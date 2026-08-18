@@ -84,16 +84,18 @@ target_link_libraries(
 )
 bvb_enable_warnings(bvb-vulkan-present-selftest)
 
-add_library(bvb-vulkan-resolve-trace SHARED src/vulkan_resolve_trace.c)
-target_link_libraries(
-  bvb-vulkan-resolve-trace
-  PRIVATE Vulkan::Headers ${CMAKE_DL_LIBS}
-)
-set_target_properties(
-  bvb-vulkan-resolve-trace
-  PROPERTIES OUTPUT_NAME bvb-vulkan-resolve-trace
-)
-bvb_enable_warnings(bvb-vulkan-resolve-trace)
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
+  add_library(bvb-vulkan-resolve-trace SHARED src/vulkan_resolve_trace.c)
+  target_link_libraries(
+    bvb-vulkan-resolve-trace
+    PRIVATE Vulkan::Headers ${CMAKE_DL_LIBS}
+  )
+  set_target_properties(
+    bvb-vulkan-resolve-trace
+    PROPERTIES OUTPUT_NAME bvb-vulkan-resolve-trace
+  )
+  bvb_enable_warnings(bvb-vulkan-resolve-trace)
+endif()
 
 add_library(bvb-wire STATIC src/lifecycle.c src/protocol.c src/transport.c)
 target_include_directories(
@@ -118,10 +120,13 @@ bvb_enable_warnings(bvb-bridge-client)
 install(
   TARGETS bvb-vulkan-probe bvb-bridge-service bvb-bridge-client
           bvb-vulkan-selftest bvb-vulkan-surface-probe
-          bvb-vulkan-present-selftest bvb-vulkan-resolve-trace
+          bvb-vulkan-present-selftest
   RUNTIME DESTINATION bin
-  LIBRARY DESTINATION lib
 )
+
+if(TARGET bvb-vulkan-resolve-trace)
+  install(TARGETS bvb-vulkan-resolve-trace LIBRARY DESTINATION lib)
+endif()
 
 if(BUILD_TESTING)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -151,26 +156,28 @@ if(BUILD_TESTING)
 
   add_test(NAME protocol-contract COMMAND bvb-protocol-test)
 
-  add_library(bvb-fake-vulkan-resolve SHARED tests/fake_vulkan_resolve.c)
-  target_link_libraries(bvb-fake-vulkan-resolve PRIVATE Vulkan::Headers)
-  bvb_enable_warnings(bvb-fake-vulkan-resolve)
+  if(TARGET bvb-vulkan-resolve-trace)
+    add_library(bvb-fake-vulkan-resolve SHARED tests/fake_vulkan_resolve.c)
+    target_link_libraries(bvb-fake-vulkan-resolve PRIVATE Vulkan::Headers)
+    bvb_enable_warnings(bvb-fake-vulkan-resolve)
 
-  add_executable(bvb-vulkan-resolve-consumer tests/vulkan_resolve_consumer.c)
-  target_link_libraries(
-    bvb-vulkan-resolve-consumer
-    PRIVATE Vulkan::Headers ${CMAKE_DL_LIBS}
-  )
-  bvb_enable_warnings(bvb-vulkan-resolve-consumer)
+    add_executable(bvb-vulkan-resolve-consumer tests/vulkan_resolve_consumer.c)
+    target_link_libraries(
+      bvb-vulkan-resolve-consumer
+      PRIVATE Vulkan::Headers ${CMAKE_DL_LIBS}
+    )
+    bvb_enable_warnings(bvb-vulkan-resolve-consumer)
 
-  add_test(
-    NAME vulkan-resolve-trace
-    COMMAND
-      "${Python3_EXECUTABLE}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_vulkan_resolve_trace.py"
-      "$<TARGET_FILE:bvb-vulkan-resolve-trace>"
-      "$<TARGET_FILE:bvb-fake-vulkan-resolve>"
-      "$<TARGET_FILE:bvb-vulkan-resolve-consumer>"
-  )
+    add_test(
+      NAME vulkan-resolve-trace
+      COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_vulkan_resolve_trace.py"
+        "$<TARGET_FILE:bvb-vulkan-resolve-trace>"
+        "$<TARGET_FILE:bvb-fake-vulkan-resolve>"
+        "$<TARGET_FILE:bvb-vulkan-resolve-consumer>"
+    )
+  endif()
 
   add_test(
     NAME probe-contract
