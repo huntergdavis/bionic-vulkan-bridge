@@ -39,9 +39,26 @@ target_include_directories(
 target_link_libraries(bvb-vulkan-caps PRIVATE Vulkan::Headers ${CMAKE_DL_LIBS})
 bvb_enable_warnings(bvb-vulkan-caps)
 
+add_library(bvb-vulkan-selftest-core STATIC src/vulkan_selftest.c)
+target_include_directories(
+  bvb-vulkan-selftest-core
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
+)
+target_link_libraries(
+  bvb-vulkan-selftest-core
+  PRIVATE Vulkan::Headers ${CMAKE_DL_LIBS}
+)
+bvb_enable_warnings(bvb-vulkan-selftest-core)
+
 add_executable(bvb-vulkan-probe src/vulkan_probe.c)
 target_link_libraries(bvb-vulkan-probe PRIVATE bvb-vulkan-caps)
 bvb_enable_warnings(bvb-vulkan-probe)
+
+add_executable(bvb-vulkan-selftest src/vulkan_selftest_main.c)
+target_link_libraries(bvb-vulkan-selftest PRIVATE bvb-vulkan-selftest-core)
+bvb_enable_warnings(bvb-vulkan-selftest)
 
 add_library(bvb-wire STATIC src/protocol.c src/transport.c)
 target_include_directories(
@@ -62,6 +79,7 @@ bvb_enable_warnings(bvb-bridge-client)
 
 install(
   TARGETS bvb-vulkan-probe bvb-bridge-service bvb-bridge-client
+          bvb-vulkan-selftest
   RUNTIME DESTINATION bin
 )
 
@@ -90,6 +108,15 @@ if(BUILD_TESTING)
       "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_probe.py"
       "$<TARGET_FILE:bvb-vulkan-probe>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+  )
+
+  add_test(
+    NAME vulkan-selftest-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_selftest.py"
+      "$<TARGET_FILE:bvb-vulkan-selftest>"
       "$<TARGET_FILE:bvb-fake-vulkan>"
   )
 
