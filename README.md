@@ -34,6 +34,9 @@ Android's system Vulkan loader and enumerated its Adreno 730 in 345 ms. See
 The next gate also passed: an AArch64 glibc client negotiated protocol v1 with
 a separate Bionic service that could see Android's Vulkan loader. See
 [E002](docs/EXPERIMENT_LOG.md#e002--glibc-client-to-bionic-service-handshake-2026-08-18).
+Gate 0.3 then moved Vulkan enumeration through that boundary: every bridged
+Adreno capability field matched a fresh direct-probe control. See
+[E003](docs/EXPERIMENT_LOG.md#e003--bridged-vulkan-capability-parity-2026-08-18).
 
 ## Build and test on a normal Linux host
 
@@ -71,8 +74,9 @@ the cross-libc handshake gate with:
 ./scripts/test-cross-libc-termux.sh
 ```
 
-The script verifies that the client names the Termux glibc ELF interpreter
-before connecting it to the independently Bionic-linked service.
+The script verifies that the client names the Termux glibc ELF interpreter,
+requests Vulkan capabilities from the independently Bionic-linked service, and
+compares every result field with a fresh direct Bionic probe.
 
 ## Project boundaries
 

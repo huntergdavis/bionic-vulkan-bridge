@@ -19,8 +19,8 @@
 
 ## 0.3 — Capability parity
 
-- [ ] Query Vulkan capabilities through the bridge
-- [ ] Compare direct and bridged capability documents byte-for-byte where valid
+- [x] Query Vulkan capabilities through the bridge
+- [x] Compare direct and bridged capability documents field-for-field
 - [ ] Add Android native-window and surface feasibility probe
 - [ ] Evaluate libadrenotools only if the system-loader path needs capabilities
   it cannot provide

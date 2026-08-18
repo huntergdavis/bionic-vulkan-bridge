@@ -96,3 +96,30 @@ steady-state transport benchmark.
 Conclusion: the proposed libc boundary works on the target without PRoot. The
 next gate should move the already-proven Vulkan capability query across this
 boundary, then compare its document against E001.
+
+## E003 — bridged Vulkan capability parity (2026-08-18)
+
+Status: passed at commit `7a59622fefab86f7a1991925e9771954e3ec9e8f`.
+
+Hypothesis: the Bionic service can run the same Vulkan collector as E001,
+encode its result over protocol v1, and produce an equivalent document after a
+glibc client decodes it.
+
+Method: `scripts/test-cross-libc-termux.sh` compiled the client with
+`gcc-glibc`, verified its glibc interpreter, started the Bionic service, and
+requested `VULKAN_CAPS`. It then ran a fresh direct Bionic probe and compared
+loader API, extension/device counts, device identity, Vulkan/driver versions,
+queue and heap counts, and device-local bytes.
+
+Result: `capability_parity=PASS`. The bridged document reported the Adreno 730,
+loader API 1.4.0 (`4210688`), device API 1.1.128 (`4198528`), 14 instance
+extensions, two queue families, two memory heaps, and 7,914,782,720
+device-local bytes—identical to the direct control. Both service and client
+exited `0` with no reported error. The measured 311,055,990 ns includes glibc
+client startup, two protocol exchanges, and the Vulkan query; it is not a
+steady-state per-call benchmark.
+
+Conclusion: Vulkan data now crosses the real glibc/Bionic boundary without
+PRoot and without changing the observed capabilities. This proves control-plane
+feasibility. It does not yet implement Vulkan object creation, command
+submission, Android surfaces, or a game-facing loader.
