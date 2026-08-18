@@ -31,3 +31,8 @@ This approach retains Termux and the glibc compatibility layer initially. It
 also makes process isolation, handle translation, memory sharing, and
 synchronization explicit engineering work rather than hidden assumptions.
 
+The initial framing and socket hardening reuse the tested fixed-width,
+little-endian protocol discipline from
+[`termux-glibc-compat`](https://github.com/huntergdavis/termux-glibc-compat/tree/da200c72bb2fd4d3f6a4e7817d82eaf311f83780),
+adapted to an independently versioned Vulkan protocol. The local `deja` recall
+query returned no prior cross-libc Vulkan bridge implementation to reuse.

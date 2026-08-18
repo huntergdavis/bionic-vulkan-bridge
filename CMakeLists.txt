@@ -23,14 +23,37 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(VulkanHeaders)
 
+function(bvb_enable_warnings target)
+  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(${target} PRIVATE -Wall -Wextra -Werror)
+  endif()
+endfunction()
+
 add_executable(bvb-vulkan-probe src/vulkan_probe.c)
 target_link_libraries(bvb-vulkan-probe PRIVATE Vulkan::Headers ${CMAKE_DL_LIBS})
+bvb_enable_warnings(bvb-vulkan-probe)
 
-if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-  target_compile_options(bvb-vulkan-probe PRIVATE -Wall -Wextra -Werror)
-endif()
+add_library(bvb-wire STATIC src/protocol.c src/transport.c)
+target_include_directories(
+  bvb-wire
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
+)
+bvb_enable_warnings(bvb-wire)
 
-install(TARGETS bvb-vulkan-probe RUNTIME DESTINATION bin)
+add_executable(bvb-bridge-service src/bridge_service.c)
+target_link_libraries(bvb-bridge-service PRIVATE bvb-wire)
+bvb_enable_warnings(bvb-bridge-service)
+
+add_executable(bvb-bridge-client src/bridge_client.c)
+target_link_libraries(bvb-bridge-client PRIVATE bvb-wire)
+bvb_enable_warnings(bvb-bridge-client)
+
+install(
+  TARGETS bvb-vulkan-probe bvb-bridge-service bvb-bridge-client
+  RUNTIME DESTINATION bin
+)
 
 if(BUILD_TESTING)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)
@@ -43,9 +66,13 @@ if(BUILD_TESTING)
       C_VISIBILITY_PRESET hidden
       OUTPUT_NAME bvb-fake-vulkan
   )
-  if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(bvb-fake-vulkan PRIVATE -Wall -Wextra -Werror)
-  endif()
+  bvb_enable_warnings(bvb-fake-vulkan)
+
+  add_executable(bvb-protocol-test tests/protocol.c)
+  target_link_libraries(bvb-protocol-test PRIVATE bvb-wire)
+  bvb_enable_warnings(bvb-protocol-test)
+
+  add_test(NAME protocol-contract COMMAND bvb-protocol-test)
 
   add_test(
     NAME probe-contract
@@ -55,5 +82,13 @@ if(BUILD_TESTING)
       "$<TARGET_FILE:bvb-vulkan-probe>"
       "$<TARGET_FILE:bvb-fake-vulkan>"
   )
-endif()
 
+  add_test(
+    NAME bridge-integration
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bridge_integration.py"
+      "$<TARGET_FILE:bvb-bridge-service>"
+      "$<TARGET_FILE:bvb-bridge-client>"
+  )
+endif()
