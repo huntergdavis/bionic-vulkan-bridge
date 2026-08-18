@@ -14,12 +14,13 @@ struct client_options {
     const char *socket_path;
     bool request_vulkan_caps;
     bool request_vulkan_selftest;
+    bool request_activity_status;
 };
 
 static void usage(const char *program) {
     fprintf(stderr,
             "usage: %s --socket ABSOLUTE_PATH "
-            "[--vulkan-caps] [--vulkan-selftest]\n",
+            "[--vulkan-caps] [--vulkan-selftest] [--activity-status]\n",
             program);
 }
 
@@ -34,6 +35,8 @@ static int parse_arguments(int argc, char **argv,
             options->request_vulkan_caps = true;
         } else if (strcmp(argv[index], "--vulkan-selftest") == 0) {
             options->request_vulkan_selftest = true;
+        } else if (strcmp(argv[index], "--activity-status") == 0) {
+            options->request_activity_status = true;
         } else {
             usage(argv[0]);
             return 2;
@@ -157,7 +160,8 @@ static void print_json_string(const char *value) {
 static void print_document(const struct bvb_protocol_packet *hello_packet,
                            const struct bvb_hello_response *hello,
                            const struct bvb_vulkan_caps *caps,
-                           const struct bvb_vulkan_selftest_result *selftest) {
+                           const struct bvb_vulkan_selftest_result *selftest,
+                           const struct bvb_activity_status *activity) {
     printf("{\"schema_version\":1,\"protocol_version\":%u,"
            "\"request_id\":%" PRIu32 ",\"service_flags\":%" PRIu32
            ",\"bionic_service\":%s,\"android_vulkan_loader\":%s,"
@@ -235,6 +239,44 @@ static void print_document(const struct bvb_protocol_packet *hello_packet,
                selftest->fill_word,
                selftest->mismatched_words,
                selftest->submit_wait_elapsed_ns);
+    }
+    if (activity != NULL) {
+        printf(",\"activity_status\":{\"ingress_configured\":%s"
+               ",\"authenticated_event_count\":%" PRIu32
+               ",\"rejected_event_count\":%" PRIu32
+               ",\"last_sequence\":%" PRIu32
+               ",\"last_event\":%" PRIu32
+               ",\"state_flags\":%" PRIu32
+               ",\"created\":%s,\"started\":%s,\"resumed\":%s"
+               ",\"window_present\":%s,\"renderer_ready\":%s"
+               ",\"focused\":%s,\"destroyed\":%s"
+               ",\"width\":%" PRIu32 ",\"height\":%" PRIu32
+               ",\"activity_pid\":%" PRIu32
+               ",\"last_event_monotonic_ns\":%" PRIu64
+               ",\"last_event_received_ns\":%" PRIu64 "}",
+               activity->ingress_configured != 0U ? "true" : "false",
+               activity->authenticated_event_count,
+               activity->rejected_event_count, activity->last_sequence,
+               activity->last_event, activity->state_flags,
+               (activity->state_flags & BVB_ACTIVITY_CREATED) != 0U ? "true"
+                                                                    : "false",
+               (activity->state_flags & BVB_ACTIVITY_STARTED) != 0U ? "true"
+                                                                    : "false",
+               (activity->state_flags & BVB_ACTIVITY_RESUMED) != 0U ? "true"
+                                                                    : "false",
+               (activity->state_flags & BVB_ACTIVITY_WINDOW_PRESENT) != 0U
+                   ? "true"
+                   : "false",
+               (activity->state_flags & BVB_ACTIVITY_RENDERER_READY) != 0U
+                   ? "true"
+                   : "false",
+               (activity->state_flags & BVB_ACTIVITY_FOCUSED) != 0U ? "true"
+                                                                    : "false",
+               (activity->state_flags & BVB_ACTIVITY_DESTROYED) != 0U ? "true"
+                                                                      : "false",
+               activity->width, activity->height, activity->activity_pid,
+               activity->last_event_monotonic_ns,
+               activity->last_event_received_ns);
     }
     fputs("}\n", stdout);
 }
@@ -343,7 +385,35 @@ int main(int argc, char **argv) {
         selftest_pointer = &selftest;
     }
 
+    struct bvb_activity_status activity_status;
+    struct bvb_activity_status *activity_status_pointer = NULL;
+    if (options.request_activity_status) {
+        memset(&request, 0, sizeof(request));
+        request.header.version = BVB_PROTOCOL_VERSION;
+        request.header.kind = BVB_PROTOCOL_REQUEST;
+        request.header.opcode = BVB_OPCODE_ACTIVITY_STATUS;
+        request.header.request_id = 0x42564204U;
+
+        struct bvb_protocol_packet activity_packet;
+        result = exchange(socket_fd, &request, &activity_packet);
+        if (result != 0 || activity_packet.header.status != 0 ||
+            activity_packet.header.payload_length != BVB_ACTIVITY_STATUS_SIZE) {
+            (void)close(socket_fd);
+            fputs("bvb: Activity status request failed\n", stderr);
+            return 8;
+        }
+        result = bvb_protocol_decode_activity_status(activity_packet.payload,
+                                                     &activity_status);
+        if (result != 0) {
+            (void)close(socket_fd);
+            fputs("bvb: invalid Activity status response\n", stderr);
+            return 8;
+        }
+        activity_status_pointer = &activity_status;
+    }
+
     (void)close(socket_fd);
-    print_document(&hello_packet, &hello, caps_pointer, selftest_pointer);
+    print_document(&hello_packet, &hello, caps_pointer, selftest_pointer,
+                   activity_status_pointer);
     return 0;
 }

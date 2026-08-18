@@ -2,6 +2,8 @@
 
 import json
 import pathlib
+import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -13,12 +15,22 @@ def run_exchange(
     client: str,
     socket_path: pathlib.Path,
     loader: str | None = None,
+    lifecycle: bool = False,
 ) -> dict[str, object]:
     service_command = [service, "--socket", str(socket_path), "--once"]
     client_command = [client, "--socket", str(socket_path)]
     if loader is not None:
         service_command.extend(["--loader", loader])
         client_command.extend(["--vulkan-caps", "--vulkan-selftest"])
+    token = bytes.fromhex(
+        "00112233445566778899aabbccddeeff"
+        "fedcba98765432100123456789abcdef"
+    )
+    if lifecycle:
+        service_command.extend(
+            ["--activity-port", "0", "--activity-token", token.hex()]
+        )
+        client_command.append("--activity-status")
     server = subprocess.Popen(
             service_command,
             stdout=subprocess.PIPE,
@@ -32,6 +44,54 @@ def run_exchange(
                 break
             time.sleep(0.01)
         assert socket_path.exists(), server.communicate(timeout=1.0)
+
+        ready_line = server.stdout.readline()
+        assert "ready socket=" in ready_line
+        if lifecycle:
+            port_text = ready_line.split("activity_port=", 1)[1].strip()
+            activity_port = int(port_text)
+            assert 0 < activity_port <= 65535
+
+            def send_event(
+                event: int,
+                sequence: int,
+                width: int = 0,
+                height: int = 0,
+                event_token: bytes = token,
+            ) -> int:
+                record = struct.pack(
+                    "<IHHIIIIQ32s",
+                    0x314C5642,
+                    1,
+                    event,
+                    sequence,
+                    width,
+                    height,
+                    12345,
+                    9876543210 + sequence,
+                    event_token,
+                )
+                with socket.create_connection(
+                    ("127.0.0.1", activity_port), timeout=1.0
+                ) as connection:
+                    connection.sendall(record)
+                    ack = connection.recv(16)
+                magic, version, reserved, accepted_sequence, status = struct.unpack(
+                    "<IHHIi", ack
+                )
+                assert magic == 0x314C5642
+                assert version == 1
+                assert reserved == 0
+                assert accepted_sequence == sequence
+                return status
+
+            assert send_event(1, 1, event_token=bytes(32)) == -13
+            assert send_event(1, 1) == 0
+            assert send_event(2, 2) == 0
+            assert send_event(3, 3) == 0
+            assert send_event(7, 4, 2800, 1752) == 0
+            assert send_event(11, 5, 2800, 1752) == 0
+            assert send_event(9, 6) == 0
 
         completed = subprocess.run(
             client_command,
@@ -50,7 +110,7 @@ def run_exchange(
 
         server_stdout, server_stderr = server.communicate(timeout=5.0)
         assert server.returncode == 0, server_stderr
-        assert "ready socket=" in server_stdout
+        assert "ready socket=" not in server_stdout
         assert not socket_path.exists()
         return document
     finally:
@@ -92,6 +152,31 @@ def main() -> int:
         assert selftest["mismatched_words"] == 0
         assert "VK_KHR_surface" in selftest["known_instance_extensions"]
         assert "VK_KHR_swapchain" in selftest["known_device_extensions"]
+
+        lifecycle_document = run_exchange(
+            service,
+            client,
+            temp_path / "lifecycle" / "bridge.sock",
+            lifecycle=True,
+        )
+        assert lifecycle_document["service_flags"] & 4
+        activity = lifecycle_document["activity_status"]
+        assert isinstance(activity, dict)
+        assert activity["ingress_configured"] is True
+        assert activity["authenticated_event_count"] == 6
+        assert activity["rejected_event_count"] == 1
+        assert activity["last_sequence"] == 6
+        assert activity["last_event"] == 9
+        assert activity["created"] is True
+        assert activity["started"] is True
+        assert activity["resumed"] is True
+        assert activity["window_present"] is True
+        assert activity["renderer_ready"] is True
+        assert activity["focused"] is True
+        assert activity["destroyed"] is False
+        assert activity["width"] == 2800
+        assert activity["height"] == 1752
+        assert activity["activity_pid"] == 12345
 
     print("PASS: bridge handshake integration")
     return 0
