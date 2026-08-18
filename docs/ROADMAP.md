@@ -37,7 +37,7 @@
   Termux:X11's EGL-owned surface
 - [x] Create a swapchain, present a deterministic frame, and verify every
   consumer pixel
-- [ ] Add an explicit lifecycle/status handoff between the visible Activity and
+- [x] Add an explicit lifecycle/status handoff between the visible Activity and
   the Bionic bridge service
 - [x] Add immersive-mode navigation-bar control for the eventual game host
 

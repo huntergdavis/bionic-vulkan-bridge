@@ -55,6 +55,11 @@ E009 adds immersive-sticky system-UI control without changing the renderer.
 The magenta frame remained visible while the tablet's navigation controls were
 fully hidden, and immersive mode is restored whenever the Activity regains
 focus.
+E010 adds an explicit Activity-to-service lifecycle handoff. A fresh 256-bit
+launch capability authenticates events over an opt-in loopback listener; the
+existing owner-authenticated Unix control socket then exposes the accepted
+state to glibc. The hardware gate reported an active, focused, renderer-ready
+2800x1752 window and rejected a deliberately invalid token.
 
 ## Build and test on a normal Linux host
 
@@ -139,6 +144,17 @@ The script compiles a no-Java `NativeActivity` library, packages it with
 artifact path and ELF dependencies. Generated APKs and the debug key stay in
 ignored `out/`. The E008/E009 acceptance test is a visibly magenta, immersive
 Android Activity; it does not use or replace Termux:X11.
+
+After installing the generated APK, run the complete E010 lifecycle gate with:
+
+```sh
+./scripts/test-visible-host-lifecycle-termux.sh
+```
+
+The harness creates a fresh launch token, starts an ephemeral loopback ingress,
+proves invalid-token rejection, launches the Activity with private Intent
+extras, queries the resulting state through a glibc client, and writes evidence
+under ignored `out/`. The token is not printed or retained in those artifacts.
 
 ## Project boundaries
 

@@ -43,6 +43,23 @@ glibc layer remains because the commercial game stack depends on it. The bridge
 is intended to remove graphics translation overhead and incompatibility, not to
 replace unrelated working components.
 
+## Visible host control boundary
+
+The visible Android Activity and Termux service have different Android UIDs, so
+the Activity cannot use the service's mode-0600 filesystem socket. E010 keeps
+that owner-authenticated Unix socket unchanged and adds a separate, opt-in
+listener bound only to `127.0.0.1`. A fresh 256-bit capability is passed to the
+Activity in its launch Intent; every fixed-width lifecycle record carries that
+capability and receives an explicit ACK. The capability is never returned by
+the status query or written to the evidence artifacts.
+
+The Bionic service derives Activity state only from authenticated, ordered
+events. A glibc client can query the snapshot through the existing Unix
+protocol. This is a low-rate control plane for creation, focus, window, and
+renderer readiness—not the future Vulkan hot path. Per-call Vulkan RPC remains
+out of scope; game command/data transfer must still be batched or shared-memory
+based.
+
 ## Development gates
 
 1. **Native loader proof (0.1):** a Bionic process opens the absolute Android
@@ -67,7 +84,9 @@ that larger design.
 - Never rely on Vulkan loader search order in a hardware experiment.
 - Every cross-libc message begins with a versioned, fixed-width header.
 - Pointer values never cross the process boundary.
+- Cross-UID Activity events require a fresh launch capability and a
+  loopback-only listener; they never weaken the owner-authenticated Unix
+  control socket.
 - Each optimization has an A/B control and records thermals, resolution, and
   process topology.
 - A failed gate is recorded; it is not rewritten as success.
-

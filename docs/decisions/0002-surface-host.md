@@ -31,17 +31,19 @@ presents an opaque-magenta frame, and verifies all 4,096 consumer pixels.
 E008 packages a standalone `NativeActivity` and visibly presents the same
 magenta frame on its dedicated Android window. E009 hides Android's system bars
 with immersive-sticky View flags and restores them after focus changes without
-altering the renderer. The next gate is explicit ownership and lifecycle
-transfer between this host and the Bionic bridge service. It will not
-reinterpret an X socket/window or concurrently take over Termux:X11's existing
-EGL-owned surface.
+altering the renderer. E010 passes explicit lifecycle/status transfer: the
+Activity authenticates fixed-width events to an opt-in loopback ingress with a
+fresh 256-bit launch capability, and the glibc client queries the derived state
+through the existing owner-authenticated Unix socket. It does not reinterpret
+an X socket/window or concurrently take over Termux:X11's existing EGL-owned
+surface. The next gate is game-facing Vulkan dispatch.
 
 The service remains Bionic and the game-facing client remains glibc. Termux:X11
 continues to own Steam/X11 UI until a dedicated game surface is active.
 
 ## Consequences
 
-- Surface and swapchain lifecycle become explicit protocol state.
+- Surface and swapchain lifecycle are now explicit protocol state.
 - A dedicated view can be switched full-screen for a game without discarding
   the working Steam UI or login state.
 - Input routing and view switching become separate later gates.

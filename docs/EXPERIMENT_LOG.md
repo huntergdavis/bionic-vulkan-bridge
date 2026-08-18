@@ -352,3 +352,74 @@ Conclusion: the project now has a dedicated, visibly rendered, immersive
 Android Vulkan host. The next controlled gate is an explicit lifecycle/status
 handoff between this Activity and the existing Bionic bridge service; Steam,
 DXVK, game input, and game-facing dispatch remain outside this result.
+
+## E010 — authenticated Activity lifecycle/status handoff (2026-08-18)
+
+Status: passed at commit `293fbee07b6710b45d39b74dde4dd1255452e557`.
+
+Hypothesis: the standalone Android Activity can explicitly publish its window,
+renderer, and focus state to the existing Bionic bridge service, and a glibc
+client can query that accepted state without weakening the existing
+owner-authenticated Unix control socket.
+
+Method: protocol v1 gained fixed-width lifecycle records and ACKs plus a
+read-only `ACTIVITY_STATUS` opcode. Because the Activity and Termux service use
+different Android UIDs, the service opens an opt-in ephemeral listener bound
+only to `127.0.0.1`. The harness generates a fresh 256-bit capability from
+`/dev/urandom` and supplies it to both the service and Activity through private
+launch arguments. Records carry the capability, monotonically increasing
+sequence, event, Activity PID, dimensions, and monotonic timestamp. The token
+is not printed, returned by the query, or retained in evidence. The service's
+mode-0600, peer-credential-authenticated Unix socket remains unchanged.
+
+Security control: before launching the Activity, the hardware harness sent a
+well-formed `CREATED` record with an all-zero token. The service returned an
+explicit `-EACCES` ACK and recorded exactly one rejected event. It then accepted
+seven events from the real Activity PID 6254 in order: `CREATED`, `STARTED`,
+`RESUMED`, `WINDOW_CREATED`, `RENDERER_READY`, `FOCUS_LOST`, and
+`FOCUS_GAINED`, with sequences 1 through 7.
+
+Result: the glibc client queried the Bionic service and received service flags
+7 (Bionic, Android system Vulkan loader, and Activity ingress), 64-bit pointers,
+and 4,096-byte pages. The Activity snapshot reported seven authenticated
+events, one rejected event, last sequence 7, last event `FOCUS_GAINED`, state
+flags 63, and every active flag true: created, started, resumed, window present,
+renderer ready, and focused. The window was exactly 2800x1752, matching the
+tablet panel; destroyed was false. The final event's service-receive timestamp
+was 914,896 ns after its Activity timestamp. Service stderr was empty.
+
+Binary and artifact identities:
+
+- visible-host APK SHA-256:
+  `82cea5f637ac448ca438078ba1d6757953da16c8ffe37978dc422878f0ab0bb5`
+- visible-host native library SHA-256:
+  `aed79197bfe5c7a118bfc1b2c1b2c8377bf8f95e6db9bbb96be7e6bab4132587`
+- Bionic service SHA-256:
+  `082dc59b257f27557525cdb612c5c84a95dff21a660a162883989e4b639da594`
+- glibc client SHA-256:
+  `8cb4eabf2163b668cdf141fb2b0735414d96326246d59198fa38d4c27b30bac5`
+- status JSON SHA-256:
+  `cd95b40b7cb0a0baebfea34cc4859b942ba05c7cecbf97179e5a41211d5070ad`
+- service stdout SHA-256:
+  `26a1d8857119437f99fd7b7c0268f17aa234ea82c1175163960fcc6aedce0a85`
+- empty service stderr SHA-256:
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
+- signer certificate SHA-256:
+  `5754d1170b6d007e72afed7de676312b9a1320d39c7b1405be9efa1ab2ef1e06`
+
+The service ELF requests `/system/bin/linker64`; the querying client requests
+Termux glibc's `ld-linux-aarch64.so.1`. APK version `0.1.2` (code 3) targets API
+36, its native library targets API 24, and its only added permission is
+`android.permission.INTERNET` for the loopback connection.
+
+The required recall query—`Bionic Vulkan bridge NativeActivity lifecycle status
+handoff Unix socket Android Activity service window focus protocol`—returned no
+indexed prior implementation. E010 reused the repository's E002-E005
+fixed-width protocol and authenticated Unix control plane plus E008-E009's
+Activity ownership, callbacks, renderer, and immersive behavior.
+
+Conclusion: visible-host lifecycle is now real, authenticated bridge state that
+a glibc process can query. E010 does not carry Vulkan commands or game input and
+does not claim an FPS gain. The next gate is to trace the minimum Vulkan entry
+points required at DXVK startup and design generated handle/dispatch ownership
+without turning each hot Vulkan call into a synchronous socket RPC.
