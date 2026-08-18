@@ -25,6 +25,18 @@
 - [ ] Evaluate libadrenotools only if the system-loader path needs capabilities
   it cannot provide
 
+## 0.4 — Native execution and surface host
+
+- [x] Create a logical device and command pool through the Android driver
+- [x] Submit, wait for, map, and verify a native GPU buffer operation
+- [x] Trigger the same operation from glibc and compare deterministic fields
+- [x] Inventory Android WSI and AHardwareBuffer/FD interop support
+- [ ] Create and query an Android Vulkan surface backed by a controlled
+  `ANativeWindow`
+- [ ] Add a dedicated visible `SurfaceView` host without taking over
+  Termux:X11's EGL-owned surface
+- [ ] Create a swapchain and present a deterministic frame
+
 ## Game-facing milestones
 
 - [ ] Trace the minimum Vulkan entry-point set exercised by DXVK startup

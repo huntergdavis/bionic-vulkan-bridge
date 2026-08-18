@@ -37,6 +37,10 @@ a separate Bionic service that could see Android's Vulkan loader. See
 Gate 0.3 then moved Vulkan enumeration through that boundary: every bridged
 Adreno capability field matched a fresh direct-probe control. See
 [E003](docs/EXPERIMENT_LOG.md#e003--bridged-vulkan-capability-parity-2026-08-18).
+The native execution gate now also passes: both the direct Bionic probe and a
+glibc-triggered service request submitted and verified an Adreno command buffer
+with zero data mismatches. See
+[E004/E005](docs/EXPERIMENT_LOG.md#e004--native-vulkan-command-submission-2026-08-18).
 
 ## Build and test on a normal Linux host
 
@@ -77,6 +81,17 @@ the cross-libc handshake gate with:
 The script verifies that the client names the Termux glibc ELF interpreter,
 requests Vulkan capabilities from the independently Bionic-linked service, and
 compares every result field with a fresh direct Bionic probe.
+
+Run only the native command-submission gate with:
+
+```sh
+./build/bvb-vulkan-selftest | python -m json.tool
+```
+
+This creates a Vulkan device and command pool, fills a 4 KiB host-visible
+buffer on the GPU, synchronizes it for host access, and verifies all 1,024
+words. It also inventories the WSI and external-memory extensions needed by the
+next surface phase.
 
 ## Project boundaries
 

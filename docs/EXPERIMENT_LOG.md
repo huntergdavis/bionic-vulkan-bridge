@@ -123,3 +123,55 @@ Conclusion: Vulkan data now crosses the real glibc/Bionic boundary without
 PRoot and without changing the observed capabilities. This proves control-plane
 feasibility. It does not yet implement Vulkan object creation, command
 submission, Android surfaces, or a game-facing loader.
+
+## E004 — native Vulkan command submission (2026-08-18)
+
+Status: passed at commit `0ad41f81f96a828cb73b387af025427a7c138a76`.
+
+Hypothesis: the Bionic process can move beyond discovery and execute a real
+command buffer through Android's Adreno driver, then verify the result from
+host-visible memory.
+
+Method: the self-test opened the absolute Android loader, inventoried known
+instance/device extensions, created a logical device, selected a compatible
+queue and host-visible memory type, recorded `vkCmdFillBuffer` plus a
+transfer-to-host barrier, submitted and waited, mapped 4,096 bytes, and checked
+all 1,024 32-bit words against `0xa5c3f00d`.
+
+The first hardware attempt at commit `819371c` failed cleanly with `no
+transfer-capable queue family`. The Adreno queue flags were later observed as
+`27`: graphics, compute, sparse-binding, and protected, but no explicit
+transfer bit. The Vulkan specification makes the transfer bit optional when a
+queue reports graphics or compute. Commit `0ad41f8` corrected only that
+selection rule to accept graphics, compute, or explicit-transfer queues.
+
+Result: exit `0`, empty standard error, and zero mismatched words. The selected
+queue was family 0 with flags `27`; memory type 6 had flags `15`
+(device-local, host-visible, coherent, cached). Submit plus queue-idle wait took
+3,298,542 ns and whole-process time was 206,800,729 ns.
+
+The loader exposed 14 instance and 90 device extensions. Known relevant
+extensions included Android surface/swapchain, external memory and semaphore
+FDs, Android hardware-buffer memory, timeline semaphore, and external fence
+FD. `VK_EXT_headless_surface` was absent.
+
+## E005 — glibc-triggered native command execution (2026-08-18)
+
+Status: passed at commit `46a079a7e95c42de086e25cd4fe4dd55aa85ebd3`.
+
+Protocol opcode 3 carries a fixed 64-byte little-endian self-test result. The
+glibc client negotiated protocol v1, requested capabilities, then caused the
+Bionic service to execute the same native GPU fill. The published script ran a
+second direct Bionic control and required parity for every deterministic field.
+
+Result: `capability_parity=PASS` and `command_selftest_parity=PASS`. The
+service-side GPU submit/wait took 3,440,573 ns; the immediate direct control
+took 2,371,511 ns. Both verified 1,024 words with zero mismatches. The combined
+glibc startup, handshake, capability query, and bridged command test took
+209,695,208 ns. These single timings establish operation and rough scale, not a
+steady-state throughput claim.
+
+Conclusion: the project now proves discovery, device/object creation, command
+recording, submission, synchronization, host-visible memory, and cross-libc
+control against the real Android driver. The next unproven boundary is WSI: an
+owned `ANativeWindow`, Vulkan surface, swapchain, and visible presentation.
