@@ -7,6 +7,7 @@ project_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 : "${PREFIX:?run this script from Termux}"
 
 compiler=${BVB_GLIBC_CC:-$PREFIX/glibc/bin/gcc}
+runner=${BVB_GLIBC_RUNNER:-$PREFIX/bin/glibc-runner}
 headers=$project_dir/build/_deps/vulkanheaders-src/include
 output_dir=$project_dir/out/glibc
 output=$output_dir/libbvb-vulkan-resolve-trace.so
@@ -15,13 +16,17 @@ output=$output_dir/libbvb-vulkan-resolve-trace.so
     printf 'missing glibc compiler: %s\n' "$compiler" >&2
     exit 1
 }
+[[ -x $runner ]] || {
+    printf 'missing glibc runner: %s\n' "$runner" >&2
+    exit 1
+}
 [[ -f $headers/vulkan/vulkan.h ]] || {
     printf 'missing pinned Vulkan headers; run scripts/build-termux.sh first\n' >&2
     exit 1
 }
 mkdir -p -- "$output_dir"
 
-"$compiler" \
+"$runner" "$compiler" \
     -std=c17 -O2 -DNDEBUG -fPIC -fvisibility=hidden \
     -Wall -Wextra -Werror \
     -I"$headers" \
