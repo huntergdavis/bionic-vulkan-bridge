@@ -7,6 +7,7 @@ staging_dir="$out_dir/staging"
 native_dir="$staging_dir/lib/arm64-v8a"
 manifest="$project_dir/android/visible-host/AndroidManifest.xml"
 source_file="$project_dir/android/visible-host/native_main.c"
+lifecycle_source="$project_dir/src/lifecycle.c"
 vulkan_headers="$project_dir/build/_deps/vulkanheaders-src/include"
 framework_resources=/system/framework/framework-res.apk
 unsigned_apk="$out_dir/bvb-visible-host-unsigned.apk"
@@ -22,7 +23,8 @@ for command_name in clang aapt zipalign apksigner keytool readelf; do
         exit 2
     fi
 done
-for required_file in "$manifest" "$source_file" "$framework_resources" \
+for required_file in "$manifest" "$source_file" "$lifecycle_source" \
+    "$project_dir/include/bvb/lifecycle.h" "$framework_resources" \
     "$vulkan_headers/vulkan/vulkan.h" /system/lib64/libandroid.so \
     /system/lib64/liblog.so /system/lib64/libvulkan.so; do
     if [ ! -f "$required_file" ]; then
@@ -34,8 +36,8 @@ done
 mkdir -p "$native_dir"
 clang -std=c17 -O2 -fPIC -fvisibility=hidden -Wall -Wextra -Werror \
     -shared -Wl,-soname,libbvb-visible-host.so \
-    -I"$vulkan_headers" \
-    "$source_file" \
+    -I"$project_dir/include" -I"$vulkan_headers" \
+    "$source_file" "$lifecycle_source" \
     /system/lib64/libandroid.so /system/lib64/liblog.so \
     /system/lib64/libvulkan.so \
     -o "$native_dir/libbvb-visible-host.so"

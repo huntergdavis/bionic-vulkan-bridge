@@ -1,15 +1,24 @@
 #define VK_USE_PLATFORM_ANDROID_KHR
 
+#include <bvb/lifecycle.h>
+
 #include <android/log.h>
 #include <android/native_activity.h>
 #include <android/native_window.h>
 #include <android/window.h>
 #include <vulkan/vulkan.h>
 
+#include <arpa/inet.h>
+#include <errno.h>
+#include <netinet/in.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <time.h>
+#include <unistd.h>
 
 #define BVB_LOG_TAG "BVBVisibleHost"
 #define BVB_LOGI(...)                                                           \
@@ -40,7 +49,201 @@ struct bvb_visible_state {
     VkSemaphore render_semaphore;
 };
 
+struct bvb_lifecycle_client {
+    bool configured;
+    uint16_t port;
+    uint32_t next_sequence;
+    uint8_t token[BVB_LIFECYCLE_TOKEN_SIZE];
+};
+
 static struct bvb_visible_state state;
+static struct bvb_lifecycle_client lifecycle;
+
+static void configure_lifecycle(ANativeActivity *activity) {
+    memset(&lifecycle, 0, sizeof(lifecycle));
+    JNIEnv *env = activity->env;
+    jclass activity_class = (*env)->GetObjectClass(env, activity->clazz);
+    jmethodID get_intent = activity_class == NULL
+                               ? NULL
+                               : (*env)->GetMethodID(
+                                     env, activity_class, "getIntent",
+                                     "()Landroid/content/Intent;");
+    jobject intent = get_intent == NULL
+                         ? NULL
+                         : (*env)->CallObjectMethod(env, activity->clazz,
+                                                    get_intent);
+    jclass intent_class = intent == NULL
+                              ? NULL
+                              : (*env)->GetObjectClass(env, intent);
+    jmethodID get_int_extra = intent_class == NULL
+                                  ? NULL
+                                  : (*env)->GetMethodID(
+                                        env, intent_class, "getIntExtra",
+                                        "(Ljava/lang/String;I)I");
+    jmethodID get_string_extra = intent_class == NULL
+                                     ? NULL
+                                     : (*env)->GetMethodID(
+                                           env, intent_class, "getStringExtra",
+                                           "(Ljava/lang/String;)Ljava/lang/String;");
+    jstring port_key = (*env)->NewStringUTF(env, "bvb_activity_port");
+    jstring token_key = (*env)->NewStringUTF(env, "bvb_activity_token");
+    jint port = get_int_extra == NULL || port_key == NULL
+                    ? 0
+                    : (*env)->CallIntMethod(env, intent, get_int_extra, port_key,
+                                            0);
+    jstring token_string = get_string_extra == NULL || token_key == NULL
+                               ? NULL
+                               : (jstring)(*env)->CallObjectMethod(
+                                     env, intent, get_string_extra, token_key);
+    const char *token = token_string == NULL
+                            ? NULL
+                            : (*env)->GetStringUTFChars(env, token_string, NULL);
+    if (!(*env)->ExceptionCheck(env) && port > 0 && port <= UINT16_MAX &&
+        token != NULL &&
+        bvb_lifecycle_token_from_hex(token, lifecycle.token) == 0) {
+        lifecycle.configured = true;
+        lifecycle.port = (uint16_t)port;
+        lifecycle.next_sequence = 1;
+        BVB_LOGI("E010_LIFECYCLE_CONFIGURED port=%u", (unsigned int)port);
+    } else {
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+        }
+        BVB_LOGI("E010_LIFECYCLE_DISABLED");
+    }
+    if (token != NULL) {
+        (*env)->ReleaseStringUTFChars(env, token_string, token);
+    }
+    if (token_string != NULL) {
+        (*env)->DeleteLocalRef(env, token_string);
+    }
+    if (token_key != NULL) {
+        (*env)->DeleteLocalRef(env, token_key);
+    }
+    if (port_key != NULL) {
+        (*env)->DeleteLocalRef(env, port_key);
+    }
+    if (intent_class != NULL) {
+        (*env)->DeleteLocalRef(env, intent_class);
+    }
+    if (intent != NULL) {
+        (*env)->DeleteLocalRef(env, intent);
+    }
+    if (activity_class != NULL) {
+        (*env)->DeleteLocalRef(env, activity_class);
+    }
+}
+
+static int send_exact(int socket_fd, const uint8_t *input, size_t length) {
+    size_t offset = 0;
+    while (offset < length) {
+        ssize_t sent = send(socket_fd, input + offset, length - offset,
+                            MSG_NOSIGNAL);
+        if (sent < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -errno;
+        }
+        offset += (size_t)sent;
+    }
+    return 0;
+}
+
+static int receive_exact(int socket_fd, uint8_t *output, size_t length) {
+    size_t offset = 0;
+    while (offset < length) {
+        ssize_t received = recv(socket_fd, output + offset, length - offset, 0);
+        if (received == 0) {
+            return -ECONNRESET;
+        }
+        if (received < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return -errno;
+        }
+        offset += (size_t)received;
+    }
+    return 0;
+}
+
+static void emit_lifecycle(uint16_t event, uint32_t width, uint32_t height) {
+    if (!lifecycle.configured) {
+        return;
+    }
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        BVB_LOGE("E010_EVENT_FAIL event=%u clock=%d", (unsigned int)event,
+                 errno);
+        lifecycle.configured = false;
+        return;
+    }
+    struct bvb_lifecycle_record record = {
+        .event = event,
+        .sequence = lifecycle.next_sequence,
+        .width = width,
+        .height = height,
+        .activity_pid = (uint32_t)getpid(),
+        .monotonic_ns = (uint64_t)now.tv_sec * UINT64_C(1000000000) +
+                        (uint64_t)now.tv_nsec,
+    };
+    memcpy(record.token, lifecycle.token, sizeof(record.token));
+    uint8_t wire[BVB_LIFECYCLE_RECORD_SIZE];
+    int result = bvb_lifecycle_encode_record(wire, &record);
+    int socket_fd = -1;
+    if (result == 0) {
+        socket_fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, IPPROTO_TCP);
+        result = socket_fd < 0 ? -errno : 0;
+    }
+    if (result == 0) {
+        const struct timeval timeout = {.tv_sec = 0, .tv_usec = 500000};
+        if (setsockopt(socket_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout,
+                       sizeof(timeout)) != 0 ||
+            setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout,
+                       sizeof(timeout)) != 0) {
+            result = -errno;
+        }
+    }
+    if (result == 0) {
+        const struct sockaddr_in address = {
+            .sin_family = AF_INET,
+            .sin_port = htons(lifecycle.port),
+            .sin_addr = {.s_addr = htonl(INADDR_LOOPBACK)},
+        };
+        if (connect(socket_fd, (const struct sockaddr *)&address,
+                    sizeof(address)) != 0) {
+            result = -errno;
+        }
+    }
+    if (result == 0) {
+        result = send_exact(socket_fd, wire, sizeof(wire));
+    }
+    uint8_t ack_wire[BVB_LIFECYCLE_ACK_SIZE];
+    if (result == 0) {
+        result = receive_exact(socket_fd, ack_wire, sizeof(ack_wire));
+    }
+    struct bvb_lifecycle_ack ack;
+    if (result == 0) {
+        result = bvb_lifecycle_decode_ack(ack_wire, &ack);
+    }
+    if (result == 0 &&
+        (ack.sequence != lifecycle.next_sequence || ack.status != 0)) {
+        result = ack.status != 0 ? ack.status : -EPROTO;
+    }
+    if (socket_fd >= 0) {
+        (void)close(socket_fd);
+    }
+    if (result != 0) {
+        BVB_LOGE("E010_EVENT_FAIL event=%u sequence=%u status=%d",
+                 (unsigned int)event, lifecycle.next_sequence, result);
+        lifecycle.configured = false;
+        return;
+    }
+    BVB_LOGI("E010_EVENT_ACK event=%u sequence=%u", (unsigned int)event,
+             lifecycle.next_sequence);
+    lifecycle.next_sequence += 1U;
+}
 
 static void apply_immersive_mode(ANativeActivity *activity) {
     JNIEnv *env = activity->env;
@@ -545,8 +748,14 @@ static void on_window_created(ANativeActivity *activity,
     destroy_renderer();
     BVB_LOGI("E008_WINDOW_CREATED width=%d height=%d",
              ANativeWindow_getWidth(window), ANativeWindow_getHeight(window));
+    uint32_t width = (uint32_t)ANativeWindow_getWidth(window);
+    uint32_t height = (uint32_t)ANativeWindow_getHeight(window);
+    emit_lifecycle(BVB_LIFECYCLE_EVENT_WINDOW_CREATED, width, height);
     if (!create_renderer(window)) {
+        emit_lifecycle(BVB_LIFECYCLE_EVENT_RENDERER_FAILED, width, height);
         destroy_renderer();
+    } else {
+        emit_lifecycle(BVB_LIFECYCLE_EVENT_RENDERER_READY, width, height);
     }
 }
 
@@ -574,12 +783,43 @@ static void on_window_destroyed(ANativeActivity *activity,
     (void)window;
     BVB_LOGI("E008_WINDOW_DESTROYED");
     destroy_renderer();
+    emit_lifecycle(BVB_LIFECYCLE_EVENT_WINDOW_DESTROYED, 0, 0);
 }
 
 static void on_window_focus_changed(ANativeActivity *activity, int has_focus) {
     if (has_focus != 0) {
         apply_immersive_mode(activity);
+        emit_lifecycle(BVB_LIFECYCLE_EVENT_FOCUS_GAINED, 0, 0);
+    } else {
+        emit_lifecycle(BVB_LIFECYCLE_EVENT_FOCUS_LOST, 0, 0);
     }
+}
+
+static void on_start(ANativeActivity *activity) {
+    (void)activity;
+    emit_lifecycle(BVB_LIFECYCLE_EVENT_STARTED, 0, 0);
+}
+
+static void on_resume(ANativeActivity *activity) {
+    (void)activity;
+    emit_lifecycle(BVB_LIFECYCLE_EVENT_RESUMED, 0, 0);
+}
+
+static void on_pause(ANativeActivity *activity) {
+    (void)activity;
+    emit_lifecycle(BVB_LIFECYCLE_EVENT_PAUSED, 0, 0);
+}
+
+static void on_stop(ANativeActivity *activity) {
+    (void)activity;
+    emit_lifecycle(BVB_LIFECYCLE_EVENT_STOPPED, 0, 0);
+}
+
+static void on_destroy(ANativeActivity *activity) {
+    (void)activity;
+    emit_lifecycle(BVB_LIFECYCLE_EVENT_DESTROYED, 0, 0);
+    destroy_renderer();
+    memset(&lifecycle, 0, sizeof(lifecycle));
 }
 
 __attribute__((visibility("default"))) void
@@ -588,6 +828,12 @@ ANativeActivity_onCreate(ANativeActivity *activity, void *saved_state,
     (void)saved_state;
     (void)saved_state_size;
     memset(&state, 0, sizeof(state));
+    configure_lifecycle(activity);
+    activity->callbacks->onStart = on_start;
+    activity->callbacks->onResume = on_resume;
+    activity->callbacks->onPause = on_pause;
+    activity->callbacks->onStop = on_stop;
+    activity->callbacks->onDestroy = on_destroy;
     activity->callbacks->onNativeWindowCreated = on_window_created;
     activity->callbacks->onNativeWindowResized = on_window_resized;
     activity->callbacks->onNativeWindowRedrawNeeded = on_window_redraw_needed;
@@ -598,4 +844,5 @@ ANativeActivity_onCreate(ANativeActivity *activity, void *saved_state,
         activity, AWINDOW_FLAG_FULLSCREEN | AWINDOW_FLAG_KEEP_SCREEN_ON, 0);
     apply_immersive_mode(activity);
     BVB_LOGI("E008_ACTIVITY_CREATED");
+    emit_lifecycle(BVB_LIFECYCLE_EVENT_CREATED, 0, 0);
 }
