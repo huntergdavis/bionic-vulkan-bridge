@@ -175,3 +175,43 @@ Conclusion: the project now proves discovery, device/object creation, command
 recording, submission, synchronization, host-visible memory, and cross-libc
 control against the real Android driver. The next unproven boundary is WSI: an
 owned `ANativeWindow`, Vulkan surface, swapchain, and visible presentation.
+
+## E006 — controlled ANativeWindow Vulkan surface (2026-08-18)
+
+Status: passed at commit `b47d9b56c1aecf4dad579d86c248a6e8c2730fd9`.
+
+Hypothesis: a Bionic process can create an independently owned Android native
+window and use it for Vulkan WSI without reinterpreting or taking ownership of
+Termux:X11's existing X/EGL surface.
+
+Method: the probe dynamically opened `/system/lib64/libmediandk.so`, created a
+64x64 RGBA8888 `AImageReader` with GPU-sampled-image consumer usage, obtained
+its `ANativeWindow`, then opened `/system/lib64/libvulkan.so`. It enabled
+`VK_KHR_surface` and `VK_KHR_android_surface`, created the Android surface, and
+queried queue support, capabilities, formats, and present modes. The reader
+owns the native window and deletes it after the Vulkan surface and instance.
+No Steam, Termux:X11, KDE, or login-state process was touched.
+
+Result: the first hardware run exited zero in 669,521,667 ns. Queue family 0
+supported presentation with three queues. The 64x64 surface reported minimum
+and maximum image counts of 6 and 64, extents from 1x1 through 4096x4096, all
+nine transform bits, inherited composite alpha, and usage flags `159`.
+
+Five formats were available: `VK_FORMAT_R8G8B8A8_UNORM`,
+`VK_FORMAT_R8G8B8A8_SRGB`, `VK_FORMAT_R5G6B5_UNORM_PACK16`,
+`VK_FORMAT_R16G16B16A16_SFLOAT`, and
+`VK_FORMAT_A2B10G10R10_UNORM_PACK32`, all with nonlinear sRGB color space.
+Present modes were MAILBOX, FIFO, SHARED_DEMAND_REFRESH, and
+SHARED_CONTINUOUS_REFRESH; IMMEDIATE was absent.
+
+Three immediate lifecycle repeats returned identical capabilities and took
+290,248,333, 288,357,448, and 282,208,125 ns. A first `pgrep -f` cleanup check
+incorrectly matched its own wrapper command; an anchored executable pattern
+then confirmed no lingering probe process. The probe ELF uses Android
+`/system/bin/linker64`, needs only `libdl.so` and `libc.so`, and has SHA-256
+`dfcb55c01d86974dd06a7dc14419de605047854d0b008bc270dc95907e453a63`.
+
+Conclusion: an independently controlled Android native window and Vulkan
+surface now work on the Adreno 730. This does not yet prove swapchain creation,
+image acquisition, command rendering, queue presentation, or visible output.
+Those are the next gate; Termux:X11's EGL-owned surface remains untouched.

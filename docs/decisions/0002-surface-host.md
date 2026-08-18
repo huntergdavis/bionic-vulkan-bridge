@@ -1,7 +1,7 @@
 # ADR 0002: Use a controlled surface host; do not reinterpret the X connection
 
 Date: 2026-08-18  
-Status: accepted for the next prototype
+Status: accepted; first controlled-surface gate passed in E006
 
 ## Context
 
@@ -24,12 +24,12 @@ memory/synchronization support on the tablet, but no
 
 ## Decision
 
-The next gate will first create a controlled non-visible `ANativeWindow` and
-query an Android Vulkan surface without modifying Termux:X11. Visible output
-will then use a dedicated Android `SurfaceView` host in the shared-UID app
-stack. It must have explicit ownership and lifecycle transfer to the Bionic
-Vulkan service; it will not reinterpret an X socket/window or concurrently
-take over Termux:X11's existing EGL-owned surface.
+E006 creates a controlled non-visible `ANativeWindow` and queries an Android
+Vulkan surface without modifying Termux:X11. Visible output will next use a
+dedicated Android `SurfaceView` host in the shared-UID app stack. It must have
+explicit ownership and lifecycle transfer to the Bionic Vulkan service; it
+will not reinterpret an X socket/window or concurrently take over
+Termux:X11's existing EGL-owned surface.
 
 The service remains Bionic and the game-facing client remains glibc. Termux:X11
 continues to own Steam/X11 UI until a dedicated game surface is active.

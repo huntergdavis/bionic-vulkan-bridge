@@ -31,7 +31,7 @@
 - [x] Submit, wait for, map, and verify a native GPU buffer operation
 - [x] Trigger the same operation from glibc and compare deterministic fields
 - [x] Inventory Android WSI and AHardwareBuffer/FD interop support
-- [ ] Create and query an Android Vulkan surface backed by a controlled
+- [x] Create and query an Android Vulkan surface backed by a controlled
   `ANativeWindow`
 - [ ] Add a dedicated visible `SurfaceView` host without taking over
   Termux:X11's EGL-owned surface

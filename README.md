@@ -41,6 +41,9 @@ The native execution gate now also passes: both the direct Bionic probe and a
 glibc-triggered service request submitted and verified an Adreno command buffer
 with zero data mismatches. See
 [E004/E005](docs/EXPERIMENT_LOG.md#e004--native-vulkan-command-submission-2026-08-18).
+E006 then created a separately owned `AImageReader`/`ANativeWindow`, created an
+Android Vulkan surface, and queried real Adreno presentation capabilities four
+times with clean teardown. This is WSI proof, not yet a swapchain or frame.
 
 ## Build and test on a normal Linux host
 
@@ -92,6 +95,17 @@ This creates a Vulkan device and command pool, fills a 4 KiB host-visible
 buffer on the GPU, synchronizes it for host access, and verifies all 1,024
 words. It also inventories the WSI and external-memory extensions needed by the
 next surface phase.
+
+Query an independently owned Android surface with:
+
+```sh
+./build/bvb-vulkan-surface-probe | python -m json.tool
+```
+
+The probe dynamically opens the Android Vulkan and Media NDK libraries, creates
+a 64x64 RGBA8888 `AImageReader` window, enables the Android surface extensions,
+and reports presentation queues, capabilities, formats, and modes. It does not
+create a swapchain, present pixels, or touch Termux:X11's existing surface.
 
 ## Project boundaries
 
