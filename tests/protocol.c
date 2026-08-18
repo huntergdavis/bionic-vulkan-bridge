@@ -140,6 +140,82 @@ int main(void) {
     CHECK(bvb_protocol_decode_vulkan_selftest(selftest_wire,
                                               &selftest_decoded) == -EPROTO);
 
+    const char *token_hex =
+        "00112233445566778899aabbccddeeff"
+        "fedcba98765432100123456789abcdef";
+    uint8_t token[BVB_LIFECYCLE_TOKEN_SIZE];
+    CHECK(bvb_lifecycle_token_from_hex(token_hex, token) == 0);
+    CHECK(token[0] == 0x00U);
+    CHECK(token[15] == 0xffU);
+    CHECK(token[16] == 0xfeU);
+    CHECK(token[31] == 0xefU);
+    CHECK(bvb_lifecycle_token_from_hex("short", token) == -EINVAL);
+
+    struct bvb_lifecycle_record lifecycle = {
+        .event = BVB_LIFECYCLE_EVENT_RENDERER_READY,
+        .sequence = 7,
+        .width = 2800,
+        .height = 1752,
+        .activity_pid = 12345,
+        .monotonic_ns = UINT64_C(9876543210),
+    };
+    CHECK(bvb_lifecycle_token_from_hex(token_hex, lifecycle.token) == 0);
+    uint8_t lifecycle_wire[BVB_LIFECYCLE_RECORD_SIZE];
+    CHECK(bvb_lifecycle_encode_record(lifecycle_wire, &lifecycle) == 0);
+    CHECK(bvb_wire_get_u32(lifecycle_wire) == BVB_LIFECYCLE_MAGIC);
+    struct bvb_lifecycle_record lifecycle_decoded;
+    CHECK(bvb_lifecycle_decode_record(lifecycle_wire, &lifecycle_decoded) == 0);
+    CHECK(lifecycle_decoded.event == BVB_LIFECYCLE_EVENT_RENDERER_READY);
+    CHECK(lifecycle_decoded.sequence == 7U);
+    CHECK(lifecycle_decoded.width == 2800U);
+    CHECK(lifecycle_decoded.height == 1752U);
+    CHECK(lifecycle_decoded.activity_pid == 12345U);
+    CHECK(lifecycle_decoded.monotonic_ns == UINT64_C(9876543210));
+    CHECK(memcmp(lifecycle_decoded.token, lifecycle.token,
+                 BVB_LIFECYCLE_TOKEN_SIZE) == 0);
+    lifecycle_wire[0] ^= 1U;
+    CHECK(bvb_lifecycle_decode_record(lifecycle_wire, &lifecycle_decoded) ==
+          -EPROTO);
+
+    const struct bvb_lifecycle_ack ack = {
+        .sequence = 7,
+        .status = -EACCES,
+    };
+    uint8_t ack_wire[BVB_LIFECYCLE_ACK_SIZE];
+    CHECK(bvb_lifecycle_encode_ack(ack_wire, &ack) == 0);
+    struct bvb_lifecycle_ack ack_decoded;
+    CHECK(bvb_lifecycle_decode_ack(ack_wire, &ack_decoded) == 0);
+    CHECK(ack_decoded.sequence == 7U);
+    CHECK(ack_decoded.status == -EACCES);
+
+    const struct bvb_activity_status activity_status = {
+        .ingress_configured = 1,
+        .authenticated_event_count = 7,
+        .rejected_event_count = 1,
+        .last_sequence = 7,
+        .last_event = BVB_LIFECYCLE_EVENT_RENDERER_READY,
+        .state_flags = BVB_ACTIVITY_CREATED | BVB_ACTIVITY_STARTED |
+                       BVB_ACTIVITY_RESUMED | BVB_ACTIVITY_WINDOW_PRESENT |
+                       BVB_ACTIVITY_RENDERER_READY | BVB_ACTIVITY_FOCUSED,
+        .width = 2800,
+        .height = 1752,
+        .activity_pid = 12345,
+        .last_event_monotonic_ns = UINT64_C(9876543210),
+        .last_event_received_ns = UINT64_C(9876543999),
+    };
+    uint8_t activity_status_wire[BVB_ACTIVITY_STATUS_SIZE];
+    CHECK(bvb_protocol_encode_activity_status(activity_status_wire,
+                                              &activity_status) == 0);
+    struct bvb_activity_status activity_status_decoded;
+    CHECK(bvb_protocol_decode_activity_status(activity_status_wire,
+                                              &activity_status_decoded) == 0);
+    CHECK(activity_status_decoded.authenticated_event_count == 7U);
+    CHECK(activity_status_decoded.rejected_event_count == 1U);
+    CHECK(activity_status_decoded.state_flags == activity_status.state_flags);
+    CHECK(activity_status_decoded.width == 2800U);
+    CHECK(activity_status_decoded.last_event_received_ns ==
+          UINT64_C(9876543999));
+
     puts("protocol: PASS");
     return EXIT_SUCCESS;
 }

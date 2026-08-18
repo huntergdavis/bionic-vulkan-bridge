@@ -1,6 +1,7 @@
 #ifndef BVB_PROTOCOL_H
 #define BVB_PROTOCOL_H
 
+#include <bvb/lifecycle.h>
 #include <bvb/vulkan_caps.h>
 #include <bvb/vulkan_selftest.h>
 
@@ -17,13 +18,16 @@ enum {
     BVB_OPCODE_HELLO = 1,
     BVB_OPCODE_VULKAN_CAPS = 2,
     BVB_OPCODE_VULKAN_SELFTEST = 3,
+    BVB_OPCODE_ACTIVITY_STATUS = 4,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
     BVB_VULKAN_CAPS_DEVICE_SIZE = 296,
     BVB_VULKAN_SELFTEST_SIZE = 64,
+    BVB_ACTIVITY_STATUS_SIZE = 56,
     BVB_SERVICE_BIONIC = 1U << 0,
     BVB_SERVICE_ANDROID_VULKAN_LOADER = 1U << 1,
+    BVB_SERVICE_ACTIVITY_INGRESS = 1U << 2,
 };
 
 struct bvb_protocol_header {
@@ -93,6 +97,12 @@ int bvb_protocol_encode_vulkan_selftest(
 int bvb_protocol_decode_vulkan_selftest(
     const uint8_t input[BVB_VULKAN_SELFTEST_SIZE],
     struct bvb_vulkan_selftest_result *result);
+int bvb_protocol_encode_activity_status(
+    uint8_t output[BVB_ACTIVITY_STATUS_SIZE],
+    const struct bvb_activity_status *status);
+int bvb_protocol_decode_activity_status(
+    const uint8_t input[BVB_ACTIVITY_STATUS_SIZE],
+    struct bvb_activity_status *status);
 
 void bvb_wire_put_u16(uint8_t *output, uint16_t value);
 void bvb_wire_put_u32(uint8_t *output, uint32_t value);

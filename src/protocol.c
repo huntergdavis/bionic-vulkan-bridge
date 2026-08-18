@@ -52,7 +52,7 @@ static int header_is_valid(const struct bvb_protocol_header *header) {
         return -EPROTO;
     }
     if (header->opcode < BVB_OPCODE_HELLO ||
-        header->opcode > BVB_OPCODE_VULKAN_SELFTEST) {
+        header->opcode > BVB_OPCODE_ACTIVITY_STATUS) {
         return -EPROTO;
     }
     if (header->payload_length > BVB_PROTOCOL_MAX_PAYLOAD) {
@@ -331,5 +331,54 @@ int bvb_protocol_decode_vulkan_selftest(
         return -EPROTO;
     }
     *result = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_activity_status(
+    uint8_t output[BVB_ACTIVITY_STATUS_SIZE],
+    const struct bvb_activity_status *status) {
+    if (output == NULL || status == NULL || status->ingress_configured > 1U) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_ACTIVITY_STATUS_SIZE);
+    bvb_wire_put_u32(output, status->ingress_configured);
+    bvb_wire_put_u32(output + 4, status->authenticated_event_count);
+    bvb_wire_put_u32(output + 8, status->rejected_event_count);
+    bvb_wire_put_u32(output + 12, status->last_sequence);
+    bvb_wire_put_u32(output + 16, status->last_event);
+    bvb_wire_put_u32(output + 20, status->state_flags);
+    bvb_wire_put_u32(output + 24, status->width);
+    bvb_wire_put_u32(output + 28, status->height);
+    bvb_wire_put_u32(output + 32, status->activity_pid);
+    bvb_wire_put_u32(output + 36, 0U);
+    bvb_wire_put_u64(output + 40, status->last_event_monotonic_ns);
+    bvb_wire_put_u64(output + 48, status->last_event_received_ns);
+    return 0;
+}
+
+int bvb_protocol_decode_activity_status(
+    const uint8_t input[BVB_ACTIVITY_STATUS_SIZE],
+    struct bvb_activity_status *status) {
+    if (input == NULL || status == NULL) {
+        return -EINVAL;
+    }
+    struct bvb_activity_status decoded = {
+        .ingress_configured = bvb_wire_get_u32(input),
+        .authenticated_event_count = bvb_wire_get_u32(input + 4),
+        .rejected_event_count = bvb_wire_get_u32(input + 8),
+        .last_sequence = bvb_wire_get_u32(input + 12),
+        .last_event = bvb_wire_get_u32(input + 16),
+        .state_flags = bvb_wire_get_u32(input + 20),
+        .width = bvb_wire_get_u32(input + 24),
+        .height = bvb_wire_get_u32(input + 28),
+        .activity_pid = bvb_wire_get_u32(input + 32),
+        .last_event_monotonic_ns = bvb_wire_get_u64(input + 40),
+        .last_event_received_ns = bvb_wire_get_u64(input + 48),
+    };
+    if (decoded.ingress_configured > 1U || bvb_wire_get_u32(input + 36) != 0U ||
+        decoded.last_event > BVB_LIFECYCLE_EVENT_RENDERER_FAILED) {
+        return -EPROTO;
+    }
+    *status = decoded;
     return 0;
 }

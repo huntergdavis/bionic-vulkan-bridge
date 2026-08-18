@@ -84,7 +84,7 @@ target_link_libraries(
 )
 bvb_enable_warnings(bvb-vulkan-present-selftest)
 
-add_library(bvb-wire STATIC src/protocol.c src/transport.c)
+add_library(bvb-wire STATIC src/lifecycle.c src/protocol.c src/transport.c)
 target_include_directories(
   bvb-wire
   PUBLIC
