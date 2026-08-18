@@ -67,3 +67,32 @@ Conclusion: a Termux-built Bionic executable can access the documented Android
 Vulkan loader/HAL path and enumerate the physical GPU directly. Gate 0.2 may
 now test a small cross-libc process boundary without speculating about whether
 the native half works.
+
+## E002 — glibc client to Bionic service handshake (2026-08-18)
+
+Status: passed at commit `8ec07eef26bad65a3d3307a92b4c23753e0ae72f`.
+
+Hypothesis: two native AArch64 processes using different C libraries can
+authenticate over an owner-only Unix socket, exchange the fixed-width protocol,
+negotiate version 1, and report Bionic-side Vulkan visibility.
+
+Binary identities:
+
+- service interpreter `/system/bin/linker64`, with Android `libc.so`;
+- client interpreter
+  `/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1`, with
+  `libc.so.6`;
+- client compiler `aarch64-linux-gnu` GCC 14.2.1 from `gcc-glibc`;
+- client SHA-256
+  `f0f8e9449c8885b7f7e97235cc217bad502dddda1e47bf83322c79ecd8ec8fbd`.
+
+Result: both processes exited `0` with empty standard error. The glibc client
+negotiated protocol version 1 and received service flags `3`: the server was
+compiled for Bionic and could access `/system/lib64/libvulkan.so`. Both sides
+reported a 64-bit process and the service reported a 4,096-byte page size. The
+observed 66,330,052 ns includes `grun` client process startup and is not yet a
+steady-state transport benchmark.
+
+Conclusion: the proposed libc boundary works on the target without PRoot. The
+next gate should move the already-proven Vulkan capability query across this
+boundary, then compare its document against E001.

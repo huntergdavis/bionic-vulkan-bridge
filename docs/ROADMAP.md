@@ -11,9 +11,9 @@
 
 ## 0.2 — Cross-libc handshake
 
-- [ ] Define a fixed-width, little-endian protocol header
-- [ ] Build a Bionic service in Termux
-- [ ] Build a glibc client in the existing native glibc rootfs
+- [x] Define a fixed-width, little-endian protocol header
+- [x] Build a Bionic service in Termux
+- [x] Build a glibc client with the existing native glibc toolchain
 - [ ] Validate version negotiation, error handling, and reconnect behavior
 - [ ] Benchmark round-trip and bulk shared-memory throughput
 
