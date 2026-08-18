@@ -150,6 +150,34 @@ static int answer_vulkan_caps(int client_fd,
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_selftest(int client_fd,
+                                  const struct bvb_protocol_packet *request,
+                                  const char *loader_path,
+                                  bool negotiated) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || request->header.payload_length != 0U) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+
+    struct bvb_vulkan_selftest_result selftest;
+    char diagnostic[512];
+    int result = bvb_vulkan_run_selftest(loader_path, &selftest, diagnostic,
+                                         sizeof(diagnostic));
+    if (result != 0) {
+        fprintf(stderr, "bvb: Vulkan self-test failed: %s\n", diagnostic);
+        response.header.status = result;
+        return bvb_transport_send(client_fd, &response);
+    }
+    result = bvb_protocol_encode_vulkan_selftest(response.payload, &selftest);
+    if (result != 0) {
+        return result;
+    }
+    response.header.payload_length = BVB_VULKAN_SELFTEST_SIZE;
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int serve_connection(int client_fd, const char *loader_path) {
     bool negotiated = false;
     while (true) {
@@ -171,6 +199,9 @@ static int serve_connection(int client_fd, const char *loader_path) {
         } else if (request.header.opcode == BVB_OPCODE_VULKAN_CAPS) {
             result = answer_vulkan_caps(client_fd, &request, loader_path,
                                         negotiated);
+        } else if (request.header.opcode == BVB_OPCODE_VULKAN_SELFTEST) {
+            result = answer_vulkan_selftest(client_fd, &request, loader_path,
+                                            negotiated);
         } else {
             result = -EPROTO;
         }
@@ -232,4 +263,3 @@ int main(int argc, char **argv) {
     }
     return exit_code;
 }
-

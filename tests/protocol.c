@@ -113,6 +113,33 @@ int main(void) {
     CHECK(bvb_protocol_decode_vulkan_caps(caps_wire, caps_length,
                                           &caps_decoded) == -EPROTO);
 
+    const struct bvb_vulkan_selftest_result selftest = {
+        .instance_extension_count = 14,
+        .device_extension_count = 90,
+        .instance_extension_flags = UINT64_C(0x3b),
+        .device_extension_flags = UINT64_C(0xff),
+        .queue_family_index = 0,
+        .queue_flags = 27,
+        .memory_type_index = 6,
+        .memory_property_flags = 15,
+        .buffer_bytes = 4096,
+        .fill_word = UINT32_C(0xa5c3f00d),
+        .mismatched_words = 0,
+        .submit_wait_elapsed_ns = UINT64_C(3298542),
+    };
+    uint8_t selftest_wire[BVB_VULKAN_SELFTEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_selftest(selftest_wire, &selftest) == 0);
+    struct bvb_vulkan_selftest_result selftest_decoded;
+    CHECK(bvb_protocol_decode_vulkan_selftest(selftest_wire,
+                                              &selftest_decoded) == 0);
+    CHECK(selftest_decoded.device_extension_count == 90U);
+    CHECK(selftest_decoded.device_extension_flags == UINT64_C(0xff));
+    CHECK(selftest_decoded.fill_word == UINT32_C(0xa5c3f00d));
+    CHECK(selftest_decoded.submit_wait_elapsed_ns == UINT64_C(3298542));
+    selftest_wire[52] = 1U;
+    CHECK(bvb_protocol_decode_vulkan_selftest(selftest_wire,
+                                              &selftest_decoded) == -EPROTO);
+
     puts("protocol: PASS");
     return EXIT_SUCCESS;
 }

@@ -64,7 +64,8 @@ if [ ! -S "$socket_path" ]; then
 fi
 
 start_ns=$(date +%s%N)
-grun "$glibc_client" --socket "$socket_path" --vulkan-caps \
+grun "$glibc_client" --socket "$socket_path" \
+    --vulkan-caps --vulkan-selftest \
     > "$out_dir/cross-libc-handshake.json" \
     2> "$out_dir/cross-libc-client.stderr"
 end_ns=$(date +%s%N)
@@ -72,16 +73,19 @@ wait "$service_pid"
 service_pid=
 
 "$build_dir/bvb-vulkan-probe" > "$out_dir/direct-vulkan-caps.json"
+"$build_dir/bvb-vulkan-selftest" > "$out_dir/direct-vulkan-selftest.json"
 
 python - \
     "$out_dir/cross-libc-handshake.json" \
-    "$out_dir/direct-vulkan-caps.json" <<'PY'
+    "$out_dir/direct-vulkan-caps.json" \
+    "$out_dir/direct-vulkan-selftest.json" <<'PY'
 import json
 import pathlib
 import sys
 
 bridged = json.loads(pathlib.Path(sys.argv[1]).read_text())
 direct = json.loads(pathlib.Path(sys.argv[2]).read_text())
+direct_selftest = json.loads(pathlib.Path(sys.argv[3]).read_text())
 assert bridged["schema_version"] == 1
 assert bridged["protocol_version"] == 1
 assert bridged["bionic_service"] is True
@@ -113,6 +117,32 @@ for bridged_device, direct_device in zip(
 
 print(json.dumps(bridged, indent=2))
 print("capability_parity=PASS")
+selftest = bridged["vulkan_selftest"]
+selftest_fields = (
+    "instance_extension_count",
+    "known_instance_extensions",
+    "device_extension_count",
+    "known_device_extensions",
+    "queue_family_index",
+    "queue_flags",
+    "memory_type_index",
+    "memory_property_flags",
+    "buffer_bytes",
+    "fill_word",
+    "mismatched_words",
+)
+for field in selftest_fields:
+    assert selftest[field] == direct_selftest[field], field
+assert selftest["mismatched_words"] == 0
+print("command_selftest_parity=PASS")
+print(
+    "bridged_submit_wait_elapsed_ns="
+    f"{selftest['submit_wait_elapsed_ns']}"
+)
+print(
+    "direct_submit_wait_elapsed_ns="
+    f"{direct_selftest['submit_wait_elapsed_ns']}"
+)
 PY
 
 printf 'bridge_caps_elapsed_ns=%s\n' "$((end_ns - start_ns))"

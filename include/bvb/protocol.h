@@ -2,6 +2,7 @@
 #define BVB_PROTOCOL_H
 
 #include <bvb/vulkan_caps.h>
+#include <bvb/vulkan_selftest.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -15,10 +16,12 @@ enum {
     BVB_PROTOCOL_RESPONSE = 2,
     BVB_OPCODE_HELLO = 1,
     BVB_OPCODE_VULKAN_CAPS = 2,
+    BVB_OPCODE_VULKAN_SELFTEST = 3,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
     BVB_VULKAN_CAPS_DEVICE_SIZE = 296,
+    BVB_VULKAN_SELFTEST_SIZE = 64,
     BVB_SERVICE_BIONIC = 1U << 0,
     BVB_SERVICE_ANDROID_VULKAN_LOADER = 1U << 1,
 };
@@ -84,6 +87,12 @@ int bvb_protocol_decode_vulkan_caps(
     const uint8_t *input,
     uint32_t input_length,
     struct bvb_vulkan_caps *caps);
+int bvb_protocol_encode_vulkan_selftest(
+    uint8_t output[BVB_VULKAN_SELFTEST_SIZE],
+    const struct bvb_vulkan_selftest_result *result);
+int bvb_protocol_decode_vulkan_selftest(
+    const uint8_t input[BVB_VULKAN_SELFTEST_SIZE],
+    struct bvb_vulkan_selftest_result *result);
 
 void bvb_wire_put_u16(uint8_t *output, uint16_t value);
 void bvb_wire_put_u32(uint8_t *output, uint32_t value);

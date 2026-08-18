@@ -52,7 +52,7 @@ static int header_is_valid(const struct bvb_protocol_header *header) {
         return -EPROTO;
     }
     if (header->opcode < BVB_OPCODE_HELLO ||
-        header->opcode > BVB_OPCODE_VULKAN_CAPS) {
+        header->opcode > BVB_OPCODE_VULKAN_SELFTEST) {
         return -EPROTO;
     }
     if (header->payload_length > BVB_PROTOCOL_MAX_PAYLOAD) {
@@ -278,5 +278,58 @@ int bvb_protocol_decode_vulkan_caps(
         memcpy(device->name, record + 40, BVB_VULKAN_DEVICE_NAME_SIZE);
     }
     *caps = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_selftest(
+    uint8_t output[BVB_VULKAN_SELFTEST_SIZE],
+    const struct bvb_vulkan_selftest_result *result) {
+    if (output == NULL || result == NULL || result->buffer_bytes == 0U) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_SELFTEST_SIZE);
+    bvb_wire_put_u32(output, result->instance_extension_count);
+    bvb_wire_put_u32(output + 4, result->device_extension_count);
+    bvb_wire_put_u64(output + 8, result->instance_extension_flags);
+    bvb_wire_put_u64(output + 16, result->device_extension_flags);
+    bvb_wire_put_u32(output + 24, result->queue_family_index);
+    bvb_wire_put_u32(output + 28, result->queue_flags);
+    bvb_wire_put_u32(output + 32, result->memory_type_index);
+    bvb_wire_put_u32(output + 36, result->memory_property_flags);
+    bvb_wire_put_u32(output + 40, result->buffer_bytes);
+    bvb_wire_put_u32(output + 44, result->fill_word);
+    bvb_wire_put_u32(output + 48, result->mismatched_words);
+    bvb_wire_put_u32(output + 52, 0);
+    bvb_wire_put_u64(output + 56, result->submit_wait_elapsed_ns);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_selftest(
+    const uint8_t input[BVB_VULKAN_SELFTEST_SIZE],
+    struct bvb_vulkan_selftest_result *result) {
+    if (input == NULL || result == NULL) {
+        return -EINVAL;
+    }
+    if (bvb_wire_get_u32(input + 52) != 0U) {
+        return -EPROTO;
+    }
+    const struct bvb_vulkan_selftest_result decoded = {
+        .instance_extension_count = bvb_wire_get_u32(input),
+        .device_extension_count = bvb_wire_get_u32(input + 4),
+        .instance_extension_flags = bvb_wire_get_u64(input + 8),
+        .device_extension_flags = bvb_wire_get_u64(input + 16),
+        .queue_family_index = bvb_wire_get_u32(input + 24),
+        .queue_flags = bvb_wire_get_u32(input + 28),
+        .memory_type_index = bvb_wire_get_u32(input + 32),
+        .memory_property_flags = bvb_wire_get_u32(input + 36),
+        .buffer_bytes = bvb_wire_get_u32(input + 40),
+        .fill_word = bvb_wire_get_u32(input + 44),
+        .mismatched_words = bvb_wire_get_u32(input + 48),
+        .submit_wait_elapsed_ns = bvb_wire_get_u64(input + 56),
+    };
+    if (decoded.buffer_bytes == 0U) {
+        return -EPROTO;
+    }
+    *result = decoded;
     return 0;
 }

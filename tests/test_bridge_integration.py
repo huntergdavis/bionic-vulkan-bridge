@@ -18,7 +18,7 @@ def run_exchange(
     client_command = [client, "--socket", str(socket_path)]
     if loader is not None:
         service_command.extend(["--loader", loader])
-        client_command.append("--vulkan-caps")
+        client_command.extend(["--vulkan-caps", "--vulkan-selftest"])
     server = subprocess.Popen(
             service_command,
             stdout=subprocess.PIPE,
@@ -85,6 +85,13 @@ def main() -> int:
         assert device["name"] == 'BVB Fake Adreno 730 "quoted"'
         assert device["vendor_id"] == 0x5143
         assert device["device_local_bytes"] == 512 * 1024 * 1024
+        selftest = document["vulkan_selftest"]
+        assert isinstance(selftest, dict)
+        assert selftest["buffer_bytes"] == 4096
+        assert selftest["fill_word"] == 0xA5C3F00D
+        assert selftest["mismatched_words"] == 0
+        assert "VK_KHR_surface" in selftest["known_instance_extensions"]
+        assert "VK_KHR_swapchain" in selftest["known_device_extensions"]
 
     print("PASS: bridge handshake integration")
     return 0

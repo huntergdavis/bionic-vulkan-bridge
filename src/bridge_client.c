@@ -13,11 +13,13 @@
 struct client_options {
     const char *socket_path;
     bool request_vulkan_caps;
+    bool request_vulkan_selftest;
 };
 
 static void usage(const char *program) {
     fprintf(stderr,
-            "usage: %s --socket ABSOLUTE_PATH [--vulkan-caps]\n",
+            "usage: %s --socket ABSOLUTE_PATH "
+            "[--vulkan-caps] [--vulkan-selftest]\n",
             program);
 }
 
@@ -30,6 +32,8 @@ static int parse_arguments(int argc, char **argv,
             options->socket_path = argv[++index];
         } else if (strcmp(argv[index], "--vulkan-caps") == 0) {
             options->request_vulkan_caps = true;
+        } else if (strcmp(argv[index], "--vulkan-selftest") == 0) {
+            options->request_vulkan_selftest = true;
         } else {
             usage(argv[0]);
             return 2;
@@ -40,6 +44,55 @@ static int parse_arguments(int argc, char **argv,
         return 2;
     }
     return 0;
+}
+
+static void print_extension_array(uint64_t flags, bool device) {
+    struct extension_name {
+        uint64_t flag;
+        const char *name;
+    };
+    static const struct extension_name instance_extensions[] = {
+        {BVB_INSTANCE_KHR_SURFACE, "VK_KHR_surface"},
+        {BVB_INSTANCE_KHR_ANDROID_SURFACE, "VK_KHR_android_surface"},
+        {BVB_INSTANCE_EXT_HEADLESS_SURFACE, "VK_EXT_headless_surface"},
+        {BVB_INSTANCE_KHR_GET_PROPERTIES_2,
+         "VK_KHR_get_physical_device_properties2"},
+        {BVB_INSTANCE_KHR_EXTERNAL_MEMORY_CAPS,
+         "VK_KHR_external_memory_capabilities"},
+        {BVB_INSTANCE_KHR_EXTERNAL_SEMAPHORE_CAPS,
+         "VK_KHR_external_semaphore_capabilities"},
+    };
+    static const struct extension_name device_extensions[] = {
+        {BVB_DEVICE_KHR_SWAPCHAIN, "VK_KHR_swapchain"},
+        {BVB_DEVICE_KHR_EXTERNAL_MEMORY, "VK_KHR_external_memory"},
+        {BVB_DEVICE_KHR_EXTERNAL_MEMORY_FD, "VK_KHR_external_memory_fd"},
+        {BVB_DEVICE_ANDROID_HARDWARE_BUFFER,
+         "VK_ANDROID_external_memory_android_hardware_buffer"},
+        {BVB_DEVICE_KHR_EXTERNAL_SEMAPHORE, "VK_KHR_external_semaphore"},
+        {BVB_DEVICE_KHR_EXTERNAL_SEMAPHORE_FD,
+         "VK_KHR_external_semaphore_fd"},
+        {BVB_DEVICE_KHR_TIMELINE_SEMAPHORE, "VK_KHR_timeline_semaphore"},
+        {BVB_DEVICE_KHR_EXTERNAL_FENCE_FD, "VK_KHR_external_fence_fd"},
+    };
+    const struct extension_name *extensions =
+        device ? device_extensions : instance_extensions;
+    size_t count = device
+                       ? sizeof(device_extensions) / sizeof(device_extensions[0])
+                       : sizeof(instance_extensions) /
+                             sizeof(instance_extensions[0]);
+    bool first = true;
+    putchar('[');
+    for (size_t index = 0; index < count; ++index) {
+        if ((flags & extensions[index].flag) == 0U) {
+            continue;
+        }
+        if (!first) {
+            putchar(',');
+        }
+        printf("\"%s\"", extensions[index].name);
+        first = false;
+    }
+    putchar(']');
 }
 
 static int exchange(int socket_fd,
@@ -103,7 +156,8 @@ static void print_json_string(const char *value) {
 
 static void print_document(const struct bvb_protocol_packet *hello_packet,
                            const struct bvb_hello_response *hello,
-                           const struct bvb_vulkan_caps *caps) {
+                           const struct bvb_vulkan_caps *caps,
+                           const struct bvb_vulkan_selftest_result *selftest) {
     printf("{\"schema_version\":1,\"protocol_version\":%u,"
            "\"request_id\":%" PRIu32 ",\"service_flags\":%" PRIu32
            ",\"bionic_service\":%s,\"android_vulkan_loader\":%s,"
@@ -151,6 +205,36 @@ static void print_document(const struct bvb_protocol_packet *hello_packet,
                    device->device_local_bytes);
         }
         fputs("]}", stdout);
+    }
+    if (selftest != NULL) {
+        printf(",\"vulkan_selftest\":{\"instance_extension_count\":%" PRIu32
+               ",\"instance_extension_flags\":%" PRIu64
+               ",\"known_instance_extensions\":",
+               selftest->instance_extension_count,
+               selftest->instance_extension_flags);
+        print_extension_array(selftest->instance_extension_flags, false);
+        printf(",\"device_extension_count\":%" PRIu32
+               ",\"device_extension_flags\":%" PRIu64
+               ",\"known_device_extensions\":",
+               selftest->device_extension_count,
+               selftest->device_extension_flags);
+        print_extension_array(selftest->device_extension_flags, true);
+        printf(",\"queue_family_index\":%" PRIu32
+               ",\"queue_flags\":%" PRIu32
+               ",\"memory_type_index\":%" PRIu32
+               ",\"memory_property_flags\":%" PRIu32
+               ",\"buffer_bytes\":%" PRIu32
+               ",\"fill_word\":%" PRIu32
+               ",\"mismatched_words\":%" PRIu32
+               ",\"submit_wait_elapsed_ns\":%" PRIu64 "}",
+               selftest->queue_family_index,
+               selftest->queue_flags,
+               selftest->memory_type_index,
+               selftest->memory_property_flags,
+               selftest->buffer_bytes,
+               selftest->fill_word,
+               selftest->mismatched_words,
+               selftest->submit_wait_elapsed_ns);
     }
     fputs("}\n", stdout);
 }
@@ -232,8 +316,34 @@ int main(int argc, char **argv) {
         caps_pointer = &caps;
     }
 
+    struct bvb_vulkan_selftest_result selftest;
+    struct bvb_vulkan_selftest_result *selftest_pointer = NULL;
+    if (options.request_vulkan_selftest) {
+        memset(&request, 0, sizeof(request));
+        request.header.version = BVB_PROTOCOL_VERSION;
+        request.header.kind = BVB_PROTOCOL_REQUEST;
+        request.header.opcode = BVB_OPCODE_VULKAN_SELFTEST;
+        request.header.request_id = 0x42564203U;
+
+        struct bvb_protocol_packet selftest_packet;
+        result = exchange(socket_fd, &request, &selftest_packet);
+        if (result != 0 || selftest_packet.header.status != 0 ||
+            selftest_packet.header.payload_length != BVB_VULKAN_SELFTEST_SIZE) {
+            (void)close(socket_fd);
+            fputs("bvb: Vulkan self-test request failed\n", stderr);
+            return 7;
+        }
+        result = bvb_protocol_decode_vulkan_selftest(selftest_packet.payload,
+                                                     &selftest);
+        if (result != 0) {
+            (void)close(socket_fd);
+            fputs("bvb: invalid Vulkan self-test response\n", stderr);
+            return 7;
+        }
+        selftest_pointer = &selftest;
+    }
+
     (void)close(socket_fd);
-    print_document(&hello_packet, &hello, caps_pointer);
+    print_document(&hello_packet, &hello, caps_pointer, selftest_pointer);
     return 0;
 }
-

@@ -70,7 +70,10 @@ target_include_directories(
 bvb_enable_warnings(bvb-wire)
 
 add_executable(bvb-bridge-service src/bridge_service.c)
-target_link_libraries(bvb-bridge-service PRIVATE bvb-wire bvb-vulkan-caps)
+target_link_libraries(
+  bvb-bridge-service
+  PRIVATE bvb-wire bvb-vulkan-caps bvb-vulkan-selftest-core
+)
 bvb_enable_warnings(bvb-bridge-service)
 
 add_executable(bvb-bridge-client src/bridge_client.c)
