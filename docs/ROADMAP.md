@@ -39,7 +39,7 @@
   consumer pixel
 - [ ] Add an explicit lifecycle/status handoff between the visible Activity and
   the Bionic bridge service
-- [ ] Add immersive-mode navigation-bar control for the eventual game host
+- [x] Add immersive-mode navigation-bar control for the eventual game host
 
 ## Game-facing milestones
 

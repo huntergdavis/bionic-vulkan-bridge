@@ -51,6 +51,10 @@ E008 packages the same presentation architecture in a standalone Android
 `NativeActivity`. The installed app visibly displayed the opaque-magenta Vulkan
 frame fullscreen on the tablet; Android's bottom navigation icons remained
 visible. This proves a dedicated visible host, not game integration.
+E009 adds immersive-sticky system-UI control without changing the renderer.
+The magenta frame remained visible while the tablet's navigation controls were
+fully hidden, and immersive mode is restored whenever the Activity regains
+focus.
 
 ## Build and test on a normal Linux host
 
@@ -133,8 +137,8 @@ Build the dedicated visible Android host from Termux with:
 The script compiles a no-Java `NativeActivity` library, packages it with
 `aapt`, aligns and debug-signs the APK, verifies the signature, and prints the
 artifact path and ELF dependencies. Generated APKs and the debug key stay in
-ignored `out/`. The E008 acceptance test is a visibly magenta Android Activity;
-it does not use or replace Termux:X11.
+ignored `out/`. The E008/E009 acceptance test is a visibly magenta, immersive
+Android Activity; it does not use or replace Termux:X11.
 
 ## Project boundaries
 

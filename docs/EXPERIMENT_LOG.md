@@ -310,3 +310,45 @@ Conclusion: the project now owns a working visible Android presentation target
 in addition to the pixel-verified offscreen path. It is still a standalone
 test APK: explicit lifecycle/status handoff through the bridge, shared-UID
 integration, game-facing dispatch, DXVK, and performance A/B remain unproven.
+
+## E009 — immersive visible Android Vulkan host (2026-08-18)
+
+Status: passed at source commit
+`4b2b5a6cbd116cadfbe4595d8c610046decf3291`.
+
+Hypothesis: the E008 host can occupy the entire tablet display, including the
+navigation-bar area, while preserving the already-proven Vulkan presentation
+path.
+
+Method: the native Activity uses JNI to obtain its Window decor View and apply
+Android's legacy immersive-sticky system-UI flags: hide navigation, fullscreen,
+stable layout, layout-hide-navigation, layout-fullscreen, and
+immersive-sticky. It applies them during `ANativeActivity_onCreate` and again
+from `onWindowFocusChanged` whenever focus returns. The Vulkan renderer and its
+window lifecycle are unchanged from E008.
+
+Visual result: after updating and launching version `0.1.1` (version code 2),
+the opaque-magenta Vulkan frame remained visible and the user reported that it
+was "totally full screen no icons." This direct observation on the physical
+tablet passes the immersive presentation gate. Android's cross-UID capture and
+process visibility restrictions mean no Termux-side screenshot or `pidof`
+claim is used as evidence.
+
+Artifact identities:
+
+- APK SHA-256:
+  `9da4ba1d459bc6470ed7a9c0729adfb03e77a79accb1739cd5393293aa0ebb57`
+- native library SHA-256:
+  `b4772396af9bda82a41247ab06b153bb2d37eb5f2ff9447951ff3a418b7f21e5`
+- signer certificate SHA-256:
+  `5754d1170b6d007e72afed7de676312b9a1320d39c7b1405be9efa1ab2ef1e06`
+
+The required recall query—`Android NativeActivity immersive sticky hide
+navigation bar JNI setSystemUiVisibility onWindowFocusChanged`—returned no
+indexed prior match. E009 therefore reused E008's proven NativeActivity window
+ownership and renderer, adding only the Android View system-UI policy.
+
+Conclusion: the project now has a dedicated, visibly rendered, immersive
+Android Vulkan host. The next controlled gate is an explicit lifecycle/status
+handoff between this Activity and the existing Bionic bridge service; Steam,
+DXVK, game input, and game-facing dispatch remain outside this result.
