@@ -19,6 +19,15 @@
 
 enum { BVB_MAX_IMAGES = 64 };
 
+enum {
+    BVB_SYSTEM_UI_FLAG_HIDE_NAVIGATION = 0x00000002,
+    BVB_SYSTEM_UI_FLAG_FULLSCREEN = 0x00000004,
+    BVB_SYSTEM_UI_FLAG_LAYOUT_STABLE = 0x00000100,
+    BVB_SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION = 0x00000200,
+    BVB_SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN = 0x00000400,
+    BVB_SYSTEM_UI_FLAG_IMMERSIVE_STICKY = 0x00001000,
+};
+
 struct bvb_visible_state {
     ANativeWindow *window;
     VkInstance instance;
@@ -32,6 +41,69 @@ struct bvb_visible_state {
 };
 
 static struct bvb_visible_state state;
+
+static void apply_immersive_mode(ANativeActivity *activity) {
+    JNIEnv *env = activity->env;
+    jclass activity_class = (*env)->GetObjectClass(env, activity->clazz);
+    jmethodID get_window = (*env)->GetMethodID(
+        env, activity_class, "getWindow", "()Landroid/view/Window;");
+    jobject window = get_window == NULL
+                         ? NULL
+                         : (*env)->CallObjectMethod(env, activity->clazz,
+                                                    get_window);
+    jclass window_class = window == NULL
+                              ? NULL
+                              : (*env)->GetObjectClass(env, window);
+    jmethodID get_decor_view = window_class == NULL
+                                   ? NULL
+                                   : (*env)->GetMethodID(
+                                         env, window_class, "getDecorView",
+                                         "()Landroid/view/View;");
+    jobject decor_view = get_decor_view == NULL
+                             ? NULL
+                             : (*env)->CallObjectMethod(env, window,
+                                                        get_decor_view);
+    jclass view_class = decor_view == NULL
+                            ? NULL
+                            : (*env)->GetObjectClass(env, decor_view);
+    jmethodID set_visibility = view_class == NULL
+                                   ? NULL
+                                   : (*env)->GetMethodID(
+                                         env, view_class,
+                                         "setSystemUiVisibility", "(I)V");
+    if (set_visibility != NULL) {
+        const jint flags = BVB_SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                           BVB_SYSTEM_UI_FLAG_FULLSCREEN |
+                           BVB_SYSTEM_UI_FLAG_LAYOUT_STABLE |
+                           BVB_SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION |
+                           BVB_SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN |
+                           BVB_SYSTEM_UI_FLAG_IMMERSIVE_STICKY;
+        (*env)->CallVoidMethod(env, decor_view, set_visibility, flags);
+    }
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        BVB_LOGE("E009_FAIL immersive_jni_exception");
+    } else if (set_visibility == NULL) {
+        BVB_LOGE("E009_FAIL immersive_method_lookup");
+    } else {
+        BVB_LOGI("E009_IMMERSIVE_APPLIED");
+    }
+    if (view_class != NULL) {
+        (*env)->DeleteLocalRef(env, view_class);
+    }
+    if (decor_view != NULL) {
+        (*env)->DeleteLocalRef(env, decor_view);
+    }
+    if (window_class != NULL) {
+        (*env)->DeleteLocalRef(env, window_class);
+    }
+    if (window != NULL) {
+        (*env)->DeleteLocalRef(env, window);
+    }
+    if (activity_class != NULL) {
+        (*env)->DeleteLocalRef(env, activity_class);
+    }
+}
 
 static void destroy_renderer(void) {
     if (state.device != VK_NULL_HANDLE) {
@@ -504,6 +576,12 @@ static void on_window_destroyed(ANativeActivity *activity,
     destroy_renderer();
 }
 
+static void on_window_focus_changed(ANativeActivity *activity, int has_focus) {
+    if (has_focus != 0) {
+        apply_immersive_mode(activity);
+    }
+}
+
 __attribute__((visibility("default"))) void
 ANativeActivity_onCreate(ANativeActivity *activity, void *saved_state,
                          size_t saved_state_size) {
@@ -514,8 +592,10 @@ ANativeActivity_onCreate(ANativeActivity *activity, void *saved_state,
     activity->callbacks->onNativeWindowResized = on_window_resized;
     activity->callbacks->onNativeWindowRedrawNeeded = on_window_redraw_needed;
     activity->callbacks->onNativeWindowDestroyed = on_window_destroyed;
+    activity->callbacks->onWindowFocusChanged = on_window_focus_changed;
     ANativeActivity_setWindowFormat(activity, WINDOW_FORMAT_RGBA_8888);
     ANativeActivity_setWindowFlags(
         activity, AWINDOW_FLAG_FULLSCREEN | AWINDOW_FLAG_KEEP_SCREEN_ON, 0);
+    apply_immersive_mode(activity);
     BVB_LOGI("E008_ACTIVITY_CREATED");
 }
