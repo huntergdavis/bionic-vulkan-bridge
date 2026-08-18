@@ -259,3 +259,54 @@ consumer acquisition, and deterministic pixel verification now pass on the
 real Adreno driver. This is genuine rendered/presented offscreen output, but it
 is not yet visible on the tablet display and is not yet reachable through the
 glibc bridge or DXVK. The next gate is a dedicated visible `SurfaceView` host.
+
+## E008 — dedicated visible Android Vulkan host (2026-08-18)
+
+Status: passed at commit `e1ba5a7d05b4116f104e88b9b035792281225f88`.
+
+Hypothesis: a standalone Android Activity can own a display `ANativeWindow` and
+present the deterministic Adreno Vulkan frame visibly without taking ownership
+of Termux:X11's EGL surface.
+
+Method: the project added a no-Java `android.app.NativeActivity` APK. Its
+Bionic shared library receives the Activity's window callback, creates the
+Android Vulkan surface, presentation queue, FIFO swapchain, semaphores, and
+command buffer, clears an acquired RGBA8 image to opaque magenta, and presents
+it. Renderer objects remain alive until Android destroys the window. The
+reproducible Termux script compiles with Clang `-Werror`, packages with `aapt`,
+aligns, debug-signs, and verifies the APK. Generated keys and binaries remain
+outside Git in `out/`.
+
+Build result: the native library targets Android API 24 and needs only
+`libandroid.so`, `liblog.so`, `libvulkan.so`, `libdl.so`, and `libc.so`. Its
+exported `ANativeActivity_onCreate` entry point was present. The APK targets API
+36, verified with v2/v3 signatures, installed as
+`io.github.huntergdavis.bvb.visiblehost`, and exposed the NativeActivity as its
+launcher.
+
+Visual result: after installation and explicit launch, the user reported a
+solid magenta screen occupying the display. Android navigation icons remained
+visible along the bottom. This is a passed visible-presentation gate; hiding
+the navigation bar is a later immersive-mode task. The app did not modify or
+share Termux:X11's existing surface.
+
+Artifact identities:
+
+- APK SHA-256:
+  `f9159df9419418ea6eebd62963e27ac2273f7be3bf4acdbc6fc8a5ff66aeb298`
+- native library SHA-256:
+  `8f8396492e304fe671b033cd1f3ca9b7ded8f179ed506376dba4bcfbbc7b4b75`
+- signer certificate SHA-256:
+  `5754d1170b6d007e72afed7de676312b9a1320d39c7b1405be9efa1ab2ef1e06`
+
+The required NativeActivity implementation and crash-specific `deja` queries
+returned no indexed prior match. One early `pidof` observation was initially
+treated as an exit, but cross-UID process visibility made that inference
+invalid; the packaged ELF and entry point were intact, no matching crash was
+observed, and the direct display result established that the Activity was
+running.
+
+Conclusion: the project now owns a working visible Android presentation target
+in addition to the pixel-verified offscreen path. It is still a standalone
+test APK: explicit lifecycle/status handoff through the bridge, shared-UID
+integration, game-facing dispatch, DXVK, and performance A/B remain unproven.

@@ -33,10 +33,13 @@
 - [x] Inventory Android WSI and AHardwareBuffer/FD interop support
 - [x] Create and query an Android Vulkan surface backed by a controlled
   `ANativeWindow`
-- [ ] Add a dedicated visible `SurfaceView` host without taking over
+- [x] Add a dedicated visible Android native-window host without taking over
   Termux:X11's EGL-owned surface
 - [x] Create a swapchain, present a deterministic frame, and verify every
   consumer pixel
+- [ ] Add an explicit lifecycle/status handoff between the visible Activity and
+  the Bionic bridge service
+- [ ] Add immersive-mode navigation-bar control for the eventual game host
 
 ## Game-facing milestones
 

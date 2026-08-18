@@ -47,6 +47,10 @@ times with clean teardown. This is WSI proof, not yet a swapchain or frame.
 E007 completes the controlled presentation loop: it creates a six-image
 swapchain, clears an acquired image to magenta, presents it, then acquires the
 consumer image through Media NDK and verifies all 4,096 RGBA pixels.
+E008 packages the same presentation architecture in a standalone Android
+`NativeActivity`. The installed app visibly displayed the opaque-magenta Vulkan
+frame fullscreen on the tablet; Android's bottom navigation icons remained
+visible. This proves a dedicated visible host, not game integration.
 
 ## Build and test on a normal Linux host
 
@@ -119,6 +123,18 @@ Run the complete non-visible presentation/readback gate with:
 This uses a CPU-readable `AImageReader`, FIFO swapchain, transfer clear, and
 Media NDK plane readback. Success requires every 64x64 pixel to equal opaque
 magenta after presentation. Termux:X11's surface is not used.
+
+Build the dedicated visible Android host from Termux with:
+
+```sh
+./scripts/build-visible-host-termux.sh
+```
+
+The script compiles a no-Java `NativeActivity` library, packages it with
+`aapt`, aligns and debug-signs the APK, verifies the signature, and prints the
+artifact path and ELF dependencies. Generated APKs and the debug key stay in
+ignored `out/`. The E008 acceptance test is a visibly magenta Android Activity;
+it does not use or replace Termux:X11.
 
 ## Project boundaries
 
