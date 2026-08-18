@@ -16,6 +16,13 @@
 
 static VkDeviceMemory fake_bound_memory = VK_NULL_HANDLE;
 static int fake_android_surface_enabled;
+static int fake_swapchain_enabled;
+static int fake_swapchain_created;
+static int fake_image_acquired;
+static int fake_to_clear_barrier;
+static int fake_clear_recorded;
+static int fake_to_present_barrier;
+static int fake_submitted;
 
 struct ANativeWindow;
 typedef VkFlags VkAndroidSurfaceCreateFlagsKHR;
@@ -286,8 +293,16 @@ static VkResult VKAPI_CALL fake_create_device(
     const VkAllocationCallbacks *allocator,
     VkDevice *device) {
     (void)physical_device;
-    (void)create_info;
     (void)allocator;
+    fake_swapchain_enabled = 0;
+    if (create_info != NULL) {
+        for (uint32_t index = 0;
+             index < create_info->enabledExtensionCount; ++index) {
+            fake_swapchain_enabled |=
+                strcmp(create_info->ppEnabledExtensionNames[index],
+                       "VK_KHR_swapchain") == 0;
+        }
+    }
     *device = (VkDevice)(uintptr_t)0x3000U;
     return VK_SUCCESS;
 }
@@ -297,6 +312,103 @@ static void VKAPI_CALL fake_destroy_device(
     const VkAllocationCallbacks *allocator) {
     (void)device;
     (void)allocator;
+    fake_swapchain_enabled = 0;
+    fake_swapchain_created = 0;
+    fake_image_acquired = 0;
+    fake_to_clear_barrier = 0;
+    fake_clear_recorded = 0;
+    fake_to_present_barrier = 0;
+    fake_submitted = 0;
+}
+
+static VkResult VKAPI_CALL fake_create_swapchain(
+    VkDevice device, const VkSwapchainCreateInfoKHR *create_info,
+    const VkAllocationCallbacks *allocator, VkSwapchainKHR *swapchain) {
+    (void)device;
+    (void)allocator;
+    if (fake_swapchain_enabled == 0 || create_info == NULL ||
+        create_info->surface == VK_NULL_HANDLE ||
+        create_info->minImageCount != 2U ||
+        create_info->imageFormat != VK_FORMAT_R8G8B8A8_UNORM ||
+        create_info->imageColorSpace != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR ||
+        create_info->imageExtent.width != 64U ||
+        create_info->imageExtent.height != 64U ||
+        (create_info->imageUsage & VK_IMAGE_USAGE_TRANSFER_DST_BIT) == 0U ||
+        create_info->presentMode != VK_PRESENT_MODE_FIFO_KHR ||
+        swapchain == NULL) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    *swapchain = (VkSwapchainKHR)(uintptr_t)UINT64_C(0x7000);
+    fake_swapchain_created = 1;
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL fake_destroy_swapchain(
+    VkDevice device, VkSwapchainKHR swapchain,
+    const VkAllocationCallbacks *allocator) {
+    (void)device;
+    (void)swapchain;
+    (void)allocator;
+    fake_swapchain_created = 0;
+}
+
+static VkResult VKAPI_CALL fake_get_swapchain_images(
+    VkDevice device, VkSwapchainKHR swapchain, uint32_t *count,
+    VkImage *images) {
+    (void)device;
+    (void)swapchain;
+    if (fake_swapchain_created == 0 || count == NULL) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (images == NULL) {
+        *count = 3;
+        return VK_SUCCESS;
+    }
+    if (*count < 3U) {
+        return VK_INCOMPLETE;
+    }
+    for (uint32_t index = 0; index < 3U; ++index) {
+        images[index] = (VkImage)(uintptr_t)(UINT64_C(0x7100) + index);
+    }
+    *count = 3;
+    return VK_SUCCESS;
+}
+
+static VkResult VKAPI_CALL fake_create_semaphore(
+    VkDevice device, const VkSemaphoreCreateInfo *create_info,
+    const VkAllocationCallbacks *allocator, VkSemaphore *semaphore) {
+    static uintptr_t next_semaphore = 0x8000U;
+    (void)device;
+    (void)allocator;
+    if (create_info == NULL || semaphore == NULL) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    *semaphore = (VkSemaphore)next_semaphore++;
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL fake_destroy_semaphore(
+    VkDevice device, VkSemaphore semaphore,
+    const VkAllocationCallbacks *allocator) {
+    (void)device;
+    (void)semaphore;
+    (void)allocator;
+}
+
+static VkResult VKAPI_CALL fake_acquire_next_image(
+    VkDevice device, VkSwapchainKHR swapchain, uint64_t timeout,
+    VkSemaphore semaphore, VkFence fence, uint32_t *image_index) {
+    (void)device;
+    (void)swapchain;
+    (void)timeout;
+    (void)fence;
+    if (fake_swapchain_created == 0 || semaphore == VK_NULL_HANDLE ||
+        image_index == NULL) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    *image_index = 0;
+    fake_image_acquired = 1;
+    return VK_SUCCESS;
 }
 
 static void VKAPI_CALL fake_get_device_queue(
@@ -465,8 +577,37 @@ static void VKAPI_CALL fake_cmd_pipeline_barrier(
     (void)memory_barriers;
     (void)buffer_barrier_count;
     (void)buffer_barriers;
-    (void)image_barrier_count;
-    (void)image_barriers;
+    if (fake_swapchain_created != 0 && image_barrier_count == 1U &&
+        image_barriers != NULL) {
+        const VkImageMemoryBarrier *barrier = &image_barriers[0];
+        if (barrier->oldLayout == VK_IMAGE_LAYOUT_UNDEFINED &&
+            barrier->newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+            (barrier->dstAccessMask & VK_ACCESS_TRANSFER_WRITE_BIT) != 0U) {
+            fake_to_clear_barrier = 1;
+        }
+        if (fake_clear_recorded != 0 &&
+            barrier->oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+            barrier->newLayout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR &&
+            (barrier->srcAccessMask & VK_ACCESS_TRANSFER_WRITE_BIT) != 0U) {
+            fake_to_present_barrier = 1;
+        }
+    }
+}
+
+static void VKAPI_CALL fake_cmd_clear_color_image(
+    VkCommandBuffer command_buffer, VkImage image, VkImageLayout image_layout,
+    const VkClearColorValue *color, uint32_t range_count,
+    const VkImageSubresourceRange *ranges) {
+    (void)command_buffer;
+    (void)image;
+    (void)ranges;
+    if (fake_image_acquired != 0 && fake_to_clear_barrier != 0 &&
+        image_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+        color != NULL && color->float32[0] == 1.0F &&
+        color->float32[1] == 0.0F && color->float32[2] == 1.0F &&
+        color->float32[3] == 1.0F && range_count == 1U) {
+        fake_clear_recorded = 1;
+    }
 }
 
 static VkResult VKAPI_CALL fake_queue_submit(
@@ -475,14 +616,40 @@ static VkResult VKAPI_CALL fake_queue_submit(
     const VkSubmitInfo *submits,
     VkFence fence) {
     (void)queue;
-    (void)submit_count;
-    (void)submits;
     (void)fence;
+    if (fake_swapchain_created != 0) {
+        if (submit_count != 1U || submits == NULL ||
+            submits[0].waitSemaphoreCount != 1U ||
+            submits[0].commandBufferCount != 1U ||
+            submits[0].signalSemaphoreCount != 1U ||
+            fake_clear_recorded == 0 || fake_to_present_barrier == 0) {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        fake_submitted = 1;
+    }
+    return VK_SUCCESS;
+}
+
+static VkResult VKAPI_CALL fake_queue_present(
+    VkQueue queue, const VkPresentInfoKHR *present_info) {
+    (void)queue;
+    if (fake_submitted == 0 || present_info == NULL ||
+        present_info->waitSemaphoreCount != 1U ||
+        present_info->swapchainCount != 1U ||
+        present_info->pImageIndices == NULL ||
+        present_info->pImageIndices[0] != 0U) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
     return VK_SUCCESS;
 }
 
 static VkResult VKAPI_CALL fake_queue_wait_idle(VkQueue queue) {
     (void)queue;
+    return VK_SUCCESS;
+}
+
+static VkResult VKAPI_CALL fake_device_wait_idle(VkDevice device) {
+    (void)device;
     return VK_SUCCESS;
 }
 
@@ -567,6 +734,12 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     }
     BVB_DEVICE_MATCH("vkDestroyDevice", fake_destroy_device)
     BVB_DEVICE_MATCH("vkGetDeviceQueue", fake_get_device_queue)
+    BVB_DEVICE_MATCH("vkCreateSwapchainKHR", fake_create_swapchain)
+    BVB_DEVICE_MATCH("vkDestroySwapchainKHR", fake_destroy_swapchain)
+    BVB_DEVICE_MATCH("vkGetSwapchainImagesKHR", fake_get_swapchain_images)
+    BVB_DEVICE_MATCH("vkCreateSemaphore", fake_create_semaphore)
+    BVB_DEVICE_MATCH("vkDestroySemaphore", fake_destroy_semaphore)
+    BVB_DEVICE_MATCH("vkAcquireNextImageKHR", fake_acquire_next_image)
     BVB_DEVICE_MATCH("vkCreateBuffer", fake_create_buffer)
     BVB_DEVICE_MATCH("vkDestroyBuffer", fake_destroy_buffer)
     BVB_DEVICE_MATCH("vkGetBufferMemoryRequirements",
@@ -581,8 +754,11 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkEndCommandBuffer", fake_end_command_buffer)
     BVB_DEVICE_MATCH("vkCmdFillBuffer", fake_cmd_fill_buffer)
     BVB_DEVICE_MATCH("vkCmdPipelineBarrier", fake_cmd_pipeline_barrier)
+    BVB_DEVICE_MATCH("vkCmdClearColorImage", fake_cmd_clear_color_image)
     BVB_DEVICE_MATCH("vkQueueSubmit", fake_queue_submit)
+    BVB_DEVICE_MATCH("vkQueuePresentKHR", fake_queue_present)
     BVB_DEVICE_MATCH("vkQueueWaitIdle", fake_queue_wait_idle)
+    BVB_DEVICE_MATCH("vkDeviceWaitIdle", fake_device_wait_idle)
     BVB_DEVICE_MATCH("vkMapMemory", fake_map_memory)
     BVB_DEVICE_MATCH("vkUnmapMemory", fake_unmap_memory)
     BVB_DEVICE_MATCH("vkInvalidateMappedMemoryRanges",

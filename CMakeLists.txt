@@ -77,6 +77,13 @@ add_executable(bvb-vulkan-surface-probe src/vulkan_surface_probe_main.c)
 target_link_libraries(bvb-vulkan-surface-probe PRIVATE bvb-vulkan-surface-core)
 bvb_enable_warnings(bvb-vulkan-surface-probe)
 
+add_executable(bvb-vulkan-present-selftest src/vulkan_present_selftest.c)
+target_link_libraries(
+  bvb-vulkan-present-selftest
+  PRIVATE Vulkan::Headers ${CMAKE_DL_LIBS}
+)
+bvb_enable_warnings(bvb-vulkan-present-selftest)
+
 add_library(bvb-wire STATIC src/protocol.c src/transport.c)
 target_include_directories(
   bvb-wire
@@ -100,6 +107,7 @@ bvb_enable_warnings(bvb-bridge-client)
 install(
   TARGETS bvb-vulkan-probe bvb-bridge-service bvb-bridge-client
           bvb-vulkan-selftest bvb-vulkan-surface-probe
+          bvb-vulkan-present-selftest
   RUNTIME DESTINATION bin
 )
 
@@ -155,6 +163,16 @@ if(BUILD_TESTING)
       "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_surface_probe.py"
       "$<TARGET_FILE:bvb-vulkan-surface-probe>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+      "$<TARGET_FILE:bvb-fake-media-ndk>"
+  )
+
+  add_test(
+    NAME vulkan-present-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_present_selftest.py"
+      "$<TARGET_FILE:bvb-vulkan-present-selftest>"
       "$<TARGET_FILE:bvb-fake-vulkan>"
       "$<TARGET_FILE:bvb-fake-media-ndk>"
   )
