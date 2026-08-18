@@ -159,7 +159,8 @@ static PFN_vkVoidFunction VKAPI_PTR bvb_trace_gdpa(VkDevice device,
     return result;
 }
 
-void *dlsym(void *handle, const char *name) {
+__attribute__((visibility("default"))) void *dlsym(void *handle,
+                                                    const char *name) {
     bvb_dlsym_function real = bvb_find_real_dlsym();
     if (real == NULL) {
         return NULL;
