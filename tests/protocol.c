@@ -78,7 +78,41 @@ int main(void) {
     CHECK(response_decoded.pointer_bits == 64U);
     CHECK(response_decoded.page_size == 4096U);
 
+    struct bvb_vulkan_caps caps;
+    memset(&caps, 0, sizeof(caps));
+    caps.loader_api_version = 0x00401000U;
+    caps.instance_extension_count = 14;
+    caps.physical_device_count = 1;
+    caps.included_device_count = 1;
+    caps.devices[0].api_version = 0x00401080U;
+    caps.devices[0].driver_version = 0x81234567U;
+    caps.devices[0].vendor_id = 0x5143U;
+    caps.devices[0].device_id = 0x07030001U;
+    caps.devices[0].device_type = 1;
+    caps.devices[0].queue_family_count = 2;
+    caps.devices[0].memory_heap_count = 2;
+    caps.devices[0].device_local_bytes = UINT64_C(7914782720);
+    (void)snprintf(caps.devices[0].name, sizeof(caps.devices[0].name),
+                   "Adreno (TM) 730");
+
+    uint8_t caps_wire[BVB_PROTOCOL_MAX_PAYLOAD];
+    uint32_t caps_length = 0;
+    CHECK(bvb_protocol_encode_vulkan_caps(caps_wire, &caps, &caps_length) == 0);
+    CHECK(caps_length == BVB_VULKAN_CAPS_PREFIX_SIZE +
+                             BVB_VULKAN_CAPS_DEVICE_SIZE);
+    CHECK(bvb_wire_get_u32(caps_wire + 8) == 1U);
+    CHECK(bvb_wire_get_u32(caps_wire + 16 + 8) == 0x5143U);
+    struct bvb_vulkan_caps caps_decoded;
+    CHECK(bvb_protocol_decode_vulkan_caps(caps_wire, caps_length,
+                                          &caps_decoded) == 0);
+    CHECK(caps_decoded.loader_api_version == caps.loader_api_version);
+    CHECK(caps_decoded.devices[0].device_local_bytes ==
+          caps.devices[0].device_local_bytes);
+    CHECK(strcmp(caps_decoded.devices[0].name, "Adreno (TM) 730") == 0);
+    caps_wire[16 + 28] = 1U;
+    CHECK(bvb_protocol_decode_vulkan_caps(caps_wire, caps_length,
+                                          &caps_decoded) == -EPROTO);
+
     puts("protocol: PASS");
     return EXIT_SUCCESS;
 }
-

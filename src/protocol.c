@@ -2,6 +2,7 @@
 
 #include <errno.h>
 #include <stdint.h>
+#include <string.h>
 
 void bvb_wire_put_u16(uint8_t *output, uint16_t value) {
     output[0] = (uint8_t)(value & 0xffU);
@@ -19,6 +20,11 @@ void bvb_wire_put_i32(uint8_t *output, int32_t value) {
     bvb_wire_put_u32(output, (uint32_t)value);
 }
 
+void bvb_wire_put_u64(uint8_t *output, uint64_t value) {
+    bvb_wire_put_u32(output, (uint32_t)value);
+    bvb_wire_put_u32(output + 4, (uint32_t)(value >> 32));
+}
+
 uint16_t bvb_wire_get_u16(const uint8_t *input) {
     return (uint16_t)((uint16_t)input[0] | ((uint16_t)input[1] << 8));
 }
@@ -32,6 +38,11 @@ int32_t bvb_wire_get_i32(const uint8_t *input) {
     return (int32_t)bvb_wire_get_u32(input);
 }
 
+uint64_t bvb_wire_get_u64(const uint8_t *input) {
+    return (uint64_t)bvb_wire_get_u32(input) |
+           ((uint64_t)bvb_wire_get_u32(input + 4) << 32);
+}
+
 static int header_is_valid(const struct bvb_protocol_header *header) {
     if (header == NULL || header->version != BVB_PROTOCOL_VERSION) {
         return -EPROTO;
@@ -40,7 +51,8 @@ static int header_is_valid(const struct bvb_protocol_header *header) {
         header->kind != BVB_PROTOCOL_RESPONSE) {
         return -EPROTO;
     }
-    if (header->opcode != BVB_OPCODE_HELLO) {
+    if (header->opcode < BVB_OPCODE_HELLO ||
+        header->opcode > BVB_OPCODE_VULKAN_CAPS) {
         return -EPROTO;
     }
     if (header->payload_length > BVB_PROTOCOL_MAX_PAYLOAD) {
@@ -170,3 +182,101 @@ int bvb_protocol_decode_hello_response(
     return 0;
 }
 
+int bvb_protocol_encode_vulkan_caps(
+    uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
+    const struct bvb_vulkan_caps *caps,
+    uint32_t *output_length) {
+    if (output == NULL || caps == NULL || output_length == NULL ||
+        caps->included_device_count > BVB_VULKAN_MAX_DEVICES ||
+        caps->included_device_count > caps->physical_device_count) {
+        return -EINVAL;
+    }
+    uint32_t length = BVB_VULKAN_CAPS_PREFIX_SIZE +
+                      caps->included_device_count * BVB_VULKAN_CAPS_DEVICE_SIZE;
+    if (length > BVB_PROTOCOL_MAX_PAYLOAD) {
+        return -EMSGSIZE;
+    }
+
+    memset(output, 0, length);
+    bvb_wire_put_u32(output, caps->loader_api_version);
+    bvb_wire_put_u32(output + 4, caps->instance_extension_count);
+    bvb_wire_put_u32(output + 8, caps->physical_device_count);
+    bvb_wire_put_u32(output + 12, caps->included_device_count);
+
+    for (uint32_t index = 0; index < caps->included_device_count; ++index) {
+        const struct bvb_vulkan_device_caps *device = &caps->devices[index];
+        uint8_t *record = output + BVB_VULKAN_CAPS_PREFIX_SIZE +
+                          index * BVB_VULKAN_CAPS_DEVICE_SIZE;
+        size_t name_length = 0;
+        while (name_length < BVB_VULKAN_DEVICE_NAME_SIZE &&
+               device->name[name_length] != '\0') {
+            ++name_length;
+        }
+        if (name_length == BVB_VULKAN_DEVICE_NAME_SIZE) {
+            return -EINVAL;
+        }
+        bvb_wire_put_u32(record, device->api_version);
+        bvb_wire_put_u32(record + 4, device->driver_version);
+        bvb_wire_put_u32(record + 8, device->vendor_id);
+        bvb_wire_put_u32(record + 12, device->device_id);
+        bvb_wire_put_u32(record + 16, device->device_type);
+        bvb_wire_put_u32(record + 20, device->queue_family_count);
+        bvb_wire_put_u32(record + 24, device->memory_heap_count);
+        bvb_wire_put_u32(record + 28, 0);
+        bvb_wire_put_u64(record + 32, device->device_local_bytes);
+        memcpy(record + 40, device->name, name_length + 1U);
+    }
+    *output_length = length;
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_caps(
+    const uint8_t *input,
+    uint32_t input_length,
+    struct bvb_vulkan_caps *caps) {
+    if (input == NULL || caps == NULL ||
+        input_length < BVB_VULKAN_CAPS_PREFIX_SIZE) {
+        return -EINVAL;
+    }
+    uint32_t included_device_count = bvb_wire_get_u32(input + 12);
+    if (included_device_count > BVB_VULKAN_MAX_DEVICES) {
+        return -EMSGSIZE;
+    }
+    uint32_t expected_length = BVB_VULKAN_CAPS_PREFIX_SIZE +
+                               included_device_count *
+                                   BVB_VULKAN_CAPS_DEVICE_SIZE;
+    if (input_length != expected_length) {
+        return -EPROTO;
+    }
+
+    struct bvb_vulkan_caps decoded;
+    memset(&decoded, 0, sizeof(decoded));
+    decoded.loader_api_version = bvb_wire_get_u32(input);
+    decoded.instance_extension_count = bvb_wire_get_u32(input + 4);
+    decoded.physical_device_count = bvb_wire_get_u32(input + 8);
+    decoded.included_device_count = included_device_count;
+    if (decoded.included_device_count > decoded.physical_device_count) {
+        return -EPROTO;
+    }
+
+    for (uint32_t index = 0; index < included_device_count; ++index) {
+        const uint8_t *record = input + BVB_VULKAN_CAPS_PREFIX_SIZE +
+                                index * BVB_VULKAN_CAPS_DEVICE_SIZE;
+        if (bvb_wire_get_u32(record + 28) != 0U ||
+            memchr(record + 40, '\0', BVB_VULKAN_DEVICE_NAME_SIZE) == NULL) {
+            return -EPROTO;
+        }
+        struct bvb_vulkan_device_caps *device = &decoded.devices[index];
+        device->api_version = bvb_wire_get_u32(record);
+        device->driver_version = bvb_wire_get_u32(record + 4);
+        device->vendor_id = bvb_wire_get_u32(record + 8);
+        device->device_id = bvb_wire_get_u32(record + 12);
+        device->device_type = bvb_wire_get_u32(record + 16);
+        device->queue_family_count = bvb_wire_get_u32(record + 20);
+        device->memory_heap_count = bvb_wire_get_u32(record + 24);
+        device->device_local_bytes = bvb_wire_get_u64(record + 32);
+        memcpy(device->name, record + 40, BVB_VULKAN_DEVICE_NAME_SIZE);
+    }
+    *caps = decoded;
+    return 0;
+}

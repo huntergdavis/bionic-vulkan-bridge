@@ -64,28 +64,56 @@ if [ ! -S "$socket_path" ]; then
 fi
 
 start_ns=$(date +%s%N)
-grun "$glibc_client" --socket "$socket_path" \
+grun "$glibc_client" --socket "$socket_path" --vulkan-caps \
     > "$out_dir/cross-libc-handshake.json" \
     2> "$out_dir/cross-libc-client.stderr"
 end_ns=$(date +%s%N)
 wait "$service_pid"
 service_pid=
 
-python - "$out_dir/cross-libc-handshake.json" <<'PY'
+"$build_dir/bvb-vulkan-probe" > "$out_dir/direct-vulkan-caps.json"
+
+python - \
+    "$out_dir/cross-libc-handshake.json" \
+    "$out_dir/direct-vulkan-caps.json" <<'PY'
 import json
 import pathlib
 import sys
 
-document = json.loads(pathlib.Path(sys.argv[1]).read_text())
-assert document["schema_version"] == 1
-assert document["protocol_version"] == 1
-assert document["bionic_service"] is True
-assert document["android_vulkan_loader"] is True
-assert document["pointer_bits"] == 64
-assert document["page_size"] > 0
-print(json.dumps(document, indent=2))
+bridged = json.loads(pathlib.Path(sys.argv[1]).read_text())
+direct = json.loads(pathlib.Path(sys.argv[2]).read_text())
+assert bridged["schema_version"] == 1
+assert bridged["protocol_version"] == 1
+assert bridged["bionic_service"] is True
+assert bridged["android_vulkan_loader"] is True
+assert bridged["pointer_bits"] == 64
+assert bridged["page_size"] > 0
+
+caps = bridged["vulkan_caps"]
+assert caps["loader_api_version"] == direct["loader_api_version"]["raw"]
+assert caps["instance_extension_count"] == direct["instance_extension_count"]
+assert caps["physical_device_count"] == direct["physical_device_count"]
+assert len(caps["physical_devices"]) == len(direct["physical_devices"])
+plain_fields = (
+    "name",
+    "driver_version",
+    "vendor_id",
+    "device_id",
+    "device_type",
+    "queue_family_count",
+    "memory_heap_count",
+    "device_local_bytes",
+)
+for bridged_device, direct_device in zip(
+    caps["physical_devices"], direct["physical_devices"], strict=True
+):
+    assert bridged_device["api_version"] == direct_device["api_version"]["raw"]
+    for field in plain_fields:
+        assert bridged_device[field] == direct_device[field], field
+
+print(json.dumps(bridged, indent=2))
+print("capability_parity=PASS")
 PY
 
-printf 'handshake_elapsed_ns=%s\n' "$((end_ns - start_ns))"
+printf 'bridge_caps_elapsed_ns=%s\n' "$((end_ns - start_ns))"
 printf 'glibc_client=%s\n' "$glibc_client"
-

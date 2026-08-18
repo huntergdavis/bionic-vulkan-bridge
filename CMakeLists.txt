@@ -29,8 +29,18 @@ function(bvb_enable_warnings target)
   endif()
 endfunction()
 
+add_library(bvb-vulkan-caps STATIC src/vulkan_caps.c)
+target_include_directories(
+  bvb-vulkan-caps
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
+)
+target_link_libraries(bvb-vulkan-caps PRIVATE Vulkan::Headers ${CMAKE_DL_LIBS})
+bvb_enable_warnings(bvb-vulkan-caps)
+
 add_executable(bvb-vulkan-probe src/vulkan_probe.c)
-target_link_libraries(bvb-vulkan-probe PRIVATE Vulkan::Headers ${CMAKE_DL_LIBS})
+target_link_libraries(bvb-vulkan-probe PRIVATE bvb-vulkan-caps)
 bvb_enable_warnings(bvb-vulkan-probe)
 
 add_library(bvb-wire STATIC src/protocol.c src/transport.c)
@@ -43,7 +53,7 @@ target_include_directories(
 bvb_enable_warnings(bvb-wire)
 
 add_executable(bvb-bridge-service src/bridge_service.c)
-target_link_libraries(bvb-bridge-service PRIVATE bvb-wire)
+target_link_libraries(bvb-bridge-service PRIVATE bvb-wire bvb-vulkan-caps)
 bvb_enable_warnings(bvb-bridge-service)
 
 add_executable(bvb-bridge-client src/bridge_client.c)
@@ -90,5 +100,6 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bridge_integration.py"
       "$<TARGET_FILE:bvb-bridge-service>"
       "$<TARGET_FILE:bvb-bridge-client>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
   )
 endif()
