@@ -340,9 +340,12 @@ int bvb_vulkan_run_selftest(const char *loader_path,
                                              &queue_family_count,
                                              queue_families);
     bool queue_found = false;
+    const VkQueueFlags transfer_capable = VK_QUEUE_GRAPHICS_BIT |
+                                           VK_QUEUE_COMPUTE_BIT |
+                                           VK_QUEUE_TRANSFER_BIT;
     for (uint32_t index = 0; index < queue_family_count; ++index) {
         if (queue_families[index].queueCount > 0U &&
-            (queue_families[index].queueFlags & VK_QUEUE_TRANSFER_BIT) != 0U) {
+            (queue_families[index].queueFlags & transfer_capable) != 0U) {
             output->queue_family_index = index;
             output->queue_flags = queue_families[index].queueFlags;
             queue_found = true;
@@ -351,7 +354,7 @@ int bvb_vulkan_run_selftest(const char *loader_path,
     }
     free(queue_families);
     if (!queue_found) {
-        set_error(error, error_size, "no transfer-capable queue family");
+        set_error(error, error_size, "no transfer-compatible queue family");
         status = -ENOTSUP;
         goto done;
     }
