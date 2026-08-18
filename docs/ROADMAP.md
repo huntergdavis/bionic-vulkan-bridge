@@ -35,7 +35,8 @@
   `ANativeWindow`
 - [ ] Add a dedicated visible `SurfaceView` host without taking over
   Termux:X11's EGL-owned surface
-- [ ] Create a swapchain and present a deterministic frame
+- [x] Create a swapchain, present a deterministic frame, and verify every
+  consumer pixel
 
 ## Game-facing milestones
 

@@ -215,3 +215,47 @@ Conclusion: an independently controlled Android native window and Vulkan
 surface now work on the Adreno 730. This does not yet prove swapchain creation,
 image acquisition, command rendering, queue presentation, or visible output.
 Those are the next gate; Termux:X11's EGL-owned surface remains untouched.
+
+## E007 — swapchain present and consumer readback (2026-08-18)
+
+Status: passed at commit `e4af028553450bcfdf7d8efc903cd410ca8ef83a`.
+
+Hypothesis: the controlled `AImageReader` surface can complete the entire
+Vulkan producer and Android BufferQueue consumer loop, with pixel verification,
+without using Termux:X11's display surface.
+
+Method: a Bionic executable created a CPU-readable 64x64 RGBA8888
+`AImageReader`, Android Vulkan surface, logical device, presentation queue, and
+FIFO swapchain. It acquired image 0 with a semaphore, transitioned the image
+from undefined to transfer-destination layout, cleared it to opaque magenta,
+transitioned it to presentation layout, submitted with acquire/render
+semaphores, and called `vkQueuePresentKHR`. It then synchronously acquired the
+consumer `AImage`, honored its plane, row, and pixel strides, and checked every
+pixel for RGBA bytes `ff 00 ff ff`.
+
+Result: the first run created the driver's requested six-image swapchain and
+passed with 0 of 4,096 pixels mismatched. The consumer image had one plane,
+4-byte pixel stride, 256-byte row stride, and 16,384 accessible bytes.
+Submit plus presentation took 3,988,438 ns and total cold process time was
+471,708,072 ns. The image was available on the first Media NDK acquisition
+attempt.
+
+Three immediate full lifecycle repeats returned the same swapchain/image and
+zero-mismatch result. Their submit/present times were 3,343,698, 3,955,313,
+and 3,721,719 ns; total times were 310,404,166, 301,790,677, and 303,929,270
+ns. An anchored process check found no lingering executable. The Bionic ELF
+uses `/system/bin/linker64`, needs only `libdl.so` and `libc.so`, and has
+SHA-256
+`1a0eed2d72b053cbb913d2aa1c0473caaf1f8127bcb3df47b05d72da6722d35c`.
+
+The required recall query—`Android Vulkan AImageReader ANativeWindow swapchain
+acquire present clear image Adreno Bionic glibc Termux X11`—returned no indexed
+prior implementation, so E007 reused this repository's E006 ownership model
+and the pinned Vulkan/Media NDK contracts.
+
+Conclusion: device creation, swapchain creation, acquisition, command
+execution, synchronization, queue presentation, BufferQueue delivery, CPU
+consumer acquisition, and deterministic pixel verification now pass on the
+real Adreno driver. This is genuine rendered/presented offscreen output, but it
+is not yet visible on the tablet display and is not yet reachable through the
+glibc bridge or DXVK. The next gate is a dedicated visible `SurfaceView` host.

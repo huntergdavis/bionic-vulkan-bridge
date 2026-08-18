@@ -44,6 +44,9 @@ with zero data mismatches. See
 E006 then created a separately owned `AImageReader`/`ANativeWindow`, created an
 Android Vulkan surface, and queried real Adreno presentation capabilities four
 times with clean teardown. This is WSI proof, not yet a swapchain or frame.
+E007 completes the controlled presentation loop: it creates a six-image
+swapchain, clears an acquired image to magenta, presents it, then acquires the
+consumer image through Media NDK and verifies all 4,096 RGBA pixels.
 
 ## Build and test on a normal Linux host
 
@@ -106,6 +109,16 @@ The probe dynamically opens the Android Vulkan and Media NDK libraries, creates
 a 64x64 RGBA8888 `AImageReader` window, enables the Android surface extensions,
 and reports presentation queues, capabilities, formats, and modes. It does not
 create a swapchain, present pixels, or touch Termux:X11's existing surface.
+
+Run the complete non-visible presentation/readback gate with:
+
+```sh
+./build/bvb-vulkan-present-selftest | python -m json.tool
+```
+
+This uses a CPU-readable `AImageReader`, FIFO swapchain, transfer clear, and
+Media NDK plane readback. Success requires every 64x64 pixel to equal opaque
+magenta after presentation. Termux:X11's surface is not used.
 
 ## Project boundaries
 
