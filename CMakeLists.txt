@@ -60,6 +60,23 @@ add_executable(bvb-vulkan-selftest src/vulkan_selftest_main.c)
 target_link_libraries(bvb-vulkan-selftest PRIVATE bvb-vulkan-selftest-core)
 bvb_enable_warnings(bvb-vulkan-selftest)
 
+add_library(bvb-vulkan-surface-core STATIC src/vulkan_surface_probe.c)
+target_include_directories(
+  bvb-vulkan-surface-core
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
+)
+target_link_libraries(
+  bvb-vulkan-surface-core
+  PRIVATE Vulkan::Headers ${CMAKE_DL_LIBS}
+)
+bvb_enable_warnings(bvb-vulkan-surface-core)
+
+add_executable(bvb-vulkan-surface-probe src/vulkan_surface_probe_main.c)
+target_link_libraries(bvb-vulkan-surface-probe PRIVATE bvb-vulkan-surface-core)
+bvb_enable_warnings(bvb-vulkan-surface-probe)
+
 add_library(bvb-wire STATIC src/protocol.c src/transport.c)
 target_include_directories(
   bvb-wire
@@ -82,7 +99,7 @@ bvb_enable_warnings(bvb-bridge-client)
 
 install(
   TARGETS bvb-vulkan-probe bvb-bridge-service bvb-bridge-client
-          bvb-vulkan-selftest
+          bvb-vulkan-selftest bvb-vulkan-surface-probe
   RUNTIME DESTINATION bin
 )
 
@@ -98,6 +115,15 @@ if(BUILD_TESTING)
       OUTPUT_NAME bvb-fake-vulkan
   )
   bvb_enable_warnings(bvb-fake-vulkan)
+
+  add_library(bvb-fake-media-ndk SHARED tests/fake_media_ndk.c)
+  set_target_properties(
+    bvb-fake-media-ndk
+    PROPERTIES
+      C_VISIBILITY_PRESET hidden
+      OUTPUT_NAME bvb-fake-media-ndk
+  )
+  bvb_enable_warnings(bvb-fake-media-ndk)
 
   add_executable(bvb-protocol-test tests/protocol.c)
   target_link_libraries(bvb-protocol-test PRIVATE bvb-wire)
@@ -121,6 +147,16 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_selftest.py"
       "$<TARGET_FILE:bvb-vulkan-selftest>"
       "$<TARGET_FILE:bvb-fake-vulkan>"
+  )
+
+  add_test(
+    NAME vulkan-surface-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_surface_probe.py"
+      "$<TARGET_FILE:bvb-vulkan-surface-probe>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+      "$<TARGET_FILE:bvb-fake-media-ndk>"
   )
 
   add_test(

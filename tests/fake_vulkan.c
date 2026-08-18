@@ -2,6 +2,7 @@
 
 #include <vulkan/vulkan.h>
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,6 +15,19 @@
 #endif
 
 static VkDeviceMemory fake_bound_memory = VK_NULL_HANDLE;
+static int fake_android_surface_enabled;
+
+struct ANativeWindow;
+typedef VkFlags VkAndroidSurfaceCreateFlagsKHR;
+typedef struct VkAndroidSurfaceCreateInfoKHR {
+    VkStructureType sType;
+    const void *pNext;
+    VkAndroidSurfaceCreateFlagsKHR flags;
+    struct ANativeWindow *window;
+} VkAndroidSurfaceCreateInfoKHR;
+typedef VkResult(VKAPI_PTR *bvb_create_android_surface_fn)(
+    VkInstance instance, const VkAndroidSurfaceCreateInfoKHR *create_info,
+    const VkAllocationCallbacks *allocator, VkSurfaceKHR *surface);
 
 static VkResult VKAPI_CALL fake_enumerate_instance_version(uint32_t *version) {
     *version = VK_MAKE_API_VERSION(0, 1, 4, 354);
@@ -51,10 +65,123 @@ static VkResult VKAPI_CALL fake_create_instance(
     const VkInstanceCreateInfo *create_info,
     const VkAllocationCallbacks *allocator,
     VkInstance *instance) {
-    (void)create_info;
     (void)allocator;
+    bool has_surface = false;
+    bool has_android_surface = false;
+    if (create_info != NULL) {
+        for (uint32_t index = 0;
+             index < create_info->enabledExtensionCount; ++index) {
+            const char *name = create_info->ppEnabledExtensionNames[index];
+            has_surface |= strcmp(name, "VK_KHR_surface") == 0;
+            has_android_surface |=
+                strcmp(name, "VK_KHR_android_surface") == 0;
+        }
+    }
+    fake_android_surface_enabled = has_surface && has_android_surface;
     *instance = (VkInstance)(uintptr_t)0x1000U;
     return VK_SUCCESS;
+}
+
+static VkResult VKAPI_CALL fake_create_android_surface(
+    VkInstance instance, const VkAndroidSurfaceCreateInfoKHR *create_info,
+    const VkAllocationCallbacks *allocator, VkSurfaceKHR *surface) {
+    (void)instance;
+    (void)allocator;
+    if (create_info == NULL ||
+        create_info->sType !=
+            VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR ||
+        create_info->window == NULL || surface == NULL ||
+        fake_android_surface_enabled == 0) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    *surface = (VkSurfaceKHR)(uintptr_t)UINT64_C(0x6000);
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL fake_destroy_surface(
+    VkInstance instance, VkSurfaceKHR surface,
+    const VkAllocationCallbacks *allocator) {
+    (void)instance;
+    (void)surface;
+    (void)allocator;
+}
+
+static VkResult VKAPI_CALL fake_get_surface_support(
+    VkPhysicalDevice device, uint32_t queue_family_index,
+    VkSurfaceKHR surface, VkBool32 *supported) {
+    (void)device;
+    (void)surface;
+    if (supported == NULL) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    *supported = queue_family_index == 0U ? VK_TRUE : VK_FALSE;
+    return VK_SUCCESS;
+}
+
+static VkResult VKAPI_CALL fake_get_surface_capabilities(
+    VkPhysicalDevice device, VkSurfaceKHR surface,
+    VkSurfaceCapabilitiesKHR *capabilities) {
+    (void)device;
+    (void)surface;
+    if (capabilities == NULL) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    *capabilities = (VkSurfaceCapabilitiesKHR){
+        .minImageCount = 2,
+        .maxImageCount = 4,
+        .currentExtent = {64, 64},
+        .minImageExtent = {16, 16},
+        .maxImageExtent = {4096, 4096},
+        .maxImageArrayLayers = 1,
+        .supportedTransforms = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
+        .currentTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
+        .supportedCompositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        .supportedUsageFlags = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                               VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+    };
+    return VK_SUCCESS;
+}
+
+static VkResult VKAPI_CALL fake_get_surface_formats(
+    VkPhysicalDevice device, VkSurfaceKHR surface, uint32_t *count,
+    VkSurfaceFormatKHR *formats) {
+    (void)device;
+    (void)surface;
+    static const VkSurfaceFormatKHR available[] = {
+        {VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
+        {VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
+    };
+    const uint32_t available_count =
+        (uint32_t)(sizeof(available) / sizeof(available[0]));
+    if (formats == NULL) {
+        *count = available_count;
+        return VK_SUCCESS;
+    }
+    uint32_t written = *count < available_count ? *count : available_count;
+    memcpy(formats, available, written * sizeof(*formats));
+    *count = written;
+    return written < available_count ? VK_INCOMPLETE : VK_SUCCESS;
+}
+
+static VkResult VKAPI_CALL fake_get_present_modes(
+    VkPhysicalDevice device, VkSurfaceKHR surface, uint32_t *count,
+    VkPresentModeKHR *modes) {
+    (void)device;
+    (void)surface;
+    static const VkPresentModeKHR available[] = {
+        VK_PRESENT_MODE_FIFO_KHR,
+        VK_PRESENT_MODE_IMMEDIATE_KHR,
+    };
+    const uint32_t available_count =
+        (uint32_t)(sizeof(available) / sizeof(available[0]));
+    if (modes == NULL) {
+        *count = available_count;
+        return VK_SUCCESS;
+    }
+    uint32_t written = *count < available_count ? *count : available_count;
+    memcpy(modes, available, written * sizeof(*modes));
+    *count = written;
+    return written < available_count ? VK_INCOMPLETE : VK_SUCCESS;
 }
 
 static VkResult VKAPI_CALL fake_enumerate_devices(
@@ -395,6 +522,7 @@ static void VKAPI_CALL fake_destroy_instance(
     const VkAllocationCallbacks *allocator) {
     (void)instance;
     (void)allocator;
+    fake_android_surface_enabled = 0;
 }
 
 static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
@@ -417,6 +545,14 @@ static PFN_vkVoidFunction function_pointer(const char *name) {
     BVB_MATCH("vkCreateDevice", fake_create_device)
     BVB_MATCH("vkGetDeviceProcAddr", fake_get_device_proc_addr)
     BVB_MATCH("vkDestroyInstance", fake_destroy_instance)
+    BVB_MATCH("vkCreateAndroidSurfaceKHR", fake_create_android_surface)
+    BVB_MATCH("vkDestroySurfaceKHR", fake_destroy_surface)
+    BVB_MATCH("vkGetPhysicalDeviceSurfaceSupportKHR", fake_get_surface_support)
+    BVB_MATCH("vkGetPhysicalDeviceSurfaceCapabilitiesKHR",
+              fake_get_surface_capabilities)
+    BVB_MATCH("vkGetPhysicalDeviceSurfaceFormatsKHR", fake_get_surface_formats)
+    BVB_MATCH("vkGetPhysicalDeviceSurfacePresentModesKHR",
+              fake_get_present_modes)
 #undef BVB_MATCH
     return NULL;
 }
