@@ -28,6 +28,9 @@ Steam / Proton / Wine / FEX (glibc)
 
 This is not yet a game-ready bridge. Version 0.1.0 is the native Vulkan probe
 and the test framework needed to distinguish real progress from assumptions.
+The first hardware gate passed on the Galaxy Tab S8+: the probe directly loaded
+Android's system Vulkan loader and enumerated its Adreno 730 in 345 ms. See
+[E001](docs/EXPERIMENT_LOG.md#e001--direct-bionic-vulkan-enumeration-2026-08-18).
 
 ## Build and test on a normal Linux host
 
@@ -81,4 +84,3 @@ See [Architecture](docs/ARCHITECTURE.md), [Roadmap](docs/ROADMAP.md), and the
 ## License
 
 [MIT](LICENSE)
-

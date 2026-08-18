@@ -5,9 +5,9 @@
 - [x] Absolute-path Vulkan loader probe
 - [x] Stable JSON schema and exit codes
 - [x] Host fake-loader regression test
-- [ ] Build in Termux on the target tablet
-- [ ] Enumerate the tablet's physical Vulkan device
-- [ ] Record loader/HAL identity and probe output
+- [x] Build in Termux on the target tablet
+- [x] Enumerate the tablet's physical Vulkan device
+- [x] Record loader/HAL identity and probe output
 
 ## 0.2 — Cross-libc handshake
 
@@ -35,4 +35,3 @@
 - [ ] Run the fixed native-resolution Tomb Raider 2013 benchmark
 - [ ] Compare FPS, frame pacing, startup time, peak RSS, and thermals against the
   current glibc/proot control
-
