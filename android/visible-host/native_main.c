@@ -1,7 +1,9 @@
+#define _GNU_SOURCE
 #define VK_USE_PLATFORM_ANDROID_KHR
 
 #include <bvb/command_batch.h>
 #include <bvb/lifecycle.h>
+#include <bvb/protocol.h>
 #include <bvb/visible_ingress.h>
 
 #include <android/log.h>
@@ -18,12 +20,14 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdatomic.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
+#include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -98,6 +102,7 @@ static atomic_bool visible_brokered_ingress;
 static atomic_uint visible_frame_count = 1U;
 static pthread_mutex_t lifecycle_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t external_memory_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_once_t external_broker_once = PTHREAD_ONCE_INIT;
 static struct bvb_renderer_control renderer = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
     .condition = PTHREAD_COND_INITIALIZER,
@@ -107,7 +112,12 @@ enum {
     BVB_E020_REGION_BYTES = 4096,
     BVB_E022_REGION_GENERATION = 1,
     BVB_E023_MAX_FRAMES = 4096,
+    BVB_E036_TOKEN_HEX_BYTES = BVB_LIFECYCLE_TOKEN_SIZE * 2,
+    BVB_E036_RESPONSE_BYTES = 20,
 };
+
+static const char BVB_E036_BROKER_SOCKET[] =
+    "bvb-visible-external-memory";
 
 static bool token_matches(const uint8_t *left, const uint8_t *right) {
     uint8_t difference = 0U;
@@ -196,69 +206,166 @@ Java_io_github_huntergdavis_bvb_visiblehost_SharedRegionProvider_nativeOpenRegio
     return memory_fd;
 }
 
-JNIEXPORT jlongArray JNICALL
-Java_io_github_huntergdavis_bvb_visiblehost_SharedRegionProvider_nativeOpenExternalMemory(
-    JNIEnv *env, jclass provider_class, jstring token_string) {
-    (void)provider_class;
-    jlong values[5] = {-EINVAL, -1, 0, 0, 0};
-    jlongArray output = (*env)->NewLongArray(env, 5);
-    if (output == NULL || token_string == NULL) {
-        return output;
+static int receive_exact(int socket_fd, uint8_t *output, size_t length) {
+    size_t offset = 0U;
+    while (offset < length) {
+        ssize_t count = recv(socket_fd, output + offset, length - offset, 0);
+        if (count == 0) return -EPIPE;
+        if (count < 0) {
+            if (errno == EINTR) continue;
+            return -errno;
+        }
+        offset += (size_t)count;
     }
-    const char *token = (*env)->GetStringUTFChars(env, token_string, NULL);
-    if (token == NULL || (*env)->ExceptionCheck(env)) {
-        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
-        (*env)->SetLongArrayRegion(env, output, 0, 5, values);
-        return output;
+    return 0;
+}
+
+static int send_external_broker_response(
+    int socket_fd, int status, int descriptor, uint64_t allocation_size,
+    uint32_t memory_type_index) {
+    uint8_t response[BVB_E036_RESPONSE_BYTES] = {0};
+    bvb_wire_put_i32(response, status);
+    bvb_wire_put_u64(response + 4, allocation_size);
+    bvb_wire_put_u32(response + 12, memory_type_index);
+    bvb_wire_put_u32(response + 16, BVB_E020_REGION_BYTES);
+    struct iovec vector = {
+        .iov_base = response,
+        .iov_len = sizeof(response),
+    };
+    uint8_t control[CMSG_SPACE(sizeof(int))] = {0};
+    struct msghdr message = {
+        .msg_iov = &vector,
+        .msg_iovlen = 1U,
+    };
+    if (status == 0 && descriptor >= 0) {
+        message.msg_control = control;
+        message.msg_controllen = sizeof(control);
+        struct cmsghdr *rights = CMSG_FIRSTHDR(&message);
+        rights->cmsg_level = SOL_SOCKET;
+        rights->cmsg_type = SCM_RIGHTS;
+        rights->cmsg_len = CMSG_LEN(sizeof(int));
+        memcpy(CMSG_DATA(rights), &descriptor, sizeof(descriptor));
     }
-    uint8_t parsed_token[BVB_LIFECYCLE_TOKEN_SIZE];
-    int result = bvb_lifecycle_token_from_hex(token, parsed_token);
-    (*env)->ReleaseStringUTFChars(env, token_string, token);
-    if (result == 0) {
+    ssize_t sent;
+    do {
+        sent = sendmsg(socket_fd, &message, MSG_NOSIGNAL);
+    } while (sent < 0 && errno == EINTR);
+    if (sent < 0) return -errno;
+    return sent == (ssize_t)sizeof(response) ? 0 : -EIO;
+}
+
+static void handle_external_broker_connection(int connection) {
+    int status = 0;
+    struct ucred credentials;
+    socklen_t credentials_size = sizeof(credentials);
+    if (getsockopt(connection, SOL_SOCKET, SO_PEERCRED, &credentials,
+                   &credentials_size) != 0 ||
+        credentials_size != sizeof(credentials) ||
+        credentials.uid != getuid()) {
+        status = -EACCES;
+    }
+    uint8_t token_hex[BVB_E036_TOKEN_HEX_BYTES + 1U] = {0};
+    if (status == 0) {
+        status = receive_exact(connection, token_hex,
+                               BVB_E036_TOKEN_HEX_BYTES);
+    }
+    uint8_t parsed_token[BVB_LIFECYCLE_TOKEN_SIZE] = {0};
+    if (status == 0) {
+        status = bvb_lifecycle_token_from_hex((const char *)token_hex,
+                                              parsed_token);
+    }
+    if (status == 0) {
         (void)pthread_mutex_lock(&lifecycle_mutex);
         const bool authorized = lifecycle.configured &&
                                 token_matches(parsed_token, lifecycle.token);
         (void)pthread_mutex_unlock(&lifecycle_mutex);
-        if (!authorized) result = -EACCES;
+        if (!authorized) status = -EACCES;
     }
+
+    int descriptor = -1;
+    uint64_t allocation_size = 0U;
+    uint32_t memory_type_index = 0U;
     (void)pthread_mutex_lock(&external_memory_mutex);
-    if (result == 0 &&
+    if (status == 0 &&
         (state.device == VK_NULL_HANDLE ||
          state.external_memory == VK_NULL_HANDLE ||
          state.get_memory_fd == NULL)) {
-        result = -EAGAIN;
+        status = -EAGAIN;
     }
-    int descriptor = -1;
-    if (result == 0) {
+    if (status == 0) {
         const VkMemoryGetFdInfoKHR fd_info = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
             .memory = state.external_memory,
             .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
         };
-        const VkResult vk_result = state.get_memory_fd(
+        const VkResult result = state.get_memory_fd(
             state.device, &fd_info, &descriptor);
-        if (vk_result != VK_SUCCESS || descriptor < 0) {
-            result = -EIO;
+        if (result != VK_SUCCESS || descriptor < 0) {
+            status = -EIO;
             descriptor = -1;
-            BVB_LOGE("E036_EXPORT_FAIL vkGetMemoryFdKHR=%d", (int)vk_result);
+            BVB_LOGE("E036_EXPORT_FAIL vkGetMemoryFdKHR=%d", (int)result);
+        } else {
+            allocation_size = state.external_allocation_size;
+            memory_type_index = state.external_memory_type_index;
         }
     }
-    if (result == 0) {
-        values[0] = 0;
-        values[1] = descriptor;
-        values[2] = (jlong)state.external_allocation_size;
-        values[3] = state.external_memory_type_index;
-        values[4] = BVB_E020_REGION_BYTES;
-        BVB_LOGI("E036_EXPORT_PASS bytes=%u allocation=%llu type=%u fd=%d",
-                 BVB_E020_REGION_BYTES,
-                 (unsigned long long)state.external_allocation_size,
-                 state.external_memory_type_index, descriptor);
-    } else {
-        values[0] = result;
-    }
     (void)pthread_mutex_unlock(&external_memory_mutex);
-    (*env)->SetLongArrayRegion(env, output, 0, 5, values);
-    return output;
+
+    const int send_status = send_external_broker_response(
+        connection, status, descriptor, allocation_size, memory_type_index);
+    if (descriptor >= 0) (void)close(descriptor);
+    if (status == 0 && send_status == 0) {
+        BVB_LOGI("E036_EXPORT_PASS bytes=%u allocation=%llu type=%u",
+                 BVB_E020_REGION_BYTES,
+                 (unsigned long long)allocation_size, memory_type_index);
+    } else {
+        BVB_LOGE("E036_BROKER_REQUEST_FAIL status=%d send=%d", status,
+                 send_status);
+    }
+}
+
+static void *external_broker_main(void *unused) {
+    (void)unused;
+    int listener = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (listener < 0) {
+        BVB_LOGE("E036_BROKER_FAIL socket=%d", errno);
+        return NULL;
+    }
+    struct sockaddr_un address;
+    memset(&address, 0, sizeof(address));
+    address.sun_family = AF_UNIX;
+    const size_t name_length = strlen(BVB_E036_BROKER_SOCKET);
+    memcpy(address.sun_path + 1, BVB_E036_BROKER_SOCKET, name_length);
+    const socklen_t address_size =
+        (socklen_t)(offsetof(struct sockaddr_un, sun_path) + 1U + name_length);
+    if (bind(listener, (const struct sockaddr *)&address, address_size) != 0 ||
+        listen(listener, 4) != 0) {
+        BVB_LOGE("E036_BROKER_FAIL bind_or_listen=%d", errno);
+        (void)close(listener);
+        return NULL;
+    }
+    BVB_LOGI("E036_BROKER_READY socket=%s", BVB_E036_BROKER_SOCKET);
+    for (;;) {
+        int connection = accept4(listener, NULL, NULL, SOCK_CLOEXEC);
+        if (connection < 0) {
+            if (errno == EINTR) continue;
+            BVB_LOGE("E036_BROKER_FAIL accept=%d", errno);
+            break;
+        }
+        handle_external_broker_connection(connection);
+        (void)close(connection);
+    }
+    (void)close(listener);
+    return NULL;
+}
+
+static void start_external_broker(void) {
+    pthread_t thread;
+    int result = pthread_create(&thread, NULL, external_broker_main, NULL);
+    if (result == 0) result = pthread_detach(thread);
+    if (result != 0) {
+        BVB_LOGE("E036_BROKER_FAIL thread=%d", result);
+    }
 }
 
 static void configure_lifecycle(ANativeActivity *activity) {
@@ -2268,6 +2375,7 @@ ANativeActivity_onCreate(ANativeActivity *activity, void *saved_state,
     (void)saved_state;
     (void)saved_state_size;
     configure_lifecycle(activity);
+    (void)pthread_once(&external_broker_once, start_external_broker);
     activity->callbacks->onStart = on_start;
     activity->callbacks->onResume = on_resume;
     activity->callbacks->onPause = on_pause;

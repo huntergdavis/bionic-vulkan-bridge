@@ -46,29 +46,35 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
             return;
         }
 
-        long[] externalResult = external
-                ? SharedRegionProvider.nativeOpenExternalMemory(token)
-                : null;
-        int descriptor = external
-                ? (externalResult == null || externalResult.length != 5 ||
-                   externalResult[0] != 0
-                        ? (externalResult == null || externalResult.length == 0
-                                ? -22 : (int)externalResult[0])
-                        : (int)externalResult[1])
-                : SharedRegionProvider.nativeOpenRegion(token);
-        ParcelFileDescriptor region = descriptor < 0
-                ? null
-                : ParcelFileDescriptor.adoptFd(descriptor);
+        SharedRegionProvider.ExternalMemoryResult externalResult = null;
+        int status;
+        ParcelFileDescriptor region = null;
+        try {
+            if (external) {
+                externalResult = SharedRegionProvider.openExternalMemory(token);
+                status = externalResult.status;
+                region = externalResult.descriptor;
+            } else {
+                int descriptor = SharedRegionProvider.nativeOpenRegion(token);
+                status = descriptor < 0 ? descriptor : 0;
+                if (descriptor >= 0) {
+                    region = ParcelFileDescriptor.adoptFd(descriptor);
+                }
+            }
+        } catch (Throwable failure) {
+            Log.e(LOG_TAG, "failed to obtain shared descriptor", failure);
+            status = -5;
+        }
         Parcel data = Parcel.obtain();
         Parcel reply = Parcel.obtain();
         try {
             data.writeInterfaceToken(SharedRegionClient.CALLBACK_DESCRIPTOR);
-            data.writeInt(descriptor < 0 ? descriptor : 0);
+            data.writeInt(status);
             if (region != null) {
                 if (external) {
-                    data.writeLong(externalResult[2]);
-                    data.writeInt((int)externalResult[3]);
-                    data.writeInt((int)externalResult[4]);
+                    data.writeLong(externalResult.allocationSize);
+                    data.writeInt(externalResult.memoryTypeIndex);
+                    data.writeInt(externalResult.bufferBytes);
                 }
                 region.writeToParcel(data, 0);
             }
