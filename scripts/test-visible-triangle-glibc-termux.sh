@@ -116,8 +116,7 @@ if [ -z "$port" ] || [ ! -S "$control_socket" ]; then
     exit 4
 fi
 
-am force-stop "$package_name"
-am start -W -n "$package_name/$activity_name" \
+am start -S -W -n "$package_name/$activity_name" \
     --ei bvb_activity_port "$port" \
     --es bvb_activity_token "$token" \
     --es bvb_visible_socket "$visible_socket" > "$launch_stdout"
