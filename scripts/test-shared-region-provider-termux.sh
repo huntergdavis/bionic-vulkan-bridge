@@ -21,6 +21,9 @@ manifest="$project_dir/android/visible-host/AndroidManifest.xml"
 signed_apk="$out_dir/visible-host/bvb-visible-host-debug.apk"
 helper_apk="$out_dir/$gate-shared-region-client.apk"
 relay_source="$project_dir/src/shared_region_relay.c"
+triangle_dispatch_source="$project_dir/src/triangle_dispatch.c"
+triangle_builder_source="$project_dir/src/triangle_batch_builder.c"
+vulkan_headers="$build_dir/_deps/vulkanheaders-src/include"
 
 for command_name in am aapt chmod cmake cp env grun gcc od python readelf \
     sed tr; do
@@ -29,9 +32,14 @@ for command_name in am aapt chmod cmake cp env grun gcc od python readelf \
         exit 2
     fi
 done
-if [ "$relay_mode" = 1 ] && [ ! -f "$relay_source" ]; then
-    printf 'missing required file: %s\n' "$relay_source" >&2
-    exit 2
+if [ "$relay_mode" = 1 ]; then
+    for required_file in "$relay_source" "$triangle_dispatch_source" \
+        "$triangle_builder_source" "$vulkan_headers/vulkan/vulkan.h"; do
+        if [ ! -f "$required_file" ]; then
+            printf 'missing required file: %s\n' "$required_file" >&2
+            exit 2
+        fi
+    done
 fi
 for required_file in "$build_dir/bvb-bridge-service" "$manifest" \
     "$signed_apk" "$project_dir/src/lifecycle.c" \
@@ -64,6 +72,10 @@ fi
 
 mkdir -p "$out_dir"
 cmake --build "$build_dir" --parallel --target bvb-bridge-service
+if [ "$relay_mode" = 1 ]; then
+    cmake --build "$build_dir" --parallel --target \
+        bvb-triangle-batch-builder
+fi
 glibc_client="$out_dir/bvb-bridge-client-glibc"
 grun -s gcc -std=c17 -O3 -DNDEBUG -Wall -Wextra -Werror \
     -I"$project_dir/include" \
@@ -80,8 +92,11 @@ relay_client=
 if [ "$relay_mode" = 1 ]; then
     relay_client="$out_dir/bvb-shared-region-relay-glibc"
     grun -s gcc -std=c17 -O3 -DNDEBUG -Wall -Wextra -Werror \
-        -I"$project_dir/include" \
+        -I"$project_dir/include" -I"$build_dir/generated" \
+        -I"$vulkan_headers" \
         "$project_dir/src/protocol.c" "$project_dir/src/transport.c" \
+        "$project_dir/src/handle.c" "$project_dir/src/command_batch.c" \
+        "$triangle_dispatch_source" "$triangle_builder_source" \
         "$relay_source" -o "$relay_client"
     if ! readelf -l "$relay_client" | \
         grep -q '/glibc/lib/ld-linux-aarch64.so.1'; then

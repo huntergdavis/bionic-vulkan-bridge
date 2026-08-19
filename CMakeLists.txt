@@ -220,7 +220,9 @@ target_link_libraries(
 bvb_enable_warnings(bvb-visible-triangle-client)
 
 add_executable(bvb-shared-region-relay src/shared_region_relay.c)
-target_link_libraries(bvb-shared-region-relay PRIVATE bvb-wire)
+target_link_libraries(
+  bvb-shared-region-relay PRIVATE bvb-wire bvb-triangle-batch-builder
+)
 bvb_enable_warnings(bvb-shared-region-relay)
 
 install(
@@ -308,6 +310,14 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_visible_ingress.py"
       "$<TARGET_FILE:bvb-visible-ingress-host-test>"
       "$<TARGET_FILE:bvb-visible-triangle-client>"
+  )
+
+  add_test(
+    NAME shared-region-relay-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_shared_region_relay.py"
+      "$<TARGET_FILE:bvb-shared-region-relay>"
   )
 
   if(TARGET bvb-vulkan-resolve-trace)
