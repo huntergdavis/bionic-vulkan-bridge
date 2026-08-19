@@ -1,6 +1,7 @@
 #define VK_NO_PROTOTYPES
 
 #include <bvb/command_batch.h>
+#include <bvb/dxvk_dispatch_policy.h>
 #include <bvb/triangle_dispatch.h>
 
 #include <errno.h>
@@ -44,6 +45,54 @@ static VkPipeline pipeline_from_id(uint64_t wire_id) {
     } while (0)
 
 int main(void) {
+    CHECK(bvb_dxvk_dispatch_policy_count() == 742U);
+    size_t executable_count = 0U;
+    size_t required_count = 0U;
+    size_t probed_null_count = 0U;
+    const char *previous_name = NULL;
+    for (size_t index = 0U; index < bvb_dxvk_dispatch_policy_count();
+         ++index) {
+        const struct bvb_dxvk_dispatch_policy_entry *entry =
+            bvb_dxvk_dispatch_policy_at(index);
+        CHECK(entry != NULL);
+        CHECK(previous_name == NULL || strcmp(previous_name, entry->name) < 0);
+        CHECK(bvb_dxvk_dispatch_policy_lookup(entry->name) == entry);
+        PFN_vkVoidFunction resolved =
+            vkGetDeviceProcAddr(VK_NULL_HANDLE, entry->name);
+        if (entry->support == BVB_DXVK_SUPPORT_EXECUTABLE) {
+            ++executable_count;
+            CHECK(resolved != NULL);
+        } else {
+            CHECK(resolved == NULL);
+            if (entry->support ==
+                BVB_DXVK_SUPPORT_REQUIRED_UNIMPLEMENTED) {
+                ++required_count;
+            } else {
+                CHECK(entry->support == BVB_DXVK_SUPPORT_PROBED_NULL);
+                ++probed_null_count;
+            }
+        }
+        previous_name = entry->name;
+    }
+    CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
+    CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
+    CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
+    CHECK(executable_count == 8U);
+    CHECK(required_count == 432U);
+    CHECK(probed_null_count == 302U);
+    const struct bvb_dxvk_dispatch_policy_entry *create_instance =
+        bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");
+    CHECK(create_instance != NULL);
+    CHECK(create_instance->scope == BVB_DXVK_SCOPE_GLOBAL);
+    CHECK(create_instance->lookup_count == 5U);
+    CHECK(create_instance->support ==
+          BVB_DXVK_SUPPORT_REQUIRED_UNIMPLEMENTED);
+    const struct bvb_dxvk_dispatch_policy_entry *private_entry =
+        bvb_dxvk_dispatch_policy_lookup("wine_vkAcquireKeyedMutex");
+    CHECK(private_entry != NULL);
+    CHECK(private_entry->scope == BVB_DXVK_SCOPE_PRIVATE);
+    CHECK(private_entry->support == BVB_DXVK_SUPPORT_PROBED_NULL);
+
     RESOLVE(vkCmdBeginRendering);
     RESOLVE(vkCmdBindPipeline);
     RESOLVE(vkCmdSetViewport);

@@ -164,9 +164,38 @@ add_custom_command(
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
   VERBATIM
 )
+set(
+  bvb_dxvk_dispatch_policy_include
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/bvb_dxvk_dispatch_policy.inc"
+)
+set(
+  bvb_dxvk_dispatch_policy_json
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/bvb_dxvk_dispatch_policy.json"
+)
+add_custom_command(
+  OUTPUT
+    "${bvb_dxvk_dispatch_policy_include}"
+    "${bvb_dxvk_dispatch_policy_json}"
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-dxvk-dispatch-policy.py"
+    "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
+    "${bvb_triangle_dispatch_include}"
+    "${bvb_dxvk_dispatch_policy_include}"
+    "${bvb_dxvk_dispatch_policy_json}"
+  DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-dxvk-dispatch-policy.py"
+    "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
+    "${bvb_triangle_dispatch_include}"
+  VERBATIM
+)
 add_library(
   bvb-vulkan-client-dispatch SHARED
+  src/dxvk_dispatch_policy.c
   src/triangle_dispatch.c
+  "${bvb_dxvk_dispatch_policy_include}"
   "${bvb_triangle_dispatch_include}"
 )
 target_include_directories(
@@ -294,6 +323,17 @@ if(BUILD_TESTING)
   )
   bvb_enable_warnings(bvb-triangle-dispatch-test)
   add_test(NAME triangle-dispatch-contract COMMAND bvb-triangle-dispatch-test)
+  add_test(
+    NAME dxvk-dispatch-policy-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_dxvk_dispatch_policy.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-dxvk-dispatch-policy.py"
+      "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
+      "${bvb_triangle_dispatch_include}"
+      "${bvb_dxvk_dispatch_policy_json}"
+  )
 
   add_test(
     NAME visible-triangle-client-contract

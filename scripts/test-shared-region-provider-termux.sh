@@ -22,6 +22,7 @@ signed_apk="$out_dir/visible-host/bvb-visible-host-debug.apk"
 helper_apk="$out_dir/$gate-shared-region-client.apk"
 relay_source="$project_dir/src/shared_region_relay.c"
 triangle_dispatch_source="$project_dir/src/triangle_dispatch.c"
+dxvk_dispatch_policy_source="$project_dir/src/dxvk_dispatch_policy.c"
 triangle_builder_source="$project_dir/src/triangle_batch_builder.c"
 vulkan_headers="$build_dir/_deps/vulkanheaders-src/include"
 
@@ -34,6 +35,7 @@ for command_name in am aapt chmod cmake cp env grun gcc od python readelf \
 done
 if [ "$relay_mode" = 1 ]; then
     for required_file in "$relay_source" "$triangle_dispatch_source" \
+        "$dxvk_dispatch_policy_source" \
         "$triangle_builder_source" "$vulkan_headers/vulkan/vulkan.h"; do
         if [ ! -f "$required_file" ]; then
             printf 'missing required file: %s\n' "$required_file" >&2
@@ -97,7 +99,8 @@ if [ "$relay_mode" = 1 ]; then
         "$project_dir/src/lifecycle.c" "$project_dir/src/protocol.c" \
         "$project_dir/src/transport.c" \
         "$project_dir/src/handle.c" "$project_dir/src/command_batch.c" \
-        "$triangle_dispatch_source" "$triangle_builder_source" \
+        "$dxvk_dispatch_policy_source" "$triangle_dispatch_source" \
+        "$triangle_builder_source" \
         "$relay_source" -o "$relay_client"
     if ! readelf -l "$relay_client" | \
         grep -q '/glibc/lib/ld-linux-aarch64.so.1'; then

@@ -1,6 +1,7 @@
 #define VK_NO_PROTOTYPES
 
 #include <bvb/command_batch.h>
+#include <bvb/dxvk_dispatch_policy.h>
 #include <bvb/triangle_dispatch.h>
 
 #include <errno.h>
@@ -269,5 +270,11 @@ vkGetDeviceProcAddr(VkDevice device, const char *name) {
     }
 #include "bvb_triangle_dispatch.inc"
 #undef BVB_TRIANGLE_DISPATCH_ENTRY
+    const struct bvb_dxvk_dispatch_policy_entry *policy =
+        bvb_dxvk_dispatch_policy_lookup(name);
+    if (policy == NULL ||
+        policy->support != BVB_DXVK_SUPPORT_EXECUTABLE) {
+        return NULL;
+    }
     return NULL;
 }

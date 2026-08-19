@@ -28,6 +28,11 @@ mkdir -p "$generated_dir"
 python "$project_dir/scripts/generate-triangle-dispatch.py" \
     "$registry" "$manifest" \
     "$generated_dir/bvb_triangle_dispatch.inc"
+python "$project_dir/scripts/generate-dxvk-dispatch-policy.py" \
+    "$registry" "$manifest" \
+    "$generated_dir/bvb_triangle_dispatch.inc" \
+    "$generated_dir/bvb_dxvk_dispatch_policy.inc" \
+    "$generated_dir/bvb_dxvk_dispatch_policy.json"
 
 library="$out_dir/libvulkan-bvb-glibc.so"
 client="$out_dir/bvb-visible-triangle-client-glibc"
@@ -38,6 +43,7 @@ grun -s gcc -std=c17 -O3 -DNDEBUG -fPIC -fvisibility=hidden \
     "$project_dir/src/protocol.c" \
     "$project_dir/src/handle.c" \
     "$project_dir/src/command_batch.c" \
+    "$project_dir/src/dxvk_dispatch_policy.c" \
     "$project_dir/src/triangle_dispatch.c" \
     -Wl,-soname,libvulkan-bvb-glibc.so \
     -o "$library"
