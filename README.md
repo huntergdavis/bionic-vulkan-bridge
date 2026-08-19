@@ -106,6 +106,11 @@ loader reported Vulkan 1.4.0 and created two native instances represented to
 glibc by sequential type-safe proxy IDs. The bridge currently advertises zero
 instance extensions and layers; this is intentional until their semantics are
 implemented.
+E026 adds instance-scoped destruction and physical-device enumeration. The real
+Adreno device returned the same type-2 proxy across repeated count/fill calls,
+and both native instances were explicitly destroyed before disconnect. The
+generated policy now marks 14 measured names executable and keeps the remaining
+426 resolved names unavailable.
 
 ## Build and test on a normal Linux host
 

@@ -1364,3 +1364,65 @@ typed handle IDs, E015's generated client-dispatch pattern, and E024's measured
 truth table. E026 should add explicit `vkDestroyInstance` dispatch plus
 `vkEnumeratePhysicalDevices`, returning connection-owned physical-device proxy
 IDs without yet advertising unimplemented property or WSI calls.
+
+## E026 — Stable physical-device proxies and explicit teardown (2026-08-19)
+
+Status: passed on normal Linux, Termux ARM64, and the real Galaxy Tab S8+
+glibc-to-Bionic Android Vulkan path.
+
+Hypothesis: E025's connection-owned instance can enumerate native physical
+devices without leaking Bionic pointers, return stable dispatchable proxies
+across Vulkan's count/fill pattern, and explicitly destroy its native instance
+and child ownership before connection teardown.
+
+Method: protocol-v1 opcodes 13 and 14 carry a fixed-width instance ID and a
+bounded variable-length physical-device response. The Bionic context expands
+its E012 handle table to hold both instances and their physical-device children.
+It resolves `vkEnumeratePhysicalDevices` from the native instance, limits the
+result to eight devices, reuses an existing proxy ID when the same native handle
+is observed again, and records the instance as parent. Destruction removes all
+child mappings before removing and destroying the native instance.
+
+The glibc library adds `vkEnumeratePhysicalDevices` and `vkDestroyInstance` to
+instance-scoped GIPA. It maintains heap-backed type-2 proxies in a per-process
+cache so repeated enumeration returns the same `VkPhysicalDevice` pointer for
+the same wire ID. Successful destruction invalidates and frees every child
+proxy and then the type-1 instance proxy. E026's checked-in executable list
+advances the measured policy to 14 names; instance functions resolve only when
+GIPA receives a valid instance proxy.
+
+Result: the real Android loader again reported Vulkan 1.4.0. The count call
+reported one physical device. The fill call and a repeated fill call returned
+the same client proxy pointer and wire ID `0x0200000000000001`: object type 2
+(`PHYSICAL_DEVICE`), serial 1, parented to instance
+`0x0100000000000001`. The client then explicitly destroyed that instance and a
+second instance. Client and service stderr were empty and both exited zero.
+This proves identity and lifecycle only; the proxy still exposes no physical-
+device properties, queue/memory inventory, extensions, logical device, or WSI.
+
+All 17 normal-host contracts and all 15 contracts available under Termux ARM64
+passed. The canonical real-glibc/Bionic gate passed at source commit
+`cf1cf74`. The policy classifies 14 of 742 measured names executable, 426
+resolved names required-but-unimplemented, and 302 observed null probes.
+
+Evidence and artifact identities:
+
+- canonical evidence:
+  `docs/evidence/e026-instance-vulkan-bootstrap.json`, 3,784 bytes, SHA-256
+  `25456a8c75b4c6d844dde39a800c69bc5a005819bd8c36c6d71025ec794ce175`;
+- generated E026 policy summary: 1,327 bytes, SHA-256
+  `762742ce0e60c7058e09ac8c41cda38be44baa3cb1240dd3decf7d3ea247a9f3`;
+- glibc `libvulkan-bvb` bridge: 143,488 bytes, SHA-256
+  `4452c2572ed483ab97fdc3545e384ec398bb59f76dc8e3827f8a3e5eda980e69`;
+- glibc bootstrap client: 71,472 bytes, SHA-256
+  `cca5c356adddd06e95dac38fc075b343c0ac2ea1c8d5cdf3318ed7570220c6c8`;
+- Bionic bridge service: 65,544 bytes, SHA-256
+  `57e7af46d25269201e93ea326a0de678631aba3f5277f6d7046ccfcfd2b40e10`.
+
+The required recall query—`vkDestroyInstance vkEnumeratePhysicalDevices proxy
+physical device stable handle Bionic bridge E026`—found no indexed prior
+implementation. E026 reused E012's typed and parented handle table, E025's
+persistent authenticated client connection, and E025's corrected instance-
+scoped GIPA resolution. E027 should add the bounded read-only discovery calls
+DXVK needs next: physical-device properties, queue families, memory properties,
+and device-extension enumeration, without yet allowing logical-device creation.

@@ -63,6 +63,8 @@
   startup lookup without advertising unimplemented commands
 - [x] Execute the four measured global Vulkan bootstrap calls through Bionic
   and return typed glibc instance proxies
+- [x] Add explicit instance destruction and stable, parented physical-device
+  proxy enumeration
 - [ ] Expand generated dispatch to the measured DXVK startup subset
 - [ ] Implement GPU external-memory and synchronization strategy
 - [x] Reach a rendered test triangle
