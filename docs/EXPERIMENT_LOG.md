@@ -501,3 +501,66 @@ is not execution-frequency profiling, so the manifest bounds dispatch coverage
 but does not label commands hot. The next gate is generated proxy-handle
 ownership plus a shared-memory command batch for the minimal rendered triangle
 subset, following [decision 0003](decisions/0003-batched-game-dispatch.md).
+
+## E012 — glibc-built batch replayed by Bionic Vulkan (2026-08-18)
+
+Status: passed on hardware at commit
+`1f1229828fb11408dc308ce2b4d3662699513048`.
+
+Hypothesis: a glibc client can construct one bounded, little-endian command
+batch with typed wire handles, send it once across the authenticated bridge,
+and have the Bionic service resolve those handles and replay the commands on
+the real Android Vulkan driver without an RPC for each Vulkan command.
+
+Method: stable 64-bit IDs encode object type in the high byte and a nonzero
+serial in the remaining 56 bits. The Bionic side stores real handle bits in an
+open-addressed ownership table; pointer values never enter the batch. The
+client built a 104-byte batch containing a command-buffer ID, sequence 1, one
+`FILL_BUFFER` record, and one `BUFFER_HOST_READ_BARRIER` record. The service
+validated the entire batch, resolved its command buffer and buffer, recorded
+both operations, submitted once, waited, mapped the 4 KiB allocation, and
+checked all 1,024 words against `0xa5c3f00d`.
+
+The hardware harness ran three paths against `/system/lib64/libvulkan.so` and
+Adreno 730: the established cross-libc service self-test, the standalone
+Bionic control, and the new glibc-built batch. Capability and deterministic
+result fields matched across all paths. The batch had zero mismatched words.
+Its GPU submit-plus-wait observation was 4,427,084 ns; the standalone control
+was 4,888,594 ns and the established service path was 6,469,115 ns. Total
+batch client/service elapsed time was 199,013,750 ns and included fresh process,
+instance, device, memory, and queue setup.
+
+These are single correctness observations while Steam remained resident, so
+they do not establish that batching is faster. They do establish that the
+batch mechanism did not add a per-command socket exchange and that its replay
+reached the same real-driver result.
+
+All seven tablet CTest cases passed, including the native command-batch
+contract and fake-driver integration. The glibc client requests
+`/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1`; the Bionic
+service requests `/system/bin/linker64`. Both batch client and service stderr
+artifacts were empty. Steam PID 5973 and Termux:X11 PID 27923 remained alive;
+no game process ran during this test.
+
+Evidence identities:
+
+- result: `docs/evidence/e012-cross-libc-batch.json`, 958 bytes, SHA-256
+  `1c823fedbfbfc9a499d289456253d508e022d75554dd3fced7746b49ee910445`
+- glibc client: 75,616 bytes, SHA-256
+  `7756a8f363b3e1334145a14e0c92e50ef78fdf046ce712b3f6de80765543d2b7`
+- Bionic service: 50,088 bytes, SHA-256
+  `639532e6c75edc10e58cecdc18a18ad8cd940c9e2e020bd885c5f2c3487b27e7`
+- batch service stderr and batch client stderr: empty, SHA-256
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
+
+The required recall query—`Vulkan proxy handles shared memory command batch
+protocol triangle bionic glibc`—returned no indexed prior implementation.
+E012 reused E004/E005's exact native buffer, memory, submission, and mapped
+verification lifecycle plus E002's authenticated, fixed-width cross-libc
+transport.
+
+Conclusion: the first real driver command batch now crosses glibc to Bionic
+and verifies GPU output. The packet-sized 104-byte proof is not the final data
+plane. The next gate is a shared-memory batch region with sequence/ownership
+validation and measured warm throughput, followed by generated triangle
+dispatch.

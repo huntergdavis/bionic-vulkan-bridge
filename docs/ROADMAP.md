@@ -45,7 +45,9 @@
 
 - [x] Trace the Vulkan entry-point set resolved during Wine/DXVK startup
 - [x] Generate registry-backed global/instance/device ownership metadata
-- [ ] Implement generated dispatch and handle ownership
+- [x] Implement typed proxy-handle ownership
+- [x] Replay a bounded client-built command batch on the Android driver
+- [ ] Generate executable Vulkan entry-point dispatch
 - [ ] Implement external/shared memory and synchronization strategy
 - [ ] Reach a rendered test triangle
 - [ ] Reach a DXVK sample
