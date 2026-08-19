@@ -1740,3 +1740,56 @@ command recording, and deterministic fill/readback.
 The next visual gate adds a per-frame rotation push constant to the existing
 shared frame ring. E032 does not yet claim mapped-memory sharing, general
 semaphore support, DXVK startup, or a game FPS change.
+
+## E033 — Bridged per-frame rotating triangle (2026-08-19)
+
+Status: passed on real Adreno 730 hardware from a Termux ARM64 glibc producer
+through the Android Bionic visible host at source commit `90f087d`.
+
+Hypothesis: E023's reusable four-slot shared frame ring can carry changing
+game-side data every frame, and the Bionic host can replay it through a real
+Vulkan push constant without deriving animation locally.
+
+Method: command-batch opcode 9 adds a fixed 16-byte record containing a typed
+pipeline-layout ID, an angle, and the native-window aspect ratio. Generated
+glibc `vkCmdPushConstants` dispatch writes a deterministic angle based on the
+batch sequence: one revolution every 600 frames. Bionic validates and resolves
+the layout ID, then pushes both floats into an aspect-correct vertex shader.
+Each frame contains seven commands and occupies 224 bytes of its 256-byte ring
+slot. The Activity received 4,096 frames; the initial 10-second helper timeout
+failure was reproduced, traced to the outer SCM-rights completion wait, and
+fixed with a bounded five-minute helper timeout. Per-frame renderer timeouts
+remain 10 seconds.
+
+Result: the user visually confirmed continuous rotation, and the complete
+native-resolution 2800x1752 run processed sequences 1 through 4,096 in
+68.443 seconds. Mean throughput was 59.8 FPS; per-frame round-trip timing was
+1.703 ms minimum, 16.657 ms median, 18.869 ms p95, 16.670 ms mean, and
+27.354 ms maximum. Wrong-capability access returned `-EACCES`, all four ring
+slots were reused, and relay, service, and valid-helper stderr were empty. All
+18 host contracts and all 16 Termux ARM64 contracts passed. The E033 policy
+classifies 46 of 742 names executable, 394 resolved names
+required-but-unimplemented, and 302 observed-null.
+
+Canonical evidence is `docs/evidence/e033-rotating-triangle.json`, 2,773
+bytes, SHA-256
+`24e573c19181a4725dfbd67dcfecbe4435ffbacfd4b72d9bc313de2e77093407`.
+The canonical artifacts are:
+
+- generated E033 policy: 2,205 bytes, SHA-256
+  `b8b975d3331594fb14fd3eedc35b852c2ed0797ee60a54f97c8447c641f858b2`;
+- glibc shared-region relay: 219,656 bytes, SHA-256
+  `5ae38fc76a65b100c1fbe017c498dbdf3438dbc6148ab1391a3fdd8d7833615f`;
+- signed Bionic visible-host APK: 53,673 bytes, SHA-256
+  `89ec99246a886c73931e350873cb731e8381891b02009d829b620dc4f478bfd8`.
+
+The required recall query found no earlier rotating-triangle bridge or timeout
+fix. E033 reused E023's persistent frame ring, E025's authenticated connection,
+and E026–E032's typed handles, generated dispatch, command recording, and
+fence-backed resource path.
+
+The next bounded gate is client-visible mapped upload memory, proven by moving
+triangle vertex data out of the shader and into a glibc-populated Vulkan vertex
+buffer. E033 does not yet claim general mapped-memory coherence, image or
+shader creation through the game-facing control path, descriptor sets,
+indexed drawing, DXVK startup, or a game FPS change.

@@ -146,6 +146,11 @@ E032 adds typed fence ownership and asynchronous completion. The same GPU fill
 now submits with a real fence, transitions from `VK_NOT_READY` to signaled,
 waits without a queue-idle barrier, resets to `VK_NOT_READY`, and tears down
 cleanly. The policy now marks 45 names executable and leaves 395 unavailable.
+E033 adds a typed per-frame push-constant record and drives an aspect-correct
+rotation from glibc through the four-slot shared ring into the Bionic vertex
+shader. A native-resolution Adreno run sustained all 4,096 frames in 68.44
+seconds (59.8 FPS, 16.66 ms median, 18.87 ms p95) with empty error streams.
+The policy now marks 46 names executable and leaves 394 unavailable.
 
 ## Build and test on a normal Linux host
 

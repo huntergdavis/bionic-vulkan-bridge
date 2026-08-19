@@ -79,6 +79,8 @@
 - [ ] Implement GPU external-memory and synchronization strategy
 - [x] Reach a rendered test triangle
 - [x] Deliver the glibc-generated triangle batch to the visible host
+- [x] Drive sustained per-frame shader data through the shared ring and render
+  a visibly rotating native-resolution triangle
 - [ ] Reach a DXVK sample
 - [ ] Run the fixed native-resolution Tomb Raider 2013 benchmark
 - [ ] Compare FPS, frame pacing, startup time, peak RSS, and thermals against the

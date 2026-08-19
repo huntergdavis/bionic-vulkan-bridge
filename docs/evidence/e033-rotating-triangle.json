@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "gate": "E033",
+  "result": "pass",
+  "source_libc": "glibc",
+  "host_libc": "bionic",
+  "transport": "binder_scm_rights_shared_mapping_then_loopback_metadata",
+  "wrong_capability": {
+    "result": "fail",
+    "stage": "request_region",
+    "native_status": -13
+  },
+  "binder_helper": {
+    "result": "pass",
+    "binder_region_received": true,
+    "relay": "same_uid_scm_rights",
+    "relay_round_trip_ns": 68444126015
+  },
+  "glibc_relay": {
+    "result": "pass",
+    "transport": "binder_scm_rights_then_loopback_metadata",
+    "peer_uid": 10469,
+    "peer_pid": 11904,
+    "region_bytes": 4096,
+    "seals": 7,
+    "writable_mapping": true,
+    "width": 2800,
+    "height": 1752,
+    "batch_offset": 64,
+    "batch_stride": 256,
+    "batch_bytes": 224,
+    "commands": 7,
+    "sequence": 4096,
+    "frames": 4096,
+    "ring_slots": 4,
+    "receive_validate_ns": 649323,
+    "execute_round_trip_ns": 16670371,
+    "round_trip_min_ns": 1702656,
+    "round_trip_p50_ns": 16657448,
+    "round_trip_p95_ns": 18869062,
+    "round_trip_mean_ns": 16670371,
+    "round_trip_max_ns": 27353907,
+    "execute_total_ns": 68281843696,
+    "receive_to_present_ns": 68443371692
+  },
+  "activity_status": {
+    "ingress_configured": true,
+    "authenticated_event_count": 8,
+    "rejected_event_count": 0,
+    "last_sequence": 8,
+    "last_event": 5,
+    "state_flags": 1,
+    "created": true,
+    "started": false,
+    "resumed": false,
+    "window_present": false,
+    "renderer_ready": false,
+    "focused": false,
+    "destroyed": false,
+    "width": 0,
+    "height": 0,
+    "activity_pid": 9731,
+    "last_event_monotonic_ns": 969468319319133,
+    "last_event_received_ns": 969468321398612
+  },
+  "authenticated_lifecycle_events": [
+    {
+      "event": 1,
+      "sequence": 1,
+      "pid": 9731,
+      "width": 0,
+      "height": 0
+    },
+    {
+      "event": 2,
+      "sequence": 2,
+      "pid": 9731,
+      "width": 0,
+      "height": 0
+    },
+    {
+      "event": 3,
+      "sequence": 3,
+      "pid": 9731,
+      "width": 0,
+      "height": 0
+    },
+    {
+      "event": 7,
+      "sequence": 4,
+      "pid": 9731,
+      "width": 2800,
+      "height": 1752
+    },
+    {
+      "event": 10,
+      "sequence": 5,
+      "pid": 9731,
+      "width": 0,
+      "height": 0
+    },
+    {
+      "event": 9,
+      "sequence": 6,
+      "pid": 9731,
+      "width": 0,
+      "height": 0
+    },
+    {
+      "event": 8,
+      "sequence": 7,
+      "pid": 9731,
+      "width": 0,
+      "height": 0
+    },
+    {
+      "event": 5,
+      "sequence": 8,
+      "pid": 9731,
+      "width": 0,
+      "height": 0
+    }
+  ],
+  "e019_inline_baseline_round_trip_ns": 14618177,
+  "execute_vs_e019_percent": 14.04,
+  "full_relay_vs_e019_percent": 468112.46,
+  "screenshot": null
+}
