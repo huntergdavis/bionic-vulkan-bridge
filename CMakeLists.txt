@@ -182,10 +182,22 @@ add_executable(bvb-bridge-client src/bridge_client.c)
 target_link_libraries(bvb-bridge-client PRIVATE bvb-wire bvb-command-batch)
 bvb_enable_warnings(bvb-bridge-client)
 
+add_executable(bvb-visible-triangle-client src/visible_triangle_client.c)
+target_link_libraries(
+  bvb-visible-triangle-client
+  PRIVATE
+    bvb-vulkan-client-dispatch
+    bvb-wire
+    bvb-command-batch
+    Vulkan::Headers
+)
+bvb_enable_warnings(bvb-visible-triangle-client)
+
 install(
   TARGETS bvb-vulkan-probe bvb-bridge-service bvb-bridge-client
           bvb-vulkan-selftest bvb-vulkan-surface-probe
           bvb-vulkan-present-selftest bvb-vulkan-client-dispatch
+          bvb-visible-triangle-client
   RUNTIME DESTINATION bin
 )
 
@@ -243,6 +255,14 @@ if(BUILD_TESTING)
   )
   bvb_enable_warnings(bvb-triangle-dispatch-test)
   add_test(NAME triangle-dispatch-contract COMMAND bvb-triangle-dispatch-test)
+
+  add_test(
+    NAME visible-triangle-client-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_visible_triangle_client.py"
+      "$<TARGET_FILE:bvb-visible-triangle-client>"
+  )
 
   if(TARGET bvb-vulkan-resolve-trace)
     add_library(bvb-fake-vulkan-resolve SHARED tests/fake_vulkan_resolve.c)
