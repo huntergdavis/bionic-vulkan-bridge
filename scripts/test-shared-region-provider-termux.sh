@@ -4,13 +4,23 @@ set -eu
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 build_dir="$project_dir/build"
 out_dir="$project_dir/out"
+relay_mode=${BVB_SHARED_REGION_RELAY:-0}
+case "$relay_mode" in
+    0) gate=e020 ;;
+    1) gate=e021 ;;
+    *)
+        printf 'BVB_SHARED_REGION_RELAY must be 0 or 1\n' >&2
+        exit 2
+        ;;
+esac
 runtime_parent=${TMPDIR:-/tmp}
 package_name=io.github.huntergdavis.bvb.visiblehost
 activity_name=android.app.NativeActivity
 client_class=io.github.huntergdavis.bvb.visiblehost.SharedRegionClient
 manifest="$project_dir/android/visible-host/AndroidManifest.xml"
 signed_apk="$out_dir/visible-host/bvb-visible-host-debug.apk"
-helper_apk="$out_dir/e020-shared-region-client.apk"
+helper_apk="$out_dir/$gate-shared-region-client.apk"
+relay_source="$project_dir/src/shared_region_relay.c"
 
 for command_name in am aapt chmod cmake cp env grun gcc od python readelf \
     sed tr; do
@@ -19,6 +29,10 @@ for command_name in am aapt chmod cmake cp env grun gcc od python readelf \
         exit 2
     fi
 done
+if [ "$relay_mode" = 1 ] && [ ! -f "$relay_source" ]; then
+    printf 'missing required file: %s\n' "$relay_source" >&2
+    exit 2
+fi
 for required_file in "$build_dir/bvb-bridge-service" "$manifest" \
     "$signed_apk" "$project_dir/src/lifecycle.c" \
     "$project_dir/src/protocol.c" "$project_dir/src/transport.c" \
@@ -62,9 +76,22 @@ if ! readelf -l "$glibc_client" | \
     printf 'control client does not use Termux glibc\n' >&2
     exit 3
 fi
+relay_client=
+if [ "$relay_mode" = 1 ]; then
+    relay_client="$out_dir/bvb-shared-region-relay-glibc"
+    grun -s gcc -std=c17 -O3 -DNDEBUG -Wall -Wextra -Werror \
+        -I"$project_dir/include" \
+        "$project_dir/src/protocol.c" "$project_dir/src/transport.c" \
+        "$relay_source" -o "$relay_client"
+    if ! readelf -l "$relay_client" | \
+        grep -q '/glibc/lib/ld-linux-aarch64.so.1'; then
+        printf 'relay consumer does not use Termux glibc\n' >&2
+        exit 3
+    fi
+fi
 
 case "$helper_apk" in
-    "$out_dir/e020-shared-region-client.apk") ;;
+    "$out_dir/$gate-shared-region-client.apk") ;;
     *)
         printf 'unexpected helper APK path: %s\n' "$helper_apk" >&2
         exit 2
@@ -75,23 +102,30 @@ if [ -e "$helper_apk" ]; then
 fi
 cp "$signed_apk" "$helper_apk"
 chmod 0400 "$helper_apk"
-runtime_dir=$(mktemp -d "$runtime_parent/bvb-e020.XXXXXX")
+runtime_dir=$(mktemp -d "$runtime_parent/bvb-$gate.XXXXXX")
 control_socket="$runtime_dir/bridge.sock"
-service_stdout="$out_dir/e020-service.stdout"
-service_stderr="$out_dir/e020-service.stderr"
-launch_stdout="$out_dir/e020-activity-launch.stdout"
-wrong_json="$out_dir/e020-wrong-token.json"
-wrong_stdout="$out_dir/e020-wrong-token.stdout"
-wrong_stderr="$out_dir/e020-wrong-token.stderr"
-valid_json="$out_dir/e020-valid-token.json"
-valid_stdout="$out_dir/e020-valid-token.stdout"
-valid_stderr="$out_dir/e020-valid-token.stderr"
-status_json="$out_dir/e020-activity-status.json"
-evidence_json="$out_dir/e020-binder-fd-gate.json"
+service_stdout="$out_dir/$gate-service.stdout"
+service_stderr="$out_dir/$gate-service.stderr"
+launch_stdout="$out_dir/$gate-activity-launch.stdout"
+wrong_json="$out_dir/$gate-wrong-token.json"
+wrong_stdout="$out_dir/$gate-wrong-token.stdout"
+wrong_stderr="$out_dir/$gate-wrong-token.stderr"
+valid_json="$out_dir/$gate-valid-token.json"
+valid_stdout="$out_dir/$gate-valid-token.stdout"
+valid_stderr="$out_dir/$gate-valid-token.stderr"
+status_json="$out_dir/$gate-activity-status.json"
+relay_stdout="$out_dir/$gate-relay.stdout"
+relay_stderr="$out_dir/$gate-relay.stderr"
+evidence_json="$out_dir/$gate-binder-fd-gate.json"
 token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
 wrong_token=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 service_pid=
+relay_pid=
 cleanup() {
+    if [ -n "$relay_pid" ] && kill -0 "$relay_pid" 2>/dev/null; then
+        kill "$relay_pid" 2>/dev/null || true
+        wait "$relay_pid" 2>/dev/null || true
+    fi
     if [ -n "$service_pid" ] && kill -0 "$service_pid" 2>/dev/null; then
         kill "$service_pid" 2>/dev/null || true
         wait "$service_pid" 2>/dev/null || true
@@ -102,7 +136,8 @@ trap cleanup EXIT HUP INT TERM
 
 for output in "$service_stdout" "$service_stderr" "$launch_stdout" \
     "$wrong_json" "$wrong_stdout" "$wrong_stderr" "$valid_json" \
-    "$valid_stdout" "$valid_stderr" "$status_json"; do
+    "$valid_stdout" "$valid_stderr" "$status_json" "$relay_stdout" \
+    "$relay_stderr"; do
     : > "$output"
 done
 "$build_dir/bvb-bridge-service" --socket "$control_socket" --once \
@@ -159,9 +194,18 @@ run_helper() {
     result_path=$2
     stdout_path=$3
     stderr_path=$4
-    env -u LD_LIBRARY_PATH -u LD_PRELOAD CLASSPATH="$helper_apk" \
-        /system/bin/app_process -Xnoimage-dex2oat / "$client_class" \
-        "$helper_token" "$result_path" > "$stdout_path" 2> "$stderr_path"
+    relay_socket=${5:-}
+    if [ -n "$relay_socket" ]; then
+        env -u LD_LIBRARY_PATH -u LD_PRELOAD CLASSPATH="$helper_apk" \
+            /system/bin/app_process -Xnoimage-dex2oat / "$client_class" \
+            "$helper_token" "$result_path" "$relay_socket" \
+            > "$stdout_path" 2> "$stderr_path"
+    else
+        env -u LD_LIBRARY_PATH -u LD_PRELOAD CLASSPATH="$helper_apk" \
+            /system/bin/app_process -Xnoimage-dex2oat / "$client_class" \
+            "$helper_token" "$result_path" \
+            > "$stdout_path" 2> "$stderr_path"
+    fi
 }
 
 if run_helper "$wrong_token" "$wrong_json" "$wrong_stdout" \
@@ -169,11 +213,46 @@ if run_helper "$wrong_token" "$wrong_json" "$wrong_stdout" \
     printf 'wrong provider capability unexpectedly succeeded\n' >&2
     exit 6
 fi
-if ! run_helper "$token" "$valid_json" "$valid_stdout" "$valid_stderr"; then
+relay_socket=
+if [ "$relay_mode" = 1 ]; then
+    relay_socket="bvb-e021-$(printf '%.16s' "$token")"
+    grun "$relay_client" --socket "$relay_socket" \
+        > "$relay_stdout" 2> "$relay_stderr" &
+    relay_pid=$!
+    attempt=0
+    while kill -0 "$relay_pid" 2>/dev/null; do
+        if grep -q '^bvb-shared-region-relay: ready socket=' \
+            "$relay_stdout"; then
+            break
+        fi
+        attempt=$((attempt + 1))
+        if [ "$attempt" -ge 100 ]; then
+            printf 'glibc relay readiness timed out\n' >&2
+            exit 6
+        fi
+        sleep 0.05
+    done
+    if ! kill -0 "$relay_pid" 2>/dev/null; then
+        printf 'glibc relay exited before becoming ready\n' >&2
+        cat "$relay_stderr" >&2
+        exit 6
+    fi
+fi
+if ! run_helper "$token" "$valid_json" "$valid_stdout" "$valid_stderr" \
+    "$relay_socket"; then
     printf 'valid provider capability failed\n' >&2
     sed -n '1,160p' "$valid_stderr" >&2
     cat "$valid_json" >&2
     exit 6
+fi
+if [ "$relay_mode" = 1 ]; then
+    if ! wait "$relay_pid"; then
+        relay_pid=
+        printf 'glibc relay validation failed\n' >&2
+        cat "$relay_stderr" >&2
+        exit 6
+    fi
+    relay_pid=
 fi
 
 grun "$glibc_client" --socket "$control_socket" --activity-status \
@@ -181,6 +260,7 @@ grun "$glibc_client" --socket "$control_socket" --activity-status \
 wait "$service_pid"
 service_pid=
 
+if [ "$relay_mode" = 0 ]; then
 python - "$wrong_json" "$valid_json" "$status_json" \
     "$service_stdout" "$evidence_json" <<'PY'
 import json
@@ -236,9 +316,78 @@ evidence_path.write_text(json.dumps(document, indent=2) + "\n")
 print(json.dumps(document, indent=2))
 print("binder_shared_region_fd=PASS")
 PY
+else
+python - "$wrong_json" "$valid_json" "$relay_stdout" "$status_json" \
+    "$service_stdout" "$evidence_json" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+wrong_path, valid_path, relay_path, status_path, service_path, evidence_path = map(
+    pathlib.Path, sys.argv[1:]
+)
+wrong = json.loads(wrong_path.read_text())
+valid = json.loads(valid_path.read_text())
+relay_lines = relay_path.read_text().splitlines()
+relay = json.loads(next(line for line in relay_lines if line.startswith("{")))
+status = json.loads(status_path.read_text())
+activity = status["activity_status"]
+event_pattern = re.compile(
+    r"activity_event=(\d+) sequence=(\d+) pid=(\d+) "
+    r"width=(\d+) height=(\d+)"
+)
+events = [
+    {
+        "event": int(match.group(1)),
+        "sequence": int(match.group(2)),
+        "pid": int(match.group(3)),
+        "width": int(match.group(4)),
+        "height": int(match.group(5)),
+    }
+    for match in event_pattern.finditer(service_path.read_text())
+]
+event_codes = {record["event"] for record in events}
+assert wrong == {
+    "result": "fail",
+    "stage": "request_region",
+    "native_status": -13,
+}
+assert valid["result"] == "pass"
+assert valid["binder_region_received"] is True
+assert valid["relay"] == "same_uid_scm_rights"
+assert valid["relay_round_trip_ns"] > 0
+assert relay["result"] == "pass"
+assert relay["transport"] == "binder_then_same_uid_scm_rights"
+assert relay["region_bytes"] == 4096
+assert relay["writable_mapping"] is True
+assert activity["ingress_configured"] is True
+assert activity["rejected_event_count"] == 0
+assert activity["authenticated_event_count"] == len(events)
+assert {1, 2, 3, 7, 9, 10, 11}.issubset(event_codes)
+document = {
+    "schema_version": 1,
+    "gate": "E021",
+    "result": "pass",
+    "transport": "binder_then_same_uid_scm_rights",
+    "wrong_capability": wrong,
+    "binder_helper": valid,
+    "glibc_consumer": relay,
+    "authenticated_lifecycle_events": events,
+    "activity_status": activity,
+}
+evidence_path.write_text(json.dumps(document, indent=2) + "\n")
+print(json.dumps(document, indent=2))
+print("binder_glibc_scm_rights=PASS")
+PY
+fi
 
 printf 'evidence_json=%s\n' "$evidence_json"
 printf 'valid_stderr=%s\n' "$valid_stderr"
 printf 'wrong_stderr=%s\n' "$wrong_stderr"
 printf 'service_stdout=%s\n' "$service_stdout"
 printf 'service_stderr=%s\n' "$service_stderr"
+if [ "$relay_mode" = 1 ]; then
+    printf 'relay_stdout=%s\n' "$relay_stdout"
+    printf 'relay_stderr=%s\n' "$relay_stderr"
+fi
