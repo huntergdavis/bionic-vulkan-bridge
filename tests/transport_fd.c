@@ -12,6 +12,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #define CHECK(expression)                                                       \
@@ -43,7 +44,8 @@ static int hello_packet(struct bvb_protocol_packet *packet,
 int main(void) {
     int sockets[2];
     CHECK(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets) == 0);
-    int memory = memfd_create("bvb-transport-test", MFD_CLOEXEC);
+    int memory =
+        (int)syscall(SYS_memfd_create, "bvb-transport-test", MFD_CLOEXEC);
     CHECK(memory >= 0);
     CHECK(ftruncate(memory, 4096) == 0);
     const char marker[] = "shared-batch";
