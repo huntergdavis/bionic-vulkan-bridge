@@ -72,10 +72,13 @@ still constructed inside the Activity. E017 passes that exact generated batch
 from a glibc process to a same-UID Bionic ingress receiver in about 0.250 ms on
 the tablet. E018 then isolated the real Android boundary: APK v7 reached a
 focused native-resolution window, but stock Android denied Termux's cross-UID
-abstract Unix socket connection before setup (`EACCES`). The next gate copies
-the small proof batch over authenticated loopback TCP; shared-memory production
-batching will require an Android-supported descriptor broker. Visible external
-replay is not claimed yet.
+abstract Unix socket connection before setup (`EACCES`). E019 changes only that
+boundary: APK v8 accepts an authenticated inline batch over loopback TCP. The
+real glibc client delivered its 200-byte six-command stream, and Bionic
+validated, replayed, submitted, and presented it through Adreno at 2800x1752 in
+a 14.6 ms synchronous round trip. This proves visible external replay across
+Android UIDs. Inline TCP is the bounded correctness path; shared-memory game
+batching still requires an Android-supported descriptor broker.
 
 ## Build and test on a normal Linux host
 

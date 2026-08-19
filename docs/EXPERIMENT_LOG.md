@@ -954,3 +954,48 @@ renderer unchanged while copying the small proof batch over loopback TCP. A
 subsequent production path must use an Android-supported descriptor broker
 (for example Binder/`ParcelFileDescriptor`) to recover shared-memory batching;
 the inline TCP gate is diagnostic, not the final high-throughput design.
+
+## E019 — visible glibc-to-Bionic replay across Android UIDs (2026-08-19)
+
+Status: passed on hardware at commit `b50b85c`.
+
+Hypothesis: E018 failed specifically because Android denied its cross-UID Unix
+socket, not because the glibc-generated batch, capability authentication,
+Bionic executor, or Vulkan presentation path was invalid. Replacing only that
+transport with loopback TCP and an inline proof batch should reach the existing
+renderer.
+
+Method: protocol opcode 10 carries a 32-byte launch capability followed by the
+unchanged self-describing command batch, bounded by the existing 4 KiB packet
+limit. The Activity binds only `127.0.0.1` on a fresh port. Its ingress worker
+performs constant-time token comparison and the full existing batch validation,
+then uses the same wait/claim/complete synchronization consumed by E016-E018.
+The glibc client adds a mutually exclusive `--tcp-port` mode; its abstract Unix
+and sealed-memfd mode remains covered separately. A wrong-token TCP connection
+is rejected before a valid connection in the host contract.
+
+Result: all 14 host tests and all 12 tests available in the tablet's Bionic
+build passed. Signed APK v8 (version 0.1.7) launched as PID 19204 and emitted six
+authenticated lifecycle events with zero rejections: created, started, resumed,
+2800x1752 window-created, focused, and renderer-ready. The real ARM64 glibc
+client sent one 256-byte packet containing the exact 200-byte, six-command,
+sequence-1 triangle batch. Bionic validated, replayed, submitted, presented,
+completed the client response, and reported state flags 63. The synchronous
+end-to-end round trip was 14,618,177 ns (about 14.6 ms); client stderr was empty.
+
+Exact state and artifact hashes are recorded in
+`docs/evidence/e019-visible-loopback-inline.json`. Android still prevents the
+Termux UID from reading this app's logcat, so the independently authenticated
+lifecycle completion is retained as the machine-readable pass gate. E019
+reuses E017's generated dispatch and batch format plus E016's compatibility
+render-pass executor. The required recall searches found no matching prior
+cross-UID solution.
+
+Conclusion: this is the first complete external replay: real glibc-generated
+Vulkan commands crossed the stock Android application boundary and were
+presented by the Bionic/Adreno host at native tablet resolution. Inline TCP is
+an intentionally bounded correctness bridge, not the final game transport.
+The next performance gate is an Android descriptor broker that hands shared
+memory to a Termux-UID Bionic shim, which can then pass that descriptor to the
+glibc/FEX side locally with `SCM_RIGHTS`. That restores zero-copy batching while
+respecting Android's cross-UID security model.

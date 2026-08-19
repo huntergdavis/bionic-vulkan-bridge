@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "gate": "E019",
+  "result": "pass",
+  "target": "Samsung Galaxy Tab S8+",
+  "commit": "b50b85c",
+  "source_libc": "glibc",
+  "host_libc": "bionic",
+  "transport": "loopback_tcp_inline",
+  "triangle_client": {
+    "tcp_port": 39695,
+    "width": 2800,
+    "height": 1752,
+    "batch_bytes": 200,
+    "command_count": 6,
+    "sequence": 1,
+    "packet_bytes": 256,
+    "round_trip_ns": 14618177,
+    "stderr_bytes": 0
+  },
+  "activity_status": {
+    "ingress_configured": true,
+    "authenticated_event_count": 6,
+    "rejected_event_count": 0,
+    "last_sequence": 6,
+    "last_event": 11,
+    "state_flags": 63,
+    "created": true,
+    "started": true,
+    "resumed": true,
+    "window_present": true,
+    "renderer_ready": true,
+    "focused": true,
+    "destroyed": false,
+    "width": 2800,
+    "height": 1752,
+    "activity_pid": 19204
+  },
+  "artifacts": {
+    "apk_v8_sha256": "11f62c6f320bfdbf9b74eaf40d0454cf8363e869ff22989bb484f296590d8299",
+    "bionic_host_sha256": "73f6be7bb48fc00a3ae5a3ed1e9fdeeaddb8cbf003ec91eed2e1c9bea901ee70",
+    "glibc_client_sha256": "7384f96b2835c8a59a0a9aa5a6c0b58d278cb54fce21f55c47b27a8f0ec2bcf4",
+    "glibc_dispatch_sha256": "b9175b18d467056287b2ec30abd9a5942f928c97eddc43c64e678e57150b981b"
+  },
+  "visible_external_rendering_claimed": true,
+  "production_zero_copy_transport_claimed": false
+}
