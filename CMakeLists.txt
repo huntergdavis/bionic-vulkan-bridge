@@ -106,6 +106,16 @@ target_include_directories(
 )
 bvb_enable_warnings(bvb-wire)
 
+add_library(bvb-command-batch STATIC src/handle.c src/command_batch.c)
+target_include_directories(
+  bvb-command-batch
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
+)
+target_link_libraries(bvb-command-batch PRIVATE bvb-wire)
+bvb_enable_warnings(bvb-command-batch)
+
 add_executable(bvb-bridge-service src/bridge_service.c)
 target_link_libraries(
   bvb-bridge-service
@@ -155,6 +165,11 @@ if(BUILD_TESTING)
   bvb_enable_warnings(bvb-protocol-test)
 
   add_test(NAME protocol-contract COMMAND bvb-protocol-test)
+
+  add_executable(bvb-command-batch-test tests/command_batch.c)
+  target_link_libraries(bvb-command-batch-test PRIVATE bvb-command-batch)
+  bvb_enable_warnings(bvb-command-batch-test)
+  add_test(NAME command-batch-contract COMMAND bvb-command-batch-test)
 
   if(TARGET bvb-vulkan-resolve-trace)
     add_library(bvb-fake-vulkan-resolve SHARED tests/fake_vulkan_resolve.c)
