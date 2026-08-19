@@ -8,7 +8,14 @@ native_dir="$staging_dir/lib/arm64-v8a"
 manifest="$project_dir/android/visible-host/AndroidManifest.xml"
 source_file="$project_dir/android/visible-host/native_main.c"
 lifecycle_source="$project_dir/src/lifecycle.c"
+protocol_source="$project_dir/src/protocol.c"
+handle_source="$project_dir/src/handle.c"
+batch_source="$project_dir/src/command_batch.c"
 vulkan_headers="$project_dir/build/_deps/vulkanheaders-src/include"
+vertex_shader="$project_dir/android/visible-host/shaders/triangle.vert"
+fragment_shader="$project_dir/android/visible-host/shaders/triangle.frag"
+shader_dir="$out_dir/shaders"
+shader_include="$shader_dir/triangle_shaders.inc"
 framework_resources=/system/framework/framework-res.apk
 unsigned_apk="$out_dir/bvb-visible-host-unsigned.apk"
 aligned_apk="$out_dir/bvb-visible-host-aligned.apk"
@@ -17,14 +24,18 @@ keystore="$out_dir/debug.keystore"
 
 : "${PREFIX:?PREFIX must name the Termux prefix}"
 
-for command_name in clang aapt zipalign apksigner keytool readelf; do
+for command_name in clang aapt zipalign apksigner keytool readelf \
+    glslangValidator python; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         printf 'missing required command: %s\n' "$command_name" >&2
         exit 2
     fi
 done
 for required_file in "$manifest" "$source_file" "$lifecycle_source" \
-    "$project_dir/include/bvb/lifecycle.h" "$framework_resources" \
+    "$protocol_source" "$handle_source" "$batch_source" \
+    "$vertex_shader" "$fragment_shader" \
+    "$project_dir/include/bvb/lifecycle.h" \
+    "$project_dir/include/bvb/command_batch.h" "$framework_resources" \
     "$vulkan_headers/vulkan/vulkan.h" /system/lib64/libandroid.so \
     /system/lib64/liblog.so /system/lib64/libvulkan.so; do
     if [ ! -f "$required_file" ]; then
@@ -34,10 +45,21 @@ for required_file in "$manifest" "$source_file" "$lifecycle_source" \
 done
 
 mkdir -p "$native_dir"
-clang -std=c17 -O2 -fPIC -fvisibility=hidden -Wall -Wextra -Werror \
+mkdir -p "$shader_dir"
+glslangValidator -V --target-env vulkan1.1 -S vert \
+    -o "$shader_dir/triangle.vert.spv" "$vertex_shader" >/dev/null
+glslangValidator -V --target-env vulkan1.1 -S frag \
+    -o "$shader_dir/triangle.frag.spv" "$fragment_shader" >/dev/null
+python "$project_dir/scripts/embed-spirv.py" \
+    "$shader_dir/triangle.vert.spv" "$shader_dir/triangle.frag.spv" \
+    "$shader_include"
+
+clang -std=c17 -O3 -DNDEBUG -fPIC -fvisibility=hidden \
+    -Wall -Wextra -Werror \
     -shared -Wl,-soname,libbvb-visible-host.so \
-    -I"$project_dir/include" -I"$vulkan_headers" \
-    "$source_file" "$lifecycle_source" \
+    -I"$project_dir/include" -I"$vulkan_headers" -I"$shader_dir" \
+    "$source_file" "$lifecycle_source" "$protocol_source" \
+    "$handle_source" "$batch_source" \
     /system/lib64/libandroid.so /system/lib64/liblog.so \
     /system/lib64/libvulkan.so \
     -o "$native_dir/libbvb-visible-host.so"

@@ -1,5 +1,6 @@
 #define VK_USE_PLATFORM_ANDROID_KHR
 
+#include <bvb/command_batch.h>
 #include <bvb/lifecycle.h>
 
 #include <android/log.h>
@@ -19,6 +20,8 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+
+#include "triangle_shaders.inc"
 
 #define BVB_LOG_TAG "BVBVisibleHost"
 #define BVB_LOGI(...)                                                           \
@@ -44,6 +47,11 @@ struct bvb_visible_state {
     VkDevice device;
     VkQueue queue;
     VkSwapchainKHR swapchain;
+    VkImageView image_view;
+    VkShaderModule vertex_shader;
+    VkShaderModule fragment_shader;
+    VkPipelineLayout pipeline_layout;
+    VkPipeline pipeline;
     VkCommandPool command_pool;
     VkSemaphore acquire_semaphore;
     VkSemaphore render_semaphore;
@@ -317,6 +325,21 @@ static void destroy_renderer(void) {
         if (state.acquire_semaphore != VK_NULL_HANDLE) {
             vkDestroySemaphore(state.device, state.acquire_semaphore, NULL);
         }
+        if (state.pipeline != VK_NULL_HANDLE) {
+            vkDestroyPipeline(state.device, state.pipeline, NULL);
+        }
+        if (state.pipeline_layout != VK_NULL_HANDLE) {
+            vkDestroyPipelineLayout(state.device, state.pipeline_layout, NULL);
+        }
+        if (state.fragment_shader != VK_NULL_HANDLE) {
+            vkDestroyShaderModule(state.device, state.fragment_shader, NULL);
+        }
+        if (state.vertex_shader != VK_NULL_HANDLE) {
+            vkDestroyShaderModule(state.device, state.vertex_shader, NULL);
+        }
+        if (state.image_view != VK_NULL_HANDLE) {
+            vkDestroyImageView(state.device, state.image_view, NULL);
+        }
         if (state.command_pool != VK_NULL_HANDLE) {
             vkDestroyCommandPool(state.device, state.command_pool, NULL);
         }
@@ -398,6 +421,253 @@ static VkExtent2D choose_extent(const VkSurfaceCapabilitiesKHR *capabilities,
     return extent;
 }
 
+static uint64_t native_handle_bits(const void *handle, size_t size) {
+    uint64_t bits = 0U;
+    if (handle != NULL && size <= sizeof(bits)) {
+        memcpy(&bits, handle, size);
+    }
+    return bits;
+}
+
+static VkCommandBuffer command_buffer_from_bits(uint64_t bits) {
+    VkCommandBuffer handle = VK_NULL_HANDLE;
+    memcpy(&handle, &bits, sizeof(handle));
+    return handle;
+}
+
+static VkImageView image_view_from_bits(uint64_t bits) {
+    VkImageView handle = VK_NULL_HANDLE;
+    memcpy(&handle, &bits, sizeof(handle));
+    return handle;
+}
+
+static VkPipeline pipeline_from_bits(uint64_t bits) {
+    VkPipeline handle = VK_NULL_HANDLE;
+    memcpy(&handle, &bits, sizeof(handle));
+    return handle;
+}
+
+static int build_triangle_batch(uint8_t *batch, size_t capacity,
+                                VkExtent2D extent, size_t *length) {
+    const uint64_t command_buffer_id =
+        bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 1U);
+    const uint64_t image_view_id =
+        bvb_handle_id(BVB_OBJECT_IMAGE_VIEW, 1U);
+    const uint64_t pipeline_id = bvb_handle_id(BVB_OBJECT_PIPELINE, 1U);
+    struct bvb_command_batch_builder builder;
+    int result = bvb_command_batch_begin(&builder, batch, capacity,
+                                         command_buffer_id, 1U);
+    if (result == 0) {
+        result = bvb_command_batch_append_begin_rendering(
+            &builder,
+            &(const struct bvb_begin_rendering_command){
+                .color_image_view_id = image_view_id,
+                .width = extent.width,
+                .height = extent.height,
+                .image_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                .load_op = VK_ATTACHMENT_LOAD_OP_CLEAR,
+                .store_op = VK_ATTACHMENT_STORE_OP_STORE,
+                .layer_count = 1U,
+                .clear_color = {0.015F, 0.02F, 0.06F, 1.0F},
+            });
+    }
+    if (result == 0) {
+        result = bvb_command_batch_append_bind_graphics_pipeline(
+            &builder,
+            &(const struct bvb_bind_graphics_pipeline_command){
+                .pipeline_id = pipeline_id,
+            });
+    }
+    if (result == 0) {
+        result = bvb_command_batch_append_set_viewport(
+            &builder,
+            &(const struct bvb_set_viewport_command){
+                .x = 0.0F,
+                .y = 0.0F,
+                .width = (float)extent.width,
+                .height = (float)extent.height,
+                .minimum_depth = 0.0F,
+                .maximum_depth = 1.0F,
+            });
+    }
+    if (result == 0) {
+        result = bvb_command_batch_append_set_scissor(
+            &builder,
+            &(const struct bvb_set_scissor_command){
+                .x = 0,
+                .y = 0,
+                .width = extent.width,
+                .height = extent.height,
+            });
+    }
+    if (result == 0) {
+        result = bvb_command_batch_append_draw(
+            &builder,
+            &(const struct bvb_draw_command){
+                .vertex_count = 3U,
+                .instance_count = 1U,
+            });
+    }
+    if (result == 0) {
+        result = bvb_command_batch_append_end_rendering(&builder);
+    }
+    if (result == 0) {
+        result = bvb_command_batch_finish(&builder, length);
+    }
+    return result;
+}
+
+static int replay_triangle_batch(
+    const uint8_t *batch, size_t length, VkCommandBuffer command_buffer,
+    VkImageView image_view, VkPipeline pipeline,
+    PFN_vkCmdBeginRenderingKHR begin_rendering,
+    PFN_vkCmdEndRenderingKHR end_rendering) {
+    struct bvb_command_batch_info info;
+    int result = bvb_command_batch_validate(batch, length, &info);
+    if (result != 0 || info.command_count != 6U ||
+        begin_rendering == NULL || end_rendering == NULL) {
+        return result != 0 ? result : -EPROTO;
+    }
+    const uint64_t image_view_id =
+        bvb_handle_id(BVB_OBJECT_IMAGE_VIEW, 1U);
+    const uint64_t pipeline_id = bvb_handle_id(BVB_OBJECT_PIPELINE, 1U);
+    struct bvb_handle_entry entries[8];
+    struct bvb_handle_table handles;
+    result = bvb_handle_table_init(&handles, entries, 8U);
+    if (result == 0) {
+        result = bvb_handle_table_insert(
+            &handles, info.command_buffer_id, 0U,
+            native_handle_bits(&command_buffer, sizeof(command_buffer)));
+    }
+    if (result == 0) {
+        result = bvb_handle_table_insert(
+            &handles, image_view_id, 0U,
+            native_handle_bits(&image_view, sizeof(image_view)));
+    }
+    if (result == 0) {
+        result = bvb_handle_table_insert(
+            &handles, pipeline_id, 0U,
+            native_handle_bits(&pipeline, sizeof(pipeline)));
+    }
+    if (result != 0) {
+        return result;
+    }
+    uint64_t native_command_buffer = 0U;
+    result = bvb_handle_table_lookup(
+        &handles, info.command_buffer_id, BVB_OBJECT_COMMAND_BUFFER, NULL,
+        &native_command_buffer);
+    if (result != 0 ||
+        command_buffer_from_bits(native_command_buffer) != command_buffer) {
+        return -EPROTO;
+    }
+
+    struct bvb_command_batch_iterator iterator;
+    result = bvb_command_batch_iterator_init(&iterator, batch, length);
+    if (result != 0) {
+        return result;
+    }
+    struct bvb_command_record record;
+    for (uint32_t index = 0U; index < 6U; ++index) {
+        result = bvb_command_batch_next(&iterator, &record);
+        if (result != 0) {
+            return -EPROTO;
+        }
+        if (index == 0U && record.opcode == BVB_COMMAND_BEGIN_RENDERING) {
+            struct bvb_begin_rendering_command command;
+            uint64_t image_view_bits = 0U;
+            result = bvb_command_decode_begin_rendering(&record, &command);
+            if (result == 0) {
+                result = bvb_handle_table_lookup(
+                    &handles, command.color_image_view_id,
+                    BVB_OBJECT_IMAGE_VIEW, NULL, &image_view_bits);
+            }
+            if (result != 0) {
+                return result;
+            }
+            const VkRenderingAttachmentInfoKHR attachment = {
+                .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
+                .imageView = image_view_from_bits(image_view_bits),
+                .imageLayout = (VkImageLayout)command.image_layout,
+                .resolveMode = VK_RESOLVE_MODE_NONE,
+                .loadOp = (VkAttachmentLoadOp)command.load_op,
+                .storeOp = (VkAttachmentStoreOp)command.store_op,
+                .clearValue.color.float32 = {
+                    command.clear_color[0], command.clear_color[1],
+                    command.clear_color[2], command.clear_color[3],
+                },
+            };
+            const VkRenderingInfoKHR rendering = {
+                .sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR,
+                .renderArea = {
+                    .offset = {0, 0},
+                    .extent = {command.width, command.height},
+                },
+                .layerCount = command.layer_count,
+                .colorAttachmentCount = 1U,
+                .pColorAttachments = &attachment,
+            };
+            begin_rendering(command_buffer, &rendering);
+        } else if (index == 1U &&
+                   record.opcode == BVB_COMMAND_BIND_GRAPHICS_PIPELINE) {
+            struct bvb_bind_graphics_pipeline_command command;
+            uint64_t pipeline_bits = 0U;
+            result = bvb_command_decode_bind_graphics_pipeline(&record,
+                                                                &command);
+            if (result == 0) {
+                result = bvb_handle_table_lookup(
+                    &handles, command.pipeline_id, BVB_OBJECT_PIPELINE, NULL,
+                    &pipeline_bits);
+            }
+            if (result != 0) {
+                return result;
+            }
+            vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                              pipeline_from_bits(pipeline_bits));
+        } else if (index == 2U && record.opcode == BVB_COMMAND_SET_VIEWPORT) {
+            struct bvb_set_viewport_command command;
+            result = bvb_command_decode_set_viewport(&record, &command);
+            if (result != 0) {
+                return result;
+            }
+            const VkViewport viewport = {
+                .x = command.x,
+                .y = command.y,
+                .width = command.width,
+                .height = command.height,
+                .minDepth = command.minimum_depth,
+                .maxDepth = command.maximum_depth,
+            };
+            vkCmdSetViewport(command_buffer, 0U, 1U, &viewport);
+        } else if (index == 3U && record.opcode == BVB_COMMAND_SET_SCISSOR) {
+            struct bvb_set_scissor_command command;
+            result = bvb_command_decode_set_scissor(&record, &command);
+            if (result != 0) {
+                return result;
+            }
+            const VkRect2D scissor = {
+                .offset = {command.x, command.y},
+                .extent = {command.width, command.height},
+            };
+            vkCmdSetScissor(command_buffer, 0U, 1U, &scissor);
+        } else if (index == 4U && record.opcode == BVB_COMMAND_DRAW) {
+            struct bvb_draw_command command;
+            result = bvb_command_decode_draw(&record, &command);
+            if (result != 0) {
+                return result;
+            }
+            vkCmdDraw(command_buffer, command.vertex_count,
+                      command.instance_count, command.first_vertex,
+                      command.first_instance);
+        } else if (index == 5U &&
+                   record.opcode == BVB_COMMAND_END_RENDERING) {
+            end_rendering(command_buffer);
+        } else {
+            return -EPROTO;
+        }
+    }
+    return bvb_command_batch_next(&iterator, &record) == 1 ? 0 : -EPROTO;
+}
+
 static bool create_renderer(ANativeWindow *window) {
     static const char *const instance_extensions[] = {
         VK_KHR_SURFACE_EXTENSION_NAME,
@@ -406,9 +676,9 @@ static bool create_renderer(ANativeWindow *window) {
     const VkApplicationInfo application_info = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .pApplicationName = "bvb-visible-host",
-        .applicationVersion = VK_MAKE_API_VERSION(0, 0, 8, 0),
+        .applicationVersion = VK_MAKE_API_VERSION(0, 0, 16, 0),
         .pEngineName = "none",
-        .apiVersion = VK_API_VERSION_1_0,
+        .apiVersion = VK_API_VERSION_1_1,
     };
     const VkInstanceCreateInfo instance_info = {
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
@@ -447,8 +717,24 @@ static bool create_renderer(ANativeWindow *window) {
         return false;
     }
     VkPhysicalDevice physical_device = devices[0];
-    if (!has_device_extension(physical_device, VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
-        BVB_LOGE("E008_FAIL no_swapchain_extension");
+    if (!has_device_extension(physical_device,
+                              VK_KHR_SWAPCHAIN_EXTENSION_NAME) ||
+        !has_device_extension(physical_device,
+                              VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME)) {
+        BVB_LOGE("E016_FAIL required_device_extension");
+        return false;
+    }
+    VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamic_rendering = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR,
+    };
+    VkPhysicalDeviceFeatures2 features = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        .pNext = &dynamic_rendering,
+    };
+    vkGetPhysicalDeviceFeatures2(physical_device, &features);
+    if (dynamic_rendering.dynamicRendering != VK_TRUE) {
+        BVB_LOGE("E016_FAIL dynamic_rendering_feature");
         return false;
     }
 
@@ -494,9 +780,10 @@ static bool create_renderer(ANativeWindow *window) {
     result = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
         physical_device, state.surface, &capabilities);
     if (result != VK_SUCCESS || capabilities.minImageCount == 0U ||
-        (capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT) ==
+        (capabilities.supportedUsageFlags &
+         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) ==
             0U) {
-        BVB_LOGE("E008_FAIL surface_capabilities=%d usage=%u", (int)result,
+        BVB_LOGE("E016_FAIL surface_capabilities=%d usage=%u", (int)result,
                  capabilities.supportedUsageFlags);
         return false;
     }
@@ -545,12 +832,16 @@ static bool create_renderer(ANativeWindow *window) {
         .pQueuePriorities = &queue_priority,
     };
     static const char *const device_extensions[] = {
-        VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+        VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
+    };
+    dynamic_rendering.dynamicRendering = VK_TRUE;
     const VkDeviceCreateInfo device_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pNext = &dynamic_rendering,
         .queueCreateInfoCount = 1,
         .pQueueCreateInfos = &queue_info,
-        .enabledExtensionCount = 1,
+        .enabledExtensionCount = 2,
         .ppEnabledExtensionNames = device_extensions,
     };
     result = vkCreateDevice(physical_device, &device_info, NULL,
@@ -570,7 +861,7 @@ static bool create_renderer(ANativeWindow *window) {
         .imageColorSpace = surface_format.colorSpace,
         .imageExtent = extent,
         .imageArrayLayers = 1,
-        .imageUsage = VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .preTransform = capabilities.currentTransform,
         .compositeAlpha = composite_alpha,
@@ -597,6 +888,118 @@ static bool create_renderer(ANativeWindow *window) {
                                      &image_count, images);
     if (result != VK_SUCCESS) {
         BVB_LOGE("E008_FAIL swapchain_image_list=%d", (int)result);
+        return false;
+    }
+
+    const VkShaderModuleCreateInfo vertex_shader_info = {
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = sizeof(BVB_TRIANGLE_VERTEX_SPIRV),
+        .pCode = BVB_TRIANGLE_VERTEX_SPIRV,
+    };
+    result = vkCreateShaderModule(state.device, &vertex_shader_info, NULL,
+                                  &state.vertex_shader);
+    if (result != VK_SUCCESS) {
+        BVB_LOGE("E016_FAIL vertex_shader=%d", (int)result);
+        return false;
+    }
+    const VkShaderModuleCreateInfo fragment_shader_info = {
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = sizeof(BVB_TRIANGLE_FRAGMENT_SPIRV),
+        .pCode = BVB_TRIANGLE_FRAGMENT_SPIRV,
+    };
+    result = vkCreateShaderModule(state.device, &fragment_shader_info, NULL,
+                                  &state.fragment_shader);
+    if (result != VK_SUCCESS) {
+        BVB_LOGE("E016_FAIL fragment_shader=%d", (int)result);
+        return false;
+    }
+    const VkPipelineLayoutCreateInfo pipeline_layout_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+    };
+    result = vkCreatePipelineLayout(state.device, &pipeline_layout_info, NULL,
+                                    &state.pipeline_layout);
+    if (result != VK_SUCCESS) {
+        BVB_LOGE("E016_FAIL pipeline_layout=%d", (int)result);
+        return false;
+    }
+    const VkPipelineShaderStageCreateInfo shader_stages[] = {
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_VERTEX_BIT,
+            .module = state.vertex_shader,
+            .pName = "main",
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+            .module = state.fragment_shader,
+            .pName = "main",
+        },
+    };
+    const VkPipelineVertexInputStateCreateInfo vertex_input = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+    };
+    const VkPipelineInputAssemblyStateCreateInfo input_assembly = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+    };
+    const VkPipelineViewportStateCreateInfo viewport_state = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .viewportCount = 1U,
+        .scissorCount = 1U,
+    };
+    const VkPipelineRasterizationStateCreateInfo rasterization = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .polygonMode = VK_POLYGON_MODE_FILL,
+        .cullMode = VK_CULL_MODE_NONE,
+        .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+        .lineWidth = 1.0F,
+    };
+    const VkPipelineMultisampleStateCreateInfo multisample = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+    };
+    const VkPipelineColorBlendAttachmentState color_attachment = {
+        .colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                          VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT,
+    };
+    const VkPipelineColorBlendStateCreateInfo color_blend = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .attachmentCount = 1U,
+        .pAttachments = &color_attachment,
+    };
+    static const VkDynamicState dynamic_states[] = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR,
+    };
+    const VkPipelineDynamicStateCreateInfo dynamic_state = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .dynamicStateCount = 2U,
+        .pDynamicStates = dynamic_states,
+    };
+    const VkPipelineRenderingCreateInfoKHR rendering_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
+        .colorAttachmentCount = 1U,
+        .pColorAttachmentFormats = &surface_format.format,
+    };
+    const VkGraphicsPipelineCreateInfo pipeline_info = {
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext = &rendering_info,
+        .stageCount = 2U,
+        .pStages = shader_stages,
+        .pVertexInputState = &vertex_input,
+        .pInputAssemblyState = &input_assembly,
+        .pViewportState = &viewport_state,
+        .pRasterizationState = &rasterization,
+        .pMultisampleState = &multisample,
+        .pColorBlendState = &color_blend,
+        .pDynamicState = &dynamic_state,
+        .layout = state.pipeline_layout,
+    };
+    result = vkCreateGraphicsPipelines(state.device, VK_NULL_HANDLE, 1U,
+                                       &pipeline_info, NULL, &state.pipeline);
+    if (result != VK_SUCCESS) {
+        BVB_LOGE("E016_FAIL graphics_pipeline=%d", (int)result);
         return false;
     }
 
@@ -647,6 +1050,56 @@ static bool create_renderer(ANativeWindow *window) {
         BVB_LOGE("E008_FAIL acquire=%d index=%u", (int)result, image_index);
         return false;
     }
+    const VkImageViewCreateInfo image_view_info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = images[image_index],
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = surface_format.format,
+        .components = {
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+        },
+        .subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = 0U,
+            .levelCount = 1U,
+            .baseArrayLayer = 0U,
+            .layerCount = 1U,
+        },
+    };
+    result = vkCreateImageView(state.device, &image_view_info, NULL,
+                               &state.image_view);
+    if (result != VK_SUCCESS) {
+        BVB_LOGE("E016_FAIL image_view=%d", (int)result);
+        return false;
+    }
+    PFN_vkVoidFunction begin_raw =
+        vkGetDeviceProcAddr(state.device, "vkCmdBeginRenderingKHR");
+    PFN_vkVoidFunction end_raw =
+        vkGetDeviceProcAddr(state.device, "vkCmdEndRenderingKHR");
+    PFN_vkCmdBeginRenderingKHR begin_rendering = NULL;
+    PFN_vkCmdEndRenderingKHR end_rendering = NULL;
+    _Static_assert(sizeof(begin_rendering) == sizeof(begin_raw),
+                   "Vulkan function pointer size mismatch");
+    _Static_assert(sizeof(end_rendering) == sizeof(end_raw),
+                   "Vulkan function pointer size mismatch");
+    memcpy(&begin_rendering, &begin_raw, sizeof(begin_rendering));
+    memcpy(&end_rendering, &end_raw, sizeof(end_rendering));
+    if (begin_rendering == NULL || end_rendering == NULL) {
+        BVB_LOGE("E016_FAIL dynamic_rendering_entry_points");
+        return false;
+    }
+    uint8_t triangle_batch[512];
+    size_t triangle_batch_length = 0U;
+    int batch_status = build_triangle_batch(
+        triangle_batch, sizeof(triangle_batch), extent,
+        &triangle_batch_length);
+    if (batch_status != 0) {
+        BVB_LOGE("E016_FAIL batch_build=%d", batch_status);
+        return false;
+    }
     const VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
@@ -663,36 +1116,38 @@ static bool create_renderer(ANativeWindow *window) {
         .baseArrayLayer = 0,
         .layerCount = 1,
     };
-    VkImageMemoryBarrier to_clear = {
+    VkImageMemoryBarrier to_render = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
         .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .image = images[image_index],
         .subresourceRange = range,
     };
     vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL,
-                         1, &to_clear);
-    const VkClearColorValue clear_color = {
-        .float32 = {1.0F, 0.0F, 1.0F, 1.0F},
-    };
-    vkCmdClearColorImage(command_buffer, images[image_index],
-                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &clear_color, 1,
-                         &range);
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0,
+                         NULL, 0, NULL, 1, &to_render);
+    batch_status = replay_triangle_batch(
+        triangle_batch, triangle_batch_length, command_buffer,
+        state.image_view, state.pipeline, begin_rendering, end_rendering);
+    if (batch_status != 0) {
+        BVB_LOGE("E016_FAIL batch_replay=%d", batch_status);
+        return false;
+    }
     VkImageMemoryBarrier to_present = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .image = images[image_index],
         .subresourceRange = range,
     };
-    vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+    vkCmdPipelineBarrier(command_buffer,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
                          VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, NULL, 0,
                          NULL, 1, &to_present);
     result = vkEndCommandBuffer(command_buffer);
@@ -701,7 +1156,8 @@ static bool create_renderer(ANativeWindow *window) {
         return false;
     }
 
-    VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    VkPipelineStageFlags wait_stage =
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
     const VkSubmitInfo submit_info = {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .waitSemaphoreCount = 1,
@@ -736,6 +1192,7 @@ static bool create_renderer(ANativeWindow *window) {
         return false;
     }
     state.window = window;
+    BVB_LOGI("E016_PASS batch_bytes=%zu commands=6", triangle_batch_length);
     BVB_LOGI("E008_PASS width=%u height=%u images=%u index=%u format=%d",
              extent.width, extent.height, image_count, image_index,
              (int)surface_format.format);
