@@ -94,6 +94,12 @@ for an explicit post-present acknowledgement before reuse. Two consecutive
 native-resolution runs averaged 16.07 and 16.33 ms per acknowledged frame, with
 16.49/16.81 ms medians and 18.96/19.35 ms p95 latency. This is FIFO/vsync-paced
 triangle replay, not a game FPS benchmark.
+E024 turns E011's complete 742-name DXVK startup observation into a generated,
+auditable runtime policy. Of 440 names that resolved in the control trace, only
+the eight names already backed by executable triangle dispatch return non-null;
+the other 432 remain explicitly unsupported, as do the 302 names that originally
+probed null. The real Termux ARM64 glibc target validates every lookup without
+falsely advertising Vulkan functionality that the bridge cannot execute yet.
 
 ## Build and test on a normal Linux host
 

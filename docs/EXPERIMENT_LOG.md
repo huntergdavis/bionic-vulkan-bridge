@@ -1228,3 +1228,66 @@ mapping, E021's Binder/`SCM_RIGHTS` descriptor chain, and their authenticated
 metadata protocol. E024 should expand generated dispatch from the six-command
 triangle subset toward the measured DXVK startup entry-point set while keeping
 this persistent transport as the regression baseline.
+
+## E024 — Generated measured DXVK dispatch policy (2026-08-19)
+
+Status: passed on normal Linux, Termux ARM64, and the real Termux glibc target;
+the E023 visible 64-frame hardware regression also passed.
+
+Hypothesis: E011's observed DXVK startup inventory can become an exhaustive,
+generated runtime policy before the bridge implements more Vulkan semantics.
+This should make every lookup classification inspectable and testable while
+preventing the loader from receiving a callable pointer for a command the
+bridge cannot execute.
+
+Method: `scripts/generate-dxvk-dispatch-policy.py` joins the pinned E011
+742-name manifest with the generated E015 triangle dispatch table. It emits a
+C include consumed by `src/dxvk_dispatch_policy.c` and a JSON summary. Every
+entry records its Vulkan dispatch scope, whether it resolved during E011, and
+one of three support states: `executable`, `required_unimplemented`, or
+`probed_null`. The runtime resolver returns a pointer only for executable
+entries. The expanded dispatcher test queries all 742 observed names and
+asserts both the classification totals and resolver behavior. The canonical
+Termux harness builds and runs the shared object and test binary with the real
+AArch64 glibc interpreter, records dynamic exports, and emits the evidence JSON.
+
+Result: the policy contains all 742 observed names: 4 global, 101 instance,
+635 device, and 2 Wine-private lookups. E011 resolved 440 of them. Eight names
+are executable aliases for the existing six-command triangle path; the other
+432 resolved names return null because their semantics remain unimplemented.
+All 302 names that probed null in E011 also return null. The glibc executable
+queried every entry and observed exactly 8 non-null, 432 required-but-null, and
+302 probed-null results. Its stderr was empty. This is an honest capability
+boundary, not a claim that DXVK can execute through the bridge yet.
+
+All 16 normal-host tests passed. All 14 tests available on Termux ARM64 passed,
+and the standalone glibc dispatcher test passed under
+`ld-linux-aarch64.so.1`. The policy-aware E023 hardware regression then
+presented all 64 native 2,800 x 1,752 frames through four persistent slots. It
+measured 1.543 ms minimum, 16.654 ms p50, 19.539 ms p95, 16.239 ms mean, and
+29.887 ms maximum execute-to-ack latency over 1.039 s. That matches the earlier
+vsync-paced E023 range and detects no transport regression from policy lookup.
+
+Evidence and artifact identities:
+
+- canonical evidence: `docs/evidence/e024-dxvk-dispatch-policy.json`, 3,023
+  bytes, SHA-256
+  `ff17d8c2991c2de57f74326c9532f62fd2b75a8f90d887db5e6a941d34456045`;
+- generated policy include: 117,745 bytes, SHA-256
+  `fba18fa35304927d05491fe3bd3210bb53c6b6224509ea20fecc599f7813498a`;
+- generated policy summary: 1,018 bytes, SHA-256
+  `323624b49a5b34170caea626ba5f27c37eef18ec9ac18e6e7b695ad11b579bad`;
+- glibc shared library: 139,936 bytes, SHA-256
+  `217c617db2c1ba9a3b72868a941aaeba1f36481ce952af41fa3d8d38e7214aeb`;
+- glibc test executable: 74,912 bytes, SHA-256
+  `e38783e696559eba994075cc9a9aee71fb826bef87232415b7231699cef19406`.
+
+The required recall query—`DXVK startup measured Vulkan entry points generated
+dispatch E011 E015 next subset E024`—found no indexed E024 implementation. This
+gate reused E011's measured inventory, E015's executable dispatch, and E023's
+persistent visible transport as its regression control. E025 should implement
+the four observed global bootstrap calls (`vkCreateInstance`,
+`vkEnumerateInstanceExtensionProperties`,
+`vkEnumerateInstanceLayerProperties`, and `vkEnumerateInstanceVersion`) against
+the Bionic control path, introduce proxy instance ownership, and expose only
+extensions the bridge can actually support.

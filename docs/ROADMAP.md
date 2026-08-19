@@ -59,6 +59,8 @@
   and compare complete latency with the inline control
 - [x] Replace the one-shot shared region with a reusable frame ring and explicit
   producer/consumer synchronization, then measure steady-state replay
+- [x] Generate an auditable runtime support policy for every measured DXVK
+  startup lookup without advertising unimplemented commands
 - [ ] Expand generated dispatch to the measured DXVK startup subset
 - [ ] Implement GPU external-memory and synchronization strategy
 - [x] Reach a rendered test triangle

@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "gate": "E024",
+  "result": "pass",
+  "target": "Termux ARM64 glibc",
+  "interpreter": "/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1",
+  "policy": {
+    "schema_version": 1,
+    "gate": "E024",
+    "source": {
+      "vk_xml_sha256": "80e7394d0e787d6ec78b67aa324add6f96129fdd042ba640cc336a5481a208ee",
+      "e011_manifest_sha256": "6a78ddd1f1b34773e4123d3612233fab2270ed0ff418d01204ad41af1cab8afc",
+      "triangle_dispatch_sha256": "c3e4aac0e16abdb218d34adb7cc83c23118b2be0e0047e9e5668d30a16185839",
+      "generated_policy_sha256": "fba18fa35304927d05491fe3bd3210bb53c6b6224509ea20fecc599f7813498a"
+    },
+    "summary": {
+      "command_count": 742,
+      "resolved_name_count": 440,
+      "executable_name_count": 8,
+      "support_counts": {
+        "probed_null": 302,
+        "required_unimplemented": 432,
+        "executable": 8
+      },
+      "dispatch_scope_counts": {
+        "global": 4,
+        "instance": 101,
+        "device": 635,
+        "private": 2
+      }
+    },
+    "executable_names": [
+      "vkCmdBeginRendering",
+      "vkCmdBeginRenderingKHR",
+      "vkCmdBindPipeline",
+      "vkCmdDraw",
+      "vkCmdEndRendering",
+      "vkCmdEndRenderingKHR",
+      "vkCmdSetScissor",
+      "vkCmdSetViewport"
+    ]
+  },
+  "runtime_validation": {
+    "queried_entry_count": 742,
+    "resolver_non_null_count": 8,
+    "resolver_null_required_count": 432,
+    "resolver_null_probed_count": 302,
+    "dynamic_exports": [
+      "bvb_dxvk_dispatch_policy_at",
+      "bvb_dxvk_dispatch_policy_count",
+      "bvb_dxvk_dispatch_policy_lookup",
+      "bvb_triangle_command_buffer_create",
+      "bvb_triangle_command_buffer_destroy",
+      "bvb_triangle_command_buffer_finish",
+      "bvb_triangle_command_buffer_status",
+      "vkGetDeviceProcAddr"
+    ],
+    "test_stdout": "PASS: generated executable triangle dispatch",
+    "test_stderr_bytes": 0
+  },
+  "artifacts": {
+    "generated_policy": {
+      "path": "/data/data/com.termux/files/home/bionic-vulkan-bridge-e023/out/triangle-dispatch-glibc/generated/bvb_dxvk_dispatch_policy.inc",
+      "bytes": 117745,
+      "sha256": "fba18fa35304927d05491fe3bd3210bb53c6b6224509ea20fecc599f7813498a"
+    },
+    "policy_summary": {
+      "path": "/data/data/com.termux/files/home/bionic-vulkan-bridge-e023/out/triangle-dispatch-glibc/generated/bvb_dxvk_dispatch_policy.json",
+      "bytes": 1018,
+      "sha256": "323624b49a5b34170caea626ba5f27c37eef18ec9ac18e6e7b695ad11b579bad"
+    },
+    "glibc_library": {
+      "path": "/data/data/com.termux/files/home/bionic-vulkan-bridge-e023/out/triangle-dispatch-glibc/libvulkan-bvb-glibc.so",
+      "bytes": 139936,
+      "sha256": "217c617db2c1ba9a3b72868a941aaeba1f36481ce952af41fa3d8d38e7214aeb"
+    },
+    "glibc_test": {
+      "path": "/data/data/com.termux/files/home/bionic-vulkan-bridge-e023/out/triangle-dispatch-glibc/bvb-triangle-dispatch-test-glibc",
+      "bytes": 74912,
+      "sha256": "e38783e696559eba994075cc9a9aee71fb826bef87232415b7231699cef19406"
+    }
+  }
+}
