@@ -556,6 +556,15 @@ static VkResult VKAPI_CALL fake_allocate_command_buffers(
     return VK_SUCCESS;
 }
 
+static void VKAPI_CALL fake_free_command_buffers(
+    VkDevice device, VkCommandPool command_pool,
+    uint32_t command_buffer_count, const VkCommandBuffer *command_buffers) {
+    (void)device;
+    (void)command_pool;
+    (void)command_buffer_count;
+    (void)command_buffers;
+}
+
 static VkResult VKAPI_CALL fake_begin_command_buffer(
     VkCommandBuffer command_buffer,
     const VkCommandBufferBeginInfo *begin_info) {
@@ -792,6 +801,7 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkDestroyCommandPool", fake_destroy_command_pool)
     BVB_DEVICE_MATCH("vkResetCommandPool", fake_reset_command_pool)
     BVB_DEVICE_MATCH("vkAllocateCommandBuffers", fake_allocate_command_buffers)
+    BVB_DEVICE_MATCH("vkFreeCommandBuffers", fake_free_command_buffers)
     BVB_DEVICE_MATCH("vkBeginCommandBuffer", fake_begin_command_buffer)
     BVB_DEVICE_MATCH("vkEndCommandBuffer", fake_end_command_buffer)
     BVB_DEVICE_MATCH("vkCmdFillBuffer", fake_cmd_fill_buffer)

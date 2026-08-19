@@ -265,6 +265,13 @@ int main(void) {
     PFN_vkQueueSubmit queue_submit = NULL;
     PFN_vkQueueWaitIdle queue_wait_idle = NULL;
     PFN_vkDeviceWaitIdle device_wait_idle = NULL;
+    PFN_vkCreateCommandPool create_command_pool = NULL;
+    PFN_vkDestroyCommandPool destroy_command_pool = NULL;
+    PFN_vkResetCommandPool reset_command_pool = NULL;
+    PFN_vkAllocateCommandBuffers allocate_command_buffers = NULL;
+    PFN_vkFreeCommandBuffers free_command_buffers = NULL;
+    PFN_vkBeginCommandBuffer begin_command_buffer = NULL;
+    PFN_vkEndCommandBuffer end_command_buffer = NULL;
     erased = vkGetDeviceProcAddr(device, "vkGetDeviceQueue");
     CHECK(erased != NULL);
     memcpy(&get_device_queue, &erased, sizeof(get_device_queue));
@@ -280,6 +287,28 @@ int main(void) {
     erased = vkGetDeviceProcAddr(device, "vkDeviceWaitIdle");
     CHECK(erased != NULL);
     memcpy(&device_wait_idle, &erased, sizeof(device_wait_idle));
+    erased = vkGetDeviceProcAddr(device, "vkCreateCommandPool");
+    CHECK(erased != NULL);
+    memcpy(&create_command_pool, &erased, sizeof(create_command_pool));
+    erased = vkGetDeviceProcAddr(device, "vkDestroyCommandPool");
+    CHECK(erased != NULL);
+    memcpy(&destroy_command_pool, &erased, sizeof(destroy_command_pool));
+    erased = vkGetDeviceProcAddr(device, "vkResetCommandPool");
+    CHECK(erased != NULL);
+    memcpy(&reset_command_pool, &erased, sizeof(reset_command_pool));
+    erased = vkGetDeviceProcAddr(device, "vkAllocateCommandBuffers");
+    CHECK(erased != NULL);
+    memcpy(&allocate_command_buffers, &erased,
+           sizeof(allocate_command_buffers));
+    erased = vkGetDeviceProcAddr(device, "vkFreeCommandBuffers");
+    CHECK(erased != NULL);
+    memcpy(&free_command_buffers, &erased, sizeof(free_command_buffers));
+    erased = vkGetDeviceProcAddr(device, "vkBeginCommandBuffer");
+    CHECK(erased != NULL);
+    memcpy(&begin_command_buffer, &erased, sizeof(begin_command_buffer));
+    erased = vkGetDeviceProcAddr(device, "vkEndCommandBuffer");
+    CHECK(erased != NULL);
+    memcpy(&end_command_buffer, &erased, sizeof(end_command_buffer));
     CHECK(vkGetDeviceProcAddr(device, "vkCmdDraw") != NULL);
     VkQueue queue = VK_NULL_HANDLE;
     get_device_queue(device, queue_family_index, 0U, &queue);
@@ -298,6 +327,51 @@ int main(void) {
           VK_ERROR_FEATURE_NOT_PRESENT);
     CHECK(queue_wait_idle(queue) == VK_SUCCESS);
     CHECK(device_wait_idle(device) == VK_SUCCESS);
+
+    const VkCommandPoolCreateInfo pool_create_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+        .queueFamilyIndex = queue_family_index,
+    };
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    CHECK(create_command_pool(
+              device, &pool_create_info, NULL, &command_pool) == VK_SUCCESS);
+    CHECK(command_pool != VK_NULL_HANDLE);
+    const uint64_t command_pool_id =
+        bvb_command_pool_proxy_id(command_pool);
+    CHECK(bvb_handle_type(command_pool_id) == BVB_OBJECT_COMMAND_POOL);
+    CHECK(bvb_handle_serial(command_pool_id) == 1U);
+    const VkCommandBufferAllocateInfo allocate_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = command_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1U,
+    };
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    CHECK(allocate_command_buffers(
+              device, &allocate_info, &command_buffer) == VK_SUCCESS);
+    CHECK(command_buffer != VK_NULL_HANDLE);
+    const uint64_t command_buffer_id =
+        bvb_command_buffer_proxy_id(command_buffer);
+    CHECK(bvb_handle_type(command_buffer_id) == BVB_OBJECT_COMMAND_BUFFER);
+    CHECK(bvb_handle_serial(command_buffer_id) == 1U);
+    const VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    CHECK(begin_command_buffer(command_buffer, &begin_info) == VK_SUCCESS);
+    CHECK(end_command_buffer(command_buffer) == VK_SUCCESS);
+    const VkSubmitInfo command_submit = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1U,
+        .pCommandBuffers = &command_buffer,
+    };
+    CHECK(queue_submit(queue, 1U, &command_submit, VK_NULL_HANDLE) ==
+          VK_SUCCESS);
+    CHECK(queue_wait_idle(queue) == VK_SUCCESS);
+    CHECK(reset_command_pool(device, command_pool, 0U) == VK_SUCCESS);
+    free_command_buffers(device, command_pool, 1U, &command_buffer);
+    destroy_command_pool(device, command_pool, NULL);
     destroy_device(device, NULL);
 
     VkInstance instance_two = VK_NULL_HANDLE;
@@ -322,7 +396,9 @@ int main(void) {
            "device=%s device_api=%u driver=%u vendor=%u device_id=%u "
            "queues=%u memory_types=%u memory_heaps=%u device_extensions=%u "
            "sampler_anisotropy=%u logical_device=%llu queue=%llu "
-           "empty_submit=0 queue_wait=0 device_wait=0\n",
+           "empty_submit=0 queue_wait=0 device_wait=0 "
+           "command_pool=%llu command_buffer=%llu command_submit=0 "
+           "pool_reset=0\n",
            api_version, (unsigned long long)instance_one_id,
            (unsigned long long)instance_two_id,
            (unsigned long long)physical_id, properties.deviceName,
@@ -332,6 +408,8 @@ int main(void) {
            memory.memoryHeapCount, available_device_extension_count,
            features.samplerAnisotropy,
            (unsigned long long)device_id,
-           (unsigned long long)queue_id);
+           (unsigned long long)queue_id,
+           (unsigned long long)command_pool_id,
+           (unsigned long long)command_buffer_id);
     return 0;
 }

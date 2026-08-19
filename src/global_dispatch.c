@@ -22,6 +22,8 @@ static const uint64_t BVB_DEVICE_PROXY_MAGIC =
     UINT64_C(0x4256424445563030);
 static const uint64_t BVB_QUEUE_PROXY_MAGIC =
     UINT64_C(0x4256425155453030);
+static const uint64_t BVB_COMMAND_BUFFER_PROXY_MAGIC =
+    UINT64_C(0x425642434d443030);
 
 struct bvb_instance_proxy {
     const void *dispatch;
@@ -54,6 +56,21 @@ struct bvb_queue_proxy {
     struct bvb_queue_proxy *next;
 };
 
+struct bvb_command_pool_proxy {
+    uint64_t wire_id;
+    uint64_t parent_id;
+    struct bvb_command_pool_proxy *next;
+};
+
+struct bvb_command_buffer_proxy {
+    const void *dispatch;
+    uint64_t magic;
+    uint64_t wire_id;
+    uint64_t parent_pool_id;
+    uint64_t device_id;
+    struct bvb_command_buffer_proxy *next;
+};
+
 struct bvb_global_client_state {
     pthread_mutex_t mutex;
     int socket_fd;
@@ -63,6 +80,8 @@ struct bvb_global_client_state {
     struct bvb_physical_device_proxy *physical_devices;
     struct bvb_device_proxy *devices;
     struct bvb_queue_proxy *queues;
+    struct bvb_command_pool_proxy *command_pools;
+    struct bvb_command_buffer_proxy *command_buffers;
 };
 
 static const uint64_t bvb_dispatch_anchor = UINT64_C(0x4256424449535030);
@@ -284,6 +303,64 @@ BVB_GLOBAL_EXPORT uint64_t bvb_queue_proxy_id(VkQueue queue) {
     return proxy == NULL ? 0U : proxy->wire_id;
 }
 
+static uint64_t command_pool_wire_id(VkCommandPool command_pool) {
+    uint64_t wire_id = 0U;
+    _Static_assert(sizeof(command_pool) <= sizeof(wire_id),
+                   "VkCommandPool exceeds bridge handle width");
+    memcpy(&wire_id, &command_pool, sizeof(command_pool));
+    return wire_id;
+}
+
+static struct bvb_command_pool_proxy *command_pool_proxy_locked(
+    VkCommandPool command_pool) {
+    const uint64_t wire_id = command_pool_wire_id(command_pool);
+    if (bvb_handle_expect(wire_id, BVB_OBJECT_COMMAND_POOL) != 0) {
+        return NULL;
+    }
+    for (struct bvb_command_pool_proxy *proxy =
+             bvb_global_client.command_pools;
+         proxy != NULL; proxy = proxy->next) {
+        if (proxy->wire_id == wire_id) {
+            return proxy;
+        }
+    }
+    return NULL;
+}
+
+BVB_GLOBAL_EXPORT uint64_t bvb_command_pool_proxy_id(
+    VkCommandPool command_pool) {
+    uint64_t result = 0U;
+    if (pthread_mutex_lock(&bvb_global_client.mutex) == 0) {
+        struct bvb_command_pool_proxy *proxy =
+            command_pool_proxy_locked(command_pool);
+        result = proxy == NULL ? 0U : proxy->wire_id;
+        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    }
+    return result;
+}
+
+static struct bvb_command_buffer_proxy *command_buffer_proxy(
+    VkCommandBuffer command_buffer) {
+    struct bvb_command_buffer_proxy *proxy =
+        (struct bvb_command_buffer_proxy *)command_buffer;
+    if (proxy == NULL || proxy->dispatch != &bvb_dispatch_anchor ||
+        proxy->magic != BVB_COMMAND_BUFFER_PROXY_MAGIC ||
+        bvb_handle_expect(proxy->wire_id, BVB_OBJECT_COMMAND_BUFFER) != 0 ||
+        bvb_handle_expect(proxy->parent_pool_id,
+                          BVB_OBJECT_COMMAND_POOL) != 0 ||
+        bvb_handle_expect(proxy->device_id, BVB_OBJECT_DEVICE) != 0) {
+        return NULL;
+    }
+    return proxy;
+}
+
+BVB_GLOBAL_EXPORT uint64_t bvb_command_buffer_proxy_id(
+    VkCommandBuffer command_buffer) {
+    struct bvb_command_buffer_proxy *proxy =
+        command_buffer_proxy(command_buffer);
+    return proxy == NULL ? 0U : proxy->wire_id;
+}
+
 static struct bvb_queue_proxy *queue_proxy_locked(
     uint64_t wire_id, uint64_t parent_id) {
     for (struct bvb_queue_proxy *proxy = bvb_global_client.queues;
@@ -319,12 +396,75 @@ static void remove_queue_proxies_locked(uint64_t parent_id) {
     }
 }
 
+static void remove_command_buffer_proxy_locked(
+    struct bvb_command_buffer_proxy *target) {
+    struct bvb_command_buffer_proxy **cursor =
+        &bvb_global_client.command_buffers;
+    while (*cursor != NULL) {
+        struct bvb_command_buffer_proxy *proxy = *cursor;
+        if (proxy == target) {
+            *cursor = proxy->next;
+            proxy->magic = 0U;
+            free(proxy);
+            return;
+        }
+        cursor = &proxy->next;
+    }
+}
+
+static void remove_command_buffers_for_pool_locked(uint64_t parent_pool_id) {
+    struct bvb_command_buffer_proxy **cursor =
+        &bvb_global_client.command_buffers;
+    while (*cursor != NULL) {
+        struct bvb_command_buffer_proxy *proxy = *cursor;
+        if (proxy->parent_pool_id == parent_pool_id) {
+            *cursor = proxy->next;
+            proxy->magic = 0U;
+            free(proxy);
+        } else {
+            cursor = &proxy->next;
+        }
+    }
+}
+
+static void remove_command_pool_proxy_locked(
+    struct bvb_command_pool_proxy *target) {
+    struct bvb_command_pool_proxy **cursor =
+        &bvb_global_client.command_pools;
+    while (*cursor != NULL) {
+        struct bvb_command_pool_proxy *proxy = *cursor;
+        if (proxy == target) {
+            *cursor = proxy->next;
+            remove_command_buffers_for_pool_locked(proxy->wire_id);
+            free(proxy);
+            return;
+        }
+        cursor = &proxy->next;
+    }
+}
+
+static void remove_command_pools_for_device_locked(uint64_t parent_id) {
+    struct bvb_command_pool_proxy **cursor =
+        &bvb_global_client.command_pools;
+    while (*cursor != NULL) {
+        struct bvb_command_pool_proxy *proxy = *cursor;
+        if (proxy->parent_id == parent_id) {
+            *cursor = proxy->next;
+            remove_command_buffers_for_pool_locked(proxy->wire_id);
+            free(proxy);
+        } else {
+            cursor = &proxy->next;
+        }
+    }
+}
+
 static void remove_device_proxy_locked(struct bvb_device_proxy *target) {
     struct bvb_device_proxy **cursor = &bvb_global_client.devices;
     while (*cursor != NULL) {
         struct bvb_device_proxy *proxy = *cursor;
         if (proxy == target) {
             *cursor = proxy->next;
+            remove_command_pools_for_device_locked(proxy->wire_id);
             remove_queue_proxies_locked(proxy->wire_id);
             proxy->magic = 0U;
             free(proxy);
@@ -340,6 +480,7 @@ static void remove_device_proxies_for_instance_locked(uint64_t instance_id) {
         struct bvb_device_proxy *proxy = *cursor;
         if (proxy->instance_id == instance_id) {
             *cursor = proxy->next;
+            remove_command_pools_for_device_locked(proxy->wire_id);
             remove_queue_proxies_locked(proxy->wire_id);
             proxy->magic = 0U;
             free(proxy);
@@ -1058,6 +1199,374 @@ static void VKAPI_CALL bvb_bridge_vkGetDeviceQueue(
     }
 }
 
+static VkResult result_request_locked(
+    uint16_t opcode, const uint8_t *payload, uint32_t payload_length) {
+    int result = connect_locked();
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = opcode,
+        .request_id = next_request_id_locked(),
+        .payload_length = payload_length,
+    };
+    if (result == 0 && payload_length != 0U) {
+        if (payload == NULL || payload_length > sizeof(request.payload)) {
+            result = -EINVAL;
+        } else {
+            memcpy(request.payload, payload, payload_length);
+        }
+    }
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        result = exchange_locked(&request, &response);
+    }
+    if (result == 0 &&
+        (response.header.status != 0 ||
+         response.header.payload_length != BVB_VULKAN_RESULT_SIZE)) {
+        result = -EPROTO;
+    }
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    if (result == 0) {
+        result = bvb_protocol_decode_vulkan_result(
+            response.payload, &vulkan_result);
+    }
+    return result == 0 ? (VkResult)vulkan_result
+                       : VK_ERROR_INITIALIZATION_FAILED;
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkCreateCommandPool(
+    VkDevice device, const VkCommandPoolCreateInfo *create_info,
+    const VkAllocationCallbacks *allocator, VkCommandPool *command_pool) {
+    if (command_pool != NULL) {
+        *command_pool = VK_NULL_HANDLE;
+    }
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    const VkCommandPoolCreateFlags supported_flags =
+        VK_COMMAND_POOL_CREATE_TRANSIENT_BIT |
+        VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    if (device_state == NULL || create_info == NULL || command_pool == NULL ||
+        allocator != NULL ||
+        create_info->sType != VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO ||
+        create_info->pNext != NULL ||
+        (create_info->flags & ~supported_flags) != 0U) {
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    struct bvb_command_pool_proxy *pool_state =
+        calloc(1, sizeof(*pool_state));
+    if (pool_state == NULL) {
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
+    }
+    const struct bvb_vulkan_command_pool_create_request create_request = {
+        .device_id = device_state->wire_id,
+        .flags = create_info->flags,
+        .queue_family_index = create_info->queueFamilyIndex,
+    };
+    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        free(pool_state);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    int result = connect_locked();
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_COMMAND_POOL_CREATE,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_COMMAND_POOL_CREATE_REQUEST_SIZE,
+    };
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_command_pool_create_request(
+            request.payload, &create_request);
+    }
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        result = exchange_locked(&request, &response);
+    }
+    if (result == 0 &&
+        (response.header.status != 0 ||
+         response.header.payload_length !=
+             BVB_VULKAN_COMMAND_POOL_CREATE_RESPONSE_SIZE)) {
+        result = -EPROTO;
+    }
+    struct bvb_vulkan_command_pool_create_response decoded = {0};
+    if (result == 0) {
+        result = bvb_protocol_decode_vulkan_command_pool_create_response(
+            response.payload, &decoded);
+    }
+    if (result == 0 && decoded.vulkan_result == VK_SUCCESS) {
+        pool_state->wire_id = decoded.command_pool_id;
+        pool_state->parent_id = device_state->wire_id;
+        pool_state->next = bvb_global_client.command_pools;
+        bvb_global_client.command_pools = pool_state;
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result != 0) {
+        free(pool_state);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (decoded.vulkan_result != VK_SUCCESS) {
+        free(pool_state);
+        return (VkResult)decoded.vulkan_result;
+    }
+    memcpy(command_pool, &decoded.command_pool_id, sizeof(*command_pool));
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL bvb_bridge_vkDestroyCommandPool(
+    VkDevice device, VkCommandPool command_pool,
+    const VkAllocationCallbacks *allocator) {
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || allocator != NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return;
+    }
+    struct bvb_command_pool_proxy *pool_state =
+        command_pool_proxy_locked(command_pool);
+    int result = pool_state != NULL &&
+                         pool_state->parent_id == device_state->wire_id
+                     ? connect_locked()
+                     : -EINVAL;
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_COMMAND_POOL_DESTROY,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_COMMAND_POOL_ID_SIZE,
+    };
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_command_pool_id(
+            request.payload, pool_state->wire_id);
+    }
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        result = exchange_locked(&request, &response);
+    }
+    if (result == 0 &&
+        (response.header.status != 0 || response.header.payload_length != 0U)) {
+        result = -EPROTO;
+    }
+    if (result == 0) {
+        remove_command_pool_proxy_locked(pool_state);
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkResetCommandPool(
+    VkDevice device, VkCommandPool command_pool,
+    VkCommandPoolResetFlags flags) {
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if ((flags & ~VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT) != 0U ||
+        device_state == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    struct bvb_command_pool_proxy *pool_state =
+        command_pool_proxy_locked(command_pool);
+    VkResult vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    if (pool_state != NULL && pool_state->parent_id == device_state->wire_id) {
+        const struct bvb_vulkan_command_pool_reset_request reset_request = {
+            .command_pool_id = pool_state->wire_id,
+            .flags = flags,
+        };
+        uint8_t payload[BVB_VULKAN_COMMAND_POOL_RESET_REQUEST_SIZE];
+        int result = bvb_protocol_encode_vulkan_command_pool_reset_request(
+            payload, &reset_request);
+        if (result == 0) {
+            vulkan_result = result_request_locked(
+                BVB_OPCODE_VULKAN_COMMAND_POOL_RESET, payload,
+                sizeof(payload));
+        }
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return vulkan_result;
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkAllocateCommandBuffers(
+    VkDevice device, const VkCommandBufferAllocateInfo *allocate_info,
+    VkCommandBuffer *command_buffers) {
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || allocate_info == NULL ||
+        command_buffers == NULL ||
+        allocate_info->sType !=
+            VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO ||
+        allocate_info->pNext != NULL ||
+        allocate_info->level != VK_COMMAND_BUFFER_LEVEL_PRIMARY ||
+        allocate_info->commandBufferCount != 1U) {
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    command_buffers[0] = VK_NULL_HANDLE;
+    struct bvb_command_buffer_proxy *command_state =
+        calloc(1, sizeof(*command_state));
+    if (command_state == NULL) {
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
+    }
+    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        free(command_state);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    struct bvb_command_pool_proxy *pool_state =
+        command_pool_proxy_locked(allocate_info->commandPool);
+    int result = pool_state != NULL &&
+                         pool_state->parent_id == device_state->wire_id
+                     ? connect_locked()
+                     : -EINVAL;
+    const struct bvb_vulkan_command_buffer_allocate_request allocate_request = {
+        .command_pool_id = pool_state == NULL ? 0U : pool_state->wire_id,
+        .level = allocate_info->level,
+        .count = allocate_info->commandBufferCount,
+    };
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_COMMAND_BUFFER_ALLOCATE,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_COMMAND_BUFFER_ALLOCATE_REQUEST_SIZE,
+    };
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_command_buffer_allocate_request(
+            request.payload, &allocate_request);
+    }
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        result = exchange_locked(&request, &response);
+    }
+    if (result == 0 &&
+        (response.header.status != 0 ||
+         response.header.payload_length !=
+             BVB_VULKAN_COMMAND_BUFFER_ALLOCATE_RESPONSE_SIZE)) {
+        result = -EPROTO;
+    }
+    struct bvb_vulkan_command_buffer_allocate_response decoded = {0};
+    if (result == 0) {
+        result = bvb_protocol_decode_vulkan_command_buffer_allocate_response(
+            response.payload, &decoded);
+    }
+    if (result == 0 && decoded.vulkan_result == VK_SUCCESS) {
+        command_state->dispatch = &bvb_dispatch_anchor;
+        command_state->magic = BVB_COMMAND_BUFFER_PROXY_MAGIC;
+        command_state->wire_id = decoded.command_buffer_id;
+        command_state->parent_pool_id = pool_state->wire_id;
+        command_state->device_id = device_state->wire_id;
+        command_state->next = bvb_global_client.command_buffers;
+        bvb_global_client.command_buffers = command_state;
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result != 0) {
+        free(command_state);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (decoded.vulkan_result != VK_SUCCESS) {
+        free(command_state);
+        return (VkResult)decoded.vulkan_result;
+    }
+    *command_buffers = (VkCommandBuffer)command_state;
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL bvb_bridge_vkFreeCommandBuffers(
+    VkDevice device, VkCommandPool command_pool,
+    uint32_t command_buffer_count, const VkCommandBuffer *command_buffers) {
+    if (command_buffer_count == 0U) {
+        return;
+    }
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || command_buffer_count != 1U ||
+        command_buffers == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return;
+    }
+    struct bvb_command_pool_proxy *pool_state =
+        command_pool_proxy_locked(command_pool);
+    struct bvb_command_buffer_proxy *command_state =
+        command_buffer_proxy(command_buffers[0]);
+    int result = pool_state != NULL && command_state != NULL &&
+                         pool_state->parent_id == device_state->wire_id &&
+                         command_state->parent_pool_id == pool_state->wire_id
+                     ? connect_locked()
+                     : -EINVAL;
+    const struct bvb_vulkan_command_buffer_free_request free_request = {
+        .command_pool_id = pool_state == NULL ? 0U : pool_state->wire_id,
+        .command_buffer_id =
+            command_state == NULL ? 0U : command_state->wire_id,
+    };
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_COMMAND_BUFFER_FREE,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_COMMAND_BUFFER_FREE_REQUEST_SIZE,
+    };
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_command_buffer_free_request(
+            request.payload, &free_request);
+    }
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        result = exchange_locked(&request, &response);
+    }
+    if (result == 0 &&
+        (response.header.status != 0 || response.header.payload_length != 0U)) {
+        result = -EPROTO;
+    }
+    if (result == 0) {
+        remove_command_buffer_proxy_locked(command_state);
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkBeginCommandBuffer(
+    VkCommandBuffer command_buffer,
+    const VkCommandBufferBeginInfo *begin_info) {
+    struct bvb_command_buffer_proxy *command_state =
+        command_buffer_proxy(command_buffer);
+    if (command_state == NULL || begin_info == NULL ||
+        begin_info->sType != VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO ||
+        begin_info->pNext != NULL || begin_info->pInheritanceInfo != NULL ||
+        (begin_info->flags & ~VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT) !=
+            0U ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    const struct bvb_vulkan_command_buffer_begin_request begin_request = {
+        .command_buffer_id = command_state->wire_id,
+        .flags = begin_info->flags,
+    };
+    uint8_t payload[BVB_VULKAN_COMMAND_BUFFER_BEGIN_REQUEST_SIZE];
+    int result = bvb_protocol_encode_vulkan_command_buffer_begin_request(
+        payload, &begin_request);
+    VkResult vulkan_result = result == 0
+                                 ? result_request_locked(
+                                       BVB_OPCODE_VULKAN_COMMAND_BUFFER_BEGIN,
+                                       payload, sizeof(payload))
+                                 : VK_ERROR_INITIALIZATION_FAILED;
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return vulkan_result;
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkEndCommandBuffer(
+    VkCommandBuffer command_buffer) {
+    struct bvb_command_buffer_proxy *command_state =
+        command_buffer_proxy(command_buffer);
+    if (command_state == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    uint8_t payload[BVB_VULKAN_COMMAND_BUFFER_ID_SIZE];
+    int result = bvb_protocol_encode_vulkan_command_buffer_id(
+        payload, command_state->wire_id);
+    VkResult vulkan_result = result == 0
+                                 ? result_request_locked(
+                                       BVB_OPCODE_VULKAN_COMMAND_BUFFER_END,
+                                       payload, sizeof(payload))
+                                 : VK_ERROR_INITIALIZATION_FAILED;
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return vulkan_result;
+}
+
 static VkResult queue_result_operation(
     uint16_t opcode, VkQueue queue) {
     struct bvb_queue_proxy *proxy = queue_proxy(queue);
@@ -1100,12 +1609,43 @@ static VkResult queue_result_operation(
 static VkResult VKAPI_CALL bvb_bridge_vkQueueSubmit(
     VkQueue queue, uint32_t submit_count, const VkSubmitInfo *submits,
     VkFence fence) {
-    (void)submits;
-    if (submit_count != 0U || fence != VK_NULL_HANDLE) {
+    struct bvb_queue_proxy *queue_state = queue_proxy(queue);
+    if (queue_state == NULL || fence != VK_NULL_HANDLE) {
         return VK_ERROR_FEATURE_NOT_PRESENT;
     }
-    return queue_result_operation(
-        BVB_OPCODE_VULKAN_QUEUE_SUBMIT_EMPTY, queue);
+    if (submit_count == 0U) {
+        return queue_result_operation(
+            BVB_OPCODE_VULKAN_QUEUE_SUBMIT_EMPTY, queue);
+    }
+    if (submit_count != 1U || submits == NULL ||
+        submits[0].sType != VK_STRUCTURE_TYPE_SUBMIT_INFO ||
+        submits[0].pNext != NULL || submits[0].waitSemaphoreCount != 0U ||
+        submits[0].commandBufferCount != 1U ||
+        submits[0].pCommandBuffers == NULL ||
+        submits[0].signalSemaphoreCount != 0U) {
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    struct bvb_command_buffer_proxy *command_state =
+        command_buffer_proxy(submits[0].pCommandBuffers[0]);
+    if (command_state == NULL ||
+        command_state->device_id != queue_state->parent_id ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    const struct bvb_vulkan_queue_submit_command_request submit_request = {
+        .queue_id = queue_state->wire_id,
+        .command_buffer_id = command_state->wire_id,
+    };
+    uint8_t payload[BVB_VULKAN_QUEUE_SUBMIT_COMMAND_REQUEST_SIZE];
+    int result = bvb_protocol_encode_vulkan_queue_submit_command_request(
+        payload, &submit_request);
+    VkResult vulkan_result = result == 0
+                                 ? result_request_locked(
+                                       BVB_OPCODE_VULKAN_QUEUE_SUBMIT_COMMAND,
+                                       payload, sizeof(payload))
+                                 : VK_ERROR_INITIALIZATION_FAILED;
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return vulkan_result;
 }
 
 static VkResult VKAPI_CALL bvb_bridge_vkQueueWaitIdle(VkQueue queue) {
@@ -1165,6 +1705,14 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     BVB_DEVICE_MATCH("vkQueueSubmit", bvb_bridge_vkQueueSubmit)
     BVB_DEVICE_MATCH("vkQueueWaitIdle", bvb_bridge_vkQueueWaitIdle)
     BVB_DEVICE_MATCH("vkDeviceWaitIdle", bvb_bridge_vkDeviceWaitIdle)
+    BVB_DEVICE_MATCH("vkCreateCommandPool", bvb_bridge_vkCreateCommandPool)
+    BVB_DEVICE_MATCH("vkDestroyCommandPool", bvb_bridge_vkDestroyCommandPool)
+    BVB_DEVICE_MATCH("vkResetCommandPool", bvb_bridge_vkResetCommandPool)
+    BVB_DEVICE_MATCH("vkAllocateCommandBuffers",
+                     bvb_bridge_vkAllocateCommandBuffers)
+    BVB_DEVICE_MATCH("vkFreeCommandBuffers", bvb_bridge_vkFreeCommandBuffers)
+    BVB_DEVICE_MATCH("vkBeginCommandBuffer", bvb_bridge_vkBeginCommandBuffer)
+    BVB_DEVICE_MATCH("vkEndCommandBuffer", bvb_bridge_vkEndCommandBuffer)
 #undef BVB_DEVICE_MATCH
     return NULL;
 }

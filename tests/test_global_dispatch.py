@@ -16,7 +16,7 @@ def main() -> int:
     service, client, loader = map(
         lambda value: str(pathlib.Path(value).resolve()), sys.argv[1:]
     )
-    with tempfile.TemporaryDirectory(prefix="bvb-e025-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="bvb-e030-") as temporary:
         socket_path = pathlib.Path(temporary) / "runtime" / "bridge.sock"
         server = subprocess.Popen(
             [
@@ -63,6 +63,9 @@ def main() -> int:
             assert f"logical_device={0x0300000000000001}" in completed.stdout
             assert f"queue={0x0400000000000001}" in completed.stdout
             assert "empty_submit=0 queue_wait=0 device_wait=0" in completed.stdout
+            assert f"command_pool={0x0A00000000000001}" in completed.stdout
+            assert f"command_buffer={0x0B00000000000001}" in completed.stdout
+            assert "command_submit=0 pool_reset=0" in completed.stdout
             server_stdout, server_stderr = server.communicate(timeout=5.0)
             assert server.returncode == 0, server_stderr
             assert server_stdout == ""
@@ -72,7 +75,7 @@ def main() -> int:
             if server.poll() is None:
                 server.terminate()
                 server.wait(timeout=5.0)
-    print("PASS: E029 empty-submit and idle integration")
+    print("PASS: E030 command-buffer submit integration")
     return 0
 
 

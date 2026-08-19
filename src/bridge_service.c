@@ -941,6 +941,267 @@ static int answer_vulkan_device_wait_idle(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_command_pool_create(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_COMMAND_POOL_CREATE_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_command_pool_create_request decoded;
+    int result = bvb_protocol_decode_vulkan_command_pool_create_request(
+        request->payload, &decoded);
+    struct bvb_vulkan_command_pool_create_response created = {0};
+    char diagnostic[512] = {0};
+    if (result == 0) {
+        result = bvb_vulkan_global_context_create_command_pool(
+            context, &decoded, &created, diagnostic, sizeof(diagnostic));
+    }
+    if (result != 0) {
+        fprintf(stderr, "bvb: command-pool create failed: %s\n", diagnostic);
+    } else {
+        result = bvb_protocol_encode_vulkan_command_pool_create_response(
+            response.payload, &created);
+    }
+    if (result == 0) {
+        response.header.payload_length =
+            BVB_VULKAN_COMMAND_POOL_CREATE_RESPONSE_SIZE;
+    } else {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_command_pool_destroy(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length != BVB_VULKAN_COMMAND_POOL_ID_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    uint64_t command_pool_id = 0U;
+    int result = bvb_protocol_decode_vulkan_command_pool_id(
+        request->payload, &command_pool_id);
+    char diagnostic[512] = {0};
+    if (result == 0) {
+        result = bvb_vulkan_global_context_destroy_command_pool(
+            context, command_pool_id, diagnostic, sizeof(diagnostic));
+    }
+    if (result != 0) {
+        fprintf(stderr, "bvb: command-pool destroy failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_command_pool_reset(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_COMMAND_POOL_RESET_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_command_pool_reset_request decoded;
+    int result = bvb_protocol_decode_vulkan_command_pool_reset_request(
+        request->payload, &decoded);
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    char diagnostic[512] = {0};
+    if (result == 0) {
+        result = bvb_vulkan_global_context_reset_command_pool(
+            context, &decoded, &vulkan_result,
+            diagnostic, sizeof(diagnostic));
+    }
+    if (result != 0) {
+        fprintf(stderr, "bvb: command-pool reset failed: %s\n", diagnostic);
+    } else {
+        result = bvb_protocol_encode_vulkan_result(
+            response.payload, vulkan_result);
+    }
+    if (result == 0) {
+        response.header.payload_length = BVB_VULKAN_RESULT_SIZE;
+    } else {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_command_buffer_allocate(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_COMMAND_BUFFER_ALLOCATE_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_command_buffer_allocate_request decoded;
+    int result = bvb_protocol_decode_vulkan_command_buffer_allocate_request(
+        request->payload, &decoded);
+    struct bvb_vulkan_command_buffer_allocate_response allocated = {0};
+    char diagnostic[512] = {0};
+    if (result == 0) {
+        result = bvb_vulkan_global_context_allocate_command_buffer(
+            context, &decoded, &allocated, diagnostic, sizeof(diagnostic));
+    }
+    if (result != 0) {
+        fprintf(stderr, "bvb: command-buffer allocate failed: %s\n",
+                diagnostic);
+    } else {
+        result = bvb_protocol_encode_vulkan_command_buffer_allocate_response(
+            response.payload, &allocated);
+    }
+    if (result == 0) {
+        response.header.payload_length =
+            BVB_VULKAN_COMMAND_BUFFER_ALLOCATE_RESPONSE_SIZE;
+    } else {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_command_buffer_free(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_COMMAND_BUFFER_FREE_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_command_buffer_free_request decoded;
+    int result = bvb_protocol_decode_vulkan_command_buffer_free_request(
+        request->payload, &decoded);
+    char diagnostic[512] = {0};
+    if (result == 0) {
+        result = bvb_vulkan_global_context_free_command_buffer(
+            context, &decoded, diagnostic, sizeof(diagnostic));
+    }
+    if (result != 0) {
+        fprintf(stderr, "bvb: command-buffer free failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_command_buffer_begin(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_COMMAND_BUFFER_BEGIN_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_command_buffer_begin_request decoded;
+    int result = bvb_protocol_decode_vulkan_command_buffer_begin_request(
+        request->payload, &decoded);
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    char diagnostic[512] = {0};
+    if (result == 0) {
+        result = bvb_vulkan_global_context_begin_command_buffer(
+            context, &decoded, &vulkan_result,
+            diagnostic, sizeof(diagnostic));
+    }
+    if (result != 0) {
+        fprintf(stderr, "bvb: command-buffer begin failed: %s\n", diagnostic);
+    } else {
+        result = bvb_protocol_encode_vulkan_result(
+            response.payload, vulkan_result);
+    }
+    if (result == 0) {
+        response.header.payload_length = BVB_VULKAN_RESULT_SIZE;
+    } else {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_command_buffer_end(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length != BVB_VULKAN_COMMAND_BUFFER_ID_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    uint64_t command_buffer_id = 0U;
+    int result = bvb_protocol_decode_vulkan_command_buffer_id(
+        request->payload, &command_buffer_id);
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    char diagnostic[512] = {0};
+    if (result == 0) {
+        result = bvb_vulkan_global_context_end_command_buffer(
+            context, command_buffer_id, &vulkan_result,
+            diagnostic, sizeof(diagnostic));
+    }
+    if (result != 0) {
+        fprintf(stderr, "bvb: command-buffer end failed: %s\n", diagnostic);
+    } else {
+        result = bvb_protocol_encode_vulkan_result(
+            response.payload, vulkan_result);
+    }
+    if (result == 0) {
+        response.header.payload_length = BVB_VULKAN_RESULT_SIZE;
+    } else {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_queue_submit_command(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_QUEUE_SUBMIT_COMMAND_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_queue_submit_command_request decoded;
+    int result = bvb_protocol_decode_vulkan_queue_submit_command_request(
+        request->payload, &decoded);
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    char diagnostic[512] = {0};
+    if (result == 0) {
+        result = bvb_vulkan_global_context_queue_submit_command(
+            context, &decoded, &vulkan_result,
+            diagnostic, sizeof(diagnostic));
+    }
+    if (result != 0) {
+        fprintf(stderr, "bvb: queue command submit failed: %s\n", diagnostic);
+    } else {
+        result = bvb_protocol_encode_vulkan_result(
+            response.payload, vulkan_result);
+    }
+    if (result == 0) {
+        response.header.payload_length = BVB_VULKAN_RESULT_SIZE;
+    } else {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_selftest(int client_fd,
                                   const struct bvb_protocol_packet *request,
                                   const char *loader_path,
@@ -1227,6 +1488,38 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_DEVICE_WAIT_IDLE) {
             result = answer_vulkan_device_wait_idle(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_COMMAND_POOL_CREATE) {
+            result = answer_vulkan_command_pool_create(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_COMMAND_POOL_DESTROY) {
+            result = answer_vulkan_command_pool_destroy(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_COMMAND_POOL_RESET) {
+            result = answer_vulkan_command_pool_reset(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_COMMAND_BUFFER_ALLOCATE) {
+            result = answer_vulkan_command_buffer_allocate(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_COMMAND_BUFFER_FREE) {
+            result = answer_vulkan_command_buffer_free(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_COMMAND_BUFFER_BEGIN) {
+            result = answer_vulkan_command_buffer_begin(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_COMMAND_BUFFER_END) {
+            result = answer_vulkan_command_buffer_end(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_QUEUE_SUBMIT_COMMAND) {
+            result = answer_vulkan_queue_submit_command(
                 client_fd, &request, negotiated, global_context);
         } else {
             result = -EPROTO;

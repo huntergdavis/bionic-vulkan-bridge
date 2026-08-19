@@ -279,6 +279,128 @@ int main(void) {
               vulkan_result_wire, &vulkan_result_decoded) == 0);
     CHECK(vulkan_result_decoded == -4);
 
+    const struct bvb_vulkan_command_pool_create_request pool_create = {
+        .device_id = UINT64_C(0x0300000000000001),
+        .flags = 3U,
+        .queue_family_index = 2U,
+    };
+    uint8_t pool_create_wire[BVB_VULKAN_COMMAND_POOL_CREATE_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_command_pool_create_request(
+              pool_create_wire, &pool_create) == 0);
+    struct bvb_vulkan_command_pool_create_request pool_create_decoded;
+    CHECK(bvb_protocol_decode_vulkan_command_pool_create_request(
+              pool_create_wire, &pool_create_decoded) == 0);
+    CHECK(pool_create_decoded.device_id == pool_create.device_id);
+    CHECK(pool_create_decoded.flags == 3U);
+    CHECK(pool_create_decoded.queue_family_index == 2U);
+
+    const struct bvb_vulkan_command_pool_create_response pool_created = {
+        .vulkan_result = 0,
+        .command_pool_id = UINT64_C(0x0a00000000000001),
+    };
+    uint8_t pool_created_wire[BVB_VULKAN_COMMAND_POOL_CREATE_RESPONSE_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_command_pool_create_response(
+              pool_created_wire, &pool_created) == 0);
+    struct bvb_vulkan_command_pool_create_response pool_created_decoded;
+    CHECK(bvb_protocol_decode_vulkan_command_pool_create_response(
+              pool_created_wire, &pool_created_decoded) == 0);
+    CHECK(pool_created_decoded.command_pool_id == pool_created.command_pool_id);
+
+    const struct bvb_vulkan_command_pool_reset_request pool_reset = {
+        .command_pool_id = pool_created.command_pool_id,
+        .flags = 1U,
+    };
+    uint8_t pool_reset_wire[BVB_VULKAN_COMMAND_POOL_RESET_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_command_pool_reset_request(
+              pool_reset_wire, &pool_reset) == 0);
+    struct bvb_vulkan_command_pool_reset_request pool_reset_decoded;
+    CHECK(bvb_protocol_decode_vulkan_command_pool_reset_request(
+              pool_reset_wire, &pool_reset_decoded) == 0);
+    CHECK(pool_reset_decoded.command_pool_id == pool_reset.command_pool_id);
+    CHECK(pool_reset_decoded.flags == 1U);
+
+    const struct bvb_vulkan_command_buffer_allocate_request buffer_allocate = {
+        .command_pool_id = pool_created.command_pool_id,
+        .level = 0U,
+        .count = 1U,
+    };
+    uint8_t buffer_allocate_wire[
+        BVB_VULKAN_COMMAND_BUFFER_ALLOCATE_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_command_buffer_allocate_request(
+              buffer_allocate_wire, &buffer_allocate) == 0);
+    struct bvb_vulkan_command_buffer_allocate_request buffer_allocate_decoded;
+    CHECK(bvb_protocol_decode_vulkan_command_buffer_allocate_request(
+              buffer_allocate_wire, &buffer_allocate_decoded) == 0);
+    CHECK(buffer_allocate_decoded.command_pool_id ==
+          buffer_allocate.command_pool_id);
+    CHECK(buffer_allocate_decoded.level == 0U);
+    CHECK(buffer_allocate_decoded.count == 1U);
+
+    const struct bvb_vulkan_command_buffer_allocate_response buffer_allocated = {
+        .vulkan_result = 0,
+        .command_buffer_id = UINT64_C(0x0b00000000000001),
+    };
+    uint8_t buffer_allocated_wire[
+        BVB_VULKAN_COMMAND_BUFFER_ALLOCATE_RESPONSE_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_command_buffer_allocate_response(
+              buffer_allocated_wire, &buffer_allocated) == 0);
+    struct bvb_vulkan_command_buffer_allocate_response buffer_allocated_decoded;
+    CHECK(bvb_protocol_decode_vulkan_command_buffer_allocate_response(
+              buffer_allocated_wire, &buffer_allocated_decoded) == 0);
+    CHECK(buffer_allocated_decoded.command_buffer_id ==
+          buffer_allocated.command_buffer_id);
+
+    const struct bvb_vulkan_command_buffer_free_request buffer_free = {
+        .command_pool_id = pool_created.command_pool_id,
+        .command_buffer_id = buffer_allocated.command_buffer_id,
+    };
+    uint8_t buffer_free_wire[BVB_VULKAN_COMMAND_BUFFER_FREE_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_command_buffer_free_request(
+              buffer_free_wire, &buffer_free) == 0);
+    struct bvb_vulkan_command_buffer_free_request buffer_free_decoded;
+    CHECK(bvb_protocol_decode_vulkan_command_buffer_free_request(
+              buffer_free_wire, &buffer_free_decoded) == 0);
+    CHECK(buffer_free_decoded.command_pool_id == buffer_free.command_pool_id);
+    CHECK(buffer_free_decoded.command_buffer_id ==
+          buffer_free.command_buffer_id);
+
+    const struct bvb_vulkan_command_buffer_begin_request buffer_begin = {
+        .command_buffer_id = buffer_allocated.command_buffer_id,
+        .flags = 1U,
+    };
+    uint8_t buffer_begin_wire[BVB_VULKAN_COMMAND_BUFFER_BEGIN_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_command_buffer_begin_request(
+              buffer_begin_wire, &buffer_begin) == 0);
+    struct bvb_vulkan_command_buffer_begin_request buffer_begin_decoded;
+    CHECK(bvb_protocol_decode_vulkan_command_buffer_begin_request(
+              buffer_begin_wire, &buffer_begin_decoded) == 0);
+    CHECK(buffer_begin_decoded.command_buffer_id ==
+          buffer_begin.command_buffer_id);
+    CHECK(buffer_begin_decoded.flags == 1U);
+
+    uint8_t command_buffer_id_wire[BVB_VULKAN_COMMAND_BUFFER_ID_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_command_buffer_id(
+              command_buffer_id_wire, buffer_allocated.command_buffer_id) == 0);
+    uint64_t command_buffer_id_decoded = 0U;
+    CHECK(bvb_protocol_decode_vulkan_command_buffer_id(
+              command_buffer_id_wire, &command_buffer_id_decoded) == 0);
+    CHECK(command_buffer_id_decoded == buffer_allocated.command_buffer_id);
+
+    const struct bvb_vulkan_queue_submit_command_request command_submit = {
+        .queue_id = queue_id,
+        .command_buffer_id = buffer_allocated.command_buffer_id,
+    };
+    uint8_t command_submit_wire[
+        BVB_VULKAN_QUEUE_SUBMIT_COMMAND_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_queue_submit_command_request(
+              command_submit_wire, &command_submit) == 0);
+    struct bvb_vulkan_queue_submit_command_request command_submit_decoded;
+    CHECK(bvb_protocol_decode_vulkan_queue_submit_command_request(
+              command_submit_wire, &command_submit_decoded) == 0);
+    CHECK(command_submit_decoded.queue_id == command_submit.queue_id);
+    CHECK(command_submit_decoded.command_buffer_id ==
+          command_submit.command_buffer_id);
+
     const struct bvb_shared_batch_setup shared_setup = {
         .region_bytes = 4096U,
         .generation = UINT64_C(0x1122334455667788),

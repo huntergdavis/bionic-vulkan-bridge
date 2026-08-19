@@ -36,6 +36,8 @@ struct bvb_vulkan_global_context {
     uint64_t next_physical_device_serial;
     uint64_t next_device_serial;
     uint64_t next_queue_serial;
+    uint64_t next_command_pool_serial;
+    uint64_t next_command_buffer_serial;
     struct bvb_device_metadata device_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
 };
 
@@ -88,6 +90,22 @@ static VkDevice device_from_bits(uint64_t bits) {
                    "VkDevice exceeds bridge handle width");
     memcpy(&device, &bits, sizeof(device));
     return device;
+}
+
+static VkCommandPool command_pool_from_bits(uint64_t bits) {
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    _Static_assert(sizeof(command_pool) <= sizeof(bits),
+                   "VkCommandPool exceeds bridge handle width");
+    memcpy(&command_pool, &bits, sizeof(command_pool));
+    return command_pool;
+}
+
+static VkCommandBuffer command_buffer_from_bits(uint64_t bits) {
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    _Static_assert(sizeof(command_buffer) <= sizeof(bits),
+                   "VkCommandBuffer exceeds bridge handle width");
+    memcpy(&command_buffer, &bits, sizeof(command_buffer));
+    return command_buffer;
 }
 
 static int resolve_physical_device(
@@ -206,6 +224,8 @@ int bvb_vulkan_global_context_create(
     context->next_physical_device_serial = 1U;
     context->next_device_serial = 1U;
     context->next_queue_serial = 1U;
+    context->next_command_pool_serial = 1U;
+    context->next_command_buffer_serial = 1U;
     *output = context;
     return 0;
 }
@@ -844,6 +864,17 @@ int bvb_vulkan_global_context_destroy_device(
     }
     for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
         const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_COMMAND_POOL &&
+            entry->parent_id == device_id) {
+            result = bvb_vulkan_global_context_destroy_command_pool(
+                context, entry->wire_id, NULL, 0U);
+            if (result != 0) {
+                return result;
+            }
+        }
+    }
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
         if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_QUEUE &&
             entry->parent_id == device_id) {
             result = bvb_handle_table_remove(
@@ -1042,5 +1073,421 @@ int bvb_vulkan_global_context_device_wait_idle(
         return -ENOSYS;
     }
     *vulkan_result = wait_idle(device);
+    return 0;
+}
+
+static int resolve_command_pool(
+    const struct bvb_vulkan_global_context *context, uint64_t command_pool_id,
+    uint64_t *device_id, VkDevice *device, VkCommandPool *command_pool) {
+    if (context == NULL || device_id == NULL || device == NULL ||
+        command_pool == NULL) {
+        return -EINVAL;
+    }
+    uint64_t pool_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, command_pool_id, BVB_OBJECT_COMMAND_POOL,
+        device_id, &pool_bits);
+    uint64_t device_bits = 0U;
+    if (result == 0) {
+        result = bvb_handle_table_lookup(
+            &context->objects, *device_id, BVB_OBJECT_DEVICE, NULL,
+            &device_bits);
+    }
+    if (result == 0) {
+        *device = device_from_bits(device_bits);
+        *command_pool = command_pool_from_bits(pool_bits);
+    }
+    return result;
+}
+
+static int resolve_command_buffer(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t command_buffer_id, uint64_t *device_id,
+    VkDevice *device, VkCommandPool *command_pool,
+    VkCommandBuffer *command_buffer) {
+    if (context == NULL || device_id == NULL || device == NULL ||
+        command_pool == NULL || command_buffer == NULL) {
+        return -EINVAL;
+    }
+    uint64_t command_pool_id = 0U;
+    uint64_t command_buffer_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, command_buffer_id, BVB_OBJECT_COMMAND_BUFFER,
+        &command_pool_id, &command_buffer_bits);
+    if (result == 0) {
+        result = resolve_command_pool(
+            context, command_pool_id, device_id, device, command_pool);
+    }
+    if (result == 0) {
+        *command_buffer = command_buffer_from_bits(command_buffer_bits);
+    }
+    return result;
+}
+
+int bvb_vulkan_global_context_create_command_pool(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_command_pool_create_request *request,
+    struct bvb_vulkan_command_pool_create_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (context == NULL || request == NULL || response == NULL) {
+        return -EINVAL;
+    }
+    *response = (struct bvb_vulkan_command_pool_create_response){0};
+    const uint32_t supported_flags =
+        VK_COMMAND_POOL_CREATE_TRANSIENT_BIT |
+        VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    if ((request->flags & ~supported_flags) != 0U) {
+        response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    uint64_t device_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE, NULL,
+        &device_bits);
+    struct bvb_device_metadata *metadata =
+        device_metadata_slot(context, request->device_id);
+    if (result != 0 || metadata == NULL ||
+        metadata->device_id != request->device_id) {
+        set_error(error, error_size, "unknown device handle");
+        return result != 0 ? result : -ENOENT;
+    }
+    if (request->queue_family_index != metadata->queue_family_index) {
+        response->vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+        return 0;
+    }
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkCreateCommandPool create_command_pool =
+        (PFN_vkCreateCommandPool)context->get_device_proc_addr(
+            device, "vkCreateCommandPool");
+    PFN_vkDestroyCommandPool destroy_command_pool =
+        (PFN_vkDestroyCommandPool)context->get_device_proc_addr(
+            device, "vkDestroyCommandPool");
+    if (create_command_pool == NULL || destroy_command_pool == NULL) {
+        set_error(error, error_size, "device lacks command-pool lifecycle");
+        return -ENOSYS;
+    }
+    const VkCommandPoolCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = request->flags,
+        .queueFamilyIndex = request->queue_family_index,
+    };
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkResult vulkan_result = create_command_pool(
+        device, &create_info, NULL, &command_pool);
+    response->vulkan_result = vulkan_result;
+    if (vulkan_result != VK_SUCCESS) {
+        return 0;
+    }
+    const uint64_t wire_id = bvb_handle_id(
+        BVB_OBJECT_COMMAND_POOL, context->next_command_pool_serial++);
+    result = bvb_handle_table_insert(
+        &context->objects, wire_id, request->device_id,
+        handle_bits(&command_pool, sizeof(command_pool)));
+    if (result != 0) {
+        destroy_command_pool(device, command_pool, NULL);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    response->command_pool_id = wire_id;
+    return 0;
+}
+
+int bvb_vulkan_global_context_destroy_command_pool(
+    struct bvb_vulkan_global_context *context, uint64_t command_pool_id,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    uint64_t device_id = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    int result = resolve_command_pool(
+        context, command_pool_id, &device_id, &device, &command_pool);
+    if (result != 0) {
+        set_error(error, error_size, "unknown command-pool handle");
+        return result;
+    }
+    PFN_vkDestroyCommandPool destroy_command_pool =
+        (PFN_vkDestroyCommandPool)context->get_device_proc_addr(
+            device, "vkDestroyCommandPool");
+    if (destroy_command_pool == NULL) {
+        return -ENOSYS;
+    }
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_COMMAND_BUFFER &&
+            entry->parent_id == command_pool_id) {
+            result = bvb_handle_table_remove(
+                &context->objects, entry->wire_id,
+                BVB_OBJECT_COMMAND_BUFFER, NULL);
+            if (result != 0) {
+                return result;
+            }
+        }
+    }
+    result = bvb_handle_table_remove(
+        &context->objects, command_pool_id, BVB_OBJECT_COMMAND_POOL, NULL);
+    if (result != 0) {
+        return result;
+    }
+    destroy_command_pool(device, command_pool, NULL);
+    return 0;
+}
+
+int bvb_vulkan_global_context_reset_command_pool(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_command_pool_reset_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (request == NULL || vulkan_result == NULL ||
+        (request->flags & ~VK_COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT) != 0U) {
+        return -EINVAL;
+    }
+    uint64_t device_id = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    int result = resolve_command_pool(
+        context, request->command_pool_id, &device_id, &device, &command_pool);
+    if (result != 0) {
+        set_error(error, error_size, "unknown command-pool handle");
+        return result;
+    }
+    PFN_vkResetCommandPool reset_command_pool =
+        (PFN_vkResetCommandPool)context->get_device_proc_addr(
+            device, "vkResetCommandPool");
+    if (reset_command_pool == NULL) {
+        return -ENOSYS;
+    }
+    *vulkan_result = reset_command_pool(
+        device, command_pool, request->flags);
+    return 0;
+}
+
+int bvb_vulkan_global_context_allocate_command_buffer(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_command_buffer_allocate_request *request,
+    struct bvb_vulkan_command_buffer_allocate_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (context == NULL || request == NULL || response == NULL) {
+        return -EINVAL;
+    }
+    *response = (struct bvb_vulkan_command_buffer_allocate_response){0};
+    if (request->level != VK_COMMAND_BUFFER_LEVEL_PRIMARY ||
+        request->count != 1U) {
+        response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    uint64_t device_id = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    int result = resolve_command_pool(
+        context, request->command_pool_id, &device_id, &device, &command_pool);
+    if (result != 0) {
+        set_error(error, error_size, "unknown command-pool handle");
+        return result;
+    }
+    PFN_vkAllocateCommandBuffers allocate =
+        (PFN_vkAllocateCommandBuffers)context->get_device_proc_addr(
+            device, "vkAllocateCommandBuffers");
+    PFN_vkFreeCommandBuffers free_command_buffers =
+        (PFN_vkFreeCommandBuffers)context->get_device_proc_addr(
+            device, "vkFreeCommandBuffers");
+    if (allocate == NULL || free_command_buffers == NULL) {
+        set_error(error, error_size,
+                  "device lacks command-buffer allocation lifecycle");
+        return -ENOSYS;
+    }
+    const VkCommandBufferAllocateInfo allocate_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = command_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1U,
+    };
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    VkResult vulkan_result = allocate(device, &allocate_info, &command_buffer);
+    response->vulkan_result = vulkan_result;
+    if (vulkan_result != VK_SUCCESS) {
+        return 0;
+    }
+    const uint64_t wire_id = bvb_handle_id(
+        BVB_OBJECT_COMMAND_BUFFER, context->next_command_buffer_serial++);
+    result = bvb_handle_table_insert(
+        &context->objects, wire_id, request->command_pool_id,
+        handle_bits(&command_buffer, sizeof(command_buffer)));
+    if (result != 0) {
+        free_command_buffers(device, command_pool, 1U, &command_buffer);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    response->command_buffer_id = wire_id;
+    return 0;
+}
+
+int bvb_vulkan_global_context_free_command_buffer(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_command_buffer_free_request *request,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (context == NULL || request == NULL) {
+        return -EINVAL;
+    }
+    uint64_t parent_pool_id = 0U;
+    uint64_t command_buffer_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, request->command_buffer_id,
+        BVB_OBJECT_COMMAND_BUFFER, &parent_pool_id, &command_buffer_bits);
+    if (result != 0 || parent_pool_id != request->command_pool_id) {
+        set_error(error, error_size, "command buffer does not belong to pool");
+        return result != 0 ? result : -EPROTO;
+    }
+    uint64_t device_id = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    result = resolve_command_pool(
+        context, request->command_pool_id, &device_id, &device, &command_pool);
+    if (result != 0) {
+        return result;
+    }
+    PFN_vkFreeCommandBuffers free_command_buffers =
+        (PFN_vkFreeCommandBuffers)context->get_device_proc_addr(
+            device, "vkFreeCommandBuffers");
+    if (free_command_buffers == NULL) {
+        return -ENOSYS;
+    }
+    const VkCommandBuffer command_buffer =
+        command_buffer_from_bits(command_buffer_bits);
+    free_command_buffers(device, command_pool, 1U, &command_buffer);
+    return bvb_handle_table_remove(
+        &context->objects, request->command_buffer_id,
+        BVB_OBJECT_COMMAND_BUFFER, NULL);
+}
+
+int bvb_vulkan_global_context_begin_command_buffer(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_command_buffer_begin_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (request == NULL || vulkan_result == NULL ||
+        (request->flags & ~VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT) != 0U) {
+        return -EINVAL;
+    }
+    uint64_t device_id = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    int result = resolve_command_buffer(
+        context, request->command_buffer_id, &device_id, &device,
+        &command_pool, &command_buffer);
+    if (result != 0) {
+        set_error(error, error_size, "unknown command-buffer handle");
+        return result;
+    }
+    PFN_vkBeginCommandBuffer begin =
+        (PFN_vkBeginCommandBuffer)context->get_device_proc_addr(
+            device, "vkBeginCommandBuffer");
+    if (begin == NULL) {
+        return -ENOSYS;
+    }
+    const VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = request->flags,
+    };
+    *vulkan_result = begin(command_buffer, &begin_info);
+    return 0;
+}
+
+int bvb_vulkan_global_context_end_command_buffer(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t command_buffer_id, int32_t *vulkan_result,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (vulkan_result == NULL) {
+        return -EINVAL;
+    }
+    uint64_t device_id = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    int result = resolve_command_buffer(
+        context, command_buffer_id, &device_id, &device,
+        &command_pool, &command_buffer);
+    if (result != 0) {
+        set_error(error, error_size, "unknown command-buffer handle");
+        return result;
+    }
+    PFN_vkEndCommandBuffer end =
+        (PFN_vkEndCommandBuffer)context->get_device_proc_addr(
+            device, "vkEndCommandBuffer");
+    if (end == NULL) {
+        return -ENOSYS;
+    }
+    *vulkan_result = end(command_buffer);
+    return 0;
+}
+
+int bvb_vulkan_global_context_queue_submit_command(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_queue_submit_command_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (request == NULL || vulkan_result == NULL) {
+        return -EINVAL;
+    }
+    VkDevice queue_device = VK_NULL_HANDLE;
+    VkQueue queue = VK_NULL_HANDLE;
+    int result = resolve_queue(
+        context, request->queue_id, &queue_device, &queue);
+    if (result != 0) {
+        set_error(error, error_size, "unknown queue handle");
+        return result;
+    }
+    uint64_t queue_device_id = 0U;
+    uint64_t queue_bits = 0U;
+    result = bvb_handle_table_lookup(
+        &context->objects, request->queue_id, BVB_OBJECT_QUEUE,
+        &queue_device_id, &queue_bits);
+    uint64_t command_device_id = 0U;
+    VkDevice command_device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    if (result == 0) {
+        result = resolve_command_buffer(
+            context, request->command_buffer_id, &command_device_id,
+            &command_device, &command_pool, &command_buffer);
+    }
+    if (result != 0 || command_device_id != queue_device_id ||
+        command_device != queue_device) {
+        set_error(error, error_size,
+                  "queue and command buffer have different devices");
+        return result != 0 ? result : -EPROTO;
+    }
+    PFN_vkQueueSubmit submit =
+        (PFN_vkQueueSubmit)context->get_device_proc_addr(
+            queue_device, "vkQueueSubmit");
+    if (submit == NULL) {
+        return -ENOSYS;
+    }
+    const VkSubmitInfo submit_info = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1U,
+        .pCommandBuffers = &command_buffer,
+    };
+    *vulkan_result = submit(queue, 1U, &submit_info, VK_NULL_HANDLE);
     return 0;
 }

@@ -70,5 +70,38 @@ int bvb_vulkan_global_context_queue_wait_idle(
 int bvb_vulkan_global_context_device_wait_idle(
     const struct bvb_vulkan_global_context *context, uint64_t device_id,
     int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_create_command_pool(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_command_pool_create_request *request,
+    struct bvb_vulkan_command_pool_create_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_destroy_command_pool(
+    struct bvb_vulkan_global_context *context, uint64_t command_pool_id,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_reset_command_pool(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_command_pool_reset_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_allocate_command_buffer(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_command_buffer_allocate_request *request,
+    struct bvb_vulkan_command_buffer_allocate_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_free_command_buffer(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_command_buffer_free_request *request,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_begin_command_buffer(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_command_buffer_begin_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_end_command_buffer(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t command_buffer_id, int32_t *vulkan_result,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_queue_submit_command(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_queue_submit_command_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size);
 
 #endif

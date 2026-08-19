@@ -20,6 +20,10 @@ BVB_GLOBAL_EXPORT uint64_t bvb_physical_device_proxy_id(
     VkPhysicalDevice physical_device);
 BVB_GLOBAL_EXPORT uint64_t bvb_device_proxy_id(VkDevice device);
 BVB_GLOBAL_EXPORT uint64_t bvb_queue_proxy_id(VkQueue queue);
+BVB_GLOBAL_EXPORT uint64_t bvb_command_pool_proxy_id(
+    VkCommandPool command_pool);
+BVB_GLOBAL_EXPORT uint64_t bvb_command_buffer_proxy_id(
+    VkCommandBuffer command_buffer);
 PFN_vkVoidFunction bvb_global_device_proc_addr(
     VkDevice device, const char *name);
 

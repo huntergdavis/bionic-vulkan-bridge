@@ -230,14 +230,14 @@ add_custom_command(
     "${bvb_dxvk_dispatch_policy_include}"
     "${bvb_dxvk_dispatch_policy_json}"
     --additional-executable
-    "${CMAKE_CURRENT_SOURCE_DIR}/config/e029-empty-submit-dispatch.txt"
-    --gate E029
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e030-command-buffer-dispatch.txt"
+    --gate E030
   DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-dxvk-dispatch-policy.py"
     "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
     "${bvb_triangle_dispatch_include}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/config/e029-empty-submit-dispatch.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e030-command-buffer-dispatch.txt"
   VERBATIM
 )
 add_library(
@@ -408,7 +408,7 @@ if(BUILD_TESTING)
       "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
       "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
       "${bvb_triangle_dispatch_include}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/config/e029-empty-submit-dispatch.txt"
+      "${CMAKE_CURRENT_SOURCE_DIR}/config/e030-command-buffer-dispatch.txt"
       "${bvb_dxvk_dispatch_policy_json}"
   )
 
