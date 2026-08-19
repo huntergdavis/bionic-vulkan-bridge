@@ -423,3 +423,81 @@ a glibc process can query. E010 does not carry Vulkan commands or game input and
 does not claim an FPS gain. The next gate is to trace the minimum Vulkan entry
 points required at DXVK startup and design generated handle/dispatch ownership
 without turning each hot Vulkan call into a synchronous socket RPC.
+
+## E011 — process-proven Tomb Raider Vulkan dispatch inventory (2026-08-18)
+
+Status: passed with the manifest generator at commit
+`9d9147a959892371bce2c31977519d08e724d460`.
+
+Hypothesis: an opt-in glibc preload can inventory the real Vulkan entry points
+resolved during Tomb Raider's Wine/DXVK startup, identify the originating
+process, preserve normal resolution behavior, and turn the result into
+deterministic dispatch ownership metadata from the pinned Khronos registry.
+
+Method: the tracer wraps `dlsym`, `vkGetInstanceProcAddr`, and
+`vkGetDeviceProcAddr`. Trace format v1 writes each lookup in one append-only
+record containing format version, PID, TID, process-local sequence, lookup
+stage, resolution result, and name. The analyzer rejects malformed records and
+joins each name to pinned `vk.xml` metadata to classify global, instance,
+device, and Wine-private dispatch.
+
+The first SSH-started attempt was rejected before Steam by the existing
+affinity guard because its controller was in `cpuset=/moderate` and
+`cpu=/background`; its trace remained empty. The valid attempt reused the
+repository's guarded foreground-service technique. A `/system/bin/sleep 20`
+probe first proved both `/top-app` controllers. The real controller PID 5373,
+dispatcher PID 5390, affinity guard PID 5392, Steam PID 5973, and later game
+PID 7063 all independently reported `cpuset=/top-app` and `cpu=/top-app`.
+
+Result: the stable trace contains 3,828 valid v1 records, 742 unique names, and
+440 names that resolved at least once. Registry ownership is 4 global, 101
+instance, and 635 device commands plus exactly two Wine-private names:
+`wine_vkAcquireKeyedMutex` and `wine_vkReleaseKeyedMutex`. No name was unknown
+to both the pinned registry and the explicit Wine-private namespace.
+
+PID 7063 was verified through its exact `TombRaider.exe` command line,
+`STEAM_COMPAT_APP_ID=203160`, trace-file environment, affinity log, and both
+top-app controllers. It contributed 3,074 records, 711 unique names, and 328
+resolved names. Transient Wine-side startup PID 7028 contributed 754 records,
+675 unique names, and 430 resolved names. Its exact command line was not
+retained, so no stronger process identity is claimed. The combined inventory
+is required: the transient process contributed 31 display/WSI names not seen
+from the game PID.
+
+Evidence identities:
+
+- tablet trace:
+  `steam-arm64/logs/tombraider-vulkan-resolve-20260819T014633Z-5373.tsv`,
+  187,192 bytes, SHA-256
+  `3c9b119672cde7027fa0dcac42a6b7f72d5ecff54bd436647906e10d264cec61`
+- generated manifest:
+  `docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json`, 251,387
+  bytes, SHA-256
+  `6a78ddd1f1b34773e4123d3612233fab2270ed0ff418d01204ad41af1cab8afc`
+- tablet glibc tracer: SHA-256
+  `f05b548e9e7a20da536a082aeb6014e41d822a0d6986c478f5ebdd12daed0683`
+
+Two earlier legacy traces were byte-for-byte identical to each other at
+124,085 bytes and SHA-256
+`ff23b1ced1c30a90ed067199901fc21abbb010ed9fcab218b47db48afbe9be30`.
+They have the same 3,828 records, 742 names, 440 resolved names, and ownership
+counts, but cannot separate processes. That repeat validates the logical
+inventory while v1 supplies the missing provenance.
+
+The root-window screenshot attempt timed out and left a PNG that the evidence
+viewer could not decode, so E011 makes no visual UI claim. After the trace was
+stable, only the fully validated game PID received `TERM`; it exited, while
+Steam PID 5973 and Termux:X11 PID 27923 remained alive. No performance result
+is claimed because tracing was enabled.
+
+The required recall query—`bionic vulkan bridge next gate external memory
+swapchain game integration performance`—returned no indexed prior session.
+E011 reused the repository's E010 fixed-width ownership model, the earlier
+foreground RunCommandService race fix, and the opt-in trace launch added at
+steamclienttermux commit `2d1c4ec`.
+
+Conclusion: the startup resolution gate is complete and repeatable. Resolution
+is not execution-frequency profiling, so the manifest bounds dispatch coverage
+but does not label commands hot. The next gate is generated proxy-handle
+ownership plus a shared-memory command batch for the minimal rendered triangle
+subset, following [decision 0003](decisions/0003-batched-game-dispatch.md).

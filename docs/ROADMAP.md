@@ -21,7 +21,7 @@
 
 - [x] Query Vulkan capabilities through the bridge
 - [x] Compare direct and bridged capability documents field-for-field
-- [ ] Add Android native-window and surface feasibility probe
+- [x] Add Android native-window and surface feasibility probe
 - [ ] Evaluate libadrenotools only if the system-loader path needs capabilities
   it cannot provide
 
@@ -43,7 +43,8 @@
 
 ## Game-facing milestones
 
-- [ ] Trace the minimum Vulkan entry-point set exercised by DXVK startup
+- [x] Trace the Vulkan entry-point set resolved during Wine/DXVK startup
+- [x] Generate registry-backed global/instance/device ownership metadata
 - [ ] Implement generated dispatch and handle ownership
 - [ ] Implement external/shared memory and synchronization strategy
 - [ ] Reach a rendered test triangle

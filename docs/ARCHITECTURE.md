@@ -90,3 +90,11 @@ that larger design.
 - Each optimization has an A/B control and records thermals, resolution, and
   process topology.
 - A failed gate is recorded; it is not rewritten as success.
+
+The project now has a dedicated, visibly rendered, immersive Android Vulkan
+host plus an authenticated lifecycle/status handoff. E011 also provides a
+registry-backed inventory of the entry points resolved by the real Tomb Raider
+Wine/DXVK startup path. The next controlled gate is the first generated proxy
+handle and batched command path described in
+[decision 0003](decisions/0003-batched-game-dispatch.md); game input and a
+bridged game frame remain outside the completed result.
