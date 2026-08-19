@@ -52,7 +52,8 @@
 - [x] Generate executable triangle-subset Vulkan entry-point dispatch
 - [ ] Expand generated dispatch to the measured DXVK startup subset
 - [ ] Implement GPU external-memory and synchronization strategy
-- [ ] Reach a rendered test triangle
+- [x] Reach a rendered test triangle
+- [ ] Deliver the glibc-generated triangle batch to the visible host
 - [ ] Reach a DXVK sample
 - [ ] Run the fixed native-resolution Tomb Raider 2013 benchmark
 - [ ] Compare FPS, frame pacing, startup time, peak RSS, and thermals against the

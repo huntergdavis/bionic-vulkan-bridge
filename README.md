@@ -60,6 +60,16 @@ launch capability authenticates events over an opt-in loopback listener; the
 existing owner-authenticated Unix control socket then exposes the accepted
 state to glibc. The hardware gate reported an active, focused, renderer-ready
 2800x1752 window and rejected a deliberately invalid token.
+E011-E015 trace the real DXVK startup dispatch, add typed handles and
+shared-memory batching, keep the Bionic Vulkan context warm, and generate an
+executable glibc dispatch for the six-command triangle subset. E016 replays
+that same batch shape into the visible Android host. Because the tablet's
+Android Vulkan 1.1 driver does not expose `VK_KHR_dynamic_rendering`, Bionic
+translates the encoded begin/end-rendering commands to a classic render pass.
+The authenticated hardware gate reported a focused, renderer-ready 2800x1752
+window, and the triangle was visually confirmed on the tablet. The batch is
+still constructed inside the Activity; cross-process visible delivery is the
+next gate.
 
 ## Build and test on a normal Linux host
 

@@ -106,8 +106,16 @@ averaged 0.503 ms. This synchronous transfer proof is not an FPS prediction.
 E015 adds a generated glibc client dispatch for the six-command dynamic-
 rendering triangle subset plus the two observed KHR aliases. Calls resolved
 through `vkGetDeviceProcAddr` now encode the existing typed batch on the real
-target glibc ABI. The next controlled gate is Bionic-side image/pipeline
-ownership and replay of that batch, followed by external-image synchronization
-with the visible host as described in
-[decision 0003](decisions/0003-batched-game-dispatch.md). Game input, a GPU-
-drawn triangle, and a bridged game frame remain outside the completed result.
+target glibc ABI. E016 adds Bionic-side swapchain image-view and pipeline
+ownership and replays the same six records into the visible host. The Adreno
+Android driver is Vulkan 1.1.128 and does not expose
+`VK_KHR_dynamic_rendering`, so the Bionic executor validates the narrow dynamic
+rendering shape and lowers begin/end rendering to a classic render pass and
+framebuffer. The client batch format does not change. This compatibility
+lowering produced a visually confirmed, GPU-drawn triangle at 2800x1752.
+
+The E016 Activity currently constructs the validated batch locally. The next
+controlled gate is to deliver the E015 glibc-generated batch to that visible
+executor, followed by external-image synchronization as described in
+[decision 0003](decisions/0003-batched-game-dispatch.md). A bridged game frame
+and game input remain outside the completed result.

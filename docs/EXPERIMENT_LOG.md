@@ -783,3 +783,80 @@ on the real glibc client ABI and become validated bridge batches. This is not
 yet a rendered triangle: the Bionic side still needs real image-view/pipeline
 ownership and triangle replay, and the visible host then needs an explicit
 external-image/synchronization path.
+
+## E016 — visible triangle with render-pass compatibility lowering (2026-08-18)
+
+Status: passed on hardware. The initial dynamic-rendering implementation was
+committed at `8b0b962`; the working compatibility fallback is commit
+`d3f5763`, with the hardened installed-version/lifecycle harness at `32869a3`.
+
+Hypothesis: the visible Bionic Activity can own an Android swapchain image,
+image view, graphics pipeline, and synchronization objects, then replay the
+same six-record triangle batch emitted by E015 and present a real GPU-drawn
+frame. The batch must stay independent of native pointer values.
+
+Method: checked-in GLSL vertex and fragment shaders are compiled to Vulkan 1.1
+SPIR-V and embedded in the no-Java `NativeActivity` library. The Activity
+creates the Android surface and swapchain, inserts the command buffer, image
+view, and graphics pipeline into the typed handle table, validates the exact
+six-record batch, records it, submits it to Adreno 730, and presents it.
+
+The first hardware launch produced a fullscreen black surface and emitted
+authenticated lifecycle event 12 (`renderer failed`). A Bionic self-test
+against the same absolute `/system/lib64/libvulkan.so` path showed one Vulkan
+1.1.128 Adreno device and 90 device extensions, but no
+`VK_KHR_dynamic_rendering`. This rejected the original extension requirement
+before shader or draw work. Termux's separate Mesa/Turnip `vulkaninfo` result
+was deliberately excluded because it is not the Android loader used by the
+Activity.
+
+The working executor preserves the game-facing begin/end-rendering records but
+lowers the currently supported one-color, clear/store, single-layer shape to
+`vkCmdBeginRenderPass` and `vkCmdEndRenderPass`. Bionic owns the compatible
+render pass and framebuffer; viewport, scissor, pipeline bind, and draw remain
+direct native commands. Unsupported shapes return `-ENOTSUP` rather than being
+silently changed.
+
+Result: APK version 0.1.4 (version code 5) compiled and signature-verified on
+the tablet. The authenticated lifecycle gate rejected an invalid 256-bit
+token, then reported a created, started, resumed, focused, window-present, and
+renderer-ready Activity with state flags 63 at 2800x1752. The user visually
+confirmed the triangle on the tablet. Android's privileged screenshot command
+is unavailable to the Termux UID, and this Termux:API release has no screenshot
+endpoint, so no screenshot artifact is claimed yet.
+
+All 11 normal host tests passed before the hardware build. The hardened
+lifecycle harness now rejects a stale installed APK version before launch and
+prints authenticated renderer-failure events immediately instead of reporting
+only a timeout.
+
+Evidence identities:
+
+- lifecycle status: `docs/evidence/e016-visible-triangle-status.json`, 574
+  bytes, SHA-256
+  `d7b75bda7abe1fb34c9fda7e4a5d1ed62a264bcce4adad6ec7687f08f499345e`
+- Android-loader self-test:
+  `docs/evidence/e016-android-vulkan-selftest.json`, 767 bytes, SHA-256
+  `fe8605453844277ea95d431913e6289c83a7bdc3623ba46a04c34012cf8f229f`
+- APK: 33,136 bytes, SHA-256
+  `96d8d75d836bdc51594aa2c8ba3f2a772c3d5c8defb949e6a696d9d313c97d7d`
+- Bionic native library: 51,328 bytes, SHA-256
+  `32a9ac5d79b01047768a565b6324309e0f51ddfea2f697d73f7d8563120a2cc4`
+- vertex SPIR-V: 1,512 bytes, SHA-256
+  `d60c5ef67f473fb37afefe47e74430816ed25b0938f85889632f448a3b876cb7`
+- fragment SPIR-V: 500 bytes, SHA-256
+  `cd85f7f832d23a0700eab03801e7db793137f7a6fbee0c6de3dac1b82569b2e8`
+
+The required recall queries—`bionic vulkan visible host black screen E016
+dynamic rendering triangle Android native activity` and `bionic vulkan dynamic
+rendering missing classic render pass fallback vkCmdBeginRendering`—returned
+no indexed prior implementation. E016 reused E008-E010's visible Activity and
+authenticated lifecycle control, E012's typed handles and batch validator, and
+E015's exact six-record triangle shape.
+
+Conclusion: the bridge has now translated a newer game-side Vulkan rendering
+shape onto the tablet's older Android driver and presented a visible GPU-drawn
+triangle. This proves Bionic-side compatibility lowering, not yet the complete
+cross-process path: the Activity constructed the batch locally. The next gate
+is to transfer the E015 glibc-generated batch into this visible executor while
+preserving batching, handle ownership, and explicit synchronization.
