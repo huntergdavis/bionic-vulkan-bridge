@@ -311,8 +311,8 @@ assert window_events
 assert relay["width"] == window_events[-1]["width"]
 assert relay["height"] == window_events[-1]["height"]
 assert relay["batch_offset"] == 64
-assert relay["batch_bytes"] == 200
-assert relay["commands"] == 6
+assert relay["batch_bytes"] == 224
+assert relay["commands"] == 7
 assert relay["sequence"] == frames
 assert relay["frames"] == frames
 assert relay["ring_slots"] == ring_slots

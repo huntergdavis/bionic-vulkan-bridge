@@ -256,8 +256,8 @@ visible_mode, gate = sys.argv[4:6]
 triangle = json.loads(triangle_path.read_text())
 status = json.loads(status_path.read_text())
 activity = status["activity_status"]
-assert triangle["commands"] == 6
-assert triangle["batch_bytes"] == 200
+assert triangle["commands"] == 7
+assert triangle["batch_bytes"] == 224
 assert triangle["width"] == activity["width"]
 assert triangle["height"] == activity["height"]
 assert activity["renderer_ready"] is True

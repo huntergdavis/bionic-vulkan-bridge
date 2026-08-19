@@ -230,14 +230,14 @@ add_custom_command(
     "${bvb_dxvk_dispatch_policy_include}"
     "${bvb_dxvk_dispatch_policy_json}"
     --additional-executable
-    "${CMAKE_CURRENT_SOURCE_DIR}/config/e032-fence-dispatch.txt"
-    --gate E032
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e033-rotating-triangle-dispatch.txt"
+    --gate E033
   DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-dxvk-dispatch-policy.py"
     "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
     "${bvb_triangle_dispatch_include}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/config/e032-fence-dispatch.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e033-rotating-triangle-dispatch.txt"
   VERBATIM
 )
 add_library(
@@ -408,7 +408,7 @@ if(BUILD_TESTING)
       "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
       "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
       "${bvb_triangle_dispatch_include}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/config/e032-fence-dispatch.txt"
+      "${CMAKE_CURRENT_SOURCE_DIR}/config/e033-rotating-triangle-dispatch.txt"
       "${bvb_dxvk_dispatch_policy_json}"
   )
 

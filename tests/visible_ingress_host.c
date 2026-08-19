@@ -32,7 +32,7 @@ static int validate_triangle(const uint8_t *batch, size_t batch_length,
                              uint32_t height) {
     struct bvb_command_batch_info info;
     int result = bvb_command_batch_validate(batch, batch_length, &info);
-    if (result != 0 || info.command_count != 6U ||
+    if (result != 0 || info.command_count != 7U ||
         info.command_buffer_id !=
             bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 1U) ||
         info.sequence != sequence) {
@@ -46,6 +46,7 @@ static int validate_triangle(const uint8_t *batch, size_t batch_length,
     static const uint16_t expected_opcodes[] = {
         BVB_COMMAND_BEGIN_RENDERING,
         BVB_COMMAND_BIND_GRAPHICS_PIPELINE,
+        BVB_COMMAND_PUSH_ROTATION,
         BVB_COMMAND_SET_VIEWPORT,
         BVB_COMMAND_SET_SCISSOR,
         BVB_COMMAND_DRAW,
@@ -65,6 +66,17 @@ static int validate_triangle(const uint8_t *batch, size_t batch_length,
             if (result != 0 || begin.width != width ||
                 begin.height != height || begin.clear_color[0] != 0.25F ||
                 begin.clear_color[3] != 1.0F) {
+                return result != 0 ? result : -EPROTO;
+            }
+        } else if (index == 2U) {
+            struct bvb_push_rotation_command rotation;
+            result = bvb_command_decode_push_rotation(&record, &rotation);
+            const float expected_angle =
+                (float)((sequence - 1U) %
+                        BVB_TRIANGLE_ROTATION_FRAMES_PER_TURN) *
+                0.0104719755F;
+            if (result != 0 || rotation.angle_radians != expected_angle ||
+                rotation.aspect_ratio != (float)width / (float)height) {
                 return result != 0 ? result : -EPROTO;
             }
         }
@@ -138,7 +150,7 @@ int main(int argc, char **argv) {
                 region_mapping + offset, BROKERED_REGION_BYTES - offset,
                 (uint32_t)width_value, (uint32_t)height_value, index + 1U,
                 &encoded_length);
-            if (result == 0 && encoded_length != 200U) {
+            if (result == 0 && encoded_length != 224U) {
                 result = -EPROTO;
             }
         }
@@ -202,7 +214,7 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
     printf("{\"batch_bytes\":%zu,\"sequence\":%" PRIu64
-           ",\"commands\":6,\"frames\":%zu}\n",
+           ",\"commands\":7,\"frames\":%zu}\n",
            batch_length, sequence, frame_count);
     return EXIT_SUCCESS;
 }

@@ -465,7 +465,7 @@ int main(int argc, char **argv) {
                "\"writable_mapping\":true,\"width\":%" PRIu32
                ",\"height\":%" PRIu32 ",\"batch_offset\":%u,"
                "\"batch_stride\":%u,\"batch_bytes\":%zu,"
-               "\"commands\":6,\"sequence\":%" PRIu32 ","
+               "\"commands\":7,\"sequence\":%" PRIu32 ","
                "\"frames\":%" PRIu32 ",\"ring_slots\":%" PRIu32 ","
                "\"receive_validate_ns\":%" PRId64
                ",\"execute_round_trip_ns\":%" PRId64

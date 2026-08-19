@@ -14,6 +14,7 @@ import xml.etree.ElementTree as ET
 CANONICAL_COMMANDS = (
     "vkCmdBeginRendering",
     "vkCmdBindPipeline",
+    "vkCmdPushConstants",
     "vkCmdSetViewport",
     "vkCmdSetScissor",
     "vkCmdDraw",

@@ -35,6 +35,12 @@ static VkPipeline pipeline_from_id(uint64_t wire_id) {
     return handle;
 }
 
+static VkPipelineLayout pipeline_layout_from_id(uint64_t wire_id) {
+    VkPipelineLayout handle = VK_NULL_HANDLE;
+    memcpy(&handle, &wire_id, sizeof(handle));
+    return handle;
+}
+
 #define RESOLVE(name)                                                           \
     PFN_##name name = NULL;                                                     \
     do {                                                                        \
@@ -127,8 +133,8 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 45U);
-    CHECK(required_count == 395U);
+    CHECK(executable_count == 46U);
+    CHECK(required_count == 394U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");
@@ -144,6 +150,7 @@ int main(void) {
 
     RESOLVE(vkCmdBeginRendering);
     RESOLVE(vkCmdBindPipeline);
+    RESOLVE(vkCmdPushConstants);
     RESOLVE(vkCmdSetViewport);
     RESOLVE(vkCmdSetScissor);
     RESOLVE(vkCmdDraw);
@@ -161,6 +168,8 @@ int main(void) {
     const uint64_t image_view_id =
         bvb_handle_id(BVB_OBJECT_IMAGE_VIEW, 4U);
     const uint64_t pipeline_id = bvb_handle_id(BVB_OBJECT_PIPELINE, 5U);
+    const uint64_t pipeline_layout_id =
+        bvb_handle_id(BVB_OBJECT_PIPELINE_LAYOUT, 6U);
     VkCommandBuffer command_buffer = bvb_triangle_command_buffer_create(
         batch, sizeof(batch), command_buffer_id, 11U);
     CHECK(command_buffer != VK_NULL_HANDLE);
@@ -184,6 +193,11 @@ int main(void) {
     vkCmdBeginRendering(command_buffer, &rendering);
     vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                       pipeline_from_id(pipeline_id));
+    const float rotation[] = {1.25F, 16.0F / 9.0F};
+    vkCmdPushConstants(command_buffer,
+                       pipeline_layout_from_id(pipeline_layout_id),
+                       VK_SHADER_STAGE_VERTEX_BIT, 0U, sizeof(rotation),
+                       rotation);
     const VkViewport viewport = {
         .x = 0.0F,
         .y = 0.0F,
@@ -208,7 +222,8 @@ int main(void) {
     CHECK(bvb_command_batch_validate(batch, length, &info) == 0);
     CHECK(info.command_buffer_id == command_buffer_id);
     CHECK(info.sequence == 11U);
-    CHECK(info.command_count == 6U);
+    CHECK(info.command_count == 7U);
+    CHECK(info.byte_length == 224U);
 
     struct bvb_command_batch_iterator iterator;
     struct bvb_command_record record;
@@ -223,6 +238,12 @@ int main(void) {
     struct bvb_bind_graphics_pipeline_command bind;
     CHECK(bvb_command_decode_bind_graphics_pipeline(&record, &bind) == 0);
     CHECK(bind.pipeline_id == pipeline_id);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    struct bvb_push_rotation_command pushed_rotation;
+    CHECK(bvb_command_decode_push_rotation(&record, &pushed_rotation) == 0);
+    CHECK(pushed_rotation.pipeline_layout_id == pipeline_layout_id);
+    CHECK(pushed_rotation.angle_radians == rotation[0]);
+    CHECK(pushed_rotation.aspect_ratio == rotation[1]);
     CHECK(bvb_command_batch_next(&iterator, &record) == 0);
     CHECK(record.opcode == BVB_COMMAND_SET_VIEWPORT);
     CHECK(bvb_command_batch_next(&iterator, &record) == 0);

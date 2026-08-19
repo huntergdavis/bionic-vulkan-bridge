@@ -321,7 +321,7 @@ static int run(const struct client_options *options,
         *failure_stage = "complete";
         printf("{\"transport\":\"loopback_tcp_inline\",\"tcp_port\":%u,"
                "\"width\":%" PRIu32 ",\"height\":%" PRIu32
-               ",\"batch_bytes\":%zu,\"commands\":6,\"sequence\":1,"
+               ",\"batch_bytes\":%zu,\"commands\":7,\"sequence\":1,"
                "\"packet_bytes\":%zu,\"round_trip_ns\":%" PRIu64 "}\n",
                (unsigned int)options->tcp_port, options->width,
                options->height, batch_length,
@@ -391,7 +391,7 @@ static int run(const struct client_options *options,
     *failure_stage = "complete";
     printf("{\"socket_name\":\"%s\",\"width\":%" PRIu32
            ",\"height\":%" PRIu32 ",\"region_bytes\":%u"
-           ",\"batch_offset\":%u,\"batch_bytes\":%zu,\"commands\":6"
+           ",\"batch_offset\":%u,\"batch_bytes\":%zu,\"commands\":7"
            ",\"sequence\":1,\"setup_packet_bytes\":%u"
            ",\"execute_packet_bytes\":%u,\"execute_round_trip_ns\":%" PRIu64
            "}\n",

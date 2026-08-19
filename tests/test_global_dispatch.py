@@ -16,7 +16,7 @@ def main() -> int:
     service, client, loader = map(
         lambda value: str(pathlib.Path(value).resolve()), sys.argv[1:]
     )
-    with tempfile.TemporaryDirectory(prefix="bvb-e032-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="bvb-e033-") as temporary:
         socket_path = pathlib.Path(temporary) / "runtime" / "bridge.sock"
         server = subprocess.Popen(
             [
@@ -81,7 +81,7 @@ def main() -> int:
             if server.poll() is None:
                 server.terminate()
                 server.wait(timeout=5.0)
-    print("PASS: E032 fence-backed buffer-fill integration")
+    print("PASS: E033 fence-backed buffer-fill integration")
     return 0
 
 

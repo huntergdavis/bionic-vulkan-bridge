@@ -66,20 +66,20 @@ def run_contract(server_path: str, client_path: str, tcp: bool) -> None:
         )
         assert client.returncode == 0, client.stderr
         client_document = json.loads(client.stdout)
-        assert client_document["batch_bytes"] == 200
-        assert client_document["commands"] == 6
+        assert client_document["batch_bytes"] == 224
+        assert client_document["commands"] == 7
         if tcp:
             assert client_document["transport"] == "loopback_tcp_inline"
-            assert client_document["packet_bytes"] == 256
+            assert client_document["packet_bytes"] == 280
             assert client_document["round_trip_ns"] > 0
 
         server_stdout, server_stderr = server.communicate(timeout=10.0)
         assert server.returncode == 0, server_stderr
         server_document = json.loads(server_stdout)
         assert server_document == {
-            "batch_bytes": 200,
+            "batch_bytes": 224,
             "sequence": 1,
-            "commands": 6,
+            "commands": 7,
             "frames": 1,
         }
     finally:
@@ -91,7 +91,7 @@ def run_contract(server_path: str, client_path: str, tcp: bool) -> None:
 def send_brokered_execute(
     client: socket.socket, token: bytes, offset: int, sequence: int
 ) -> int:
-    payload = token + struct.pack("<QIIQ", 1, offset, 200, sequence)
+    payload = token + struct.pack("<QIIQ", 1, offset, 224, sequence)
     request_id = 0x42564200 + sequence
     header = struct.pack(
         "<IHHHHIIi", 0x31425642, 1, 1, 9, 0, request_id, len(payload), 0
@@ -141,9 +141,9 @@ def run_brokered_contract(server_path: str) -> None:
         server_stdout, server_stderr = server.communicate(timeout=10.0)
         assert server.returncode == 0, server_stderr
         assert json.loads(server_stdout) == {
-            "batch_bytes": 200,
+            "batch_bytes": 224,
             "sequence": 1,
-            "commands": 6,
+            "commands": 7,
             "frames": 1,
         }
     finally:
@@ -172,9 +172,9 @@ def run_brokered_ring_contract(server_path: str) -> None:
         server_stdout, server_stderr = server.communicate(timeout=10.0)
         assert server.returncode == 0, server_stderr
         assert json.loads(server_stdout) == {
-            "batch_bytes": 200,
+            "batch_bytes": 224,
             "sequence": 2,
-            "commands": 6,
+            "commands": 7,
             "frames": 2,
         }
     finally:

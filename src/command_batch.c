@@ -7,6 +7,7 @@
 enum {
     BVB_BEGIN_RENDERING_SIZE = 48,
     BVB_BIND_GRAPHICS_PIPELINE_SIZE = 16,
+    BVB_PUSH_ROTATION_SIZE = 16,
     BVB_SET_VIEWPORT_SIZE = 24,
     BVB_SET_SCISSOR_SIZE = 16,
     BVB_DRAW_SIZE = 16,
@@ -124,6 +125,28 @@ int bvb_command_batch_append_bind_graphics_pipeline(
     bvb_wire_put_u32(payload + 8, 0U);
     bvb_wire_put_u32(payload + 12, 0U);
     return append_record(builder, BVB_COMMAND_BIND_GRAPHICS_PIPELINE, payload,
+                         sizeof(payload));
+}
+
+int bvb_command_batch_append_push_rotation(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_push_rotation_command *command) {
+    if (command == NULL ||
+        bvb_handle_expect(command->pipeline_layout_id,
+                          BVB_OBJECT_PIPELINE_LAYOUT) != 0 ||
+        command->angle_radians < 0.0F || command->angle_radians >= 6.283186F ||
+        command->aspect_ratio <= 0.0F) {
+        return -EINVAL;
+    }
+    uint8_t payload[BVB_PUSH_ROTATION_SIZE];
+    bvb_wire_put_u64(payload, command->pipeline_layout_id);
+    put_float(payload + 8, command->angle_radians);
+    put_float(payload + 12, command->aspect_ratio);
+    if (!float_bits_are_finite(payload + 8) ||
+        !float_bits_are_finite(payload + 12)) {
+        return -EINVAL;
+    }
+    return append_record(builder, BVB_COMMAND_PUSH_ROTATION, payload,
                          sizeof(payload));
 }
 
@@ -272,6 +295,9 @@ static int expected_payload_size(uint16_t opcode, uint32_t *payload_size) {
         case BVB_COMMAND_BUFFER_HOST_READ_BARRIER:
             *payload_size = BVB_BUFFER_HOST_READ_BARRIER_SIZE;
             return 0;
+        case BVB_COMMAND_PUSH_ROTATION:
+            *payload_size = BVB_PUSH_ROTATION_SIZE;
+            return 0;
         default:
             return -EPROTO;
     }
@@ -342,6 +368,16 @@ static int validate_payload(uint16_t opcode, const uint8_t *payload) {
             return bvb_handle_expect(bvb_wire_get_u64(payload),
                                      BVB_OBJECT_BUFFER) != 0 ||
                            bvb_wire_get_u64(payload + 16) == 0U
+                       ? -EPROTO
+                       : 0;
+        case BVB_COMMAND_PUSH_ROTATION:
+            return bvb_handle_expect(bvb_wire_get_u64(payload),
+                                     BVB_OBJECT_PIPELINE_LAYOUT) != 0 ||
+                           !float_bits_are_finite(payload + 8) ||
+                           !float_bits_are_finite(payload + 12) ||
+                           get_float(payload + 8) < 0.0F ||
+                           get_float(payload + 8) >= 6.283186F ||
+                           get_float(payload + 12) <= 0.0F
                        ? -EPROTO
                        : 0;
         default:
@@ -474,6 +510,22 @@ int bvb_command_decode_bind_graphics_pipeline(
         return -EINVAL;
     }
     command->pipeline_id = bvb_wire_get_u64(record->payload);
+    return 0;
+}
+
+int bvb_command_decode_push_rotation(
+    const struct bvb_command_record *record,
+    struct bvb_push_rotation_command *command) {
+    if (record == NULL || command == NULL ||
+        record->opcode != BVB_COMMAND_PUSH_ROTATION ||
+        record->payload_length != BVB_PUSH_ROTATION_SIZE) {
+        return -EINVAL;
+    }
+    *command = (struct bvb_push_rotation_command){
+        .pipeline_layout_id = bvb_wire_get_u64(record->payload),
+        .angle_radians = get_float(record->payload + 8),
+        .aspect_ratio = get_float(record->payload + 12),
+    };
     return 0;
 }
 

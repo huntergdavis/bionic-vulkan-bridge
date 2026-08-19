@@ -105,8 +105,8 @@ def decode_batch(mapping: mmap.mmap, offset: int, length: int) -> None:
     assert magic == 0x43425642
     assert version == 1
     assert reserved == 0
-    assert byte_length == length == 200
-    assert command_count == 6
+    assert byte_length == length == 224
+    assert command_count == 7
     assert command_buffer_id == (11 << 56) | 1
     assert sequence == 1
 
@@ -126,6 +126,7 @@ def decode_batch(mapping: mmap.mmap, offset: int, length: int) -> None:
     assert [(opcode, len(payload)) for opcode, payload in records] == [
         (1, 48),
         (2, 16),
+        (9, 16),
         (3, 24),
         (4, 16),
         (5, 16),
@@ -144,10 +145,14 @@ def decode_batch(mapping: mmap.mmap, offset: int, length: int) -> None:
     )
     (pipeline_id,) = struct.unpack_from("<Q", records[1][1])
     assert pipeline_id == (16 << 56) | 1
-    viewport = struct.unpack("<ffffff", records[2][1])
+    pipeline_layout_id, angle, aspect = struct.unpack("<Qff", records[2][1])
+    assert pipeline_layout_id == (15 << 56) | 1
+    assert angle == 0.0
+    assert abs(aspect - float(WIDTH) / float(HEIGHT)) < 1e-6
+    viewport = struct.unpack("<ffffff", records[3][1])
     assert viewport == (0.0, 0.0, float(WIDTH), float(HEIGHT), 0.0, 1.0)
-    assert struct.unpack("<iiII", records[3][1]) == (0, 0, WIDTH, HEIGHT)
-    assert struct.unpack("<IIII", records[4][1]) == (3, 1, 0, 0)
+    assert struct.unpack("<iiII", records[4][1]) == (0, 0, WIDTH, HEIGHT)
+    assert struct.unpack("<IIII", records[5][1]) == (3, 1, 0, 0)
 
 
 def main() -> int:
@@ -226,8 +231,8 @@ def main() -> int:
         assert document["height"] == HEIGHT
         assert document["region_bytes"] == 4096
         assert document["batch_offset"] == 64
-        assert document["batch_bytes"] == 200
-        assert document["commands"] == 6
+        assert document["batch_bytes"] == 224
+        assert document["commands"] == 7
         assert document["sequence"] == 1
         assert document["setup_packet_bytes"] == 72
         assert document["execute_packet_bytes"] == 80

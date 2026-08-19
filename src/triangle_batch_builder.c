@@ -23,6 +23,12 @@ static VkPipeline pipeline_from_id(uint64_t wire_id) {
     return handle;
 }
 
+static VkPipelineLayout pipeline_layout_from_id(uint64_t wire_id) {
+    VkPipelineLayout handle = VK_NULL_HANDLE;
+    memcpy(&handle, &wire_id, sizeof(handle));
+    return handle;
+}
+
 #define RESOLVE_OR_FAIL(name)                                                  \
     PFN_##name name = NULL;                                                    \
     do {                                                                       \
@@ -46,6 +52,7 @@ int bvb_triangle_batch_build_sequence(uint8_t *bytes, size_t capacity,
     }
     RESOLVE_OR_FAIL(vkCmdBeginRendering);
     RESOLVE_OR_FAIL(vkCmdBindPipeline);
+    RESOLVE_OR_FAIL(vkCmdPushConstants);
     RESOLVE_OR_FAIL(vkCmdSetViewport);
     RESOLVE_OR_FAIL(vkCmdSetScissor);
     RESOLVE_OR_FAIL(vkCmdDraw);
@@ -55,6 +62,8 @@ int bvb_triangle_batch_build_sequence(uint8_t *bytes, size_t capacity,
         bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 1U);
     const uint64_t image_view_id = bvb_handle_id(BVB_OBJECT_IMAGE_VIEW, 1U);
     const uint64_t pipeline_id = bvb_handle_id(BVB_OBJECT_PIPELINE, 1U);
+    const uint64_t pipeline_layout_id =
+        bvb_handle_id(BVB_OBJECT_PIPELINE_LAYOUT, 1U);
     VkCommandBuffer command_buffer = bvb_triangle_command_buffer_create(
         bytes, capacity, command_buffer_id, sequence);
     if (command_buffer == VK_NULL_HANDLE) {
@@ -80,6 +89,15 @@ int bvb_triangle_batch_build_sequence(uint8_t *bytes, size_t capacity,
     vkCmdBeginRendering(command_buffer, &rendering);
     vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                       pipeline_from_id(pipeline_id));
+    const float rotation[] = {
+        (float)((sequence - 1U) % BVB_TRIANGLE_ROTATION_FRAMES_PER_TURN) *
+            0.0104719755F,
+        (float)width / (float)height,
+    };
+    vkCmdPushConstants(command_buffer,
+                       pipeline_layout_from_id(pipeline_layout_id),
+                       VK_SHADER_STAGE_VERTEX_BIT, 0U, sizeof(rotation),
+                       rotation);
     const VkViewport viewport = {
         .x = 0.0F,
         .y = 0.0F,
@@ -109,7 +127,7 @@ int bvb_triangle_batch_build_sequence(uint8_t *bytes, size_t capacity,
     struct bvb_command_batch_info info;
     result = bvb_command_batch_validate(bytes, *batch_length, &info);
     if (result != 0 || info.command_buffer_id != command_buffer_id ||
-        info.sequence != sequence || info.command_count != 6U) {
+        info.sequence != sequence || info.command_count != 7U) {
         return result != 0 ? result : -EPROTO;
     }
     return 0;

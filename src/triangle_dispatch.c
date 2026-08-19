@@ -125,6 +125,36 @@ static void VKAPI_CALL bvb_bridge_vkCmdBindPipeline(
                    }));
 }
 
+static void VKAPI_CALL bvb_bridge_vkCmdPushConstants(
+    VkCommandBuffer command_buffer, VkPipelineLayout layout,
+    VkShaderStageFlags stage_flags, uint32_t offset, uint32_t size,
+    const void *values) {
+    struct bvb_triangle_command_buffer *state = command_state(command_buffer);
+    const uint64_t pipeline_layout_id =
+        non_dispatchable_bits(&layout, sizeof(layout));
+    if (state == NULL || state->status != 0 || state->finished) {
+        record_status(state, -EINVAL);
+        return;
+    }
+    if (bvb_handle_expect(pipeline_layout_id,
+                          BVB_OBJECT_PIPELINE_LAYOUT) != 0 ||
+        stage_flags != VK_SHADER_STAGE_VERTEX_BIT || offset != 0U ||
+        size != 2U * sizeof(float) || values == NULL) {
+        record_status(state, -ENOTSUP);
+        return;
+    }
+    float constants[2];
+    memcpy(constants, values, sizeof(constants));
+    record_status(
+        state, bvb_command_batch_append_push_rotation(
+                   &state->builder,
+                   &(const struct bvb_push_rotation_command){
+                       .pipeline_layout_id = pipeline_layout_id,
+                       .angle_radians = constants[0],
+                       .aspect_ratio = constants[1],
+                   }));
+}
+
 static void VKAPI_CALL bvb_bridge_vkCmdSetViewport(
     VkCommandBuffer command_buffer, uint32_t first_viewport,
     uint32_t viewport_count, const VkViewport *viewports) {

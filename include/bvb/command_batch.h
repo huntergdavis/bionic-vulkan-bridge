@@ -22,6 +22,7 @@ enum {
     BVB_COMMAND_END_RENDERING = 6,
     BVB_COMMAND_FILL_BUFFER = 7,
     BVB_COMMAND_BUFFER_HOST_READ_BARRIER = 8,
+    BVB_COMMAND_PUSH_ROTATION = 9,
 };
 
 struct bvb_begin_rendering_command {
@@ -37,6 +38,12 @@ struct bvb_begin_rendering_command {
 
 struct bvb_bind_graphics_pipeline_command {
     uint64_t pipeline_id;
+};
+
+struct bvb_push_rotation_command {
+    uint64_t pipeline_layout_id;
+    float angle_radians;
+    float aspect_ratio;
 };
 
 struct bvb_set_viewport_command {
@@ -114,6 +121,9 @@ int bvb_command_batch_append_begin_rendering(
 int bvb_command_batch_append_bind_graphics_pipeline(
     struct bvb_command_batch_builder *builder,
     const struct bvb_bind_graphics_pipeline_command *command);
+int bvb_command_batch_append_push_rotation(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_push_rotation_command *command);
 int bvb_command_batch_append_set_viewport(
     struct bvb_command_batch_builder *builder,
     const struct bvb_set_viewport_command *command);
@@ -145,6 +155,9 @@ int bvb_command_decode_begin_rendering(
 int bvb_command_decode_bind_graphics_pipeline(
     const struct bvb_command_record *record,
     struct bvb_bind_graphics_pipeline_command *command);
+int bvb_command_decode_push_rotation(
+    const struct bvb_command_record *record,
+    struct bvb_push_rotation_command *command);
 int bvb_command_decode_set_viewport(const struct bvb_command_record *record,
                                     struct bvb_set_viewport_command *command);
 int bvb_command_decode_set_scissor(const struct bvb_command_record *record,

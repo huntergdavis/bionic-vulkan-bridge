@@ -684,6 +684,12 @@ static VkPipeline pipeline_from_bits(uint64_t bits) {
     return handle;
 }
 
+static VkPipelineLayout pipeline_layout_from_bits(uint64_t bits) {
+    VkPipelineLayout handle = VK_NULL_HANDLE;
+    memcpy(&handle, &bits, sizeof(handle));
+    return handle;
+}
+
 static int build_triangle_batch(uint8_t *batch, size_t capacity,
                                 VkExtent2D extent, size_t *length) {
     const uint64_t command_buffer_id =
@@ -691,6 +697,8 @@ static int build_triangle_batch(uint8_t *batch, size_t capacity,
     const uint64_t image_view_id =
         bvb_handle_id(BVB_OBJECT_IMAGE_VIEW, 1U);
     const uint64_t pipeline_id = bvb_handle_id(BVB_OBJECT_PIPELINE, 1U);
+    const uint64_t pipeline_layout_id =
+        bvb_handle_id(BVB_OBJECT_PIPELINE_LAYOUT, 1U);
     struct bvb_command_batch_builder builder;
     int result = bvb_command_batch_begin(&builder, batch, capacity,
                                          command_buffer_id, 1U);
@@ -713,6 +721,15 @@ static int build_triangle_batch(uint8_t *batch, size_t capacity,
             &builder,
             &(const struct bvb_bind_graphics_pipeline_command){
                 .pipeline_id = pipeline_id,
+            });
+    }
+    if (result == 0) {
+        result = bvb_command_batch_append_push_rotation(
+            &builder,
+            &(const struct bvb_push_rotation_command){
+                .pipeline_layout_id = pipeline_layout_id,
+                .angle_radians = 0.0F,
+                .aspect_ratio = (float)extent.width / (float)extent.height,
             });
     }
     if (result == 0) {
@@ -756,17 +773,21 @@ static int build_triangle_batch(uint8_t *batch, size_t capacity,
 
 static int replay_triangle_batch(
     const uint8_t *batch, size_t length, VkCommandBuffer command_buffer,
-    VkImageView image_view, VkPipeline pipeline, VkRenderPass render_pass,
+    VkImageView image_view, VkPipeline pipeline,
+    VkPipelineLayout pipeline_layout, VkRenderPass render_pass,
     VkFramebuffer framebuffer, VkExtent2D extent) {
     struct bvb_command_batch_info info;
     int result = bvb_command_batch_validate(batch, length, &info);
-    if (result != 0 || info.command_count != 6U ||
-        render_pass == VK_NULL_HANDLE || framebuffer == VK_NULL_HANDLE) {
+    if (result != 0 || info.command_count != 7U ||
+        pipeline_layout == VK_NULL_HANDLE || render_pass == VK_NULL_HANDLE ||
+        framebuffer == VK_NULL_HANDLE) {
         return result != 0 ? result : -EPROTO;
     }
     const uint64_t image_view_id =
         bvb_handle_id(BVB_OBJECT_IMAGE_VIEW, 1U);
     const uint64_t pipeline_id = bvb_handle_id(BVB_OBJECT_PIPELINE, 1U);
+    const uint64_t pipeline_layout_id =
+        bvb_handle_id(BVB_OBJECT_PIPELINE_LAYOUT, 1U);
     struct bvb_handle_entry entries[8];
     struct bvb_handle_table handles;
     result = bvb_handle_table_init(&handles, entries, 8U);
@@ -784,6 +805,11 @@ static int replay_triangle_batch(
         result = bvb_handle_table_insert(
             &handles, pipeline_id, 0U,
             native_handle_bits(&pipeline, sizeof(pipeline)));
+    }
+    if (result == 0) {
+        result = bvb_handle_table_insert(
+            &handles, pipeline_layout_id, 0U,
+            native_handle_bits(&pipeline_layout, sizeof(pipeline_layout)));
     }
     if (result != 0) {
         return result;
@@ -803,7 +829,7 @@ static int replay_triangle_batch(
         return result;
     }
     struct bvb_command_record record;
-    for (uint32_t index = 0U; index < 6U; ++index) {
+    for (uint32_t index = 0U; index < 7U; ++index) {
         result = bvb_command_batch_next(&iterator, &record);
         if (result != 0) {
             return -EPROTO;
@@ -864,7 +890,31 @@ static int replay_triangle_batch(
             }
             vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                               pipeline_from_bits(pipeline_bits));
-        } else if (index == 2U && record.opcode == BVB_COMMAND_SET_VIEWPORT) {
+        } else if (index == 2U &&
+                   record.opcode == BVB_COMMAND_PUSH_ROTATION) {
+            struct bvb_push_rotation_command command;
+            uint64_t pipeline_layout_bits = 0U;
+            result = bvb_command_decode_push_rotation(&record, &command);
+            if (result == 0) {
+                result = bvb_handle_table_lookup(
+                    &handles, command.pipeline_layout_id,
+                    BVB_OBJECT_PIPELINE_LAYOUT, NULL, &pipeline_layout_bits);
+            }
+            if (result != 0 ||
+                pipeline_layout_from_bits(pipeline_layout_bits) !=
+                    pipeline_layout ||
+                command.aspect_ratio !=
+                    (float)extent.width / (float)extent.height) {
+                return result != 0 ? result : -ENOTSUP;
+            }
+            const float constants[] = {
+                command.angle_radians,
+                command.aspect_ratio,
+            };
+            vkCmdPushConstants(command_buffer, pipeline_layout,
+                               VK_SHADER_STAGE_VERTEX_BIT, 0U,
+                               sizeof(constants), constants);
+        } else if (index == 3U && record.opcode == BVB_COMMAND_SET_VIEWPORT) {
             struct bvb_set_viewport_command command;
             result = bvb_command_decode_set_viewport(&record, &command);
             if (result != 0 || command.x != 0.0F || command.y != 0.0F ||
@@ -883,7 +933,7 @@ static int replay_triangle_batch(
                 .maxDepth = command.maximum_depth,
             };
             vkCmdSetViewport(command_buffer, 0U, 1U, &viewport);
-        } else if (index == 3U && record.opcode == BVB_COMMAND_SET_SCISSOR) {
+        } else if (index == 4U && record.opcode == BVB_COMMAND_SET_SCISSOR) {
             struct bvb_set_scissor_command command;
             result = bvb_command_decode_set_scissor(&record, &command);
             if (result != 0 || command.x != 0 || command.y != 0 ||
@@ -896,7 +946,7 @@ static int replay_triangle_batch(
                 .extent = {command.width, command.height},
             };
             vkCmdSetScissor(command_buffer, 0U, 1U, &scissor);
-        } else if (index == 4U && record.opcode == BVB_COMMAND_DRAW) {
+        } else if (index == 5U && record.opcode == BVB_COMMAND_DRAW) {
             struct bvb_draw_command command;
             result = bvb_command_decode_draw(&record, &command);
             if (result != 0 || command.vertex_count != 3U ||
@@ -907,7 +957,7 @@ static int replay_triangle_batch(
             vkCmdDraw(command_buffer, command.vertex_count,
                       command.instance_count, command.first_vertex,
                       command.first_instance);
-        } else if (index == 5U &&
+        } else if (index == 6U &&
                    record.opcode == BVB_COMMAND_END_RENDERING) {
             vkCmdEndRenderPass(command_buffer);
         } else {
@@ -1042,7 +1092,8 @@ static int render_triangle_frame(
                          0U, NULL, 0U, NULL, 1U, &to_render);
     status = replay_triangle_batch(
         render_batch, render_batch_length, command_buffer, image_view,
-        state.pipeline, state.render_pass, framebuffer, extent);
+        state.pipeline, state.pipeline_layout, state.render_pass, framebuffer,
+        extent);
     if (status != 0) {
         BVB_LOGE("E016_FAIL batch_replay=%d", status);
         goto cleanup;
@@ -1386,8 +1437,15 @@ static bool create_renderer(ANativeWindow *window) {
         BVB_LOGE("E016_FAIL fragment_shader=%d", (int)result);
         return false;
     }
+    const VkPushConstantRange push_constant_range = {
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+        .offset = 0U,
+        .size = 2U * sizeof(float),
+    };
     const VkPipelineLayoutCreateInfo pipeline_layout_info = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pushConstantRangeCount = 1U,
+        .pPushConstantRanges = &push_constant_range,
     };
     result = vkCreatePipelineLayout(state.device, &pipeline_layout_info, NULL,
                                     &state.pipeline_layout);
@@ -1677,7 +1735,8 @@ static bool create_renderer(ANativeWindow *window) {
                          NULL, 0, NULL, 1, &to_render);
     batch_status = replay_triangle_batch(
         render_batch, render_batch_length, command_buffer, state.image_view,
-        state.pipeline, state.render_pass, state.framebuffer, extent);
+        state.pipeline, state.pipeline_layout, state.render_pass,
+        state.framebuffer, extent);
     if (batch_status != 0) {
         BVB_LOGE("E016_FAIL batch_replay=%d", batch_status);
         complete_external_batch(external_claimed, batch_status);
@@ -1744,7 +1803,7 @@ static bool create_renderer(ANativeWindow *window) {
     }
     complete_external_batch(external_claimed, 0);
     state.window = window;
-    BVB_LOGI("E016_PASS batch_bytes=%zu commands=6 backend=render_pass "
+    BVB_LOGI("E016_PASS batch_bytes=%zu commands=7 backend=render_pass "
              "source=%s",
              render_batch_length, external_claimed ? "glibc" : "local");
     if (external_claimed) {

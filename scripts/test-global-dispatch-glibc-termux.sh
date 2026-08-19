@@ -87,7 +87,7 @@ BVB_BRIDGE_SOCKET="$control_socket" grun "$client" \
 wait "$service_pid"
 service_pid=
 if [ -s "$client_stderr" ] || [ -s "$service_stderr" ]; then
-    printf 'E032 emitted unexpected stderr\n' >&2
+    printf 'E033 emitted unexpected stderr\n' >&2
     exit 5
 fi
 
@@ -126,13 +126,13 @@ def artifact(path):
 
 
 policy = json.loads(policy_path.read_text())
-assert policy["gate"] == "E032"
+assert policy["gate"] == "E033"
 assert policy["summary"]["command_count"] == 742
-assert policy["summary"]["executable_name_count"] == 45
+assert policy["summary"]["executable_name_count"] == 46
 assert policy["summary"]["support_counts"] == {
     "probed_null": 302,
-    "required_unimplemented": 395,
-    "executable": 45,
+    "required_unimplemented": 394,
+    "executable": 46,
 }
 client_stdout = client_stdout_path.read_text().strip()
 match = re.fullmatch(
@@ -322,7 +322,7 @@ assert expected_exports <= symbol_names
 
 document = {
     "schema_version": 1,
-    "gate": "E032",
+    "gate": "E033",
     "result": "pass",
     "source_commit": source_commit,
     "target": "Galaxy Tab S8+ Termux ARM64 glibc to Android Bionic",

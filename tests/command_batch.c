@@ -65,6 +65,8 @@ static int test_batch(void) {
         bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 3U);
     const uint64_t image_view = bvb_handle_id(BVB_OBJECT_IMAGE_VIEW, 4U);
     const uint64_t pipeline = bvb_handle_id(BVB_OBJECT_PIPELINE, 5U);
+    const uint64_t pipeline_layout =
+        bvb_handle_id(BVB_OBJECT_PIPELINE_LAYOUT, 6U);
     struct bvb_command_batch_builder builder;
     CHECK(bvb_command_batch_begin(&builder, bytes, sizeof(bytes), command_buffer,
                                   11U) == 0);
@@ -84,6 +86,13 @@ static int test_batch(void) {
               &builder,
               &(const struct bvb_bind_graphics_pipeline_command){
                   .pipeline_id = pipeline,
+              }) == 0);
+    CHECK(bvb_command_batch_append_push_rotation(
+              &builder,
+              &(const struct bvb_push_rotation_command){
+                  .pipeline_layout_id = pipeline_layout,
+                  .angle_radians = 1.25F,
+                  .aspect_ratio = 16.0F / 9.0F,
               }) == 0);
     CHECK(bvb_command_batch_append_set_viewport(
               &builder,
@@ -120,7 +129,8 @@ static int test_batch(void) {
     CHECK(bvb_command_batch_validate(bytes, length, &info) == 0);
     CHECK(info.command_buffer_id == command_buffer);
     CHECK(info.sequence == 11U);
-    CHECK(info.command_count == 6U);
+    CHECK(info.command_count == 7U);
+    CHECK(info.byte_length == 224U);
     CHECK(info.byte_length == length);
 
     struct bvb_command_batch_iterator iterator;
@@ -137,6 +147,13 @@ static int test_batch(void) {
     CHECK(bvb_command_batch_next(&iterator, &record) == 0);
     CHECK(bvb_command_decode_bind_graphics_pipeline(&record, &bind) == 0);
     CHECK(bind.pipeline_id == pipeline);
+
+    struct bvb_push_rotation_command rotation;
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    CHECK(bvb_command_decode_push_rotation(&record, &rotation) == 0);
+    CHECK(rotation.pipeline_layout_id == pipeline_layout);
+    CHECK(rotation.angle_radians == 1.25F);
+    CHECK(rotation.aspect_ratio == 16.0F / 9.0F);
 
     struct bvb_set_viewport_command viewport;
     CHECK(bvb_command_batch_next(&iterator, &record) == 0);
