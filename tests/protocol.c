@@ -72,6 +72,17 @@ int main(void) {
     CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
     CHECK(decoded.opcode == BVB_OPCODE_VULKAN_INSTANCE_CREATE);
 
+    const struct bvb_protocol_header last_opcode_header = {
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_LAST,
+        .request_id = 0x90a0b0c0U,
+        .payload_length = BVB_VULKAN_MEMORY_IO_PREFIX_SIZE,
+    };
+    CHECK(bvb_protocol_encode_header(wire, &last_opcode_header) == 0);
+    CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
+    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_MEMORY_READ);
+
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
         .maximum_version = 3,
@@ -523,6 +534,59 @@ int main(void) {
     CHECK(bvb_protocol_decode_vulkan_queue_submit_command_fence_request(
               fenced_submit_wire, &fenced_submit_decoded) == 0);
     CHECK(fenced_submit_decoded.fence_id == fenced_submit.fence_id);
+
+    uint8_t memory_bytes[BVB_VULKAN_MEMORY_IO_MAX_BYTES];
+    for (size_t index = 0U; index < sizeof(memory_bytes); ++index) {
+        memory_bytes[index] = (uint8_t)(index ^ (index >> 8));
+    }
+    const struct bvb_vulkan_memory_io_request memory_io = {
+        .memory_id = buffer_bind.memory_id,
+        .offset = 12U,
+        .length = sizeof(memory_bytes),
+    };
+    uint8_t memory_io_wire[BVB_PROTOCOL_MAX_PAYLOAD];
+    uint32_t memory_io_length = 0U;
+    CHECK(bvb_protocol_encode_vulkan_memory_write_request(
+              memory_io_wire, &memory_io, memory_bytes,
+              &memory_io_length) == 0);
+    CHECK(memory_io_length == BVB_PROTOCOL_MAX_PAYLOAD);
+    struct bvb_vulkan_memory_io_request memory_io_decoded;
+    const uint8_t *memory_data_decoded = NULL;
+    CHECK(bvb_protocol_decode_vulkan_memory_write_request(
+              memory_io_wire, memory_io_length, &memory_io_decoded,
+              &memory_data_decoded) == 0);
+    CHECK(memory_io_decoded.offset == memory_io.offset);
+    CHECK(memcmp(memory_data_decoded, memory_bytes,
+                 sizeof(memory_bytes)) == 0);
+    memory_io_wire[20] = 1U;
+    CHECK(bvb_protocol_decode_vulkan_memory_write_request(
+              memory_io_wire, memory_io_length, &memory_io_decoded,
+              &memory_data_decoded) == -EPROTO);
+    memory_io_wire[20] = 0U;
+    CHECK(bvb_protocol_decode_vulkan_memory_write_request(
+              memory_io_wire, memory_io_length - 1U, &memory_io_decoded,
+              &memory_data_decoded) == -EPROTO);
+    CHECK(bvb_protocol_encode_vulkan_memory_read_request(
+              memory_io_wire, &memory_io) == 0);
+    CHECK(bvb_protocol_decode_vulkan_memory_read_request(
+              memory_io_wire, &memory_io_decoded) == 0);
+    CHECK(memory_io_decoded.length == sizeof(memory_bytes));
+    const struct bvb_vulkan_memory_io_response memory_io_response = {
+        .vulkan_result = 0,
+        .length = sizeof(memory_bytes),
+    };
+    CHECK(bvb_protocol_encode_vulkan_memory_io_response(
+              memory_io_wire, &memory_io_response, memory_bytes,
+              &memory_io_length) == 0);
+    CHECK(memory_io_length ==
+          BVB_VULKAN_MEMORY_IO_RESPONSE_PREFIX_SIZE + sizeof(memory_bytes));
+    struct bvb_vulkan_memory_io_response memory_io_response_decoded;
+    CHECK(bvb_protocol_decode_vulkan_memory_io_response(
+              memory_io_wire, memory_io_length, &memory_io_response_decoded,
+              &memory_data_decoded) == 0);
+    CHECK(memory_io_response_decoded.length == sizeof(memory_bytes));
+    CHECK(memcmp(memory_data_decoded, memory_bytes,
+                 sizeof(memory_bytes)) == 0);
 
     const struct bvb_shared_batch_setup shared_setup = {
         .region_bytes = 4096U,

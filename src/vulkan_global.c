@@ -1909,6 +1909,128 @@ int bvb_vulkan_global_context_verify_memory_fill(
     return 0;
 }
 
+static int resolve_host_visible_memory(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_io_request *request,
+    const struct bvb_memory_metadata **metadata, VkDevice *device,
+    VkDeviceMemory *memory) {
+    if (context == NULL || request == NULL || metadata == NULL ||
+        device == NULL || memory == NULL || request->length == 0U ||
+        request->length > BVB_VULKAN_MEMORY_IO_MAX_BYTES) {
+        return -EINVAL;
+    }
+    struct bvb_memory_metadata *found = memory_metadata_slot(
+        (struct bvb_vulkan_global_context *)context, request->memory_id);
+    if (found == NULL || found->memory_id != request->memory_id ||
+        request->offset > found->allocation_size ||
+        request->length > found->allocation_size - request->offset ||
+        (found->property_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0U) {
+        return -ERANGE;
+    }
+    uint64_t device_id = 0U;
+    uint64_t memory_bits = 0U;
+    int result = resolve_device_child(
+        context, request->memory_id, BVB_OBJECT_DEVICE_MEMORY, &device_id,
+        device, &memory_bits);
+    if (result == 0) {
+        *metadata = found;
+        *memory = memory_from_bits(memory_bits);
+    }
+    return result;
+}
+
+int bvb_vulkan_global_context_write_memory(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_io_request *request, const uint8_t *data,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (data == NULL || vulkan_result == NULL) return -EINVAL;
+    *vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    const struct bvb_memory_metadata *metadata = NULL;
+    VkDevice device = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    int result = resolve_host_visible_memory(
+        context, request, &metadata, &device, &memory);
+    if (result != 0) return result;
+    PFN_vkMapMemory map = (PFN_vkMapMemory)context->get_device_proc_addr(
+        device, "vkMapMemory");
+    PFN_vkUnmapMemory unmap =
+        (PFN_vkUnmapMemory)context->get_device_proc_addr(device,
+                                                         "vkUnmapMemory");
+    if (map == NULL || unmap == NULL) return -ENOSYS;
+    void *mapped = NULL;
+    *vulkan_result = map(device, memory, 0U, VK_WHOLE_SIZE, 0U, &mapped);
+    if (*vulkan_result != VK_SUCCESS || mapped == NULL) return 0;
+    memcpy((uint8_t *)mapped + request->offset, data, request->length);
+    if ((metadata->property_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) ==
+        0U) {
+        PFN_vkFlushMappedMemoryRanges flush =
+            (PFN_vkFlushMappedMemoryRanges)context->get_device_proc_addr(
+                device, "vkFlushMappedMemoryRanges");
+        const VkMappedMemoryRange range = {
+            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .memory = memory,
+            .offset = 0U,
+            .size = VK_WHOLE_SIZE,
+        };
+        *vulkan_result = flush == NULL
+                             ? VK_ERROR_FEATURE_NOT_PRESENT
+                             : flush(device, 1U, &range);
+    }
+    unmap(device, memory);
+    return 0;
+}
+
+int bvb_vulkan_global_context_read_memory(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_io_request *request, uint8_t *data,
+    uint32_t capacity, uint32_t *length, int32_t *vulkan_result,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (data == NULL || length == NULL || vulkan_result == NULL ||
+        request == NULL || capacity < request->length) return -EINVAL;
+    *length = 0U;
+    *vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    const struct bvb_memory_metadata *metadata = NULL;
+    VkDevice device = VK_NULL_HANDLE;
+    VkDeviceMemory memory = VK_NULL_HANDLE;
+    int result = resolve_host_visible_memory(
+        context, request, &metadata, &device, &memory);
+    if (result != 0) return result;
+    PFN_vkMapMemory map = (PFN_vkMapMemory)context->get_device_proc_addr(
+        device, "vkMapMemory");
+    PFN_vkUnmapMemory unmap =
+        (PFN_vkUnmapMemory)context->get_device_proc_addr(device,
+                                                         "vkUnmapMemory");
+    if (map == NULL || unmap == NULL) return -ENOSYS;
+    void *mapped = NULL;
+    *vulkan_result = map(device, memory, 0U, VK_WHOLE_SIZE, 0U, &mapped);
+    if (*vulkan_result != VK_SUCCESS || mapped == NULL) return 0;
+    if ((metadata->property_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) ==
+        0U) {
+        PFN_vkInvalidateMappedMemoryRanges invalidate =
+            (PFN_vkInvalidateMappedMemoryRanges)
+                context->get_device_proc_addr(
+                    device, "vkInvalidateMappedMemoryRanges");
+        const VkMappedMemoryRange range = {
+            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .memory = memory,
+            .offset = 0U,
+            .size = VK_WHOLE_SIZE,
+        };
+        *vulkan_result = invalidate == NULL
+                             ? VK_ERROR_FEATURE_NOT_PRESENT
+                             : invalidate(device, 1U, &range);
+    }
+    if (*vulkan_result == VK_SUCCESS) {
+        memcpy(data, (const uint8_t *)mapped + request->offset,
+               request->length);
+        *length = request->length;
+    }
+    unmap(device, memory);
+    return 0;
+}
+
 int bvb_vulkan_global_context_create_fence(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_fence_create_request *request,

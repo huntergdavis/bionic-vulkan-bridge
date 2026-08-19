@@ -34,8 +34,8 @@ python "$project_dir/scripts/generate-dxvk-dispatch-policy.py" \
     "$generated_dir/bvb_dxvk_dispatch_policy.inc" \
     "$generated_dir/bvb_dxvk_dispatch_policy.json" \
     --additional-executable \
-    "$project_dir/config/e033-rotating-triangle-dispatch.txt" \
-    --gate E033
+    "$project_dir/config/e034-mapped-memory-dispatch.txt" \
+    --gate E034
 python "$project_dir/scripts/generate-vulkan-discovery-wire.py" \
     "$registry" \
     "$generated_dir/bvb_vulkan_discovery_wire.inc"

@@ -1416,6 +1416,79 @@ static int answer_vulkan_memory_verify_fill(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_memory_write(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_memory_io_request decoded;
+    const uint8_t *data = NULL;
+    int result = bvb_protocol_decode_vulkan_memory_write_request(
+        request->payload, request->header.payload_length, &decoded, &data);
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    char diagnostic[512] = {0};
+    if (result == 0) {
+        result = bvb_vulkan_global_context_write_memory(
+            context, &decoded, data, &vulkan_result, diagnostic,
+            sizeof(diagnostic));
+    }
+    const struct bvb_vulkan_memory_io_response written = {
+        .vulkan_result = vulkan_result,
+    };
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_memory_io_response(
+            response.payload, &written, NULL,
+            &response.header.payload_length);
+    }
+    if (result != 0) {
+        fprintf(stderr, "bvb: memory write failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_memory_read(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length != BVB_VULKAN_MEMORY_IO_PREFIX_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_memory_io_request decoded;
+    int result = bvb_protocol_decode_vulkan_memory_read_request(
+        request->payload, &decoded);
+    uint8_t data[BVB_VULKAN_MEMORY_IO_MAX_BYTES];
+    uint32_t length = 0U;
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    char diagnostic[512] = {0};
+    if (result == 0) {
+        result = bvb_vulkan_global_context_read_memory(
+            context, &decoded, data, sizeof(data), &length, &vulkan_result,
+            diagnostic, sizeof(diagnostic));
+    }
+    const struct bvb_vulkan_memory_io_response read = {
+        .vulkan_result = vulkan_result,
+        .length = vulkan_result == VK_SUCCESS ? length : 0U,
+    };
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_memory_io_response(
+            response.payload, &read, length == 0U ? NULL : data,
+            &response.header.payload_length);
+    }
+    if (result != 0) {
+        fprintf(stderr, "bvb: memory read failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_fence_operation(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context) {
@@ -1856,6 +1929,14 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_MEMORY_VERIFY_FILL) {
             result = answer_vulkan_memory_verify_fill(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_MEMORY_WRITE) {
+            result = answer_vulkan_memory_write(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_MEMORY_READ) {
+            result = answer_vulkan_memory_read(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode == BVB_OPCODE_VULKAN_FENCE_STATUS ||
                    request.header.opcode == BVB_OPCODE_VULKAN_FENCE_RESET) {

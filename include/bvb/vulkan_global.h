@@ -136,6 +136,15 @@ int bvb_vulkan_global_context_verify_memory_fill(
     const struct bvb_vulkan_memory_verify_fill_request *request,
     struct bvb_vulkan_memory_verify_fill_response *response,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_write_memory(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_io_request *request, const uint8_t *data,
+    int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_read_memory(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_io_request *request, uint8_t *data,
+    uint32_t capacity, uint32_t *length, int32_t *vulkan_result,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_create_fence(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_fence_create_request *request,

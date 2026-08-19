@@ -797,6 +797,16 @@ static VkResult VKAPI_CALL fake_invalidate_mapped_ranges(
     return VK_SUCCESS;
 }
 
+static VkResult VKAPI_CALL fake_flush_mapped_ranges(
+    VkDevice device,
+    uint32_t range_count,
+    const VkMappedMemoryRange *ranges) {
+    (void)device;
+    (void)range_count;
+    (void)ranges;
+    return VK_SUCCESS;
+}
+
 static void VKAPI_CALL fake_destroy_instance(
     VkInstance instance,
     const VkAllocationCallbacks *allocator) {
@@ -883,6 +893,7 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkDeviceWaitIdle", fake_device_wait_idle)
     BVB_DEVICE_MATCH("vkMapMemory", fake_map_memory)
     BVB_DEVICE_MATCH("vkUnmapMemory", fake_unmap_memory)
+    BVB_DEVICE_MATCH("vkFlushMappedMemoryRanges", fake_flush_mapped_ranges)
     BVB_DEVICE_MATCH("vkInvalidateMappedMemoryRanges",
                      fake_invalidate_mapped_ranges)
 #undef BVB_DEVICE_MATCH

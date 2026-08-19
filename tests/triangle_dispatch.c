@@ -107,6 +107,12 @@ int main(void) {
                                "vkGetBufferMemoryRequirements") == 0 ||
                         strcmp(entry->name, "vkAllocateMemory") == 0 ||
                         strcmp(entry->name, "vkFreeMemory") == 0 ||
+                        strcmp(entry->name, "vkMapMemory") == 0 ||
+                        strcmp(entry->name, "vkUnmapMemory") == 0 ||
+                        strcmp(entry->name,
+                               "vkFlushMappedMemoryRanges") == 0 ||
+                        strcmp(entry->name,
+                               "vkInvalidateMappedMemoryRanges") == 0 ||
                         strcmp(entry->name, "vkBindBufferMemory") == 0 ||
                         strcmp(entry->name, "vkCmdFillBuffer") == 0 ||
                         strcmp(entry->name, "vkCreateFence") == 0 ||
@@ -133,8 +139,8 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 46U);
-    CHECK(required_count == 394U);
+    CHECK(executable_count == 50U);
+    CHECK(required_count == 390U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");

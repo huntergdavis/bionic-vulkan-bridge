@@ -278,6 +278,10 @@ int main(void) {
     PFN_vkAllocateMemory allocate_memory = NULL;
     PFN_vkFreeMemory free_memory = NULL;
     PFN_vkBindBufferMemory bind_buffer_memory = NULL;
+    PFN_vkMapMemory map_memory = NULL;
+    PFN_vkUnmapMemory unmap_memory = NULL;
+    PFN_vkFlushMappedMemoryRanges flush_mapped_memory_ranges = NULL;
+    PFN_vkInvalidateMappedMemoryRanges invalidate_mapped_memory_ranges = NULL;
     PFN_vkCmdFillBuffer cmd_fill_buffer = NULL;
     PFN_vkCreateFence create_fence = NULL;
     PFN_vkDestroyFence destroy_fence = NULL;
@@ -340,6 +344,20 @@ int main(void) {
     erased = vkGetDeviceProcAddr(device, "vkBindBufferMemory");
     CHECK(erased != NULL);
     memcpy(&bind_buffer_memory, &erased, sizeof(bind_buffer_memory));
+    erased = vkGetDeviceProcAddr(device, "vkMapMemory");
+    CHECK(erased != NULL);
+    memcpy(&map_memory, &erased, sizeof(map_memory));
+    erased = vkGetDeviceProcAddr(device, "vkUnmapMemory");
+    CHECK(erased != NULL);
+    memcpy(&unmap_memory, &erased, sizeof(unmap_memory));
+    erased = vkGetDeviceProcAddr(device, "vkFlushMappedMemoryRanges");
+    CHECK(erased != NULL);
+    memcpy(&flush_mapped_memory_ranges, &erased,
+           sizeof(flush_mapped_memory_ranges));
+    erased = vkGetDeviceProcAddr(device, "vkInvalidateMappedMemoryRanges");
+    CHECK(erased != NULL);
+    memcpy(&invalidate_mapped_memory_ranges, &erased,
+           sizeof(invalidate_mapped_memory_ranges));
     erased = vkGetDeviceProcAddr(device, "vkCmdFillBuffer");
     CHECK(erased != NULL);
     memcpy(&cmd_fill_buffer, &erased, sizeof(cmd_fill_buffer));
@@ -447,6 +465,32 @@ int main(void) {
     CHECK(bvb_handle_type(memory_id) == BVB_OBJECT_DEVICE_MEMORY);
     CHECK(bvb_handle_serial(memory_id) == 1U);
     CHECK(bind_buffer_memory(device, buffer, device_memory, 0U) == VK_SUCCESS);
+    uint8_t *mapped = NULL;
+    CHECK(map_memory(device, device_memory, 0U, VK_WHOLE_SIZE, 0U,
+                     (void **)&mapped) == VK_SUCCESS);
+    CHECK(mapped != NULL);
+    uint8_t expected_mapping[4096];
+    for (size_t index = 0U; index < sizeof(expected_mapping); ++index) {
+        expected_mapping[index] = (uint8_t)(index ^ (index >> 4));
+    }
+    memcpy(mapped, expected_mapping, sizeof(expected_mapping));
+    const VkMappedMemoryRange mapped_range = {
+        .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+        .memory = device_memory,
+        .offset = 0U,
+        .size = VK_WHOLE_SIZE,
+    };
+    CHECK(flush_mapped_memory_ranges(device, 1U, &mapped_range) ==
+          VK_SUCCESS);
+    memset(mapped, 0, sizeof(expected_mapping));
+    CHECK(invalidate_mapped_memory_ranges(device, 1U, &mapped_range) ==
+          VK_SUCCESS);
+    uint32_t mapped_mismatches = 0U;
+    for (size_t index = 0U; index < sizeof(expected_mapping); ++index) {
+        if (mapped[index] != expected_mapping[index]) ++mapped_mismatches;
+    }
+    CHECK(mapped_mismatches == 0U);
+    unmap_memory(device, device_memory);
     const VkFenceCreateInfo fence_create_info = {
         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
     };
@@ -513,6 +557,7 @@ int main(void) {
            "empty_submit=0 queue_wait=0 device_wait=0 "
            "command_pool=%llu command_buffer=%llu command_submit=0 "
            "pool_reset=0 buffer=%llu memory=%llu memory_type=%u "
+           "mapped_bytes=4096 mapped_mismatches=%u "
            "fill_words=1024 mismatches=%u fence=%llu fence_before=1 "
            "fenced_submit=0 fence_after=0 fence_wait=0 fence_reset=0 "
            "fence_after_reset=1\n",
@@ -530,7 +575,7 @@ int main(void) {
            (unsigned long long)command_buffer_id,
            (unsigned long long)buffer_id,
            (unsigned long long)memory_id,
-           memory_type_index, mismatched_words,
+           memory_type_index, mapped_mismatches, mismatched_words,
            (unsigned long long)fence_id);
     return 0;
 }

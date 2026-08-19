@@ -62,6 +62,9 @@ enum {
     BVB_OPCODE_VULKAN_FENCE_WAIT = 45,
     BVB_OPCODE_VULKAN_FENCE_RESET = 46,
     BVB_OPCODE_VULKAN_QUEUE_SUBMIT_COMMAND_FENCE = 47,
+    BVB_OPCODE_VULKAN_MEMORY_WRITE = 48,
+    BVB_OPCODE_VULKAN_MEMORY_READ = 49,
+    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_MEMORY_READ,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -111,6 +114,10 @@ enum {
     BVB_VULKAN_FENCE_CREATE_REQUEST_SIZE = 16,
     BVB_VULKAN_FENCE_WAIT_REQUEST_SIZE = 24,
     BVB_VULKAN_QUEUE_SUBMIT_COMMAND_FENCE_REQUEST_SIZE = 24,
+    BVB_VULKAN_MEMORY_IO_PREFIX_SIZE = 24,
+    BVB_VULKAN_MEMORY_IO_RESPONSE_PREFIX_SIZE = 8,
+    BVB_VULKAN_MEMORY_IO_MAX_BYTES =
+        BVB_PROTOCOL_MAX_PAYLOAD - BVB_VULKAN_MEMORY_IO_PREFIX_SIZE,
     BVB_VULKAN_PHYSICAL_DEVICES_PREFIX_SIZE = 8,
     BVB_VULKAN_MAX_PHYSICAL_DEVICES = 8,
     BVB_SHARED_BATCH_MIN_BYTES = 4096,
@@ -329,6 +336,17 @@ struct bvb_vulkan_queue_submit_command_fence_request {
     uint64_t queue_id;
     uint64_t command_buffer_id;
     uint64_t fence_id;
+};
+
+struct bvb_vulkan_memory_io_request {
+    uint64_t memory_id;
+    uint64_t offset;
+    uint32_t length;
+};
+
+struct bvb_vulkan_memory_io_response {
+    int32_t vulkan_result;
+    uint32_t length;
 };
 
 /*
@@ -605,6 +623,26 @@ int bvb_protocol_encode_vulkan_queue_submit_command_fence_request(
 int bvb_protocol_decode_vulkan_queue_submit_command_fence_request(
     const uint8_t input[BVB_VULKAN_QUEUE_SUBMIT_COMMAND_FENCE_REQUEST_SIZE],
     struct bvb_vulkan_queue_submit_command_fence_request *request);
+int bvb_protocol_encode_vulkan_memory_write_request(
+    uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
+    const struct bvb_vulkan_memory_io_request *request,
+    const uint8_t *data, uint32_t *output_length);
+int bvb_protocol_decode_vulkan_memory_write_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_memory_io_request *request, const uint8_t **data);
+int bvb_protocol_encode_vulkan_memory_read_request(
+    uint8_t output[BVB_VULKAN_MEMORY_IO_PREFIX_SIZE],
+    const struct bvb_vulkan_memory_io_request *request);
+int bvb_protocol_decode_vulkan_memory_read_request(
+    const uint8_t input[BVB_VULKAN_MEMORY_IO_PREFIX_SIZE],
+    struct bvb_vulkan_memory_io_request *request);
+int bvb_protocol_encode_vulkan_memory_io_response(
+    uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
+    const struct bvb_vulkan_memory_io_response *response,
+    const uint8_t *data, uint32_t *output_length);
+int bvb_protocol_decode_vulkan_memory_io_response(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_memory_io_response *response, const uint8_t **data);
 
 void bvb_wire_put_u16(uint8_t *output, uint16_t value);
 void bvb_wire_put_u32(uint8_t *output, uint32_t value);

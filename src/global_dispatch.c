@@ -74,6 +74,10 @@ struct bvb_command_buffer_proxy {
 struct bvb_resource_proxy {
     uint64_t wire_id;
     uint64_t parent_id;
+    uint64_t allocation_size;
+    uint64_t mapped_offset;
+    uint64_t mapped_size;
+    uint8_t *mapped_bytes;
     enum bvb_object_type type;
     struct bvb_resource_proxy *next;
 };
@@ -522,6 +526,7 @@ static void remove_resource_proxy_locked(struct bvb_resource_proxy *target) {
         struct bvb_resource_proxy *proxy = *cursor;
         if (proxy == target) {
             *cursor = proxy->next;
+            free(proxy->mapped_bytes);
             free(proxy);
             return;
         }
@@ -535,6 +540,7 @@ static void remove_resources_for_device_locked(uint64_t parent_id) {
         struct bvb_resource_proxy *proxy = *cursor;
         if (proxy->parent_id == parent_id) {
             *cursor = proxy->next;
+            free(proxy->mapped_bytes);
             free(proxy);
         } else {
             cursor = &proxy->next;
@@ -1831,6 +1837,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkAllocateMemory(
         free(state);
         return VK_ERROR_INITIALIZATION_FAILED;
     }
+    state->allocation_size = allocate_info->allocationSize;
     uint64_t wire_id = 0U;
     VkResult vulkan_result = create_resource_locked(
         BVB_OPCODE_VULKAN_MEMORY_ALLOCATE, payload, sizeof(payload),
@@ -1883,6 +1890,248 @@ static VkResult VKAPI_CALL bvb_bridge_vkBindBufferMemory(
     }
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
     return vulkan_result;
+}
+
+static VkResult memory_write_locked(
+    const struct bvb_resource_proxy *state, uint64_t offset,
+    const uint8_t *bytes, uint64_t length) {
+    if (state == NULL || bytes == NULL || length == 0U ||
+        offset > state->allocation_size ||
+        length > state->allocation_size - offset || connect_locked() != 0) {
+        return VK_ERROR_MEMORY_MAP_FAILED;
+    }
+    uint64_t completed = 0U;
+    while (completed < length) {
+        const uint32_t chunk =
+            length - completed > BVB_VULKAN_MEMORY_IO_MAX_BYTES
+                ? BVB_VULKAN_MEMORY_IO_MAX_BYTES
+                : (uint32_t)(length - completed);
+        const struct bvb_vulkan_memory_io_request decoded = {
+            .memory_id = state->wire_id,
+            .offset = offset + completed,
+            .length = chunk,
+        };
+        struct bvb_protocol_packet request = {0};
+        request.header = (struct bvb_protocol_header){
+            .version = BVB_PROTOCOL_VERSION,
+            .kind = BVB_PROTOCOL_REQUEST,
+            .opcode = BVB_OPCODE_VULKAN_MEMORY_WRITE,
+            .request_id = next_request_id_locked(),
+        };
+        int result = bvb_protocol_encode_vulkan_memory_write_request(
+            request.payload, &decoded, bytes + completed,
+            &request.header.payload_length);
+        struct bvb_protocol_packet response = {0};
+        if (result == 0) result = exchange_locked(&request, &response);
+        struct bvb_vulkan_memory_io_response written = {0};
+        const uint8_t *response_data = NULL;
+        if (result == 0 && response.header.status == 0) {
+            result = bvb_protocol_decode_vulkan_memory_io_response(
+                response.payload, response.header.payload_length, &written,
+                &response_data);
+        }
+        if (result != 0 || response.header.status != 0 ||
+            written.length != 0U) {
+            return VK_ERROR_MEMORY_MAP_FAILED;
+        }
+        if (written.vulkan_result != VK_SUCCESS) {
+            return (VkResult)written.vulkan_result;
+        }
+        completed += chunk;
+    }
+    return VK_SUCCESS;
+}
+
+static VkResult memory_read_locked(
+    const struct bvb_resource_proxy *state, uint64_t offset,
+    uint8_t *bytes, uint64_t length) {
+    if (state == NULL || bytes == NULL || length == 0U ||
+        offset > state->allocation_size ||
+        length > state->allocation_size - offset || connect_locked() != 0) {
+        return VK_ERROR_MEMORY_MAP_FAILED;
+    }
+    uint64_t completed = 0U;
+    while (completed < length) {
+        const uint32_t chunk =
+            length - completed > BVB_VULKAN_MEMORY_IO_MAX_BYTES
+                ? BVB_VULKAN_MEMORY_IO_MAX_BYTES
+                : (uint32_t)(length - completed);
+        const struct bvb_vulkan_memory_io_request decoded = {
+            .memory_id = state->wire_id,
+            .offset = offset + completed,
+            .length = chunk,
+        };
+        struct bvb_protocol_packet request = {0};
+        request.header = (struct bvb_protocol_header){
+            .version = BVB_PROTOCOL_VERSION,
+            .kind = BVB_PROTOCOL_REQUEST,
+            .opcode = BVB_OPCODE_VULKAN_MEMORY_READ,
+            .request_id = next_request_id_locked(),
+            .payload_length = BVB_VULKAN_MEMORY_IO_PREFIX_SIZE,
+        };
+        int result = bvb_protocol_encode_vulkan_memory_read_request(
+            request.payload, &decoded);
+        struct bvb_protocol_packet response = {0};
+        if (result == 0) result = exchange_locked(&request, &response);
+        struct bvb_vulkan_memory_io_response read = {0};
+        const uint8_t *response_data = NULL;
+        if (result == 0 && response.header.status == 0) {
+            result = bvb_protocol_decode_vulkan_memory_io_response(
+                response.payload, response.header.payload_length, &read,
+                &response_data);
+        }
+        if (result != 0 || response.header.status != 0) {
+            return VK_ERROR_MEMORY_MAP_FAILED;
+        }
+        if (read.vulkan_result != VK_SUCCESS) {
+            return (VkResult)read.vulkan_result;
+        }
+        if (read.length != chunk) return VK_ERROR_MEMORY_MAP_FAILED;
+        memcpy(bytes + completed, response_data, chunk);
+        completed += chunk;
+    }
+    return VK_SUCCESS;
+}
+
+static VkResult mapped_range_locked(
+    struct bvb_resource_proxy *state, uint64_t offset, uint64_t size,
+    bool read_from_native) {
+    if (state == NULL || state->mapped_bytes == NULL ||
+        offset < state->mapped_offset || offset > state->allocation_size) {
+        return VK_ERROR_MEMORY_MAP_FAILED;
+    }
+    const uint64_t effective_size = size == VK_WHOLE_SIZE
+                                        ? state->allocation_size - offset
+                                        : size;
+    if (effective_size == 0U ||
+        effective_size > state->allocation_size - offset ||
+        offset - state->mapped_offset > state->mapped_size ||
+        effective_size >
+            state->mapped_size - (offset - state->mapped_offset)) {
+        return VK_ERROR_MEMORY_MAP_FAILED;
+    }
+    uint8_t *shadow =
+        state->mapped_bytes + (size_t)(offset - state->mapped_offset);
+    return read_from_native
+               ? memory_read_locked(state, offset, shadow, effective_size)
+               : memory_write_locked(state, offset, shadow, effective_size);
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkMapMemory(
+    VkDevice device, VkDeviceMemory memory, VkDeviceSize offset,
+    VkDeviceSize size, VkMemoryMapFlags flags, void **data) {
+    if (data != NULL) *data = NULL;
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    const uint64_t memory_id = non_dispatchable_wire_id(&memory, sizeof(memory));
+    if (device_state == NULL || data == NULL || flags != 0U ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return VK_ERROR_MEMORY_MAP_FAILED;
+    }
+    struct bvb_resource_proxy *state =
+        resource_proxy_locked(memory_id, BVB_OBJECT_DEVICE_MEMORY);
+    const uint64_t effective_size =
+        state != NULL && size == VK_WHOLE_SIZE && offset <= state->allocation_size
+            ? state->allocation_size - offset
+            : size;
+    VkResult result = VK_ERROR_MEMORY_MAP_FAILED;
+    if (state != NULL && state->parent_id == device_state->wire_id &&
+        state->mapped_bytes == NULL && effective_size != 0U &&
+        offset <= state->allocation_size &&
+        effective_size <= state->allocation_size - offset &&
+        effective_size <= SIZE_MAX) {
+        uint8_t *shadow = malloc((size_t)effective_size);
+        if (shadow == NULL) {
+            result = VK_ERROR_OUT_OF_HOST_MEMORY;
+        } else {
+            result = memory_read_locked(state, offset, shadow, effective_size);
+            if (result == VK_SUCCESS) {
+                state->mapped_offset = offset;
+                state->mapped_size = effective_size;
+                state->mapped_bytes = shadow;
+                *data = shadow;
+            } else {
+                free(shadow);
+            }
+        }
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return result;
+}
+
+static void VKAPI_CALL bvb_bridge_vkUnmapMemory(
+    VkDevice device, VkDeviceMemory memory) {
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    const uint64_t memory_id = non_dispatchable_wire_id(&memory, sizeof(memory));
+    if (device_state == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return;
+    }
+    struct bvb_resource_proxy *state =
+        resource_proxy_locked(memory_id, BVB_OBJECT_DEVICE_MEMORY);
+    if (state != NULL && state->parent_id == device_state->wire_id &&
+        state->mapped_bytes != NULL) {
+        (void)mapped_range_locked(state, state->mapped_offset,
+                                  state->mapped_size, false);
+        free(state->mapped_bytes);
+        state->mapped_bytes = NULL;
+        state->mapped_offset = 0U;
+        state->mapped_size = 0U;
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+}
+
+static VkResult mapped_ranges_operation(
+    VkDevice device, uint32_t range_count, const VkMappedMemoryRange *ranges,
+    bool read_from_native) {
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || range_count == 0U || ranges == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return VK_ERROR_MEMORY_MAP_FAILED;
+    }
+    VkResult result = VK_SUCCESS;
+    for (uint32_t index = 0U; index < range_count && result == VK_SUCCESS;
+         ++index) {
+        const uint64_t memory_id = non_dispatchable_wire_id(
+            &ranges[index].memory, sizeof(ranges[index].memory));
+        struct bvb_resource_proxy *state =
+            resource_proxy_locked(memory_id, BVB_OBJECT_DEVICE_MEMORY);
+        if (ranges[index].sType != VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE ||
+            ranges[index].pNext != NULL || state == NULL ||
+            state->parent_id != device_state->wire_id) {
+            result = VK_ERROR_MEMORY_MAP_FAILED;
+        } else {
+            result = mapped_range_locked(
+                state, ranges[index].offset, ranges[index].size,
+                read_from_native);
+        }
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return result;
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkFlushMappedMemoryRanges(
+    VkDevice device, uint32_t range_count,
+    const VkMappedMemoryRange *ranges) {
+    return mapped_ranges_operation(device, range_count, ranges, false);
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkInvalidateMappedMemoryRanges(
+    VkDevice device, uint32_t range_count,
+    const VkMappedMemoryRange *ranges) {
+    return mapped_ranges_operation(device, range_count, ranges, true);
+}
+
+static VkResult flush_mapped_resources_locked(uint64_t device_id) {
+    for (struct bvb_resource_proxy *state = bvb_global_client.resources;
+         state != NULL; state = state->next) {
+        if (state->type == BVB_OBJECT_DEVICE_MEMORY &&
+            state->parent_id == device_id && state->mapped_bytes != NULL) {
+            VkResult result = mapped_range_locked(
+                state, state->mapped_offset, state->mapped_size, false);
+            if (result != VK_SUCCESS) return result;
+        }
+    }
+    return VK_SUCCESS;
 }
 
 static void VKAPI_CALL bvb_bridge_vkCmdFillBuffer(
@@ -2168,6 +2417,12 @@ static VkResult VKAPI_CALL bvb_bridge_vkQueueSubmit(
         (void)pthread_mutex_unlock(&bvb_global_client.mutex);
         return VK_ERROR_INITIALIZATION_FAILED;
     }
+    VkResult upload_result =
+        flush_mapped_resources_locked(queue_state->parent_id);
+    if (upload_result != VK_SUCCESS) {
+        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+        return upload_result;
+    }
     if (fence != VK_NULL_HANDLE) {
         const struct bvb_vulkan_queue_submit_command_fence_request
             submit_request = {
@@ -2276,6 +2531,12 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     BVB_DEVICE_MATCH("vkAllocateMemory", bvb_bridge_vkAllocateMemory)
     BVB_DEVICE_MATCH("vkFreeMemory", bvb_bridge_vkFreeMemory)
     BVB_DEVICE_MATCH("vkBindBufferMemory", bvb_bridge_vkBindBufferMemory)
+    BVB_DEVICE_MATCH("vkMapMemory", bvb_bridge_vkMapMemory)
+    BVB_DEVICE_MATCH("vkUnmapMemory", bvb_bridge_vkUnmapMemory)
+    BVB_DEVICE_MATCH("vkFlushMappedMemoryRanges",
+                     bvb_bridge_vkFlushMappedMemoryRanges)
+    BVB_DEVICE_MATCH("vkInvalidateMappedMemoryRanges",
+                     bvb_bridge_vkInvalidateMappedMemoryRanges)
     BVB_DEVICE_MATCH("vkCmdFillBuffer", bvb_bridge_vkCmdFillBuffer)
     BVB_DEVICE_MATCH("vkCreateFence", bvb_bridge_vkCreateFence)
     BVB_DEVICE_MATCH("vkDestroyFence", bvb_bridge_vkDestroyFence)
