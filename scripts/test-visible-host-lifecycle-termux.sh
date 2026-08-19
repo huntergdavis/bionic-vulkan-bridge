@@ -16,7 +16,9 @@ for command_name in am grun gcc od python readelf sed tr; do
 done
 for required_file in "$build_dir/bvb-bridge-service" \
     "$project_dir/src/lifecycle.c" "$project_dir/src/protocol.c" \
-    "$project_dir/src/transport.c" "$project_dir/src/bridge_client.c"; do
+    "$project_dir/src/transport.c" "$project_dir/src/handle.c" \
+    "$project_dir/src/command_batch.c" \
+    "$project_dir/src/bridge_client.c"; do
     if [ ! -f "$required_file" ]; then
         printf 'missing required file: %s\n' "$required_file" >&2
         exit 2
@@ -34,6 +36,8 @@ grun -s gcc -std=c17 -O2 -Wall -Wextra -Werror \
     "$project_dir/src/lifecycle.c" \
     "$project_dir/src/protocol.c" \
     "$project_dir/src/transport.c" \
+    "$project_dir/src/handle.c" \
+    "$project_dir/src/command_batch.c" \
     "$project_dir/src/bridge_client.c" \
     -o "$glibc_client"
 if ! readelf -l "$glibc_client" | grep -q '/glibc/lib/ld-linux-aarch64.so.1'; then
