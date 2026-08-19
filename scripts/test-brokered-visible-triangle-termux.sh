@@ -136,16 +136,11 @@ if [ -z "$port" ] || [ ! -S "$control_socket" ]; then
     exit 4
 fi
 
-am force-stop "$package_name"
-attempt=0
-while pidof "$package_name" >/dev/null 2>&1; do
-    attempt=$((attempt + 1))
-    if [ "$attempt" -ge 100 ]; then
-        printf 'visible-host process did not stop before clean launch\n' >&2
-        exit 5
-    fi
-    sleep 0.05
-done
+if pidof "$package_name" >/dev/null 2>&1; then
+    printf 'visible-host process is already running; close it before E022\n' \
+        >&2
+    exit 5
+fi
 am start -W -n "$package_name/$activity_name" \
     --ei bvb_activity_port "$port" \
     --es bvb_activity_token "$token" \
