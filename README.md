@@ -88,6 +88,12 @@ Bionic replays and presents at 2800x1752. Two consecutive v12 runs measured
 10.225 and 13.587 ms from metadata send through present, versus E019's 14.618 ms
 inline control (30.05% and 7.06% faster). Full Binder-relay-to-present time was
 13.171 and 17.301 ms; these are single-frame latency results, not FPS.
+E023 makes that path persistent: APK v13 reuses its Vulkan setup while a glibc
+producer cycles 64 sequenced frames through four shared-memory slots and waits
+for an explicit post-present acknowledgement before reuse. Two consecutive
+native-resolution runs averaged 16.07 and 16.33 ms per acknowledged frame, with
+16.49/16.81 ms medians and 18.96/19.35 ms p95 latency. This is FIFO/vsync-paced
+triangle replay, not a game FPS benchmark.
 
 ## Build and test on a normal Linux host
 

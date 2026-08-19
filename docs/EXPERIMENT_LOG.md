@@ -1163,3 +1163,68 @@ for one visible frame and is at least as fast as the inline control in both
 measured execute-to-present runs. E023 should retain the mapping and connection
 across a frame ring, add explicit producer/consumer synchronization, and report
 a multi-frame latency distribution before expanding dispatch toward DXVK.
+
+## E023 — Persistent visible frame ring (2026-08-19)
+
+Status: passed twice consecutively on hardware with signed APK v13 (0.1.12).
+
+Hypothesis: E022's Binder-brokered mapping and authenticated metadata channel
+can stay alive across many visible frames. A small rotating shared-memory ring
+with an acknowledgement after presentation should prove safe slot ownership,
+remove per-frame Binder and TCP connection setup, and expose a steady-state
+latency distribution at the tablet's native resolution.
+
+Method: the sequence-aware triangle builder writes a new 200-byte six-command
+batch into one of four 256-byte slots beginning at offset 64 in the existing
+sealed 4 KiB memfd. The real glibc relay keeps one loopback connection open for
+64 opcode-9 execute records. It does not reuse a slot until Bionic validates,
+replays, submits, calls `vkQueuePresentKHR`, waits for the queue, and returns the
+matching response. The ingress explicitly marks itself ready for the next frame
+before completing the current response, avoiding a scheduler-dependent gap.
+APK v13 keeps its Vulkan instance, device, queue, swapchain, render pass,
+pipeline, command pool, and semaphores alive; it cycles the acquired image view,
+framebuffer, and command buffer per frame. `bvb_visible_frames` is opt-in and
+the default remains the proven one-frame path. The canonical harness is
+`scripts/test-visible-frame-ring-termux.sh`.
+
+Result: both runs completed all 64 monotonically sequenced frames, wrapped all
+four slots repeatedly, rejected the wrong 256-bit capability with `-EACCES`,
+and presented through the authenticated 2,800 x 1,752 Android window with zero
+rejected lifecycle events. Run 1 measured 1.462 ms minimum, 16.488 ms p50,
+18.958 ms p95, 16.069 ms mean, and 27.674 ms maximum execute-to-ack latency;
+its 64-frame interval was 1.028 s. The canonical repeat measured 1.671 ms,
+16.815 ms, 19.352 ms, 16.329 ms, and 38.773 ms respectively, over 1.045 s.
+The combined mean is 16.199 ms, or about 61.7 serialized acknowledgements per
+second. The distribution is dominated by the FIFO/vsync presentation boundary,
+so it demonstrates sustained native-resolution replay but is not a Tomb Raider
+FPS result. E019's one-shot 14.618 ms result is not a throughput control because
+a single frame can land at a different point in the display cycle.
+
+This ring currently permits only one in-flight frame: the producer deliberately
+waits for the consumer acknowledgement before issuing the next sequence. That
+is sufficient to prove ownership and safe wraparound, but it does not yet test
+pipelined frames or eliminate the per-frame Android image-view/framebuffer/
+command-buffer churn. The final lifecycle snapshot is taken after the test
+window has stopped; successful opcode-9 responses had already acknowledged all
+64 presents. Android again denied readable app logcat and Termux produced no
+screenshot, so no image is claimed.
+
+Evidence and artifact identities:
+
+- canonical repeat evidence:
+  `docs/evidence/e023-brokered-visible-gate.json`, 2,773 bytes, SHA-256
+  `67a243e5719a8c1d61f7e7777f5eacb4b0a40e4d32ff9c0126750a679d321055`;
+- signed v13 APK: 49,577 bytes, SHA-256
+  `8f83fd6d7158064e820b2a926affa12ceed5abd63b9e20569e7e0288b81ca0be`;
+- standalone glibc relay: 78,344 bytes, SHA-256
+  `cab8177389a1db459fa6262b4cfee5a12c8c7b92541cbf60322de515a12abca9`;
+- all 15 normal-host contracts and all 13 contracts available under Termux
+  ARM64 passed. Termux Python's missing `os.memfd_create` wrapper is covered by
+  a test-only libc fallback.
+
+The required recall query found no indexed E023 implementation or Termux
+`memfd_create` workaround. This gate reused E022's visible renderer and retained
+mapping, E021's Binder/`SCM_RIGHTS` descriptor chain, and their authenticated
+metadata protocol. E024 should expand generated dispatch from the six-command
+triangle subset toward the measured DXVK startup entry-point set while keeping
+this persistent transport as the regression baseline.
