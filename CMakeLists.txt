@@ -185,6 +185,19 @@ set_target_properties(
 )
 bvb_enable_warnings(bvb-vulkan-client-dispatch)
 
+add_library(bvb-triangle-batch-builder STATIC src/triangle_batch_builder.c)
+target_include_directories(
+  bvb-triangle-batch-builder
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
+)
+target_link_libraries(
+  bvb-triangle-batch-builder
+  PUBLIC bvb-vulkan-client-dispatch bvb-command-batch Vulkan::Headers
+)
+bvb_enable_warnings(bvb-triangle-batch-builder)
+
 add_executable(bvb-bridge-service src/bridge_service.c)
 target_link_libraries(
   bvb-bridge-service
@@ -201,9 +214,8 @@ target_link_libraries(
   bvb-visible-triangle-client
   PRIVATE
     bvb-vulkan-client-dispatch
+    bvb-triangle-batch-builder
     bvb-wire
-    bvb-command-batch
-    Vulkan::Headers
 )
 bvb_enable_warnings(bvb-visible-triangle-client)
 
