@@ -7,6 +7,7 @@ out_dir="$project_dir/out"
 runtime_parent=${TMPDIR:-/tmp}
 package_name=io.github.huntergdavis.bvb.visiblehost
 activity_name=android.app.NativeActivity
+manifest="$project_dir/android/visible-host/AndroidManifest.xml"
 
 for command_name in am grun gcc od python readelf sed tr; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -15,6 +16,7 @@ for command_name in am grun gcc od python readelf sed tr; do
     fi
 done
 for required_file in "$build_dir/bvb-bridge-service" \
+    "$manifest" \
     "$project_dir/src/lifecycle.c" "$project_dir/src/protocol.c" \
     "$project_dir/src/transport.c" "$project_dir/src/handle.c" \
     "$project_dir/src/command_batch.c" \
@@ -26,6 +28,19 @@ for required_file in "$build_dir/bvb-bridge-service" \
 done
 if ! pm path "$package_name" >/dev/null 2>&1; then
     printf 'visible-host package is not installed: %s\n' "$package_name" >&2
+    exit 2
+fi
+expected_version=$(sed -n \
+    's/.*android:versionCode="\([0-9][0-9]*\)".*/\1/p' "$manifest")
+installed_version=$(pm list packages --show-versioncode 2>/dev/null | \
+    sed -n "s/^package:$package_name versionCode:\([0-9][0-9]*\).*$/\1/p")
+if [ -z "$expected_version" ] || [ -z "$installed_version" ]; then
+    printf 'could not resolve visible-host version codes\n' >&2
+    exit 2
+fi
+if [ "$installed_version" != "$expected_version" ]; then
+    printf 'visible-host version mismatch: installed=%s expected=%s\n' \
+        "$installed_version" "$expected_version" >&2
     exit 2
 fi
 
@@ -137,6 +152,11 @@ am start -n "$package_name/$activity_name" \
 
 attempt=0
 while kill -0 "$service_pid" 2>/dev/null; do
+    if grep -q 'activity_event=12 ' "$service_stdout"; then
+        printf 'Activity reported renderer failure\n' >&2
+        sed -n '/activity_event=/p' "$service_stdout" >&2
+        exit 5
+    fi
     if grep -q 'activity_event=11 ' "$service_stdout" && \
         grep -q 'activity_event=9 ' "$service_stdout"; then
         break
@@ -144,6 +164,7 @@ while kill -0 "$service_pid" 2>/dev/null; do
     attempt=$((attempt + 1))
     if [ "$attempt" -ge 200 ]; then
         printf 'Activity lifecycle events timed out\n' >&2
+        sed -n '/activity_event=/p' "$service_stdout" >&2
         exit 5
     fi
     sleep 0.05
