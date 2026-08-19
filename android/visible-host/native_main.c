@@ -12,6 +12,8 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <linux/memfd.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -19,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
@@ -89,6 +92,73 @@ static struct bvb_renderer_control renderer = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
     .condition = PTHREAD_COND_INITIALIZER,
 };
+
+enum { BVB_E020_REGION_BYTES = 4096 };
+
+static bool token_matches(const uint8_t *left, const uint8_t *right) {
+    uint8_t difference = 0U;
+    for (size_t index = 0U; index < BVB_LIFECYCLE_TOKEN_SIZE; ++index) {
+        difference |= left[index] ^ right[index];
+    }
+    return difference == 0U;
+}
+
+JNIEXPORT jint JNICALL
+Java_io_github_huntergdavis_bvb_visiblehost_SharedRegionProvider_nativeOpenRegion(
+    JNIEnv *env, jclass provider_class, jstring token_string) {
+    (void)provider_class;
+    if (token_string == NULL) {
+        return -EINVAL;
+    }
+    const char *token = (*env)->GetStringUTFChars(env, token_string, NULL);
+    if (token == NULL || (*env)->ExceptionCheck(env)) {
+        if ((*env)->ExceptionCheck(env)) {
+            (*env)->ExceptionClear(env);
+        }
+        return -EINVAL;
+    }
+    uint8_t parsed_token[BVB_LIFECYCLE_TOKEN_SIZE];
+    int result = bvb_lifecycle_token_from_hex(token, parsed_token);
+    (*env)->ReleaseStringUTFChars(env, token_string, token);
+    if (result != 0) {
+        return result;
+    }
+
+    (void)pthread_mutex_lock(&lifecycle_mutex);
+    bool authorized = lifecycle.configured &&
+                      token_matches(parsed_token, lifecycle.token);
+    (void)pthread_mutex_unlock(&lifecycle_mutex);
+    if (!authorized) {
+        return -EACCES;
+    }
+
+    int memory_fd = (int)syscall(SYS_memfd_create, "bvb-e020-region",
+                                 MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (memory_fd < 0) {
+        return -errno;
+    }
+    static const char marker[] =
+        "BVB_E020_SHARED_REGION binder_parcel_fd=PASS\n";
+    if (ftruncate(memory_fd, BVB_E020_REGION_BYTES) != 0) {
+        int saved_error = errno;
+        (void)close(memory_fd);
+        return -saved_error;
+    }
+    ssize_t written = pwrite(memory_fd, marker, sizeof(marker) - 1U, 0);
+    if (written != (ssize_t)(sizeof(marker) - 1U)) {
+        int saved_error = written < 0 ? errno : EIO;
+        (void)close(memory_fd);
+        return -saved_error;
+    }
+    if (fcntl(memory_fd, F_ADD_SEALS,
+              F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) != 0) {
+        int saved_error = errno;
+        (void)close(memory_fd);
+        return -saved_error;
+    }
+    BVB_LOGI("E020_REGION_OPEN bytes=%u", BVB_E020_REGION_BYTES);
+    return memory_fd;
+}
 
 static void configure_lifecycle(ANativeActivity *activity) {
     (void)pthread_mutex_lock(&lifecycle_mutex);

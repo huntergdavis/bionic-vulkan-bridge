@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.huntergdavis.bvb.visiblehost"
-    android:versionCode="8"
-    android:versionName="0.1.7">
+    android:versionCode="9"
+    android:versionName="0.1.8">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="36" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -15,9 +15,14 @@
         android:allowBackup="false"
         android:debuggable="true"
         android:extractNativeLibs="true"
-        android:hasCode="false"
+        android:hasCode="true"
         android:label="BVB Visible Vulkan Gate"
         android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen">
+        <provider
+            android:name="io.github.huntergdavis.bvb.visiblehost.SharedRegionProvider"
+            android:authorities="io.github.huntergdavis.bvb.visiblehost.shared"
+            android:exported="true"
+            android:grantUriPermissions="false" />
         <activity
             android:name="android.app.NativeActivity"
             android:configChanges="orientation|keyboardHidden|screenSize"

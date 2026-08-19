@@ -7,6 +7,9 @@ staging_dir="$out_dir/staging"
 native_dir="$staging_dir/lib/arm64-v8a"
 manifest="$project_dir/android/visible-host/AndroidManifest.xml"
 source_file="$project_dir/android/visible-host/native_main.c"
+java_dir="$project_dir/android/visible-host/java/io/github/huntergdavis/bvb/visiblehost"
+provider_java="$java_dir/SharedRegionProvider.java"
+client_java="$java_dir/SharedRegionClient.java"
 lifecycle_source="$project_dir/src/lifecycle.c"
 protocol_source="$project_dir/src/protocol.c"
 handle_source="$project_dir/src/handle.c"
@@ -19,6 +22,17 @@ vertex_shader="$project_dir/android/visible-host/shaders/triangle.vert"
 fragment_shader="$project_dir/android/visible-host/shaders/triangle.frag"
 shader_dir="$out_dir/shaders"
 shader_include="$shader_dir/triangle_shaders.inc"
+java_classes="$out_dir/java-classes"
+dex_dir="$out_dir/dex"
+tool_dir="$out_dir/android-tools"
+r8_version=9.4.14
+r8_jar="$tool_dir/r8-$r8_version.jar"
+r8_url="https://dl.google.com/dl/android/maven2/com/android/tools/r8/$r8_version/r8-$r8_version.jar"
+r8_sha256=05373121003e75e7bc5bc139501913531e1821ac3890cef40732e341a37c8bad
+android_jar_version=4.1.1.4
+android_jar="$tool_dir/android-$android_jar_version.jar"
+android_jar_url="https://repo1.maven.org/maven2/com/google/android/android/$android_jar_version/android-$android_jar_version.jar"
+android_jar_sha256=84072541cbb711eff89f7277100ff854929a446dba7ceb1b195c340e0b4fd3cb
 framework_resources=/system/framework/framework-res.apk
 unsigned_apk="$out_dir/bvb-visible-host-unsigned.apk"
 aligned_apk="$out_dir/bvb-visible-host-aligned.apk"
@@ -28,13 +42,15 @@ keystore="$out_dir/debug.keystore"
 : "${PREFIX:?PREFIX must name the Termux prefix}"
 
 for command_name in clang aapt zipalign apksigner keytool readelf \
-    glslangValidator python; do
+    glslangValidator python curl javac java sha256sum; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         printf 'missing required command: %s\n' "$command_name" >&2
         exit 2
     fi
 done
-for required_file in "$manifest" "$source_file" "$lifecycle_source" \
+for required_file in "$manifest" "$source_file" "$provider_java" \
+    "$client_java" \
+    "$lifecycle_source" \
     "$protocol_source" "$handle_source" "$batch_source" \
     "$transport_source" "$visible_batch_source" "$visible_ingress_source" \
     "$vertex_shader" "$fragment_shader" \
@@ -48,8 +64,52 @@ for required_file in "$manifest" "$source_file" "$lifecycle_source" \
     fi
 done
 
+fetch_pinned() {
+    url=$1
+    expected_sha256=$2
+    output=$3
+    if [ -f "$output" ]; then
+        actual_sha256=$(sha256sum "$output" | sed 's/ .*//')
+        if [ "$actual_sha256" = "$expected_sha256" ]; then
+            return 0
+        fi
+        printf 'cached build tool has wrong SHA-256: %s\n' "$output" >&2
+        return 3
+    fi
+    temporary="$output.part.$$"
+    if ! curl -fsSL "$url" -o "$temporary"; then
+        rm -f "$temporary"
+        return 3
+    fi
+    actual_sha256=$(sha256sum "$temporary" | sed 's/ .*//')
+    if [ "$actual_sha256" != "$expected_sha256" ]; then
+        printf 'downloaded build tool has wrong SHA-256: %s\n' "$url" >&2
+        rm -f "$temporary"
+        return 3
+    fi
+    mv "$temporary" "$output"
+}
+
 mkdir -p "$native_dir"
 mkdir -p "$shader_dir"
+mkdir -p "$java_classes"
+mkdir -p "$dex_dir"
+mkdir -p "$tool_dir"
+fetch_pinned "$r8_url" "$r8_sha256" "$r8_jar"
+fetch_pinned "$android_jar_url" "$android_jar_sha256" "$android_jar"
+
+javac --release 8 -classpath "$android_jar" -d "$java_classes" \
+    "$provider_java" "$client_java"
+rm -f "$dex_dir/classes.dex"
+java -cp "$r8_jar" com.android.tools.r8.D8 \
+    --release --min-api 24 --lib "$android_jar" --output "$dex_dir" \
+    "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionProvider.class" \
+    "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionClient.class"
+if [ ! -f "$dex_dir/classes.dex" ]; then
+    printf 'D8 did not produce classes.dex\n' >&2
+    exit 4
+fi
+
 glslangValidator -V --target-env vulkan1.1 -S vert \
     -o "$shader_dir/triangle.vert.spv" "$vertex_shader" >/dev/null
 glslangValidator -V --target-env vulkan1.1 -S frag \
@@ -74,6 +134,10 @@ aapt package -f -M "$manifest" -I "$framework_resources" -F "$unsigned_apk"
     cd "$staging_dir"
     aapt add "$unsigned_apk" lib/arm64-v8a/libbvb-visible-host.so >/dev/null
 )
+(
+    cd "$dex_dir"
+    aapt add "$unsigned_apk" classes.dex >/dev/null
+)
 zipalign -f 4 "$unsigned_apk" "$aligned_apk"
 
 if [ ! -f "$keystore" ]; then
@@ -91,3 +155,7 @@ printf 'VISIBLE_HOST_APK=%s\n' "$signed_apk"
 file "$native_dir/libbvb-visible-host.so"
 readelf -d "$native_dir/libbvb-visible-host.so" | sed -n '/NEEDED/p'
 aapt dump badging "$signed_apk" | sed -n '1,8p'
+if ! aapt list "$signed_apk" | grep -qx 'classes.dex'; then
+    printf 'visible host APK is missing classes.dex\n' >&2
+    exit 4
+fi
