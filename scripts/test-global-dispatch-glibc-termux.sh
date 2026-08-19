@@ -307,7 +307,7 @@ document = {
         "queue_serial": 1,
         "queue_identity_stable": True,
         "empty_submit_result": empty_submit_result,
-        "nonempty_submit_rejected_client_side": True,
+        "unsupported_submit_shape_rejected_client_side": True,
         "queue_wait_idle_result": queue_wait_result,
         "device_wait_idle_result": device_wait_result,
         "command_pool_id": command_pool,
