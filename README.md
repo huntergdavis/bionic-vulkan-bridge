@@ -111,6 +111,13 @@ Adreno device returned the same type-2 proxy across repeated count/fill calls,
 and both native instances were explicitly destroyed before disconnect. The
 generated policy now marks 14 measured names executable and keeps the remaining
 426 resolved names unavailable.
+E027 makes four bounded physical-device discovery calls executable. A real
+Termux glibc client received the Adreno 730's complete base properties, two
+queue families, nine memory types across two heaps, and all 90 device
+extensions through the Bionic service. Extension results are internally paged
+in 15-record responses, and generated wire codecs carry every field without
+sharing C structure layout across libc. The measured policy now marks 18 names
+executable while leaving 422 resolved names unavailable.
 
 ## Build and test on a normal Linux host
 

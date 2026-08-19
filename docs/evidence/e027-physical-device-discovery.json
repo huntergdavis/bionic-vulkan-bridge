@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "gate": "E027",
+  "result": "pass",
+  "source_commit": "02dee34540c334368fc4356d54fe5715e003459f",
+  "target": "Galaxy Tab S8+ Termux ARM64 glibc to Android Bionic",
+  "glibc_interpreter": "/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1",
+  "bionic_interpreter": "/system/bin/linker64",
+  "vulkan_loader": "/system/lib64/libvulkan.so",
+  "policy": {
+    "schema_version": 1,
+    "gate": "E027",
+    "source": {
+      "vk_xml_sha256": "80e7394d0e787d6ec78b67aa324add6f96129fdd042ba640cc336a5481a208ee",
+      "e011_manifest_sha256": "6a78ddd1f1b34773e4123d3612233fab2270ed0ff418d01204ad41af1cab8afc",
+      "triangle_dispatch_sha256": "c3e4aac0e16abdb218d34adb7cc83c23118b2be0e0047e9e5668d30a16185839",
+      "generated_policy_sha256": "1d7200ba29b5508ceae54d32ea78199b70e42f34c5fe4bd4431a79ba849c5e75",
+      "additional_dispatch_sha256": "bde52faa7105a19a08bf254bb8604d57ca1e64b6cfaf31b246fff811579cea5e"
+    },
+    "summary": {
+      "command_count": 742,
+      "resolved_name_count": 440,
+      "executable_name_count": 18,
+      "support_counts": {
+        "probed_null": 302,
+        "required_unimplemented": 422,
+        "executable": 18
+      },
+      "dispatch_scope_counts": {
+        "global": 4,
+        "instance": 101,
+        "device": 635,
+        "private": 2
+      }
+    },
+    "executable_names": [
+      "vkCmdBeginRendering",
+      "vkCmdBeginRenderingKHR",
+      "vkCmdBindPipeline",
+      "vkCmdDraw",
+      "vkCmdEndRendering",
+      "vkCmdEndRenderingKHR",
+      "vkCmdSetScissor",
+      "vkCmdSetViewport",
+      "vkCreateInstance",
+      "vkDestroyInstance",
+      "vkEnumerateDeviceExtensionProperties",
+      "vkEnumerateInstanceExtensionProperties",
+      "vkEnumerateInstanceLayerProperties",
+      "vkEnumerateInstanceVersion",
+      "vkEnumeratePhysicalDevices",
+      "vkGetPhysicalDeviceMemoryProperties",
+      "vkGetPhysicalDeviceProperties",
+      "vkGetPhysicalDeviceQueueFamilyProperties"
+    ]
+  },
+  "physical_device_discovery": {
+    "loader_api_version": 4210688,
+    "loader_api_version_text": "1.4.0",
+    "exposed_extension_count": 0,
+    "exposed_layer_count": 0,
+    "instance_ids": [
+      72057594037927937,
+      72057594037927938
+    ],
+    "instance_type": 1,
+    "instance_serials": [
+      1,
+      2
+    ],
+    "physical_device_id": 144115188075855873,
+    "physical_device_type": 2,
+    "physical_device_serial": 1,
+    "device_name": "Adreno (TM) 730",
+    "device_api_version": 4198528,
+    "driver_version": 2150002786,
+    "vendor_id": 20803,
+    "device_id": 117637121,
+    "queue_family_count": 2,
+    "memory_type_count": 9,
+    "memory_heap_count": 2,
+    "device_extension_count": 90,
+    "extension_transport_paginated": true,
+    "instances_destroyed_explicitly": true,
+    "client_stdout": "PASS: global Vulkan discovery api=4210688 exposed_extensions=0 exposed_layers=0 instance_one=72057594037927937 instance_two=72057594037927938 physical_device=144115188075855873 device=Adreno (TM) 730 device_api=4198528 driver=2150002786 vendor=20803 device_id=117637121 queues=2 memory_types=9 memory_heaps=2 device_extensions=90",
+    "client_stderr_bytes": 0,
+    "service_stderr_bytes": 0,
+    "service_ready": true
+  },
+  "dynamic_exports": [
+    "bvb_instance_proxy_id",
+    "bvb_physical_device_proxy_id",
+    "vkGetDeviceProcAddr",
+    "vkGetInstanceProcAddr"
+  ],
+  "artifacts": {
+    "policy_summary": {
+      "path": "/data/data/com.termux/files/home/bionic-vulkan-bridge-e023/out/triangle-dispatch-glibc/generated/bvb_dxvk_dispatch_policy.json",
+      "bytes": 1499,
+      "sha256": "b27e59befe72b1db56517aa197186b287bf31c8c8556629b16d27dbc6ca28020"
+    },
+    "glibc_library": {
+      "path": "/data/data/com.termux/files/home/bionic-vulkan-bridge-e023/out/triangle-dispatch-glibc/libvulkan-bvb-glibc.so",
+      "bytes": 210352,
+      "sha256": "5ff994a71f497f726ee2c4089d20962e23c9790a868df8640f21529f89f9a465"
+    },
+    "glibc_client": {
+      "path": "/data/data/com.termux/files/home/bionic-vulkan-bridge-e023/out/triangle-dispatch-glibc/bvb-global-dispatch-test-glibc",
+      "bytes": 71568,
+      "sha256": "88af3e15e460db0c230dcd0b2b67c6c42b2eaac9e7c03220abba38b8c607949f"
+    },
+    "bionic_service": {
+      "path": "/data/data/com.termux/files/home/bionic-vulkan-bridge-e023/build/bvb-bridge-service",
+      "bytes": 81024,
+      "sha256": "56d52cc3ff8f8e8e20342bdd08867264650a6cd52e4e348ce951042705c2bf6d"
+    }
+  }
+}

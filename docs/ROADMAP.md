@@ -65,6 +65,8 @@
   and return typed glibc instance proxies
 - [x] Add explicit instance destruction and stable, parented physical-device
   proxy enumeration
+- [x] Bridge full base properties, queue families, memory topology, and paged
+  device-extension enumeration without sharing C structure layout across libc
 - [ ] Expand generated dispatch to the measured DXVK startup subset
 - [ ] Implement GPU external-memory and synchronization strategy
 - [x] Reach a rendered test triangle

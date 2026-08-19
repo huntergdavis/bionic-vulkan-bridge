@@ -1426,3 +1426,65 @@ persistent authenticated client connection, and E025's corrected instance-
 scoped GIPA resolution. E027 should add the bounded read-only discovery calls
 DXVK needs next: physical-device properties, queue families, memory properties,
 and device-extension enumeration, without yet allowing logical-device creation.
+
+## E027 — Full base physical-device discovery (2026-08-19)
+
+Status: passed on real hardware from a Termux ARM64 glibc client through the
+Android Bionic service at source commit `02dee34`.
+
+Hypothesis: E026's stable, parented physical-device proxy is sufficient to
+resolve and execute the four base discovery calls that DXVK looked up during
+E011, provided that their results use a field-defined wire ABI rather than
+copying native Vulkan C structures between libc implementations.
+
+Method: E027 adds instance-scoped implementations of
+`vkGetPhysicalDeviceProperties`,
+`vkGetPhysicalDeviceQueueFamilyProperties`,
+`vkGetPhysicalDeviceMemoryProperties`, and
+`vkEnumerateDeviceExtensionProperties`. The Bionic side recovers both the
+native physical device and its owning native instance from E026's handle table,
+then resolves each command with that instance. Queue families are bounded at
+64 and device extensions at 1,024. Extension records use 15-entry pages, so
+each response stays below the protocol's 4 KiB maximum while the glibc wrapper
+preserves Vulkan's ordinary count/list and `VK_INCOMPLETE` behavior.
+
+A generator reads the project's pinned Khronos `vk.xml` and emits explicit
+little-endian codecs for every leaf of `VkPhysicalDeviceProperties` (including
+all limits and sparse properties), `VkQueueFamilyProperties`,
+`VkPhysicalDeviceMemoryProperties`, and `VkExtensionProperties`. Native
+structure layout never crosses the process boundary. The resulting property
+record is 804 bytes; each queue record is 24 bytes; the full fixed-capacity
+memory record is 456 bytes rather than the native 520 bytes because compiler
+padding is omitted; and a two-record extension page is 536 bytes.
+
+Result: the real Android loader reported Vulkan 1.4.0 and the physical device
+reported Vulkan 1.1.128. The client received `Adreno (TM) 730`, vendor ID
+20,803, device ID 117,637,121, two queue families, nine memory types, two
+memory heaps, and 90 device extensions. Retrieving all extensions exercised
+six 15-record pages. The physical proxy remained
+`0x0200000000000001`; both instances were destroyed explicitly; client and
+service stderr were empty. The generated E027 policy classifies 18 of the 742
+measured names executable, 422 resolved names required-but-unimplemented, and
+302 observed-null names unavailable.
+
+All 18 host contracts and all 16 contracts available under Termux ARM64
+passed. Canonical evidence is
+`docs/evidence/e027-physical-device-discovery.json`, 4,447 bytes, SHA-256
+`0f5804f74b3509d331cb85cf47c33c18dfc0b47e286e8b5bc943343ba0c6ceda`.
+The canonical artifacts are:
+
+- generated E027 policy: 1,499 bytes, SHA-256
+  `b27e59befe72b1db56517aa197186b287bf31c8c8556629b16d27dbc6ca28020`;
+- glibc `libvulkan-bvb` bridge: 210,352 bytes, SHA-256
+  `5ff994a71f497f726ee2c4089d20962e23c9790a868df8640f21529f89f9a465`;
+- glibc discovery client: 71,568 bytes, SHA-256
+  `88af3e15e460db0c230dcd0b2b67c6c42b2eaac9e7c03220abba38b8c607949f`;
+- Bionic bridge service: 81,024 bytes, SHA-256
+  `56d52cc3ff8f8e8e20342bdd08867264650a6cd52e4e348ce951042705c2bf6d`.
+
+The required recall query—`physical device properties Vulkan bridge`—found
+the earlier E025/E026 session record. E027 reused E025's persistent
+authenticated glibc-to-Bionic connection and E026's stable, parented physical-
+device handles. The next bounded gate should add the feature-query surface and
+constrained logical-device/queue creation required before game-facing command
+submission; WSI remains unavailable until its semantics are bridged.
