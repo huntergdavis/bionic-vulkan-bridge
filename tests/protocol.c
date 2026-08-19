@@ -61,6 +61,17 @@ int main(void) {
     CHECK(decoded.payload_length ==
           BVB_VISIBLE_BATCH_INLINE_PREFIX_SIZE + 200U);
 
+    const struct bvb_protocol_header global_header = {
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_INSTANCE_CREATE,
+        .request_id = 0x50607080U,
+        .payload_length = BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE,
+    };
+    CHECK(bvb_protocol_encode_header(wire, &global_header) == 0);
+    CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
+    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_INSTANCE_CREATE);
+
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
         .maximum_version = 3,
@@ -90,6 +101,53 @@ int main(void) {
     CHECK(response_decoded.service_flags == 3U);
     CHECK(response_decoded.pointer_bits == 64U);
     CHECK(response_decoded.page_size == 4096U);
+
+    const struct bvb_vulkan_global_info global_info = {
+        .loader_api_version = UINT32_C(0x00403000),
+        .native_extension_count = 14U,
+        .native_layer_count = 2U,
+        .exposed_extension_count = 0U,
+        .exposed_layer_count = 0U,
+    };
+    uint8_t global_info_wire[BVB_VULKAN_GLOBAL_INFO_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_global_info(global_info_wire,
+                                                 &global_info) == 0);
+    struct bvb_vulkan_global_info global_info_decoded;
+    CHECK(bvb_protocol_decode_vulkan_global_info(global_info_wire,
+                                                 &global_info_decoded) == 0);
+    CHECK(global_info_decoded.loader_api_version ==
+          global_info.loader_api_version);
+    CHECK(global_info_decoded.native_extension_count == 14U);
+    CHECK(global_info_decoded.exposed_extension_count == 0U);
+    global_info_wire[20] = 1U;
+    CHECK(bvb_protocol_decode_vulkan_global_info(global_info_wire,
+                                                 &global_info_decoded) ==
+          -EPROTO);
+    global_info_wire[20] = 0U;
+
+    const struct bvb_vulkan_instance_create_request create_request = {
+        .api_version = UINT32_C(0x00401000),
+    };
+    uint8_t create_request_wire[BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_instance_create_request(
+              create_request_wire, &create_request) == 0);
+    struct bvb_vulkan_instance_create_request create_request_decoded;
+    CHECK(bvb_protocol_decode_vulkan_instance_create_request(
+              create_request_wire, &create_request_decoded) == 0);
+    CHECK(create_request_decoded.api_version == create_request.api_version);
+
+    const struct bvb_vulkan_instance_create_response create_response = {
+        .vulkan_result = 0,
+        .instance_id = UINT64_C(0x0100000000000001),
+    };
+    uint8_t create_response_wire[BVB_VULKAN_INSTANCE_CREATE_RESPONSE_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_instance_create_response(
+              create_response_wire, &create_response) == 0);
+    struct bvb_vulkan_instance_create_response create_response_decoded;
+    CHECK(bvb_protocol_decode_vulkan_instance_create_response(
+              create_response_wire, &create_response_decoded) == 0);
+    CHECK(create_response_decoded.vulkan_result == 0);
+    CHECK(create_response_decoded.instance_id == create_response.instance_id);
 
     const struct bvb_shared_batch_setup shared_setup = {
         .region_bytes = 4096U,

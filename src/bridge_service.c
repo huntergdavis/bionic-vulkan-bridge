@@ -4,6 +4,7 @@
 #include <bvb/protocol.h>
 #include <bvb/transport.h>
 #include <bvb/vulkan_caps.h>
+#include <bvb/vulkan_global.h>
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -453,6 +454,91 @@ static int answer_vulkan_caps(int client_fd,
     return bvb_transport_send(client_fd, &response);
 }
 
+static int ensure_vulkan_global_context(
+    const char *loader_path, struct bvb_vulkan_global_context **context) {
+    if (*context != NULL) {
+        return 0;
+    }
+    char diagnostic[512];
+    int result = bvb_vulkan_global_context_create(
+        loader_path, context, diagnostic, sizeof(diagnostic));
+    if (result != 0) {
+        fprintf(stderr, "bvb: global Vulkan context failed: %s\n",
+                diagnostic);
+    }
+    return result;
+}
+
+static int answer_vulkan_global_info(
+    int client_fd, const struct bvb_protocol_packet *request,
+    const char *loader_path, bool negotiated,
+    struct bvb_vulkan_global_context **context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length != 0U) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    int result = ensure_vulkan_global_context(loader_path, context);
+    struct bvb_vulkan_global_info info;
+    if (result == 0) {
+        result = bvb_vulkan_global_context_info(*context, &info);
+    }
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_global_info(response.payload,
+                                                        &info);
+    }
+    if (result == 0) {
+        response.header.payload_length = BVB_VULKAN_GLOBAL_INFO_SIZE;
+    } else {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_instance_create(
+    int client_fd, const struct bvb_protocol_packet *request,
+    const char *loader_path, bool negotiated,
+    struct bvb_vulkan_global_context **context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_instance_create_request create_request;
+    int result = bvb_protocol_decode_vulkan_instance_create_request(
+        request->payload, &create_request);
+    if (result == 0) {
+        result = ensure_vulkan_global_context(loader_path, context);
+    }
+    struct bvb_vulkan_instance_create_response create_response;
+    char diagnostic[512];
+    if (result == 0) {
+        result = bvb_vulkan_global_context_create_instance(
+            *context, &create_request, &create_response,
+            diagnostic, sizeof(diagnostic));
+        if (result != 0) {
+            fprintf(stderr, "bvb: Vulkan instance create failed: %s\n",
+                    diagnostic);
+        }
+    }
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_instance_create_response(
+            response.payload, &create_response);
+    }
+    if (result == 0) {
+        response.header.payload_length =
+            BVB_VULKAN_INSTANCE_CREATE_RESPONSE_SIZE;
+    } else {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_selftest(int client_fd,
                                   const struct bvb_protocol_packet *request,
                                   const char *loader_path,
@@ -634,6 +720,7 @@ static int serve_connection(int client_fd, const char *loader_path,
     bool negotiated = false;
     struct shared_batch_region shared_region = {0};
     struct bvb_vulkan_batch_context *vulkan_context = NULL;
+    struct bvb_vulkan_global_context *global_context = NULL;
     int connection_status = 0;
     while (true) {
         struct bvb_protocol_packet request;
@@ -682,6 +769,13 @@ static int serve_connection(int client_fd, const char *loader_path,
             result = answer_shared_batch_execute(
                 client_fd, &request, loader_path, negotiated, &shared_region,
                 &vulkan_context);
+        } else if (request.header.opcode == BVB_OPCODE_VULKAN_GLOBAL_INFO) {
+            result = answer_vulkan_global_info(
+                client_fd, &request, loader_path, negotiated, &global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_INSTANCE_CREATE) {
+            result = answer_vulkan_instance_create(
+                client_fd, &request, loader_path, negotiated, &global_context);
         } else {
             result = -EPROTO;
         }
@@ -694,6 +788,7 @@ static int serve_connection(int client_fd, const char *loader_path,
         }
     }
     bvb_vulkan_batch_context_destroy(vulkan_context);
+    bvb_vulkan_global_context_destroy(global_context);
     if (shared_region.address != NULL) {
         if (munmap((void *)shared_region.address, shared_region.length) != 0 &&
             connection_status == 0) {

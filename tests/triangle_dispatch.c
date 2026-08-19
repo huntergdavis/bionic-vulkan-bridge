@@ -20,6 +20,8 @@
 
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
 vkGetDeviceProcAddr(VkDevice device, const char *name);
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
+vkGetInstanceProcAddr(VkInstance instance, const char *name);
 
 static VkImageView image_view_from_id(uint64_t wire_id) {
     VkImageView handle = VK_NULL_HANDLE;
@@ -58,7 +60,9 @@ int main(void) {
         CHECK(previous_name == NULL || strcmp(previous_name, entry->name) < 0);
         CHECK(bvb_dxvk_dispatch_policy_lookup(entry->name) == entry);
         PFN_vkVoidFunction resolved =
-            vkGetDeviceProcAddr(VK_NULL_HANDLE, entry->name);
+            entry->scope == BVB_DXVK_SCOPE_GLOBAL
+                ? vkGetInstanceProcAddr(VK_NULL_HANDLE, entry->name)
+                : vkGetDeviceProcAddr(VK_NULL_HANDLE, entry->name);
         if (entry->support == BVB_DXVK_SUPPORT_EXECUTABLE) {
             ++executable_count;
             CHECK(resolved != NULL);
@@ -77,16 +81,15 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 8U);
-    CHECK(required_count == 432U);
+    CHECK(executable_count == 12U);
+    CHECK(required_count == 428U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");
     CHECK(create_instance != NULL);
     CHECK(create_instance->scope == BVB_DXVK_SCOPE_GLOBAL);
     CHECK(create_instance->lookup_count == 5U);
-    CHECK(create_instance->support ==
-          BVB_DXVK_SUPPORT_REQUIRED_UNIMPLEMENTED);
+    CHECK(create_instance->support == BVB_DXVK_SUPPORT_EXECUTABLE);
     const struct bvb_dxvk_dispatch_policy_entry *private_entry =
         bvb_dxvk_dispatch_policy_lookup("wine_vkAcquireKeyedMutex");
     CHECK(private_entry != NULL);

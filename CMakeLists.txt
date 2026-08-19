@@ -55,6 +55,19 @@ target_link_libraries(
 )
 bvb_enable_warnings(bvb-vulkan-selftest-core)
 
+add_library(bvb-vulkan-global STATIC src/vulkan_global.c)
+target_include_directories(
+  bvb-vulkan-global
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
+)
+target_link_libraries(
+  bvb-vulkan-global
+  PRIVATE bvb-command-batch Vulkan::Headers ${CMAKE_DL_LIBS}
+)
+bvb_enable_warnings(bvb-vulkan-global)
+
 add_executable(bvb-vulkan-probe src/vulkan_probe.c)
 target_link_libraries(bvb-vulkan-probe PRIVATE bvb-vulkan-caps)
 bvb_enable_warnings(bvb-vulkan-probe)
@@ -184,16 +197,20 @@ add_custom_command(
     "${bvb_triangle_dispatch_include}"
     "${bvb_dxvk_dispatch_policy_include}"
     "${bvb_dxvk_dispatch_policy_json}"
+    --additional-executable
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e025-global-dispatch.txt"
   DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-dxvk-dispatch-policy.py"
     "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
     "${bvb_triangle_dispatch_include}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e025-global-dispatch.txt"
   VERBATIM
 )
 add_library(
   bvb-vulkan-client-dispatch SHARED
   src/dxvk_dispatch_policy.c
+  src/global_dispatch.c
   src/triangle_dispatch.c
   "${bvb_dxvk_dispatch_policy_include}"
   "${bvb_triangle_dispatch_include}"
@@ -206,7 +223,8 @@ target_include_directories(
     "$<INSTALL_INTERFACE:include>"
 )
 target_link_libraries(
-  bvb-vulkan-client-dispatch PRIVATE bvb-command-batch Vulkan::Headers
+  bvb-vulkan-client-dispatch
+  PRIVATE bvb-command-batch bvb-wire Threads::Threads Vulkan::Headers
 )
 set_target_properties(
   bvb-vulkan-client-dispatch
@@ -230,7 +248,8 @@ bvb_enable_warnings(bvb-triangle-batch-builder)
 add_executable(bvb-bridge-service src/bridge_service.c)
 target_link_libraries(
   bvb-bridge-service
-  PRIVATE bvb-wire bvb-command-batch bvb-vulkan-caps bvb-vulkan-selftest-core
+  PRIVATE bvb-wire bvb-command-batch bvb-vulkan-caps bvb-vulkan-global
+          bvb-vulkan-selftest-core
 )
 bvb_enable_warnings(bvb-bridge-service)
 
@@ -323,6 +342,22 @@ if(BUILD_TESTING)
   )
   bvb_enable_warnings(bvb-triangle-dispatch-test)
   add_test(NAME triangle-dispatch-contract COMMAND bvb-triangle-dispatch-test)
+
+  add_executable(bvb-global-dispatch-test tests/global_dispatch.c)
+  target_link_libraries(
+    bvb-global-dispatch-test
+    PRIVATE bvb-vulkan-client-dispatch bvb-command-batch Vulkan::Headers
+  )
+  bvb_enable_warnings(bvb-global-dispatch-test)
+  add_test(
+    NAME global-dispatch-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+      "$<TARGET_FILE:bvb-bridge-service>"
+      "$<TARGET_FILE:bvb-global-dispatch-test>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+  )
   add_test(
     NAME dxvk-dispatch-policy-contract
     COMMAND
@@ -332,6 +367,7 @@ if(BUILD_TESTING)
       "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
       "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
       "${bvb_triangle_dispatch_include}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/config/e025-global-dispatch.txt"
       "${bvb_dxvk_dispatch_policy_json}"
   )
 

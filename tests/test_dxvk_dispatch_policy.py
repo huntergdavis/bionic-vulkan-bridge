@@ -24,12 +24,12 @@ SCOPES = {
 
 
 def main() -> int:
-    if len(sys.argv) != 6:
+    if len(sys.argv) != 7:
         raise SystemExit(
             "usage: test_dxvk_dispatch_policy.py GENERATOR REGISTRY "
-            "MANIFEST TRIANGLE_INCLUDE POLICY_JSON"
+            "MANIFEST TRIANGLE_INCLUDE ADDITIONAL_LIST POLICY_JSON"
         )
-    generator, registry, manifest_path, triangle_include, policy_json = map(
+    generator, registry, manifest_path, triangle_include, additional, policy_json = map(
         pathlib.Path, sys.argv[1:]
     )
     with tempfile.TemporaryDirectory() as temporary:
@@ -44,6 +44,8 @@ def main() -> int:
                 str(triangle_include),
                 str(generated_include),
                 str(generated_json),
+                "--additional-executable",
+                str(additional),
             ],
             check=True,
         )
@@ -54,11 +56,11 @@ def main() -> int:
         assert summary == {
             "command_count": 742,
             "resolved_name_count": 440,
-            "executable_name_count": 8,
+            "executable_name_count": 12,
             "support_counts": {
                 "probed_null": 302,
-                "required_unimplemented": 432,
-                "executable": 8,
+                "required_unimplemented": 428,
+                "executable": 12,
             },
             "dispatch_scope_counts": {
                 "global": 4,

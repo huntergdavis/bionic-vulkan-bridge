@@ -25,6 +25,8 @@ enum {
     BVB_OPCODE_VISIBLE_BATCH_SETUP = 8,
     BVB_OPCODE_VISIBLE_BATCH_EXECUTE = 9,
     BVB_OPCODE_VISIBLE_BATCH_INLINE = 10,
+    BVB_OPCODE_VULKAN_GLOBAL_INFO = 11,
+    BVB_OPCODE_VULKAN_INSTANCE_CREATE = 12,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -40,6 +42,9 @@ enum {
     BVB_VISIBLE_BATCH_INLINE_PREFIX_SIZE = BVB_LIFECYCLE_TOKEN_SIZE,
     BVB_VISIBLE_BATCH_INLINE_MAX_BYTES =
         BVB_PROTOCOL_MAX_PAYLOAD - BVB_VISIBLE_BATCH_INLINE_PREFIX_SIZE,
+    BVB_VULKAN_GLOBAL_INFO_SIZE = 24,
+    BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE = 16,
+    BVB_VULKAN_INSTANCE_CREATE_RESPONSE_SIZE = 16,
     BVB_SHARED_BATCH_MIN_BYTES = 4096,
     BVB_SHARED_BATCH_MAX_BYTES = 16 * 1024 * 1024,
     BVB_SERVICE_BIONIC = 1U << 0,
@@ -94,6 +99,26 @@ struct bvb_visible_batch_setup {
 struct bvb_visible_batch_execute {
     uint8_t token[BVB_LIFECYCLE_TOKEN_SIZE];
     struct bvb_shared_batch_execute shared;
+};
+
+struct bvb_vulkan_global_info {
+    uint32_t loader_api_version;
+    uint32_t native_extension_count;
+    uint32_t native_layer_count;
+    uint32_t exposed_extension_count;
+    uint32_t exposed_layer_count;
+};
+
+struct bvb_vulkan_instance_create_request {
+    uint32_t api_version;
+    uint32_t flags;
+    uint32_t enabled_layer_count;
+    uint32_t enabled_extension_count;
+};
+
+struct bvb_vulkan_instance_create_response {
+    int32_t vulkan_result;
+    uint64_t instance_id;
 };
 
 /*
@@ -166,6 +191,24 @@ int bvb_protocol_encode_visible_batch_execute(
 int bvb_protocol_decode_visible_batch_execute(
     const uint8_t input[BVB_VISIBLE_BATCH_EXECUTE_SIZE],
     struct bvb_visible_batch_execute *execute);
+int bvb_protocol_encode_vulkan_global_info(
+    uint8_t output[BVB_VULKAN_GLOBAL_INFO_SIZE],
+    const struct bvb_vulkan_global_info *info);
+int bvb_protocol_decode_vulkan_global_info(
+    const uint8_t input[BVB_VULKAN_GLOBAL_INFO_SIZE],
+    struct bvb_vulkan_global_info *info);
+int bvb_protocol_encode_vulkan_instance_create_request(
+    uint8_t output[BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE],
+    const struct bvb_vulkan_instance_create_request *request);
+int bvb_protocol_decode_vulkan_instance_create_request(
+    const uint8_t input[BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE],
+    struct bvb_vulkan_instance_create_request *request);
+int bvb_protocol_encode_vulkan_instance_create_response(
+    uint8_t output[BVB_VULKAN_INSTANCE_CREATE_RESPONSE_SIZE],
+    const struct bvb_vulkan_instance_create_response *response);
+int bvb_protocol_decode_vulkan_instance_create_response(
+    const uint8_t input[BVB_VULKAN_INSTANCE_CREATE_RESPONSE_SIZE],
+    struct bvb_vulkan_instance_create_response *response);
 
 void bvb_wire_put_u16(uint8_t *output, uint16_t value);
 void bvb_wire_put_u32(uint8_t *output, uint32_t value);

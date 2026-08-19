@@ -73,15 +73,34 @@ def executable_names(triangle_dispatch: Path) -> set[str]:
     return names
 
 
+def additional_executable_names(path: Path | None) -> set[str]:
+    if path is None:
+        return set()
+    names = {
+        line.strip()
+        for line in path.read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    if not names or any(re.fullmatch(r"vk[A-Za-z0-9_]+", name) is None
+                        for name in names):
+        raise ValueError("invalid additional executable dispatch list")
+    return names
+
+
 def generate(
-    registry: Path, manifest: Path, triangle_dispatch: Path
+    registry: Path, manifest: Path, triangle_dispatch: Path,
+    additional_dispatch: Path | None = None,
 ) -> tuple[str, dict[str, object]]:
     registry_names = registry_canonical_names(registry)
     evidence = json.loads(manifest.read_text())
     records = evidence.get("commands")
     if not isinstance(records, list):
         raise ValueError("E011 commands must be a list")
-    executable = executable_names(triangle_dispatch)
+    triangle_executable = executable_names(triangle_dispatch)
+    additional_executable = additional_executable_names(additional_dispatch)
+    if triangle_executable & additional_executable:
+        raise ValueError("duplicate executable dispatch names")
+    executable = triangle_executable | additional_executable
     seen: set[str] = set()
     support_counts: dict[str, int] = {
         "probed_null": 0,
@@ -116,8 +135,13 @@ def generate(
             raise ValueError(f"registry identity mismatch: {name}")
         resolved = len(resolved_stages) != 0
         if name in executable:
-            if not resolved or scope != "device":
-                raise ValueError(f"executable entry lacks device proof: {name}")
+            expected_scope = (
+                "device" if name in triangle_executable else "global"
+            )
+            if not resolved or scope != expected_scope:
+                raise ValueError(
+                    f"executable entry lacks {expected_scope} proof: {name}"
+                )
             support = "executable"
         elif resolved:
             support = "required_unimplemented"
@@ -146,6 +170,11 @@ def generate(
         f"/* E011 manifest sha256: {sha256(manifest)} */",
         f"/* executable dispatch sha256: {sha256(triangle_dispatch)} */",
     ]
+    if additional_dispatch is not None:
+        lines.append(
+            "/* additional executable dispatch sha256: "
+            f"{sha256(additional_dispatch)} */"
+        )
     for entry in entries:
         lines.append(
             "BVB_DXVK_DISPATCH_POLICY_ENTRY("
@@ -157,7 +186,7 @@ def generate(
     include = "\n".join(lines) + "\n"
     document: dict[str, object] = {
         "schema_version": 1,
-        "gate": "E024",
+        "gate": "E025" if additional_dispatch is not None else "E024",
         "source": {
             "vk_xml_sha256": sha256(registry),
             "e011_manifest_sha256": sha256(manifest),
@@ -178,6 +207,10 @@ def generate(
         },
         "executable_names": sorted(executable),
     }
+    if additional_dispatch is not None:
+        document["source"]["additional_dispatch_sha256"] = sha256(
+            additional_dispatch
+        )
     return include, document
 
 
@@ -188,9 +221,11 @@ def main() -> None:
     parser.add_argument("triangle_dispatch", type=Path)
     parser.add_argument("output_include", type=Path)
     parser.add_argument("output_json", type=Path)
+    parser.add_argument("--additional-executable", type=Path)
     arguments = parser.parse_args()
     include, document = generate(
-        arguments.registry, arguments.manifest, arguments.triangle_dispatch
+        arguments.registry, arguments.manifest, arguments.triangle_dispatch,
+        arguments.additional_executable,
     )
     arguments.output_include.parent.mkdir(parents=True, exist_ok=True)
     arguments.output_json.parent.mkdir(parents=True, exist_ok=True)

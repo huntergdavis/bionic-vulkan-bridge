@@ -68,6 +68,25 @@ static VkResult VKAPI_CALL fake_enumerate_extensions(
     return written < available ? VK_INCOMPLETE : VK_SUCCESS;
 }
 
+static VkResult VKAPI_CALL fake_enumerate_layers(
+    uint32_t *count, VkLayerProperties *properties) {
+    if (count == NULL) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (properties != NULL && *count != 0U) {
+        memset(properties, 0, sizeof(*properties));
+        (void)snprintf(properties[0].layerName,
+                       sizeof(properties[0].layerName), "%s",
+                       "VK_LAYER_BVB_fake_native_only");
+        properties[0].specVersion = VK_API_VERSION_1_0;
+        properties[0].implementationVersion = 1U;
+        *count = 1U;
+        return VK_SUCCESS;
+    }
+    *count = 1U;
+    return VK_SUCCESS;
+}
+
 static VkResult VKAPI_CALL fake_create_instance(
     const VkInstanceCreateInfo *create_info,
     const VkAllocationCallbacks *allocator,
@@ -713,6 +732,7 @@ static PFN_vkVoidFunction function_pointer(const char *name) {
     }
     BVB_MATCH("vkEnumerateInstanceVersion", fake_enumerate_instance_version)
     BVB_MATCH("vkEnumerateInstanceExtensionProperties", fake_enumerate_extensions)
+    BVB_MATCH("vkEnumerateInstanceLayerProperties", fake_enumerate_layers)
     BVB_MATCH("vkCreateInstance", fake_create_instance)
     BVB_MATCH("vkEnumeratePhysicalDevices", fake_enumerate_devices)
     BVB_MATCH("vkGetPhysicalDeviceProperties", fake_get_device_properties)
