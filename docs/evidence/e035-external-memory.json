@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "gate": "E035",
+  "result": "pass",
+  "source_commit": "7e576b9a576b3f586b16e4c091292a2d5fb967d0",
+  "target": "Galaxy Tab S8+ Android Bionic Adreno 730",
+  "vulkan_loader": "/system/lib64/libvulkan.so",
+  "bionic_interpreter": "/system/bin/linker64",
+  "external_memory": {
+    "schema_version": 1,
+    "gate": "E035",
+    "loader_path": "/system/lib64/libvulkan.so",
+    "handle_type": "opaque_fd",
+    "logical_device_count": 2,
+    "external_memory_features": 7,
+    "compatible_handle_types": 1,
+    "export_from_imported_handle_types": 1,
+    "memory_type_index": 4,
+    "memory_property_flags": 7,
+    "buffer_bytes": 4096,
+    "mismatched_bytes": 0
+  },
+  "fd_ownership": {
+    "export_transfers_to_application": true,
+    "successful_import_transfers_to_destination_driver": true,
+    "source_and_destination_logical_devices_distinct": true
+  },
+  "stderr_bytes": 0,
+  "artifacts": {
+    "bionic_external_memory_selftest": {
+      "path": "/data/data/com.termux/files/home/bionic-vulkan-bridge-e023/build/bvb-vulkan-external-memory-selftest",
+      "bytes": 60688,
+      "sha256": "719fc40f113540c743926977519b679cc63911bb3cee250ce0d95a55d4503b9c"
+    }
+  }
+}

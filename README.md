@@ -158,6 +158,11 @@ invalidated it, and recovered all 4,096 bytes from Adreno memory with zero
 mismatches. The policy now marks 50 names executable and leaves 390
 unavailable. This bounded, chunked shadow mapping is a correctness gate; it is
 not yet the external-memory/zero-copy path needed for game performance.
+E035 proves the driver-level escape from those copies: one Adreno logical
+device exported a dedicated opaque-FD allocation and a second logical device
+imported it, mapped it, and recovered all 4,096 patterned bytes with zero
+mismatches. Cross-UID delivery into the visible Android host remains the next
+gate.
 
 ## Build and test on a normal Linux host
 

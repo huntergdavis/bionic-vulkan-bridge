@@ -77,6 +77,8 @@
   through the game-facing command buffer
 - [x] Bridge bounded host-visible memory map, flush, invalidate, and unmap
   semantics through the game-facing Vulkan device
+- [x] Export and import one opaque-FD allocation across two Adreno logical
+  devices with deterministic byte parity
 - [ ] Expand generated dispatch to the measured DXVK startup subset
 - [ ] Implement GPU external-memory and synchronization strategy
 - [x] Reach a rendered test triangle

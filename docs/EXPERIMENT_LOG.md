@@ -1848,3 +1848,49 @@ its vertex data from shader constants into a glibc-populated vertex buffer.
 E034 does not claim zero-copy sharing, image or shader creation through the
 game-facing path, descriptor sets, indexed drawing, DXVK startup, a game FPS
 result, or removal of Termux.
+
+## E035 — Cross-device opaque-FD external memory (2026-08-19)
+
+Status: passed on real Adreno 730 hardware at source commit `7e576b9`.
+
+Hypothesis: two distinct logical devices created from the tablet's same Adreno
+physical device can reference one Vulkan buffer allocation through a single
+opaque POSIX file descriptor, eliminating E034's need to copy bulk data through
+4,072-byte control packets.
+
+Method: the existing Bionic selftest bootstrap now enables
+`VK_KHR_external_memory` and `VK_KHR_external_memory_fd` only when both were
+enumerated, plus the instance capability extension used for the external-
+buffer query. It creates matching 4 KiB transfer/vertex buffers on two logical
+devices. The source allocation is exportable and dedicated when required; a
+deterministic byte pattern is mapped, written, and flushed as needed. The
+source returns one opaque FD, the destination imports ownership into a distinct
+`VkDeviceMemory`, maps and invalidates it as needed, and compares every byte.
+The implementation closes an exported FD only if import did not consume it.
+
+Result: Adreno reported external-memory features `7` (`DEDICATED_ONLY`,
+`EXPORTABLE`, and `IMPORTABLE`), opaque-FD compatible and re-exportable handle
+masks of `1`, and selected host-visible/coherent memory type 4 with property
+flags `7`. The destination recovered all 4,096 bytes with zero mismatches and
+stderr was empty. All 19 host contracts passed, including a real memfd-backed
+fake-driver export/import regression.
+
+Canonical evidence is `docs/evidence/e035-external-memory.json`, 1,196 bytes,
+SHA-256
+`fa2c7893a9b6a0539f81d559afc713192fa567164a2d40c73e4d1aba15e5b371`.
+The Bionic external-memory selftest is 60,688 bytes with SHA-256
+`719fc40f113540c743926977519b679cc63911bb3cee250ce0d95a55d4503b9c`.
+
+The required recall query found no earlier E035 external-memory implementation.
+E035 reused E004/E005's loader, device, memory-selection, and cleanup path, and
+follows E020/E021's explicit descriptor-ownership discipline. The
+[Khronos external-memory-FD reference](https://registry.khronos.org/VulkanSC/specs/1.0-extensions/man/html/VK_KHR_external_memory_fd.html)
+specifies that export transfers FD ownership to the application and successful
+import transfers it to the destination Vulkan implementation.
+
+The next bounded gate is E036: export the allocation from the real visible
+Android renderer, deliver its FD across the already-proven Binder callback and
+same-UID `SCM_RIGHTS` relay, import it into the game-facing Bionic device, and
+add explicit cross-device synchronization. E035 does not yet claim cross-UID
+sharing, visible consumption, glibc Vulkan import dispatch, a vertex-buffer
+triangle, DXVK startup, a game FPS result, or removal of Termux.
