@@ -1,13 +1,29 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <bvb/command_batch.h>
 #include <bvb/lifecycle.h>
+#include <bvb/triangle_batch_builder.h>
 #include <bvb/visible_ingress.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
+#include <linux/memfd.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+enum {
+    BROKERED_REGION_BYTES = 4096,
+    BROKERED_BATCH_OFFSET = 64,
+};
 
 static int validate_triangle(const uint8_t *batch, size_t batch_length,
                              uint64_t sequence, uint32_t width,
@@ -57,7 +73,8 @@ static int validate_triangle(const uint8_t *batch, size_t batch_length,
 int main(int argc, char **argv) {
     if (argc != 5) {
         fprintf(stderr,
-                "usage: %s (SOCKET_NAME | --tcp) TOKEN_HEX WIDTH HEIGHT\n",
+                "usage: %s (SOCKET_NAME | --tcp | --tcp-brokered) "
+                "TOKEN_HEX WIDTH HEIGHT\n",
                 argv[0]);
         return EXIT_FAILURE;
     }
@@ -76,7 +93,8 @@ int main(int argc, char **argv) {
 
     struct bvb_visible_ingress *ingress = NULL;
     uint16_t bound_port = 0U;
-    int result = strcmp(argv[1], "--tcp") == 0
+    const bool brokered = strcmp(argv[1], "--tcp-brokered") == 0;
+    int result = (strcmp(argv[1], "--tcp") == 0 || brokered)
                      ? bvb_visible_ingress_create_loopback(
                            &ingress, 0U, &bound_port, token)
                      : bvb_visible_ingress_create(
@@ -85,6 +103,55 @@ int main(int argc, char **argv) {
     if (result != 0) {
         fprintf(stderr, "ingress create failed: %d\n", result);
         return EXIT_FAILURE;
+    }
+
+    int region_fd = -1;
+    uint8_t *region_mapping = MAP_FAILED;
+    if (brokered) {
+        region_fd = (int)syscall(SYS_memfd_create, "bvb-ingress-test",
+                                 MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        if (region_fd < 0 || ftruncate(region_fd, BROKERED_REGION_BYTES) != 0) {
+            result = -errno;
+        }
+        if (result == 0) {
+            region_mapping = mmap(NULL, BROKERED_REGION_BYTES,
+                                  PROT_READ | PROT_WRITE, MAP_SHARED,
+                                  region_fd, 0);
+            if (region_mapping == MAP_FAILED) {
+                result = -errno;
+            }
+        }
+        size_t encoded_length = 0U;
+        if (result == 0) {
+            result = bvb_triangle_batch_build(
+                region_mapping + BROKERED_BATCH_OFFSET,
+                BROKERED_REGION_BYTES - BROKERED_BATCH_OFFSET,
+                (uint32_t)width_value, (uint32_t)height_value,
+                &encoded_length);
+        }
+        if (result == 0 && encoded_length != 200U) {
+            result = -EPROTO;
+        }
+        if (result == 0 &&
+            fcntl(region_fd, F_ADD_SEALS,
+                  F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) != 0) {
+            result = -errno;
+        }
+        if (result == 0) {
+            result = bvb_visible_ingress_install_region(
+                ingress, region_fd, BROKERED_REGION_BYTES, 1U);
+        }
+        if (result != 0) {
+            fprintf(stderr, "brokered region install failed: %d\n", result);
+            bvb_visible_ingress_destroy(ingress);
+            if (region_mapping != MAP_FAILED) {
+                (void)munmap(region_mapping, BROKERED_REGION_BYTES);
+            }
+            if (region_fd >= 0) {
+                (void)close(region_fd);
+            }
+            return EXIT_FAILURE;
+        }
     }
     if (bound_port != 0U) {
         printf("READY %u\n", (unsigned int)bound_port);
@@ -108,6 +175,12 @@ int main(int argc, char **argv) {
         }
     }
     bvb_visible_ingress_destroy(ingress);
+    if (region_mapping != MAP_FAILED) {
+        (void)munmap(region_mapping, BROKERED_REGION_BYTES);
+    }
+    if (region_fd >= 0) {
+        (void)close(region_fd);
+    }
     if (result != 0) {
         fprintf(stderr, "ingress batch failed: %d\n", result);
         return EXIT_FAILURE;

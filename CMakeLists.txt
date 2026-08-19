@@ -281,7 +281,7 @@ if(BUILD_TESTING)
   add_executable(bvb-visible-ingress-host-test tests/visible_ingress_host.c)
   target_link_libraries(
     bvb-visible-ingress-host-test
-    PRIVATE bvb-visible-ingress bvb-command-batch
+    PRIVATE bvb-visible-ingress bvb-command-batch bvb-triangle-batch-builder
   )
   bvb_enable_warnings(bvb-visible-ingress-host-test)
 

@@ -3,6 +3,8 @@
 import json
 import os
 import pathlib
+import socket
+import struct
 import subprocess
 import sys
 
@@ -85,6 +87,63 @@ def run_contract(server_path: str, client_path: str, tcp: bool) -> None:
             server.wait(timeout=5.0)
 
 
+def brokered_exchange(port: int, token: bytes) -> int:
+    payload = token + struct.pack("<QIIQ", 1, 64, 200, 1)
+    request_id = 0x42564209
+    header = struct.pack(
+        "<IHHHHIIi", 0x31425642, 1, 1, 9, 0, request_id, len(payload), 0
+    )
+    with socket.create_connection(("127.0.0.1", port), timeout=5.0) as client:
+        client.sendall(header + payload)
+        response = b""
+        while len(response) < 24:
+            part = client.recv(24 - len(response))
+            if not part:
+                raise AssertionError("brokered response ended early")
+            response += part
+    magic, version, kind, opcode, reserved, received_id, length, status = (
+        struct.unpack("<IHHHHIIi", response)
+    )
+    assert (magic, version, kind, opcode, reserved, received_id, length) == (
+        0x31425642,
+        1,
+        2,
+        9,
+        0,
+        request_id,
+        0,
+    )
+    return status
+
+
+def run_brokered_contract(server_path: str) -> None:
+    token = bytes(range(1, 33))
+    server = subprocess.Popen(
+        [server_path, "--tcp-brokered", token.hex(), "1280", "720"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert server.stdout is not None
+        prefix, port_text = server.stdout.readline().strip().split()
+        assert prefix == "READY"
+        port = int(port_text)
+        assert brokered_exchange(port, bytes([0xFF] * 32)) == -13
+        assert brokered_exchange(port, token) == 0
+        server_stdout, server_stderr = server.communicate(timeout=10.0)
+        assert server.returncode == 0, server_stderr
+        assert json.loads(server_stdout) == {
+            "batch_bytes": 200,
+            "sequence": 1,
+            "commands": 6,
+        }
+    finally:
+        if server.poll() is None:
+            server.terminate()
+            server.wait(timeout=5.0)
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         raise SystemExit("usage: test_visible_ingress.py SERVER CLIENT")
@@ -92,7 +151,11 @@ def main() -> int:
     client_path = str(pathlib.Path(sys.argv[2]).resolve())
     run_contract(server_path, client_path, tcp=False)
     run_contract(server_path, client_path, tcp=True)
-    print("PASS: authenticated Unix/memfd and TCP/inline visible ingress")
+    run_brokered_contract(server_path)
+    print(
+        "PASS: authenticated Unix/memfd, TCP/inline, and "
+        "TCP/brokered visible ingress"
+    )
     return 0
 
 

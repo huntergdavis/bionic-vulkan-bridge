@@ -40,6 +40,7 @@ struct bvb_visible_ingress {
     bool batch_claimed;
     bool batch_completed;
     bool completion_pending_response;
+    bool brokered_region_ready;
     int batch_status;
     const uint8_t *batch;
     size_t batch_length;
@@ -49,6 +50,7 @@ struct bvb_visible_ingress {
     size_t socket_name_length;
     uint8_t socket_name[BVB_VISIBLE_ABSTRACT_NAME_MAX];
     uint8_t token[BVB_LIFECYCLE_TOKEN_SIZE];
+    struct bvb_visible_batch_region brokered_region;
 };
 
 static bool token_is_nonzero(
@@ -212,26 +214,44 @@ static void process_inline_connection(struct bvb_visible_ingress *ingress,
     memset(&request, 0, sizeof(request));
     int result = bvb_transport_receive(socket_fd, &request);
     bool request_received = result == 0;
-    if (result == 0 &&
-        (request.header.version != BVB_PROTOCOL_VERSION ||
-         request.header.kind != BVB_PROTOCOL_REQUEST ||
-         request.header.opcode != BVB_OPCODE_VISIBLE_BATCH_INLINE ||
-         request.header.status != 0)) {
-        result = -EPROTO;
-    }
     const uint8_t *batch = NULL;
     size_t batch_length = 0U;
     uint64_t sequence = 0U;
-    if (result == 0) {
+    if (result == 0 &&
+        request.header.opcode == BVB_OPCODE_VISIBLE_BATCH_INLINE) {
+        if (request.header.version != BVB_PROTOCOL_VERSION ||
+            request.header.kind != BVB_PROTOCOL_REQUEST ||
+            request.header.status != 0) {
+            result = -EPROTO;
+        }
+    } else if (result == 0 &&
+               request.header.opcode == BVB_OPCODE_VISIBLE_BATCH_EXECUTE) {
+        result = request_status(&request, BVB_OPCODE_VISIBLE_BATCH_EXECUTE,
+                                BVB_VISIBLE_BATCH_EXECUTE_SIZE);
+    } else if (result == 0) {
+        result = -EPROTO;
+    }
+    if (result == 0 &&
+        request.header.opcode == BVB_OPCODE_VISIBLE_BATCH_INLINE) {
         result = bvb_visible_batch_inline_decode(
             ingress->token, request.payload, request.header.payload_length,
             &batch, &batch_length, &sequence);
+    } else if (result == 0) {
+        (void)pthread_mutex_lock(&ingress->mutex);
+        result = ingress->brokered_region_ready
+                     ? bvb_visible_batch_region_execute(
+                           &ingress->brokered_region, request.payload,
+                           request.header.payload_length, &batch,
+                           &batch_length, &sequence)
+                     : -ENXIO;
+        (void)pthread_mutex_unlock(&ingress->mutex);
     }
     if (result == 0) {
         result = submit_batch(ingress, batch, batch_length, sequence);
     }
     if (request_received &&
-        request.header.opcode == BVB_OPCODE_VISIBLE_BATCH_INLINE) {
+        (request.header.opcode == BVB_OPCODE_VISIBLE_BATCH_INLINE ||
+         request.header.opcode == BVB_OPCODE_VISIBLE_BATCH_EXECUTE)) {
         (void)send_response(socket_fd, &request, result);
     }
 }
@@ -390,6 +410,54 @@ int bvb_visible_ingress_create_loopback(
     return 0;
 }
 
+int bvb_visible_ingress_install_region(struct bvb_visible_ingress *ingress,
+                                       int memory_fd, size_t region_bytes,
+                                       uint64_t generation) {
+    if (ingress == NULL || memory_fd < 0 || region_bytes == 0U ||
+        generation == 0U) {
+        return -EINVAL;
+    }
+    if (ingress->transport != BVB_VISIBLE_INGRESS_LOOPBACK) {
+        return -EOPNOTSUPP;
+    }
+    struct bvb_visible_batch_region candidate;
+    int result = bvb_visible_batch_region_init(&candidate, ingress->token);
+    if (result != 0) {
+        return result;
+    }
+    struct bvb_visible_batch_setup setup = {
+        .shared = {
+            .region_bytes = region_bytes,
+            .generation = generation,
+        },
+    };
+    memcpy(setup.token, ingress->token, sizeof(setup.token));
+    uint8_t payload[BVB_VISIBLE_BATCH_SETUP_SIZE];
+    result = bvb_protocol_encode_visible_batch_setup(payload, &setup);
+    if (result == 0) {
+        result = bvb_visible_batch_region_setup(
+            &candidate, payload, sizeof(payload), memory_fd);
+    }
+    if (result != 0) {
+        bvb_visible_batch_region_destroy(&candidate);
+        return result;
+    }
+
+    (void)pthread_mutex_lock(&ingress->mutex);
+    if (ingress->stop) {
+        result = -ECANCELED;
+    } else if (ingress->brokered_region_ready) {
+        result = -EALREADY;
+    } else {
+        ingress->brokered_region = candidate;
+        memset(&candidate, 0, sizeof(candidate));
+        ingress->brokered_region_ready = true;
+    }
+    (void)pthread_mutex_unlock(&ingress->mutex);
+    bvb_visible_batch_region_destroy(&candidate);
+    return result;
+}
+
 static int realtime_deadline(uint32_t timeout_ms, struct timespec *deadline) {
     if (clock_gettime(CLOCK_REALTIME, deadline) != 0) {
         return -errno;
@@ -497,6 +565,7 @@ void bvb_visible_ingress_destroy(struct bvb_visible_ingress *ingress) {
     }
     (void)pthread_join(ingress->worker, NULL);
     (void)close(ingress->listener_fd);
+    bvb_visible_batch_region_destroy(&ingress->brokered_region);
     (void)pthread_cond_destroy(&ingress->condition);
     (void)pthread_mutex_destroy(&ingress->mutex);
     memset(ingress, 0, sizeof(*ingress));
