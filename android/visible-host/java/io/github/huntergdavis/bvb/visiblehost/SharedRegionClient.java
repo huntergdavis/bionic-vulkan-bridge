@@ -33,9 +33,43 @@ public final class SharedRegionClient {
         writer.close();
     }
 
-    private static String exceptionName(Throwable failure) {
-        Throwable cause = failure.getCause();
-        return (cause == null ? failure : cause).getClass().getName();
+    private static String jsonString(String value) {
+        StringBuilder result = new StringBuilder();
+        result.append('"');
+        for (int index = 0; index < value.length(); ++index) {
+            char character = value.charAt(index);
+            if (character == '"' || character == '\\') {
+                result.append('\\');
+            }
+            if (character == '\n') {
+                result.append("\\n");
+            } else if (character == '\r') {
+                result.append("\\r");
+            } else if (character == '\t') {
+                result.append("\\t");
+            } else if (character >= 0x20) {
+                result.append(character);
+            }
+        }
+        result.append('"');
+        return result.toString();
+    }
+
+    private static String exceptionChain(Throwable failure) {
+        StringBuilder result = new StringBuilder();
+        Throwable current = failure;
+        while (current != null) {
+            if (result.length() != 0) {
+                result.append(" <- ");
+            }
+            result.append(current.getClass().getName());
+            if (current.getMessage() != null) {
+                result.append(": ");
+                result.append(current.getMessage());
+            }
+            current = current.getCause();
+        }
+        return result.toString();
     }
 
     public static void main(String[] arguments) {
@@ -43,8 +77,10 @@ public final class SharedRegionClient {
             System.err.println("usage: SharedRegionClient URI RESULT_JSON");
             System.exit(2);
         }
+        String stage = "bootstrap_context";
         try {
             Context context = termuxContext();
+            stage = "open_provider";
             ParcelFileDescriptor descriptor = context.getContentResolver()
                     .openFileDescriptor(Uri.parse(arguments[0]), "r");
             if (descriptor == null) {
@@ -52,6 +88,7 @@ public final class SharedRegionClient {
             }
             FileInputStream input =
                     new ParcelFileDescriptor.AutoCloseInputStream(descriptor);
+            stage = "read_region";
             byte[] bytes = new byte[8192];
             int length = 0;
             while (length < bytes.length) {
@@ -62,6 +99,7 @@ public final class SharedRegionClient {
                 length += count;
             }
             input.close();
+            stage = "validate_region";
             byte[] marker =
                     "BVB_E020_SHARED_REGION binder_parcel_fd=PASS\n"
                             .getBytes("UTF-8");
@@ -77,13 +115,13 @@ public final class SharedRegionClient {
                     "{\"result\":\"pass\",\"region_bytes\":4096,"
                             + "\"marker\":\"BVB_E020_SHARED_REGION\"}");
         } catch (Throwable failure) {
+            failure.printStackTrace(System.err);
             try {
                 writeResult(arguments[1],
-                        "{\"result\":\"fail\",\"exception\":\""
-                                + exceptionName(failure) + "\"}");
-            } catch (Throwable ignored) {
-                failure.printStackTrace(System.err);
-            }
+                        "{\"result\":\"fail\",\"stage\":"
+                                + jsonString(stage) + ",\"exception\":"
+                                + jsonString(exceptionChain(failure)) + "}");
+            } catch (Throwable ignored) {}
             System.exit(1);
         }
     }
