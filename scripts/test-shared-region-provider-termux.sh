@@ -94,7 +94,8 @@ if [ "$relay_mode" = 1 ]; then
     grun -s gcc -std=c17 -O3 -DNDEBUG -Wall -Wextra -Werror \
         -I"$project_dir/include" -I"$build_dir/generated" \
         -I"$vulkan_headers" \
-        "$project_dir/src/protocol.c" "$project_dir/src/transport.c" \
+        "$project_dir/src/lifecycle.c" "$project_dir/src/protocol.c" \
+        "$project_dir/src/transport.c" \
         "$project_dir/src/handle.c" "$project_dir/src/command_batch.c" \
         "$triangle_dispatch_source" "$triangle_builder_source" \
         "$relay_source" -o "$relay_client"
