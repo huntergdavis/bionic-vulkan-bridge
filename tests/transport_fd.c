@@ -1,0 +1,83 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
+#include <bvb/transport.h>
+
+#include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#define CHECK(expression)                                                       \
+    do {                                                                        \
+        if (!(expression)) {                                                    \
+            fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
+                    #expression);                                               \
+            return EXIT_FAILURE;                                                \
+        }                                                                       \
+    } while (0)
+
+static int hello_packet(struct bvb_protocol_packet *packet,
+                        uint32_t request_id) {
+    memset(packet, 0, sizeof(*packet));
+    packet->header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_HELLO,
+        .request_id = request_id,
+        .payload_length = BVB_HELLO_REQUEST_SIZE,
+    };
+    const struct bvb_hello_request request = {
+        .minimum_version = 1U,
+        .maximum_version = 1U,
+    };
+    return bvb_protocol_encode_hello_request(packet->payload, &request);
+}
+
+int main(void) {
+    int sockets[2];
+    CHECK(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets) == 0);
+    int memory = memfd_create("bvb-transport-test", MFD_CLOEXEC);
+    CHECK(memory >= 0);
+    CHECK(ftruncate(memory, 4096) == 0);
+    const char marker[] = "shared-batch";
+    CHECK(pwrite(memory, marker, sizeof(marker), 0) == (ssize_t)sizeof(marker));
+
+    struct bvb_protocol_packet sent;
+    CHECK(hello_packet(&sent, 7U) == 0);
+    CHECK(bvb_transport_send_fd(sockets[0], &sent, memory) == 0);
+    struct bvb_protocol_packet received;
+    int received_fd = -1;
+    CHECK(bvb_transport_receive_fd(sockets[1], &received, &received_fd) == 0);
+    CHECK(received.header.request_id == 7U);
+    CHECK(received_fd >= 0);
+    CHECK((fcntl(received_fd, F_GETFD) & FD_CLOEXEC) != 0);
+    char readback[sizeof(marker)] = {0};
+    CHECK(pread(received_fd, readback, sizeof(readback), 0) ==
+          (ssize_t)sizeof(readback));
+    CHECK(memcmp(readback, marker, sizeof(marker)) == 0);
+    CHECK(close(received_fd) == 0);
+
+    CHECK(hello_packet(&sent, 8U) == 0);
+    CHECK(bvb_transport_send(sockets[0], &sent) == 0);
+    received_fd = 99;
+    CHECK(bvb_transport_receive_fd(sockets[1], &received, &received_fd) == 0);
+    CHECK(received.header.request_id == 8U);
+    CHECK(received_fd == -1);
+
+    CHECK(hello_packet(&sent, 9U) == 0);
+    CHECK(bvb_transport_send_fd(sockets[0], &sent, memory) == 0);
+    CHECK(bvb_transport_receive(sockets[1], &received) == -EPROTO);
+
+    CHECK(close(memory) == 0);
+    CHECK(close(sockets[0]) == 0);
+    CHECK(close(sockets[1]) == 0);
+    puts("PASS: Unix transport descriptor passing");
+    return EXIT_SUCCESS;
+}

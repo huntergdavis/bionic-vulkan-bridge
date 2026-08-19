@@ -1,14 +1,24 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <bvb/command_batch.h>
 #include <bvb/protocol.h>
 #include <bvb/transport.h>
 #include <bvb/vulkan_caps.h>
 
+#include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
+#include <linux/memfd.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 struct client_options {
@@ -16,6 +26,7 @@ struct client_options {
     bool request_vulkan_caps;
     bool request_vulkan_selftest;
     bool request_vulkan_batch_selftest;
+    bool request_vulkan_shared_batch_selftest;
     bool request_activity_status;
 };
 
@@ -23,7 +34,8 @@ static void usage(const char *program) {
     fprintf(stderr,
             "usage: %s --socket ABSOLUTE_PATH "
             "[--vulkan-caps] [--vulkan-selftest | "
-            "--vulkan-batch-selftest] [--activity-status]\n",
+            "--vulkan-batch-selftest | --vulkan-shared-batch-selftest] "
+            "[--activity-status]\n",
             program);
 }
 
@@ -40,6 +52,8 @@ static int parse_arguments(int argc, char **argv,
             options->request_vulkan_selftest = true;
         } else if (strcmp(argv[index], "--vulkan-batch-selftest") == 0) {
             options->request_vulkan_batch_selftest = true;
+        } else if (strcmp(argv[index], "--vulkan-shared-batch-selftest") == 0) {
+            options->request_vulkan_shared_batch_selftest = true;
         } else if (strcmp(argv[index], "--activity-status") == 0) {
             options->request_activity_status = true;
         } else {
@@ -47,9 +61,11 @@ static int parse_arguments(int argc, char **argv,
             return 2;
         }
     }
-    if (options->socket_path == NULL ||
-        (options->request_vulkan_selftest &&
-         options->request_vulkan_batch_selftest)) {
+    unsigned int selftest_count =
+        (options->request_vulkan_selftest ? 1U : 0U) +
+        (options->request_vulkan_batch_selftest ? 1U : 0U) +
+        (options->request_vulkan_shared_batch_selftest ? 1U : 0U);
+    if (options->socket_path == NULL || selftest_count > 1U) {
         usage(argv[0]);
         return 2;
     }
@@ -125,6 +141,167 @@ static int exchange(int socket_fd,
     return 0;
 }
 
+static int exchange_fd(int socket_fd,
+                       const struct bvb_protocol_packet *request,
+                       struct bvb_protocol_packet *response, int passed_fd) {
+    int result = bvb_transport_send_fd(socket_fd, request, passed_fd);
+    if (result != 0) {
+        return result;
+    }
+    memset(response, 0, sizeof(*response));
+    result = bvb_transport_receive(socket_fd, response);
+    if (result != 0) {
+        return result;
+    }
+    if (response->header.kind != BVB_PROTOCOL_RESPONSE ||
+        response->header.opcode != request->header.opcode ||
+        response->header.request_id != request->header.request_id) {
+        return -EPROTO;
+    }
+    return 0;
+}
+
+static int build_transfer_batch(uint8_t *bytes, size_t capacity,
+                                uint64_t sequence, size_t *batch_length) {
+    if (bytes == NULL || batch_length == NULL) {
+        return -EINVAL;
+    }
+    struct bvb_command_batch_builder builder;
+    const uint64_t command_buffer_id =
+        bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 1U);
+    const uint64_t buffer_id = bvb_handle_id(BVB_OBJECT_BUFFER, 1U);
+    int result = bvb_command_batch_begin(&builder, bytes, capacity,
+                                         command_buffer_id, sequence);
+    if (result == 0) {
+        result = bvb_command_batch_append_fill_buffer(
+            &builder,
+            &(const struct bvb_fill_buffer_command){
+                .buffer_id = buffer_id,
+                .offset = 0U,
+                .size = 4096U,
+                .data = UINT32_C(0xa5c3f00d),
+            });
+    }
+    if (result == 0) {
+        result = bvb_command_batch_append_buffer_host_read_barrier(
+            &builder,
+            &(const struct bvb_buffer_host_read_barrier_command){
+                .buffer_id = buffer_id,
+                .offset = 0U,
+                .size = 4096U,
+            });
+    }
+    if (result == 0) {
+        result = bvb_command_batch_finish(&builder, batch_length);
+    }
+    return result;
+}
+
+static int request_shared_batch_selftest(
+    int socket_fd, struct bvb_vulkan_selftest_result *selftest) {
+    enum {
+        REGION_BYTES = 4096,
+        BATCH_OFFSET = 64,
+    };
+    int memory_fd = -1;
+    void *mapping = MAP_FAILED;
+    int result = 0;
+    uint64_t generation = 0U;
+    ssize_t random_bytes =
+        syscall(SYS_getrandom, &generation, sizeof(generation), 0);
+    if (random_bytes != (ssize_t)sizeof(generation) || generation == 0U) {
+        return -EIO;
+    }
+    memory_fd = (int)syscall(SYS_memfd_create, "bvb-shared-batch",
+                             MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (memory_fd < 0) {
+        return -errno;
+    }
+    if (ftruncate(memory_fd, REGION_BYTES) != 0) {
+        result = -errno;
+        goto done;
+    }
+    mapping = mmap(NULL, REGION_BYTES, PROT_READ | PROT_WRITE, MAP_SHARED,
+                   memory_fd, 0);
+    if (mapping == MAP_FAILED) {
+        result = -errno;
+        goto done;
+    }
+    size_t batch_length = 0U;
+    result = build_transfer_batch((uint8_t *)mapping + BATCH_OFFSET,
+                                  REGION_BYTES - BATCH_OFFSET, 1U,
+                                  &batch_length);
+    if (result != 0 || batch_length > UINT32_MAX) {
+        result = result != 0 ? result : -EOVERFLOW;
+        goto done;
+    }
+    if (fcntl(memory_fd, F_ADD_SEALS,
+              F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) != 0) {
+        result = -errno;
+        goto done;
+    }
+    atomic_thread_fence(memory_order_release);
+
+    struct bvb_protocol_packet request;
+    memset(&request, 0, sizeof(request));
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_SHARED_BATCH_SETUP,
+        .request_id = 0x42564206U,
+        .payload_length = BVB_SHARED_BATCH_SETUP_SIZE,
+    };
+    const struct bvb_shared_batch_setup setup = {
+        .region_bytes = REGION_BYTES,
+        .generation = generation,
+    };
+    result = bvb_protocol_encode_shared_batch_setup(request.payload, &setup);
+    struct bvb_protocol_packet response;
+    if (result == 0) {
+        result = exchange_fd(socket_fd, &request, &response, memory_fd);
+    }
+    if (result != 0 || response.header.status != 0 ||
+        response.header.payload_length != 0U) {
+        result = result != 0 ? result : -EPROTO;
+        goto done;
+    }
+
+    memset(&request, 0, sizeof(request));
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_SHARED_BATCH_EXECUTE,
+        .request_id = 0x42564207U,
+        .payload_length = BVB_SHARED_BATCH_EXECUTE_SIZE,
+    };
+    const struct bvb_shared_batch_execute execute = {
+        .generation = generation,
+        .offset = BATCH_OFFSET,
+        .length = (uint32_t)batch_length,
+        .sequence = 1U,
+    };
+    result = bvb_protocol_encode_shared_batch_execute(request.payload,
+                                                      &execute);
+    if (result == 0) {
+        result = exchange(socket_fd, &request, &response);
+    }
+    if (result != 0 || response.header.status != 0 ||
+        response.header.payload_length != BVB_VULKAN_SELFTEST_SIZE) {
+        result = result != 0 ? result : -EPROTO;
+        goto done;
+    }
+    result = bvb_protocol_decode_vulkan_selftest(response.payload, selftest);
+
+done:
+    if (mapping != MAP_FAILED) {
+        (void)munmap(mapping, REGION_BYTES);
+    }
+    if (memory_fd >= 0) {
+        (void)close(memory_fd);
+    }
+    return result;
+}
+
 static void print_json_string(const char *value) {
     const unsigned char *cursor = (const unsigned char *)value;
     putchar('"');
@@ -168,7 +345,7 @@ static void print_document(const struct bvb_protocol_packet *hello_packet,
                            const struct bvb_hello_response *hello,
                            const struct bvb_vulkan_caps *caps,
                            const struct bvb_vulkan_selftest_result *selftest,
-                           bool selftest_is_batch,
+                           const char *selftest_key,
                            const struct bvb_activity_status *activity) {
     printf("{\"schema_version\":1,\"protocol_version\":%u,"
            "\"request_id\":%" PRIu32 ",\"service_flags\":%" PRIu32
@@ -222,8 +399,7 @@ static void print_document(const struct bvb_protocol_packet *hello_packet,
         printf(",\"%s\":{\"instance_extension_count\":%" PRIu32
                ",\"instance_extension_flags\":%" PRIu64
                ",\"known_instance_extensions\":",
-               selftest_is_batch ? "vulkan_batch_selftest"
-                                 : "vulkan_selftest",
+               selftest_key,
                selftest->instance_extension_count,
                selftest->instance_extension_flags);
         print_extension_array(selftest->instance_extension_flags, false);
@@ -402,36 +578,9 @@ int main(int argc, char **argv) {
         request.header.opcode = BVB_OPCODE_VULKAN_BATCH_SELFTEST;
         request.header.request_id = 0x42564205U;
 
-        struct bvb_command_batch_builder builder;
-        const uint64_t command_buffer_id =
-            bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 1U);
-        const uint64_t buffer_id = bvb_handle_id(BVB_OBJECT_BUFFER, 1U);
         size_t batch_length = 0U;
-        result = bvb_command_batch_begin(
-            &builder, request.payload, sizeof(request.payload),
-            command_buffer_id, 1U);
-        if (result == 0) {
-            result = bvb_command_batch_append_fill_buffer(
-                &builder,
-                &(const struct bvb_fill_buffer_command){
-                    .buffer_id = buffer_id,
-                    .offset = 0U,
-                    .size = 4096U,
-                    .data = UINT32_C(0xa5c3f00d),
-                });
-        }
-        if (result == 0) {
-            result = bvb_command_batch_append_buffer_host_read_barrier(
-                &builder,
-                &(const struct bvb_buffer_host_read_barrier_command){
-                    .buffer_id = buffer_id,
-                    .offset = 0U,
-                    .size = 4096U,
-                });
-        }
-        if (result == 0) {
-            result = bvb_command_batch_finish(&builder, &batch_length);
-        }
+        result = build_transfer_batch(request.payload, sizeof(request.payload),
+                                      1U, &batch_length);
         if (result != 0 || batch_length > UINT32_MAX) {
             (void)close(socket_fd);
             fputs("bvb: could not construct Vulkan command batch\n", stderr);
@@ -452,6 +601,17 @@ int main(int argc, char **argv) {
         if (result != 0) {
             (void)close(socket_fd);
             fputs("bvb: invalid Vulkan batch self-test response\n", stderr);
+            return 7;
+        }
+        selftest_pointer = &selftest;
+    }
+
+    if (options.request_vulkan_shared_batch_selftest) {
+        result = request_shared_batch_selftest(socket_fd, &selftest);
+        if (result != 0) {
+            (void)close(socket_fd);
+            fprintf(stderr, "bvb: Vulkan shared-batch self-test failed: %s\n",
+                    strerror(-result));
             return 7;
         }
         selftest_pointer = &selftest;
@@ -485,8 +645,13 @@ int main(int argc, char **argv) {
     }
 
     (void)close(socket_fd);
+    const char *selftest_key = options.request_vulkan_shared_batch_selftest
+                                   ? "vulkan_shared_batch_selftest"
+                               : options.request_vulkan_batch_selftest
+                                   ? "vulkan_batch_selftest"
+                                   : "vulkan_selftest";
     print_document(&hello_packet, &hello, caps_pointer, selftest_pointer,
-                   options.request_vulkan_batch_selftest,
+                   selftest_key,
                    activity_status_pointer);
     return 0;
 }

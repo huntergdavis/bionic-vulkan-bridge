@@ -19,8 +19,13 @@ int bvb_transport_connect(const char *socket_path, uid_t expected_uid);
 int bvb_transport_authenticate(int socket_fd, uid_t expected_uid,
                                pid_t *peer_pid);
 int bvb_transport_receive(int socket_fd, struct bvb_protocol_packet *packet);
+int bvb_transport_receive_fd(int socket_fd,
+                             struct bvb_protocol_packet *packet,
+                             int *received_fd);
 int bvb_transport_send(int socket_fd,
                        const struct bvb_protocol_packet *packet);
+int bvb_transport_send_fd(int socket_fd,
+                          const struct bvb_protocol_packet *packet,
+                          int passed_fd);
 
 #endif
-

@@ -167,6 +167,11 @@ if(BUILD_TESTING)
 
   add_test(NAME protocol-contract COMMAND bvb-protocol-test)
 
+  add_executable(bvb-transport-fd-test tests/transport_fd.c)
+  target_link_libraries(bvb-transport-fd-test PRIVATE bvb-wire)
+  bvb_enable_warnings(bvb-transport-fd-test)
+  add_test(NAME transport-fd-contract COMMAND bvb-transport-fd-test)
+
   add_executable(bvb-command-batch-test tests/command_batch.c)
   target_link_libraries(bvb-command-batch-test PRIVATE bvb-command-batch)
   bvb_enable_warnings(bvb-command-batch-test)

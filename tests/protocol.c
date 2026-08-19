@@ -78,6 +78,44 @@ int main(void) {
     CHECK(response_decoded.pointer_bits == 64U);
     CHECK(response_decoded.page_size == 4096U);
 
+    const struct bvb_shared_batch_setup shared_setup = {
+        .region_bytes = 4096U,
+        .generation = UINT64_C(0x1122334455667788),
+    };
+    uint8_t shared_setup_wire[BVB_SHARED_BATCH_SETUP_SIZE];
+    CHECK(bvb_protocol_encode_shared_batch_setup(shared_setup_wire,
+                                                 &shared_setup) == 0);
+    CHECK(bvb_wire_get_u32(shared_setup_wire) == 4096U);
+    struct bvb_shared_batch_setup shared_setup_decoded;
+    CHECK(bvb_protocol_decode_shared_batch_setup(shared_setup_wire,
+                                                 &shared_setup_decoded) == 0);
+    CHECK(shared_setup_decoded.region_bytes == 4096U);
+    CHECK(shared_setup_decoded.generation ==
+          UINT64_C(0x1122334455667788));
+    shared_setup_wire[4] = 1U;
+    CHECK(bvb_protocol_decode_shared_batch_setup(shared_setup_wire,
+                                                 &shared_setup_decoded) ==
+          -EPROTO);
+    shared_setup_wire[4] = 0U;
+
+    const struct bvb_shared_batch_execute shared_execute = {
+        .generation = UINT64_C(0x1122334455667788),
+        .offset = 64U,
+        .length = 104U,
+        .sequence = 7U,
+    };
+    uint8_t shared_execute_wire[BVB_SHARED_BATCH_EXECUTE_SIZE];
+    CHECK(bvb_protocol_encode_shared_batch_execute(shared_execute_wire,
+                                                   &shared_execute) == 0);
+    struct bvb_shared_batch_execute shared_execute_decoded;
+    CHECK(bvb_protocol_decode_shared_batch_execute(shared_execute_wire,
+                                                   &shared_execute_decoded) ==
+          0);
+    CHECK(shared_execute_decoded.generation == shared_execute.generation);
+    CHECK(shared_execute_decoded.offset == 64U);
+    CHECK(shared_execute_decoded.length == 104U);
+    CHECK(shared_execute_decoded.sequence == 7U);
+
     struct bvb_vulkan_caps caps;
     memset(&caps, 0, sizeof(caps));
     caps.loader_api_version = 0x00401000U;

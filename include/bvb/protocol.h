@@ -20,12 +20,18 @@ enum {
     BVB_OPCODE_VULKAN_SELFTEST = 3,
     BVB_OPCODE_ACTIVITY_STATUS = 4,
     BVB_OPCODE_VULKAN_BATCH_SELFTEST = 5,
+    BVB_OPCODE_SHARED_BATCH_SETUP = 6,
+    BVB_OPCODE_SHARED_BATCH_EXECUTE = 7,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
     BVB_VULKAN_CAPS_DEVICE_SIZE = 296,
     BVB_VULKAN_SELFTEST_SIZE = 64,
     BVB_ACTIVITY_STATUS_SIZE = 56,
+    BVB_SHARED_BATCH_SETUP_SIZE = 16,
+    BVB_SHARED_BATCH_EXECUTE_SIZE = 24,
+    BVB_SHARED_BATCH_MIN_BYTES = 4096,
+    BVB_SHARED_BATCH_MAX_BYTES = 16 * 1024 * 1024,
     BVB_SERVICE_BIONIC = 1U << 0,
     BVB_SERVICE_ANDROID_VULKAN_LOADER = 1U << 1,
     BVB_SERVICE_ACTIVITY_INGRESS = 1U << 2,
@@ -56,6 +62,18 @@ struct bvb_hello_response {
     uint32_t service_flags;
     uint32_t pointer_bits;
     uint32_t page_size;
+};
+
+struct bvb_shared_batch_setup {
+    uint32_t region_bytes;
+    uint64_t generation;
+};
+
+struct bvb_shared_batch_execute {
+    uint64_t generation;
+    uint32_t offset;
+    uint32_t length;
+    uint64_t sequence;
 };
 
 /*
@@ -104,6 +122,18 @@ int bvb_protocol_encode_activity_status(
 int bvb_protocol_decode_activity_status(
     const uint8_t input[BVB_ACTIVITY_STATUS_SIZE],
     struct bvb_activity_status *status);
+int bvb_protocol_encode_shared_batch_setup(
+    uint8_t output[BVB_SHARED_BATCH_SETUP_SIZE],
+    const struct bvb_shared_batch_setup *setup);
+int bvb_protocol_decode_shared_batch_setup(
+    const uint8_t input[BVB_SHARED_BATCH_SETUP_SIZE],
+    struct bvb_shared_batch_setup *setup);
+int bvb_protocol_encode_shared_batch_execute(
+    uint8_t output[BVB_SHARED_BATCH_EXECUTE_SIZE],
+    const struct bvb_shared_batch_execute *execute);
+int bvb_protocol_decode_shared_batch_execute(
+    const uint8_t input[BVB_SHARED_BATCH_EXECUTE_SIZE],
+    struct bvb_shared_batch_execute *execute);
 
 void bvb_wire_put_u16(uint8_t *output, uint16_t value);
 void bvb_wire_put_u32(uint8_t *output, uint32_t value);

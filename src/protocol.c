@@ -1,3 +1,4 @@
+#include <bvb/command_batch.h>
 #include <bvb/protocol.h>
 
 #include <errno.h>
@@ -52,7 +53,7 @@ static int header_is_valid(const struct bvb_protocol_header *header) {
         return -EPROTO;
     }
     if (header->opcode < BVB_OPCODE_HELLO ||
-        header->opcode > BVB_OPCODE_VULKAN_BATCH_SELFTEST) {
+        header->opcode > BVB_OPCODE_SHARED_BATCH_EXECUTE) {
         return -EPROTO;
     }
     if (header->payload_length > BVB_PROTOCOL_MAX_PAYLOAD) {
@@ -179,6 +180,77 @@ int bvb_protocol_decode_hello_response(
         return -EPROTO;
     }
     *response = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_shared_batch_setup(
+    uint8_t output[BVB_SHARED_BATCH_SETUP_SIZE],
+    const struct bvb_shared_batch_setup *setup) {
+    if (output == NULL || setup == NULL || setup->generation == 0U ||
+        setup->region_bytes < BVB_SHARED_BATCH_MIN_BYTES ||
+        setup->region_bytes > BVB_SHARED_BATCH_MAX_BYTES) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u32(output, setup->region_bytes);
+    bvb_wire_put_u32(output + 4, 0U);
+    bvb_wire_put_u64(output + 8, setup->generation);
+    return 0;
+}
+
+int bvb_protocol_decode_shared_batch_setup(
+    const uint8_t input[BVB_SHARED_BATCH_SETUP_SIZE],
+    struct bvb_shared_batch_setup *setup) {
+    if (input == NULL || setup == NULL) {
+        return -EINVAL;
+    }
+    const struct bvb_shared_batch_setup decoded = {
+        .region_bytes = bvb_wire_get_u32(input),
+        .generation = bvb_wire_get_u64(input + 8),
+    };
+    if (bvb_wire_get_u32(input + 4) != 0U || decoded.generation == 0U ||
+        decoded.region_bytes < BVB_SHARED_BATCH_MIN_BYTES ||
+        decoded.region_bytes > BVB_SHARED_BATCH_MAX_BYTES) {
+        return -EPROTO;
+    }
+    *setup = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_shared_batch_execute(
+    uint8_t output[BVB_SHARED_BATCH_EXECUTE_SIZE],
+    const struct bvb_shared_batch_execute *execute) {
+    if (output == NULL || execute == NULL || execute->generation == 0U ||
+        execute->length < BVB_COMMAND_BATCH_HEADER_SIZE ||
+        execute->length > BVB_COMMAND_BATCH_MAX_BYTES ||
+        execute->sequence == 0U) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u64(output, execute->generation);
+    bvb_wire_put_u32(output + 8, execute->offset);
+    bvb_wire_put_u32(output + 12, execute->length);
+    bvb_wire_put_u64(output + 16, execute->sequence);
+    return 0;
+}
+
+int bvb_protocol_decode_shared_batch_execute(
+    const uint8_t input[BVB_SHARED_BATCH_EXECUTE_SIZE],
+    struct bvb_shared_batch_execute *execute) {
+    if (input == NULL || execute == NULL) {
+        return -EINVAL;
+    }
+    const struct bvb_shared_batch_execute decoded = {
+        .generation = bvb_wire_get_u64(input),
+        .offset = bvb_wire_get_u32(input + 8),
+        .length = bvb_wire_get_u32(input + 12),
+        .sequence = bvb_wire_get_u64(input + 16),
+    };
+    if (decoded.generation == 0U ||
+        decoded.length < BVB_COMMAND_BATCH_HEADER_SIZE ||
+        decoded.length > BVB_COMMAND_BATCH_MAX_BYTES ||
+        decoded.sequence == 0U) {
+        return -EPROTO;
+    }
+    *execute = decoded;
     return 0;
 }
 

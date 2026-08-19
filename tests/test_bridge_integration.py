@@ -17,6 +17,7 @@ def run_exchange(
     loader: str | None = None,
     lifecycle: bool = False,
     batched: bool = False,
+    shared: bool = False,
 ) -> dict[str, object]:
     service_command = [service, "--socket", str(socket_path), "--once"]
     client_command = [client, "--socket", str(socket_path)]
@@ -25,7 +26,11 @@ def run_exchange(
         client_command.extend(
             [
                 "--vulkan-caps",
-                "--vulkan-batch-selftest" if batched else "--vulkan-selftest",
+                "--vulkan-shared-batch-selftest"
+                if shared
+                else "--vulkan-batch-selftest"
+                if batched
+                else "--vulkan-selftest",
             ]
         )
     token = bytes.fromhex(
@@ -171,6 +176,19 @@ def main() -> int:
         assert batch_selftest["buffer_bytes"] == 4096
         assert batch_selftest["fill_word"] == 0xA5C3F00D
         assert batch_selftest["mismatched_words"] == 0
+
+        shared_document = run_exchange(
+            service,
+            client,
+            temp_path / "shared" / "bridge.sock",
+            fake_loader,
+            shared=True,
+        )
+        shared_selftest = shared_document["vulkan_shared_batch_selftest"]
+        assert isinstance(shared_selftest, dict)
+        assert shared_selftest["buffer_bytes"] == 4096
+        assert shared_selftest["fill_word"] == 0xA5C3F00D
+        assert shared_selftest["mismatched_words"] == 0
 
         lifecycle_document = run_exchange(
             service,

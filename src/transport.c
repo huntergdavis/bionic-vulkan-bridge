@@ -183,21 +183,115 @@ static int receive_exact(int socket_fd, uint8_t *output, size_t length,
     return 0;
 }
 
-int bvb_transport_receive(int socket_fd, struct bvb_protocol_packet *packet) {
-    if (socket_fd < 0 || packet == NULL) {
+int bvb_transport_receive_fd(int socket_fd, struct bvb_protocol_packet *packet,
+                             int *received_fd) {
+    if (socket_fd < 0 || packet == NULL || received_fd == NULL) {
         return -EINVAL;
     }
+    *received_fd = -1;
     uint8_t wire_header[BVB_PROTOCOL_HEADER_SIZE];
-    int result = receive_exact(socket_fd, wire_header, sizeof(wire_header), 1);
+    union {
+        struct cmsghdr alignment;
+        uint8_t bytes[CMSG_SPACE(sizeof(int) * 2U)];
+    } control;
+    memset(&control, 0, sizeof(control));
+    struct iovec vector = {
+        .iov_base = wire_header,
+        .iov_len = sizeof(wire_header),
+    };
+    struct msghdr message = {
+        .msg_iov = &vector,
+        .msg_iovlen = 1,
+        .msg_control = control.bytes,
+        .msg_controllen = sizeof(control.bytes),
+    };
+    ssize_t received;
+    do {
+        received = recvmsg(socket_fd, &message, MSG_CMSG_CLOEXEC);
+    } while (received < 0 && errno == EINTR);
+    if (received == 0) {
+        return BVB_TRANSPORT_EOF;
+    }
+    if (received < 0) {
+        return -errno;
+    }
+
+    int descriptor = -1;
+    int ancillary_invalid =
+        (message.msg_flags & (MSG_CTRUNC | MSG_TRUNC)) != 0;
+    for (struct cmsghdr *header = CMSG_FIRSTHDR(&message); header != NULL;
+         header = CMSG_NXTHDR(&message, header)) {
+        if (header->cmsg_level != SOL_SOCKET ||
+            header->cmsg_type != SCM_RIGHTS ||
+            header->cmsg_len < CMSG_LEN(0U)) {
+            ancillary_invalid = 1;
+            continue;
+        }
+        size_t descriptor_bytes = header->cmsg_len - CMSG_LEN(0U);
+        size_t descriptor_count = descriptor_bytes / sizeof(int);
+        if (descriptor_bytes % sizeof(int) != 0U || descriptor_count != 1U ||
+            descriptor >= 0) {
+            ancillary_invalid = 1;
+            for (size_t index = 0; index < descriptor_count; ++index) {
+                int extra = -1;
+                memcpy(&extra, (uint8_t *)CMSG_DATA(header) +
+                                   index * sizeof(extra),
+                       sizeof(extra));
+                if (extra >= 0) {
+                    (void)close(extra);
+                }
+            }
+            continue;
+        }
+        memcpy(&descriptor, CMSG_DATA(header), sizeof(descriptor));
+    }
+    if (ancillary_invalid) {
+        if (descriptor >= 0) {
+            (void)close(descriptor);
+        }
+        return -EPROTO;
+    }
+
+    size_t header_bytes = (size_t)received;
+    if (header_bytes > sizeof(wire_header)) {
+        if (descriptor >= 0) {
+            (void)close(descriptor);
+        }
+        return -EPROTO;
+    }
+    int result = 0;
+    if (header_bytes < sizeof(wire_header)) {
+        result = receive_exact(socket_fd, wire_header + header_bytes,
+                               sizeof(wire_header) - header_bytes, 0);
+    }
+    if (result == 0) {
+        result = bvb_protocol_decode_header(wire_header, &packet->header);
+    }
+    if (result == 0) {
+        result = receive_exact(socket_fd, packet->payload,
+                               packet->header.payload_length, 0);
+    }
+    if (result != 0) {
+        if (descriptor >= 0) {
+            (void)close(descriptor);
+        }
+        return result;
+    }
+    *received_fd = descriptor;
+    return 0;
+}
+
+int bvb_transport_receive(int socket_fd, struct bvb_protocol_packet *packet) {
+    int descriptor = -1;
+    int result = bvb_transport_receive_fd(socket_fd, packet, &descriptor);
     if (result != 0) {
         return result;
     }
-    result = bvb_protocol_decode_header(wire_header, &packet->header);
-    if (result != 0) {
-        return result;
+    if (descriptor >= 0) {
+        (void)close(descriptor);
+        return -EPROTO;
     }
-    return receive_exact(socket_fd, packet->payload,
-                         packet->header.payload_length, 0);
+    return 0;
 }
 
 static int send_exact(int socket_fd, const uint8_t *input, size_t length) {
@@ -237,3 +331,60 @@ int bvb_transport_send(int socket_fd,
                       BVB_PROTOCOL_HEADER_SIZE + packet->header.payload_length);
 }
 
+int bvb_transport_send_fd(int socket_fd,
+                          const struct bvb_protocol_packet *packet,
+                          int passed_fd) {
+    if (socket_fd < 0 || packet == NULL || passed_fd < 0 ||
+        fcntl(passed_fd, F_GETFD) < 0) {
+        return -EINVAL;
+    }
+    uint8_t wire[BVB_PROTOCOL_HEADER_SIZE + BVB_PROTOCOL_MAX_PAYLOAD];
+    int result = bvb_protocol_encode_header(wire, &packet->header);
+    if (result != 0) {
+        return result;
+    }
+    if (packet->header.payload_length > 0U) {
+        memcpy(wire + BVB_PROTOCOL_HEADER_SIZE, packet->payload,
+               packet->header.payload_length);
+    }
+    size_t wire_length =
+        BVB_PROTOCOL_HEADER_SIZE + packet->header.payload_length;
+    struct iovec vector = {
+        .iov_base = wire,
+        .iov_len = wire_length,
+    };
+    union {
+        struct cmsghdr alignment;
+        uint8_t bytes[CMSG_SPACE(sizeof(int))];
+    } control;
+    memset(&control, 0, sizeof(control));
+    struct msghdr message = {
+        .msg_iov = &vector,
+        .msg_iovlen = 1,
+        .msg_control = control.bytes,
+        .msg_controllen = sizeof(control.bytes),
+    };
+    struct cmsghdr *header = CMSG_FIRSTHDR(&message);
+    if (header == NULL) {
+        return -EINVAL;
+    }
+    header->cmsg_level = SOL_SOCKET;
+    header->cmsg_type = SCM_RIGHTS;
+    header->cmsg_len = CMSG_LEN(sizeof(int));
+    memcpy(CMSG_DATA(header), &passed_fd, sizeof(passed_fd));
+    ssize_t sent;
+    do {
+        sent = sendmsg(socket_fd, &message, MSG_NOSIGNAL);
+    } while (sent < 0 && errno == EINTR);
+    if (sent < 0) {
+        return -errno;
+    }
+    if (sent == 0) {
+        return -EPIPE;
+    }
+    if ((size_t)sent < wire_length) {
+        return send_exact(socket_fd, wire + (size_t)sent,
+                          wire_length - (size_t)sent);
+    }
+    return (size_t)sent == wire_length ? 0 : -EPROTO;
+}
