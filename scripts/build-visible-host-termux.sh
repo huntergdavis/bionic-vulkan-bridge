@@ -55,7 +55,7 @@ python "$project_dir/scripts/embed-spirv.py" \
     "$shader_include"
 
 clang -std=c17 -O3 -DNDEBUG -fPIC -fvisibility=hidden \
-    -Wall -Wextra -Werror \
+    -Wall -Wextra -Werror -pthread \
     -shared -Wl,-soname,libbvb-visible-host.so \
     -I"$project_dir/include" -I"$vulkan_headers" -I"$shader_dir" \
     "$source_file" "$lifecycle_source" "$protocol_source" \

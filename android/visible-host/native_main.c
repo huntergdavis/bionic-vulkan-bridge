@@ -12,6 +12,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -66,10 +67,28 @@ struct bvb_lifecycle_client {
     uint8_t token[BVB_LIFECYCLE_TOKEN_SIZE];
 };
 
+struct bvb_renderer_control {
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    bool thread_started;
+    bool ready;
+    uint64_t requested_generation;
+    uint64_t completed_generation;
+    uint32_t width;
+    uint32_t height;
+    ANativeWindow *window;
+};
+
 static struct bvb_visible_state state;
 static struct bvb_lifecycle_client lifecycle;
+static pthread_mutex_t lifecycle_mutex = PTHREAD_MUTEX_INITIALIZER;
+static struct bvb_renderer_control renderer = {
+    .mutex = PTHREAD_MUTEX_INITIALIZER,
+    .condition = PTHREAD_COND_INITIALIZER,
+};
 
 static void configure_lifecycle(ANativeActivity *activity) {
+    (void)pthread_mutex_lock(&lifecycle_mutex);
     memset(&lifecycle, 0, sizeof(lifecycle));
     JNIEnv *env = activity->env;
     jclass activity_class = (*env)->GetObjectClass(env, activity->clazz);
@@ -142,6 +161,7 @@ static void configure_lifecycle(ANativeActivity *activity) {
     if (activity_class != NULL) {
         (*env)->DeleteLocalRef(env, activity_class);
     }
+    (void)pthread_mutex_unlock(&lifecycle_mutex);
 }
 
 static int send_exact(int socket_fd, const uint8_t *input, size_t length) {
@@ -179,7 +199,9 @@ static int receive_exact(int socket_fd, uint8_t *output, size_t length) {
 }
 
 static void emit_lifecycle(uint16_t event, uint32_t width, uint32_t height) {
+    (void)pthread_mutex_lock(&lifecycle_mutex);
     if (!lifecycle.configured) {
+        (void)pthread_mutex_unlock(&lifecycle_mutex);
         return;
     }
     struct timespec now;
@@ -187,6 +209,7 @@ static void emit_lifecycle(uint16_t event, uint32_t width, uint32_t height) {
         BVB_LOGE("E010_EVENT_FAIL event=%u clock=%d", (unsigned int)event,
                  errno);
         lifecycle.configured = false;
+        (void)pthread_mutex_unlock(&lifecycle_mutex);
         return;
     }
     struct bvb_lifecycle_record record = {
@@ -248,11 +271,19 @@ static void emit_lifecycle(uint16_t event, uint32_t width, uint32_t height) {
         BVB_LOGE("E010_EVENT_FAIL event=%u sequence=%u status=%d",
                  (unsigned int)event, lifecycle.next_sequence, result);
         lifecycle.configured = false;
+        (void)pthread_mutex_unlock(&lifecycle_mutex);
         return;
     }
     BVB_LOGI("E010_EVENT_ACK event=%u sequence=%u", (unsigned int)event,
              lifecycle.next_sequence);
     lifecycle.next_sequence += 1U;
+    (void)pthread_mutex_unlock(&lifecycle_mutex);
+}
+
+static void disable_lifecycle(void) {
+    (void)pthread_mutex_lock(&lifecycle_mutex);
+    memset(&lifecycle, 0, sizeof(lifecycle));
+    (void)pthread_mutex_unlock(&lifecycle_mutex);
 }
 
 static void apply_immersive_mode(ANativeActivity *activity) {
@@ -1223,38 +1254,149 @@ static bool create_renderer(ANativeWindow *window) {
     return true;
 }
 
+static void *renderer_worker_main(void *unused) {
+    (void)unused;
+    uint64_t handled_generation = 0U;
+    for (;;) {
+        (void)pthread_mutex_lock(&renderer.mutex);
+        while (renderer.requested_generation == handled_generation) {
+            (void)pthread_cond_wait(&renderer.condition, &renderer.mutex);
+        }
+        const uint64_t generation = renderer.requested_generation;
+        ANativeWindow *window = renderer.window;
+        if (window != NULL) {
+            ANativeWindow_acquire(window);
+        }
+        (void)pthread_mutex_unlock(&renderer.mutex);
+
+        destroy_renderer();
+        bool success = false;
+        uint32_t width = 0U;
+        uint32_t height = 0U;
+        if (window != NULL) {
+            width = (uint32_t)ANativeWindow_getWidth(window);
+            height = (uint32_t)ANativeWindow_getHeight(window);
+            success = create_renderer(window);
+            if (!success) {
+                destroy_renderer();
+            }
+        }
+
+        (void)pthread_mutex_lock(&renderer.mutex);
+        const bool current =
+            generation == renderer.requested_generation &&
+            window == renderer.window;
+        renderer.completed_generation = generation;
+        if (current) {
+            renderer.ready = success;
+            if (window != NULL) {
+                emit_lifecycle(success ? BVB_LIFECYCLE_EVENT_RENDERER_READY
+                                       : BVB_LIFECYCLE_EVENT_RENDERER_FAILED,
+                               width, height);
+            }
+        }
+        (void)pthread_mutex_unlock(&renderer.mutex);
+
+        if (success && !current) {
+            destroy_renderer();
+        }
+        if (window != NULL) {
+            ANativeWindow_release(window);
+        }
+        handled_generation = generation;
+    }
+    return NULL;
+}
+
+static int schedule_renderer(ANativeWindow *window, bool force) {
+    const uint32_t width =
+        window == NULL ? 0U : (uint32_t)ANativeWindow_getWidth(window);
+    const uint32_t height =
+        window == NULL ? 0U : (uint32_t)ANativeWindow_getHeight(window);
+    if (window != NULL) {
+        ANativeWindow_acquire(window);
+    }
+
+    (void)pthread_mutex_lock(&renderer.mutex);
+    if (!renderer.thread_started && window != NULL) {
+        pthread_t worker;
+        int result = pthread_create(&worker, NULL, renderer_worker_main, NULL);
+        if (result != 0) {
+            (void)pthread_mutex_unlock(&renderer.mutex);
+            ANativeWindow_release(window);
+            return -result;
+        }
+        renderer.thread_started = true;
+        result = pthread_detach(worker);
+        if (result != 0) {
+            BVB_LOGE("E017_WORKER_DETACH_FAIL status=%d", result);
+        }
+    }
+    if (!renderer.thread_started) {
+        (void)pthread_mutex_unlock(&renderer.mutex);
+        return 0;
+    }
+    const bool pending =
+        renderer.requested_generation != renderer.completed_generation;
+    if (!force && renderer.window == window && renderer.width == width &&
+        renderer.height == height && (renderer.ready || pending)) {
+        (void)pthread_mutex_unlock(&renderer.mutex);
+        if (window != NULL) {
+            ANativeWindow_release(window);
+        }
+        return 0;
+    }
+    if (renderer.requested_generation == UINT64_MAX) {
+        (void)pthread_mutex_unlock(&renderer.mutex);
+        if (window != NULL) {
+            ANativeWindow_release(window);
+        }
+        return -EOVERFLOW;
+    }
+    ANativeWindow *old_window = renderer.window;
+    renderer.window = window;
+    renderer.width = width;
+    renderer.height = height;
+    renderer.ready = false;
+    renderer.requested_generation += 1U;
+    (void)pthread_cond_signal(&renderer.condition);
+    (void)pthread_mutex_unlock(&renderer.mutex);
+    if (old_window != NULL) {
+        ANativeWindow_release(old_window);
+    }
+    return 0;
+}
+
 static void on_window_created(ANativeActivity *activity,
                               ANativeWindow *window) {
     (void)activity;
-    destroy_renderer();
     BVB_LOGI("E008_WINDOW_CREATED width=%d height=%d",
              ANativeWindow_getWidth(window), ANativeWindow_getHeight(window));
     uint32_t width = (uint32_t)ANativeWindow_getWidth(window);
     uint32_t height = (uint32_t)ANativeWindow_getHeight(window);
     emit_lifecycle(BVB_LIFECYCLE_EVENT_WINDOW_CREATED, width, height);
-    if (!create_renderer(window)) {
+    int result = schedule_renderer(window, true);
+    if (result != 0) {
+        BVB_LOGE("E017_WORKER_START_FAIL status=%d", result);
         emit_lifecycle(BVB_LIFECYCLE_EVENT_RENDERER_FAILED, width, height);
-        destroy_renderer();
-    } else {
-        emit_lifecycle(BVB_LIFECYCLE_EVENT_RENDERER_READY, width, height);
     }
 }
 
 static void on_window_resized(ANativeActivity *activity,
                               ANativeWindow *window) {
     (void)activity;
-    if (state.window != window || state.swapchain == VK_NULL_HANDLE) {
-        destroy_renderer();
-        (void)create_renderer(window);
+    int result = schedule_renderer(window, false);
+    if (result != 0) {
+        BVB_LOGE("E017_RESIZE_SCHEDULE_FAIL status=%d", result);
     }
 }
 
 static void on_window_redraw_needed(ANativeActivity *activity,
                                     ANativeWindow *window) {
     (void)activity;
-    if (state.window != window || state.swapchain == VK_NULL_HANDLE) {
-        destroy_renderer();
-        (void)create_renderer(window);
+    int result = schedule_renderer(window, false);
+    if (result != 0) {
+        BVB_LOGE("E017_REDRAW_SCHEDULE_FAIL status=%d", result);
     }
 }
 
@@ -1263,7 +1405,10 @@ static void on_window_destroyed(ANativeActivity *activity,
     (void)activity;
     (void)window;
     BVB_LOGI("E008_WINDOW_DESTROYED");
-    destroy_renderer();
+    int result = schedule_renderer(NULL, true);
+    if (result != 0) {
+        BVB_LOGE("E017_DESTROY_SCHEDULE_FAIL status=%d", result);
+    }
     emit_lifecycle(BVB_LIFECYCLE_EVENT_WINDOW_DESTROYED, 0, 0);
 }
 
@@ -1298,9 +1443,12 @@ static void on_stop(ANativeActivity *activity) {
 
 static void on_destroy(ANativeActivity *activity) {
     (void)activity;
+    int result = schedule_renderer(NULL, true);
+    if (result != 0) {
+        BVB_LOGE("E017_ACTIVITY_DESTROY_SCHEDULE_FAIL status=%d", result);
+    }
     emit_lifecycle(BVB_LIFECYCLE_EVENT_DESTROYED, 0, 0);
-    destroy_renderer();
-    memset(&lifecycle, 0, sizeof(lifecycle));
+    disable_lifecycle();
 }
 
 __attribute__((visibility("default"))) void
@@ -1308,7 +1456,6 @@ ANativeActivity_onCreate(ANativeActivity *activity, void *saved_state,
                          size_t saved_state_size) {
     (void)saved_state;
     (void)saved_state_size;
-    memset(&state, 0, sizeof(state));
     configure_lifecycle(activity);
     activity->callbacks->onStart = on_start;
     activity->callbacks->onResume = on_resume;
