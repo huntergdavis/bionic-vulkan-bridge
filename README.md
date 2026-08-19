@@ -151,6 +151,13 @@ rotation from glibc through the four-slot shared ring into the Bionic vertex
 shader. A native-resolution Adreno run sustained all 4,096 frames in 68.44
 seconds (59.8 FPS, 16.66 ms median, 18.87 ms p95) with empty error streams.
 The policy now marks 46 names executable and leaves 394 unavailable.
+E034 makes the four standard mapped-memory calls executable on the game-facing
+Vulkan device. A real Termux glibc client mapped 4 KiB, wrote and flushed a
+deterministic byte pattern through the Bionic service, cleared its local view,
+invalidated it, and recovered all 4,096 bytes from Adreno memory with zero
+mismatches. The policy now marks 50 names executable and leaves 390
+unavailable. This bounded, chunked shadow mapping is a correctness gate; it is
+not yet the external-memory/zero-copy path needed for game performance.
 
 ## Build and test on a normal Linux host
 

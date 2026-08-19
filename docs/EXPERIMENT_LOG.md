@@ -1793,3 +1793,58 @@ triangle vertex data out of the shader and into a glibc-populated Vulkan vertex
 buffer. E033 does not yet claim general mapped-memory coherence, image or
 shader creation through the game-facing control path, descriptor sets,
 indexed drawing, DXVK startup, or a game FPS change.
+
+## E034 — Game-facing mapped-memory correctness (2026-08-19)
+
+Status: passed on real Adreno 730 hardware from a Termux ARM64 glibc client
+through the Android Bionic service at source commit `61c1b98`.
+
+Hypothesis: the game-facing proxy can expose Vulkan's map/flush/invalidate/
+unmap lifecycle without sharing process pointers across the glibc/Bionic
+boundary, and a byte pattern written by glibc can reach and return from the
+real Adreno allocation exactly.
+
+Method: fixed-width protocol opcodes 48 and 49 add bounded memory write and
+read operations. `vkMapMemory` allocates a client-side shadow and initializes
+it from native memory in chunks of at most 4,072 bytes. Flush copies the
+selected shadow range into the Bionic-owned allocation; invalidate copies the
+native range back. Bionic transiently maps the complete allocation for each
+chunk and performs whole-mapping cache maintenance when the selected memory
+type is not host-coherent. Queue submit conservatively uploads every still-
+mapped shadow owned by that queue's device before submitting work. This is an
+intentional correctness bridge, not the eventual bulk data path.
+
+Result: the Galaxy Tab S8+ selected Adreno memory type 6, mapped 4,096 bytes,
+wrote and flushed a deterministic byte pattern, zeroed the local shadow,
+invalidated it, and recovered the pattern with zero mismatches. The existing
+1,024-word GPU fill also retained zero mismatches, all fence transitions
+passed, and client/service stderr were empty. All 18 host contracts passed;
+the tablet's generated glibc dispatch contract and live global integration
+both passed. The E034 policy classifies 50 of 742 names executable, 390
+resolved names required-but-unimplemented, and 302 observed-null.
+
+Canonical evidence is `docs/evidence/e034-mapped-memory.json`, 7,611 bytes,
+SHA-256
+`e707f57d135850957fd27926a7c055c3200447531582e87751e03cfe7b832eec`.
+The canonical artifacts are:
+
+- generated E034 policy: 2,316 bytes, SHA-256
+  `4123d62045af497e357bd56f8a1cd1d039616afa486afc2fa9f043561eb4302f`;
+- glibc `libvulkan-bvb` bridge: 217,792 bytes, SHA-256
+  `d2a4b6c84c99e6efb7b3f7565b6d5f788c05bf71b80abf8e4036f744ad4d1b4b`;
+- glibc integration client: 72,048 bytes, SHA-256
+  `ec45885430e6eb358b6781ffaef0efb9379ae87f855d067cf944b90fb160b9bc`;
+- Bionic bridge service: 129,736 bytes, SHA-256
+  `c5356aeba2abb0070c54955055917b4aeaf7ac9f0f78a4bb495c66e8d9ac1a41`.
+
+The required recall query found no earlier E034 mapped-memory implementation.
+E034 reused E031's allocation metadata and deterministic readback path plus
+E032's device-owned queue submission lifecycle.
+
+The next bounded gate is an external-memory-backed upload allocation that the
+visible renderer can consume without thousands of inline RPC chunks. Once that
+ownership and synchronization path is proven, the rotating triangle can move
+its vertex data from shader constants into a glibc-populated vertex buffer.
+E034 does not claim zero-copy sharing, image or shader creation through the
+game-facing path, descriptor sets, indexed drawing, DXVK startup, a game FPS
+result, or removal of Termux.

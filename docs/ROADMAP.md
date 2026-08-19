@@ -75,6 +75,8 @@
   bounded non-empty queue submission
 - [x] Add buffer/memory proxy ownership and record one deterministic GPU write
   through the game-facing command buffer
+- [x] Bridge bounded host-visible memory map, flush, invalidate, and unmap
+  semantics through the game-facing Vulkan device
 - [ ] Expand generated dispatch to the measured DXVK startup subset
 - [ ] Implement GPU external-memory and synchronization strategy
 - [x] Reach a rendered test triangle
