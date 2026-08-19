@@ -30,6 +30,11 @@ enum {
     BVB_E022_CONNECT_ATTEMPTS = 500,
     BVB_E022_CONNECT_RETRY_NS = 10000000,
     BVB_E022_TIMEOUT_SECONDS = 10,
+    BVB_E023_BATCH_STRIDE = 256,
+    BVB_E023_MAX_FRAMES = 4096,
+    BVB_E023_MAX_RING_SLOTS =
+        (BVB_E021_REGION_BYTES - BVB_E022_BATCH_OFFSET) /
+        BVB_E023_BATCH_STRIDE,
 };
 
 struct relay_options {
@@ -39,12 +44,24 @@ struct relay_options {
     uint8_t token[BVB_LIFECYCLE_TOKEN_SIZE];
     uint32_t width;
     uint32_t height;
+    uint32_t frames;
+    uint32_t ring_slots;
+};
+
+struct visible_statistics {
+    int64_t minimum_ns;
+    int64_t median_ns;
+    int64_t percentile_95_ns;
+    int64_t mean_ns;
+    int64_t maximum_ns;
+    int64_t total_ns;
 };
 
 static void usage(const char *program) {
     fprintf(stderr,
             "usage: %s --socket ABSTRACT_NAME [--visible-port PORT "
-            "--token 64_HEX_DIGITS --width PIXELS --height PIXELS]\n",
+            "--token 64_HEX_DIGITS --width PIXELS --height PIXELS "
+            "[--frames COUNT --ring-slots COUNT]]\n",
             program);
 }
 
@@ -63,7 +80,10 @@ static int parse_u32(const char *input, uint32_t *output) {
 static int parse_arguments(int argc, char **argv,
                            struct relay_options *options) {
     memset(options, 0, sizeof(*options));
+    options->frames = 1U;
+    options->ring_slots = 1U;
     bool token_present = false;
+    bool ring_option_present = false;
     for (int index = 1; index < argc; ++index) {
         if (strcmp(argv[index], "--socket") == 0 && index + 1 < argc &&
             argv[index + 1][0] != '\0') {
@@ -87,6 +107,16 @@ static int parse_arguments(int argc, char **argv,
         } else if (strcmp(argv[index], "--height") == 0 &&
                    index + 1 < argc &&
                    parse_u32(argv[++index], &options->height) == 0) {
+        } else if (strcmp(argv[index], "--frames") == 0 &&
+                   index + 1 < argc &&
+                   parse_u32(argv[++index], &options->frames) == 0 &&
+                   options->frames <= BVB_E023_MAX_FRAMES) {
+            ring_option_present = true;
+        } else if (strcmp(argv[index], "--ring-slots") == 0 &&
+                   index + 1 < argc &&
+                   parse_u32(argv[++index], &options->ring_slots) == 0 &&
+                   options->ring_slots <= BVB_E023_MAX_RING_SLOTS) {
+            ring_option_present = true;
         } else {
             return -EINVAL;
         }
@@ -102,6 +132,9 @@ static int parse_arguments(int argc, char **argv,
         return -EINVAL;
     }
     options->visible = visible_arguments == 4U;
+    if (ring_option_present && !options->visible) {
+        return -EINVAL;
+    }
     return 0;
 }
 
@@ -217,77 +250,120 @@ static int connect_visible_with_retry(uint16_t port) {
     return -ETIMEDOUT;
 }
 
+static int compare_i64(const void *left, const void *right) {
+    const int64_t left_value = *(const int64_t *)left;
+    const int64_t right_value = *(const int64_t *)right;
+    return (left_value > right_value) - (left_value < right_value);
+}
+
+static void summarize_timings(int64_t *timings, uint32_t count,
+                              struct visible_statistics *statistics) {
+    int64_t total = 0;
+    for (uint32_t index = 0U; index < count; ++index) {
+        total += timings[index];
+    }
+    qsort(timings, count, sizeof(*timings), compare_i64);
+    const uint32_t median_index = (count - 1U) / 2U;
+    uint32_t percentile_95_index = (95U * count + 99U) / 100U - 1U;
+    if (percentile_95_index >= count) {
+        percentile_95_index = count - 1U;
+    }
+    *statistics = (struct visible_statistics){
+        .minimum_ns = timings[0],
+        .median_ns = timings[median_index],
+        .percentile_95_ns = timings[percentile_95_index],
+        .mean_ns = total / (int64_t)count,
+        .maximum_ns = timings[count - 1U],
+        .total_ns = total,
+    };
+}
+
 static int execute_visible(const struct relay_options *options,
                            uint8_t *mapping, size_t *batch_length,
-                           int64_t *round_trip_ns) {
-    int result = bvb_triangle_batch_build(
-        mapping + BVB_E022_BATCH_OFFSET,
-        BVB_E021_REGION_BYTES - BVB_E022_BATCH_OFFSET, options->width,
-        options->height, batch_length);
-    if (result != 0 || *batch_length > UINT32_MAX) {
-        return result != 0 ? result : -EOVERFLOW;
+                           struct visible_statistics *statistics) {
+    int64_t *timings = calloc(options->frames, sizeof(*timings));
+    if (timings == NULL) {
+        return -ENOMEM;
     }
-    atomic_thread_fence(memory_order_release);
     int socket_fd = connect_visible_with_retry(options->visible_port);
     if (socket_fd < 0) {
+        free(timings);
         return socket_fd;
     }
-    result = configure_socket_timeout(socket_fd);
-    struct bvb_protocol_packet request;
-    memset(&request, 0, sizeof(request));
-    request.header = (struct bvb_protocol_header){
-        .version = BVB_PROTOCOL_VERSION,
-        .kind = BVB_PROTOCOL_REQUEST,
-        .opcode = BVB_OPCODE_VISIBLE_BATCH_EXECUTE,
-        .request_id = BVB_E022_REQUEST_ID,
-        .payload_length = BVB_VISIBLE_BATCH_EXECUTE_SIZE,
-    };
-    struct bvb_visible_batch_execute execute = {
-        .shared = {
-            .generation = BVB_E022_GENERATION,
-            .offset = BVB_E022_BATCH_OFFSET,
-            .length = (uint32_t)*batch_length,
-            .sequence = 1U,
-        },
-    };
-    memcpy(execute.token, options->token, sizeof(execute.token));
-    if (result == 0) {
+    int result = configure_socket_timeout(socket_fd);
+    for (uint32_t frame = 0U; result == 0 && frame < options->frames;
+         ++frame) {
+        const uint64_t sequence = (uint64_t)frame + 1U;
+        const uint32_t slot = frame % options->ring_slots;
+        const uint32_t offset =
+            BVB_E022_BATCH_OFFSET + slot * BVB_E023_BATCH_STRIDE;
+        result = bvb_triangle_batch_build_sequence(
+            mapping + offset, BVB_E021_REGION_BYTES - offset,
+            options->width, options->height, sequence, batch_length);
+        if (result != 0 || *batch_length > UINT32_MAX) {
+            result = result != 0 ? result : -EOVERFLOW;
+            break;
+        }
+        atomic_thread_fence(memory_order_release);
+        struct bvb_protocol_packet request;
+        memset(&request, 0, sizeof(request));
+        request.header = (struct bvb_protocol_header){
+            .version = BVB_PROTOCOL_VERSION,
+            .kind = BVB_PROTOCOL_REQUEST,
+            .opcode = BVB_OPCODE_VISIBLE_BATCH_EXECUTE,
+            .request_id = BVB_E022_REQUEST_ID + frame,
+            .payload_length = BVB_VISIBLE_BATCH_EXECUTE_SIZE,
+        };
+        struct bvb_visible_batch_execute execute = {
+            .shared = {
+                .generation = BVB_E022_GENERATION,
+                .offset = offset,
+                .length = (uint32_t)*batch_length,
+                .sequence = sequence,
+            },
+        };
+        memcpy(execute.token, options->token, sizeof(execute.token));
         result = bvb_protocol_encode_visible_batch_execute(request.payload,
                                                            &execute);
-    }
-    struct timespec started;
-    struct timespec finished;
-    if (result == 0 && clock_gettime(CLOCK_MONOTONIC, &started) != 0) {
-        result = -errno;
-    }
-    if (result == 0) {
-        result = bvb_transport_send(socket_fd, &request);
-    }
-    struct bvb_protocol_packet response;
-    memset(&response, 0, sizeof(response));
-    if (result == 0) {
-        result = bvb_transport_receive(socket_fd, &response);
-    }
-    if (result == 0 && clock_gettime(CLOCK_MONOTONIC, &finished) != 0) {
-        result = -errno;
-    }
-    if (result == 0 &&
-        (response.header.version != BVB_PROTOCOL_VERSION ||
-         response.header.kind != BVB_PROTOCOL_RESPONSE ||
-         response.header.opcode != BVB_OPCODE_VISIBLE_BATCH_EXECUTE ||
-         response.header.request_id != BVB_E022_REQUEST_ID ||
-         response.header.payload_length != 0U || response.header.status > 0)) {
-        result = -EPROTO;
-    }
-    if (result == 0 && response.header.status != 0) {
-        result = response.header.status;
-    }
-    if (result == 0) {
-        *round_trip_ns = elapsed_ns(&started, &finished);
+        struct timespec started;
+        struct timespec finished;
+        if (result == 0 && clock_gettime(CLOCK_MONOTONIC, &started) != 0) {
+            result = -errno;
+        }
+        if (result == 0) {
+            result = bvb_transport_send(socket_fd, &request);
+        }
+        struct bvb_protocol_packet response;
+        memset(&response, 0, sizeof(response));
+        if (result == 0) {
+            result = bvb_transport_receive(socket_fd, &response);
+        }
+        if (result == 0 && clock_gettime(CLOCK_MONOTONIC, &finished) != 0) {
+            result = -errno;
+        }
+        if (result == 0 &&
+            (response.header.version != BVB_PROTOCOL_VERSION ||
+             response.header.kind != BVB_PROTOCOL_RESPONSE ||
+             response.header.opcode != BVB_OPCODE_VISIBLE_BATCH_EXECUTE ||
+             response.header.request_id != request.header.request_id ||
+             response.header.payload_length != 0U ||
+             response.header.status > 0)) {
+            result = -EPROTO;
+        }
+        if (result == 0 && response.header.status != 0) {
+            result = response.header.status;
+        }
+        if (result == 0) {
+            timings[frame] = elapsed_ns(&started, &finished);
+        }
     }
     if (close(socket_fd) != 0 && result == 0) {
         result = -errno;
     }
+    if (result == 0) {
+        summarize_timings(timings, options->frames, statistics);
+    }
+    free(timings);
     return result;
 }
 
@@ -358,10 +434,10 @@ int main(int argc, char **argv) {
     struct timespec validated;
     (void)clock_gettime(CLOCK_MONOTONIC, &validated);
     size_t batch_length = 0U;
-    int64_t execute_round_trip_ns = 0;
+    struct visible_statistics visible_statistics = {0};
     if (result == 0 && options.visible) {
         result = execute_visible(&options, mapping, &batch_length,
-                                 &execute_round_trip_ns);
+                                 &visible_statistics);
     }
     (void)clock_gettime(CLOCK_MONOTONIC, &finished);
     int response_result = region_fd >= 0
@@ -388,14 +464,28 @@ int main(int argc, char **argv) {
                "\"region_bytes\":%u,\"seals\":%d,"
                "\"writable_mapping\":true,\"width\":%" PRIu32
                ",\"height\":%" PRIu32 ",\"batch_offset\":%u,"
-               "\"batch_bytes\":%zu,\"commands\":6,\"sequence\":1,"
+               "\"batch_stride\":%u,\"batch_bytes\":%zu,"
+               "\"commands\":6,\"sequence\":%" PRIu32 ","
+               "\"frames\":%" PRIu32 ",\"ring_slots\":%" PRIu32 ","
                "\"receive_validate_ns\":%" PRId64
                ",\"execute_round_trip_ns\":%" PRId64
+               ",\"round_trip_min_ns\":%" PRId64
+               ",\"round_trip_p50_ns\":%" PRId64
+               ",\"round_trip_p95_ns\":%" PRId64
+               ",\"round_trip_mean_ns\":%" PRId64
+               ",\"round_trip_max_ns\":%" PRId64
+               ",\"execute_total_ns\":%" PRId64
                ",\"receive_to_present_ns\":%" PRId64 "}\n",
                (unsigned long)peer_uid, (long)peer_pid,
                BVB_E021_REGION_BYTES, seals, options.width, options.height,
-               BVB_E022_BATCH_OFFSET, batch_length,
-               elapsed_ns(&started, &validated), execute_round_trip_ns,
+               BVB_E022_BATCH_OFFSET, BVB_E023_BATCH_STRIDE, batch_length,
+               options.frames, options.frames, options.ring_slots,
+               elapsed_ns(&started, &validated),
+               visible_statistics.mean_ns, visible_statistics.minimum_ns,
+               visible_statistics.median_ns,
+               visible_statistics.percentile_95_ns,
+               visible_statistics.mean_ns, visible_statistics.maximum_ns,
+               visible_statistics.total_ns,
                elapsed_ns(&started, &finished));
     } else {
         printf("{\"result\":\"pass\","

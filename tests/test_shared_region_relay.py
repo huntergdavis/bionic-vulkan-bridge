@@ -33,11 +33,8 @@ def read_exact(connection: socket.socket, length: int) -> bytes:
     return result
 
 
-def main() -> int:
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: test_shared_region_relay.py RELAY")
-    relay_path = str(pathlib.Path(sys.argv[1]).resolve())
-    socket_name = f"bvb-relay-contract-{os.getpid()}"
+def run_contract(relay_path: str, frames: int, ring_slots: int) -> None:
+    socket_name = f"bvb-relay-contract-{os.getpid()}-{frames}-{ring_slots}"
     visible_listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     visible_listener.bind(("127.0.0.1", 0))
     visible_listener.listen(1)
@@ -52,20 +49,25 @@ def main() -> int:
         fcntl.F_ADD_SEALS,
         fcntl.F_SEAL_GROW | fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_SEAL,
     )
+    arguments = [
+        relay_path,
+        "--socket",
+        socket_name,
+        "--visible-port",
+        str(visible_port),
+        "--token",
+        TOKEN.hex(),
+        "--width",
+        "1280",
+        "--height",
+        "720",
+    ]
+    if frames != 1 or ring_slots != 1:
+        arguments.extend(
+            ["--frames", str(frames), "--ring-slots", str(ring_slots)]
+        )
     relay = subprocess.Popen(
-        [
-            relay_path,
-            "--socket",
-            socket_name,
-            "--visible-port",
-            str(visible_port),
-            "--token",
-            TOKEN.hex(),
-            "--width",
-            "1280",
-            "--height",
-            "720",
-        ],
+        arguments,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -86,27 +88,40 @@ def main() -> int:
             )
             visible, _ = visible_listener.accept()
             with visible:
-                request_header = read_exact(visible, 24)
-                fields = struct.unpack("<IHHHHIIi", request_header)
-                assert fields == (MAGIC, 1, 1, 9, 0, 0xE022, 56, 0)
-                payload = read_exact(visible, 56)
-                token = payload[:32]
-                generation, offset, length, sequence = struct.unpack(
-                    "<QIIQ", payload[32:]
-                )
-                assert token == TOKEN
-                assert (generation, offset, length, sequence) == (1, 64, 200, 1)
-                batch_header = struct.unpack("<IHHIIQQ", region[64:96])
-                assert batch_header == (
-                    0x43425642,
-                    1,
-                    0,
-                    200,
-                    6,
-                    0x0B00000000000001,
-                    1,
-                )
-                visible.sendall(header(2, 9, 0xE022, 0))
+                for frame in range(frames):
+                    sequence = frame + 1
+                    offset = 64 + (frame % ring_slots) * 256
+                    request_id = 0xE022 + frame
+                    request_header = read_exact(visible, 24)
+                    fields = struct.unpack("<IHHHHIIi", request_header)
+                    assert fields == (
+                        MAGIC,
+                        1,
+                        1,
+                        9,
+                        0,
+                        request_id,
+                        56,
+                        0,
+                    )
+                    payload = read_exact(visible, 56)
+                    token = payload[:32]
+                    execute = struct.unpack("<QIIQ", payload[32:])
+                    assert token == TOKEN
+                    assert execute == (1, offset, 200, sequence)
+                    batch_header = struct.unpack(
+                        "<IHHIIQQ", region[offset:offset + 32]
+                    )
+                    assert batch_header == (
+                        0x43425642,
+                        1,
+                        0,
+                        200,
+                        6,
+                        0x0B00000000000001,
+                        sequence,
+                    )
+                    visible.sendall(header(2, 9, request_id, 0))
             response = read_exact(sender, 24)
             assert struct.unpack("<IHHHHIIi", response) == (
                 MAGIC,
@@ -129,9 +144,17 @@ def main() -> int:
         assert document["batch_offset"] == 64
         assert document["batch_bytes"] == 200
         assert document["commands"] == 6
-        assert document["sequence"] == 1
+        assert document["sequence"] == frames
+        assert document["frames"] == frames
+        assert document["ring_slots"] == ring_slots
+        assert document["batch_stride"] == 256
         assert document["receive_validate_ns"] > 0
         assert document["execute_round_trip_ns"] > 0
+        assert document["round_trip_min_ns"] > 0
+        assert document["round_trip_p50_ns"] >= document["round_trip_min_ns"]
+        assert document["round_trip_p95_ns"] >= document["round_trip_p50_ns"]
+        assert document["round_trip_max_ns"] >= document["round_trip_p95_ns"]
+        assert document["execute_total_ns"] >= frames * document["round_trip_min_ns"]
         assert document["receive_to_present_ns"] >= document["execute_round_trip_ns"]
     finally:
         visible_listener.close()
@@ -140,7 +163,18 @@ def main() -> int:
         if relay.poll() is None:
             relay.terminate()
             relay.wait(timeout=5.0)
-    print("PASS: Binder/SCM_RIGHTS region drives metadata-only visible replay")
+
+
+def main() -> int:
+    if len(sys.argv) != 2:
+        raise SystemExit("usage: test_shared_region_relay.py RELAY")
+    relay_path = str(pathlib.Path(sys.argv[1]).resolve())
+    run_contract(relay_path, frames=1, ring_slots=1)
+    run_contract(relay_path, frames=6, ring_slots=4)
+    print(
+        "PASS: Binder/SCM_RIGHTS region drives one-shot and persistent "
+        "ring visible replay"
+    )
     return 0
 
 
