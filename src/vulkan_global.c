@@ -19,6 +19,7 @@ enum {
 
 struct bvb_vulkan_global_context {
     void *loader;
+    PFN_vkGetInstanceProcAddr get_instance_proc_addr;
     PFN_vkCreateInstance create_instance;
     PFN_vkDestroyInstance destroy_instance;
     struct bvb_vulkan_global_info info;
@@ -85,29 +86,29 @@ int bvb_vulkan_global_context_create(
         free(context);
         return -ENOENT;
     }
-    PFN_vkGetInstanceProcAddr gipa =
+    context->get_instance_proc_addr =
         (PFN_vkGetInstanceProcAddr)symbol_from_loader(
             context->loader, "vkGetInstanceProcAddr");
-    if (gipa == NULL) {
+    if (context->get_instance_proc_addr == NULL) {
         set_error(error, error_size, "loader has no vkGetInstanceProcAddr");
         bvb_vulkan_global_context_destroy(context);
         return -ENOSYS;
     }
     PFN_vkEnumerateInstanceVersion enumerate_version =
-        (PFN_vkEnumerateInstanceVersion)gipa(
+        (PFN_vkEnumerateInstanceVersion)context->get_instance_proc_addr(
             VK_NULL_HANDLE, "vkEnumerateInstanceVersion");
     PFN_vkEnumerateInstanceExtensionProperties enumerate_extensions =
-        (PFN_vkEnumerateInstanceExtensionProperties)gipa(
+        (PFN_vkEnumerateInstanceExtensionProperties)
+            context->get_instance_proc_addr(
             VK_NULL_HANDLE, "vkEnumerateInstanceExtensionProperties");
     PFN_vkEnumerateInstanceLayerProperties enumerate_layers =
-        (PFN_vkEnumerateInstanceLayerProperties)gipa(
+        (PFN_vkEnumerateInstanceLayerProperties)context->get_instance_proc_addr(
             VK_NULL_HANDLE, "vkEnumerateInstanceLayerProperties");
-    context->create_instance = (PFN_vkCreateInstance)gipa(
+    context->create_instance = (PFN_vkCreateInstance)
+        context->get_instance_proc_addr(
         VK_NULL_HANDLE, "vkCreateInstance");
-    context->destroy_instance = (PFN_vkDestroyInstance)gipa(
-        VK_NULL_HANDLE, "vkDestroyInstance");
     if (enumerate_extensions == NULL || enumerate_layers == NULL ||
-        context->create_instance == NULL || context->destroy_instance == NULL) {
+        context->create_instance == NULL) {
         set_error(error, error_size, "loader lacks required global functions");
         bvb_vulkan_global_context_destroy(context);
         return -ENOSYS;
@@ -222,6 +223,17 @@ int bvb_vulkan_global_context_create_instance(
     if (result != VK_SUCCESS) {
         response->vulkan_result = result;
         return 0;
+    }
+    if (context->destroy_instance == NULL) {
+        context->destroy_instance =
+            (PFN_vkDestroyInstance)context->get_instance_proc_addr(
+                instance, "vkDestroyInstance");
+        if (context->destroy_instance == NULL) {
+            set_error(error, error_size,
+                      "created instance has no vkDestroyInstance");
+            response->vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+            return 0;
+        }
     }
     const uint64_t native_bits = handle_bits(&instance, sizeof(instance));
     const uint64_t wire_id = bvb_handle_id(
