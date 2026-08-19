@@ -37,8 +37,9 @@ expected_version=$(sed -n \
     's/.*android:versionCode="\([0-9][0-9]*\)".*/\1/p' "$manifest")
 installed_version=$(pm list packages --show-versioncode 2>/dev/null | \
     sed -n "s/^package:$package_name versionCode:\([0-9][0-9]*\).*$/\1/p")
-if [ "$expected_version" != 11 ] || [ "$installed_version" != 11 ]; then
-    printf 'visible-host v11 required: installed=%s expected=%s\n' \
+if [ "$expected_version" != 12 ] || \
+    [ "$installed_version" != "$expected_version" ]; then
+    printf 'visible-host v12 required: installed=%s expected=%s\n' \
         "${installed_version:-missing}" "${expected_version:-missing}" >&2
     exit 2
 fi

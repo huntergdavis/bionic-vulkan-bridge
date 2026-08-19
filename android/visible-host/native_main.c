@@ -189,6 +189,14 @@ Java_io_github_huntergdavis_bvb_visiblehost_SharedRegionProvider_nativeOpenRegio
 
 static void configure_lifecycle(ANativeActivity *activity) {
     (void)pthread_mutex_lock(&lifecycle_mutex);
+    if (visible_ingress != NULL) {
+        struct bvb_visible_ingress *stale_ingress = visible_ingress;
+        visible_ingress = NULL;
+        visible_inline_ingress = false;
+        atomic_store(&visible_brokered_ingress, false);
+        bvb_visible_ingress_destroy(stale_ingress);
+        BVB_LOGI("E022_INGRESS_RESET");
+    }
     memset(&lifecycle, 0, sizeof(lifecycle));
     JNIEnv *env = activity->env;
     jclass activity_class = (*env)->GetObjectClass(env, activity->clazz);
