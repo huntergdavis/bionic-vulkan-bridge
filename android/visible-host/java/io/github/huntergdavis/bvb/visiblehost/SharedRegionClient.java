@@ -3,6 +3,8 @@ package io.github.huntergdavis.bvb.visiblehost;
 import android.app.ActivityManager;
 import android.app.PendingIntent;
 import android.content.Intent;
+import android.net.LocalSocket;
+import android.net.LocalSocketAddress;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -13,6 +15,9 @@ import android.os.RemoteException;
 
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.io.FileDescriptor;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.lang.reflect.Method;
 
@@ -32,6 +37,14 @@ public final class SharedRegionClient extends Binder {
     private static final int INTENT_SENDER_BROADCAST = 1;
     private static final int USER_ID_RANGE = 100000;
     private static final long CALLBACK_TIMEOUT_NS = 10000000000L;
+    private static final int PROTOCOL_MAGIC = 0x31425642;
+    private static final int PROTOCOL_VERSION = 1;
+    private static final int PROTOCOL_REQUEST = 1;
+    private static final int PROTOCOL_RESPONSE = 2;
+    private static final int OPCODE_HELLO = 1;
+    private static final int PROTOCOL_HEADER_SIZE = 24;
+    private static final int HELLO_REQUEST_SIZE = 8;
+    private static final int RELAY_REQUEST_ID = 0xE021;
 
     private boolean delivered;
     private int deliveryStatus;
@@ -179,6 +192,87 @@ public final class SharedRegionClient extends Binder {
         sendBroadcast(intent);
     }
 
+    private static void putU16(byte[] output, int offset, int value) {
+        output[offset] = (byte)value;
+        output[offset + 1] = (byte)(value >>> 8);
+    }
+
+    private static void putU32(byte[] output, int offset, int value) {
+        output[offset] = (byte)value;
+        output[offset + 1] = (byte)(value >>> 8);
+        output[offset + 2] = (byte)(value >>> 16);
+        output[offset + 3] = (byte)(value >>> 24);
+    }
+
+    private static int getU16(byte[] input, int offset) {
+        return (input[offset] & 0xff) | ((input[offset + 1] & 0xff) << 8);
+    }
+
+    private static int getU32(byte[] input, int offset) {
+        return (input[offset] & 0xff)
+                | ((input[offset + 1] & 0xff) << 8)
+                | ((input[offset + 2] & 0xff) << 16)
+                | ((input[offset + 3] & 0xff) << 24);
+    }
+
+    private static byte[] relayRequest() {
+        byte[] request = new byte[PROTOCOL_HEADER_SIZE + HELLO_REQUEST_SIZE];
+        putU32(request, 0, PROTOCOL_MAGIC);
+        putU16(request, 4, PROTOCOL_VERSION);
+        putU16(request, 6, PROTOCOL_REQUEST);
+        putU16(request, 8, OPCODE_HELLO);
+        putU32(request, 12, RELAY_REQUEST_ID);
+        putU32(request, 16, HELLO_REQUEST_SIZE);
+        putU16(request, PROTOCOL_HEADER_SIZE, PROTOCOL_VERSION);
+        putU16(request, PROTOCOL_HEADER_SIZE + 2, PROTOCOL_VERSION);
+        return request;
+    }
+
+    private static void readExact(InputStream input, byte[] bytes)
+            throws Exception {
+        int offset = 0;
+        while (offset < bytes.length) {
+            int count = input.read(bytes, offset, bytes.length - offset);
+            if (count < 0) {
+                throw new IllegalStateException("relay response ended early");
+            }
+            offset += count;
+        }
+    }
+
+    private static long relayRegion(String socketName,
+                                    ParcelFileDescriptor descriptor)
+            throws Exception {
+        LocalSocket socket = new LocalSocket();
+        long started = System.nanoTime();
+        try {
+            socket.setSoTimeout(10000);
+            socket.connect(new LocalSocketAddress(
+                    socketName, LocalSocketAddress.Namespace.ABSTRACT));
+            socket.setFileDescriptorsForSend(new FileDescriptor[] {
+                    descriptor.getFileDescriptor()
+            });
+            OutputStream output = socket.getOutputStream();
+            output.write(relayRequest());
+            output.flush();
+
+            byte[] response = new byte[PROTOCOL_HEADER_SIZE];
+            readExact(socket.getInputStream(), response);
+            if (getU32(response, 0) != PROTOCOL_MAGIC
+                    || getU16(response, 4) != PROTOCOL_VERSION
+                    || getU16(response, 6) != PROTOCOL_RESPONSE
+                    || getU16(response, 8) != OPCODE_HELLO
+                    || getU32(response, 12) != RELAY_REQUEST_ID
+                    || getU32(response, 16) != 0
+                    || getU32(response, 20) != 0) {
+                throw new IllegalStateException("invalid relay response");
+            }
+            return System.nanoTime() - started;
+        } finally {
+            socket.close();
+        }
+    }
+
     private static void writeResult(String path, String json) throws Exception {
         FileOutputStream stream = new FileOutputStream(path);
         OutputStreamWriter writer = new OutputStreamWriter(stream, "UTF-8");
@@ -227,8 +321,9 @@ public final class SharedRegionClient extends Binder {
     }
 
     public static void main(String[] arguments) {
-        if (arguments.length != 2) {
-            System.err.println("usage: SharedRegionClient TOKEN RESULT_JSON");
+        if (arguments.length != 2 && arguments.length != 3) {
+            System.err.println(
+                    "usage: SharedRegionClient TOKEN RESULT_JSON [RELAY_SOCKET]");
             System.exit(2);
         }
         String stage = "send_broadcast";
@@ -248,6 +343,17 @@ public final class SharedRegionClient extends Binder {
             }
             if (client.region == null) {
                 throw new IllegalStateException("callback returned null region");
+            }
+            if (arguments.length == 3) {
+                stage = "relay_scm_rights";
+                long relayRoundTripNs = relayRegion(arguments[2], client.region);
+                client.region.close();
+                writeResult(arguments[1],
+                        "{\"result\":\"pass\",\"binder_region_received\":true,"
+                                + "\"relay\":\"same_uid_scm_rights\","
+                                + "\"relay_round_trip_ns\":"
+                                + relayRoundTripNs + "}");
+                return;
             }
             stage = "read_region";
             FileInputStream input =

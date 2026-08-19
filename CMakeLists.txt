@@ -207,11 +207,15 @@ target_link_libraries(
 )
 bvb_enable_warnings(bvb-visible-triangle-client)
 
+add_executable(bvb-shared-region-relay src/shared_region_relay.c)
+target_link_libraries(bvb-shared-region-relay PRIVATE bvb-wire)
+bvb_enable_warnings(bvb-shared-region-relay)
+
 install(
   TARGETS bvb-vulkan-probe bvb-bridge-service bvb-bridge-client
           bvb-vulkan-selftest bvb-vulkan-surface-probe
           bvb-vulkan-present-selftest bvb-vulkan-client-dispatch
-          bvb-visible-triangle-client
+          bvb-visible-triangle-client bvb-shared-region-relay
   RUNTIME DESTINATION bin
 )
 
