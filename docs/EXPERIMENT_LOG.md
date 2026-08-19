@@ -1601,3 +1601,60 @@ repository's older native/fake Vulkan queue-submit and idle implementations.
 The next bounded gate is command-pool and command-buffer ownership followed by
 one real non-empty submission. E029 does not claim DXVK resource creation, WSI,
 game-facing animation, or an FPS change.
+
+## E030 — Typed command buffer and non-empty submit (2026-08-19)
+
+Status: passed on real hardware from a Termux ARM64 glibc client through the
+Android Bionic service at source commit `5b33ae6`.
+
+Hypothesis: E029's device and queue proxies can own an ordinary native command
+pool and primary command buffer across the libc boundary. One begun-and-ended
+buffer with no recorded GPU commands is the smallest valid payload for a
+non-empty `vkQueueSubmit`; it separates command-object lifecycle and submit
+ownership from resource and command encoding.
+
+Method: protocol opcodes 26–33 use fixed-width, type-checked records for command
+pool create/destroy/reset, one-buffer allocate/free, begin/end, and one-buffer
+queue submit. Pools are type-10 children of devices; buffers are dispatchable
+type-11 children of pools and retain their device ID on the glibc side. Submit
+validates that queue and buffer share a device on both sides. The current
+contract accepts one primary buffer, no inheritance data, at most the
+one-time-submit usage flag, no semaphores, and no fence. Pool/device teardown
+invalidates children before their parents.
+
+Result: the real Adreno 730 created command-pool proxy
+`0x0a00000000000001` and command-buffer proxy `0x0b00000000000001`.
+`vkBeginCommandBuffer`, `vkEndCommandBuffer`, a one-buffer `vkQueueSubmit`,
+`vkQueueWaitIdle`, and `vkResetCommandPool` all returned `VK_SUCCESS`. The
+client explicitly freed the command buffer and destroyed the pool before
+destroying the device and instances. Both stderr streams were empty. The E030
+policy classifies 33 of 742 measured names executable, 407 resolved names
+required-but-unimplemented, and 302 observed-null names unavailable.
+
+All 18 host contracts and all 16 contracts available under Termux ARM64 passed.
+Canonical evidence is `docs/evidence/e030-command-buffer.json`, 6,037 bytes,
+SHA-256
+`cbefbe5d64797a597a1e77e21cc4ed489ec2c79988571d22938f6cea94bb16a4`.
+The canonical artifacts are:
+
+- generated E030 policy: 1,893 bytes, SHA-256
+  `91836567a1023c43b596165a29ec32f7344d9f6adc6ee3b9aeff92025801d262`;
+- glibc `libvulkan-bvb` bridge: 213,976 bytes, SHA-256
+  `5b797501f6281a93154b37f932b5c0f07430ed68fc0684869db35b541906e44b`;
+- glibc integration client: 71,840 bytes, SHA-256
+  `21d7636120a043676acbffdf84350e22a866d76b7276b2f6a980e7efc1b9aa87`;
+- Bionic bridge service: 106,176 bytes, SHA-256
+  `dc614f95f297a896898294b97bd4d805f1e5ec10614ec34065373c2e183d892f`.
+
+The required
+`deja "Vulkan command pool command buffer proxy vkAllocateCommandBuffers non-empty vkQueueSubmit Bionic bridge"`
+query found no earlier cross-libc implementation. E030 reused the repository's
+native self-test create/begin/end/submit order, the older native/fake Vulkan
+command lifecycle, E025's persistent authenticated connection, and E026–E029's
+parented proxy model. One host failure exposed and fixed a handle-table lookup
+that omitted its required native-bits output before tablet deployment.
+
+The next bounded gate is buffer/device-memory ownership and one deterministic
+recorded GPU write through this command buffer. E030's submit array is genuinely
+non-empty, but its command buffer contains no GPU commands; it does not claim
+resource creation, rendering, game-facing animation, or an FPS change.

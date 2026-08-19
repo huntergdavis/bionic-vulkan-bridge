@@ -131,6 +131,12 @@ through the glibc-to-Bionic RPC path, with both stderr streams empty. Non-empty
 submissions and fences remain explicitly rejected until command-buffer and
 synchronization-object proxies exist. The measured policy now marks 26 names
 executable and leaves 414 resolved names unavailable.
+E030 adds typed command-pool and primary-command-buffer ownership. The glibc
+client created, began, ended, and submitted one real native command buffer on
+the Adreno queue, then waited, reset, freed, and destroyed it explicitly. This
+is a non-empty submit array, but the recorded buffer intentionally contains no
+GPU commands yet. The policy now marks 33 names executable and leaves 407
+resolved names unavailable.
 
 ## Build and test on a normal Linux host
 
