@@ -80,9 +80,12 @@ a 14.6 ms synchronous round trip. This proves visible external replay across
 Android UIDs. E020 then adds the Android-supported descriptor broker: APK v10
 returns a sealed 4 KiB memfd through a capability-authenticated Binder callback
 to a Termux-UID helper. A wrong capability returns `-EACCES`; the valid region
-and exact marker validate with no TCP payload copy. The remaining E021 step is
-to relay that already-delivered descriptor once from the Termux helper to the
-glibc/FEX client with same-UID `SCM_RIGHTS`.
+and exact marker validate with no TCP payload copy. E021 relays that descriptor
+once from the Termux helper to a real glibc process with same-UID `SCM_RIGHTS`.
+The complete connect/send/validate/ACK took 1.603 ms, while the glibc
+receive-plus-validation portion took 0.179 ms. These are transport-only
+measurements; E022 will replay the shared batch through the visible renderer
+for a fair comparison with E019's complete inline frame.
 
 ## Build and test on a normal Linux host
 

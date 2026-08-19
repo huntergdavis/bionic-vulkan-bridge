@@ -53,8 +53,10 @@
 - [x] Pass the generated glibc triangle batch to the reusable Bionic ingress
   receiver
 - [x] Transfer a sealed shared region across Android UIDs with a Binder callback
-- [ ] Relay the Binder-delivered descriptor to glibc/FEX with same-UID
+- [x] Relay the Binder-delivered descriptor to glibc/FEX with same-UID
   `SCM_RIGHTS`
+- [ ] Replay a Binder-brokered shared triangle batch through the visible host
+  and compare complete latency with the inline control
 - [ ] Expand generated dispatch to the measured DXVK startup subset
 - [ ] Implement GPU external-memory and synchronization strategy
 - [x] Reach a rendered test triangle

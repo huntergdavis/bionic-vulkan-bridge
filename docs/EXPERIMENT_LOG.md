@@ -1052,3 +1052,53 @@ E017's sealed-region format and same-UID descriptor plan, and the Binder
 callback mechanism from pinned Termux:X11 commit `139f219`. The next gate is
 E021: detach the Binder-delivered descriptor and relay it once over a
 Termux-owned Unix socket with `SCM_RIGHTS` to the real glibc client.
+
+## E021 — Binder-to-glibc same-UID descriptor relay (2026-08-19)
+
+Status: passed on hardware at commit `076d207` using the E021 harness added at
+`58c0e34`.
+
+Hypothesis: after E020 installs a memfd in a Termux-UID Java helper, an abstract
+Unix socket is valid again because both the helper and the real glibc consumer
+have Android UID 10469. Passing that descriptor once with `SCM_RIGHTS` should
+preserve a writable shared mapping without copying its 4 KiB contents through
+Java or TCP.
+
+Method: the optional relay mode keeps E020's wrong-capability control, Binder
+callback, and Activity lifecycle gate. A new Termux-glibc consumer binds an
+unpredictable abstract socket, then authenticates the Java helper with
+`SO_PEERCRED`. Java attaches the Binder-delivered descriptor to one
+`LocalSocket` write containing the existing version-1 hello packet. The glibc
+consumer uses `bvb_transport_receive_fd`, validates the fixed-width header,
+peer UID, 4,096-byte regular-file size, grow/shrink/seal seals, absence of a
+write seal, exact marker, and a read/write shared mapping. It sends the normal
+fixed-width response only after all checks pass.
+
+Result: the wrong capability again returned `-EACCES`. The valid helper relayed
+the descriptor and received its ACK in 1,602,656 ns, including abstract-socket
+connect, packet/FD send, validation, and response. The glibc consumer's
+receive-plus-validation interval was 178,750 ns. It observed peer UID 10469,
+seals value 7, the exact 4 KiB region, and a writable mapping. Helper, relay,
+and wrong-token stderr were all empty. These timings isolate descriptor relay;
+they do not include Vulkan execution or presentation and therefore are not an
+FPS result or a direct comparison with E019's complete visible-frame latency.
+
+Evidence and artifact identities:
+
+- evidence: `docs/evidence/e021-binder-glibc-relay.json`, 2,174 bytes,
+  SHA-256
+  `8d46f6384b9fd4f15066a4dd2a9e5bf9e3174559b0fdea272af48fc10b1919d3`;
+- helper APK: 49,577 bytes, SHA-256
+  `5e20f7f7837e869954f737055007e33ac2e26dc9f32150690fb8377b373b3775`;
+- real glibc relay consumer: 74,848 bytes, SHA-256
+  `c0eff9f47ce77c1e7d562c8c1254c5cdcdfa64277435a52e503c4408fc30e3b5`,
+  requesting Termux glibc's AArch64 loader;
+- all three stderr artifacts: empty, SHA-256
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+
+The required recall query returned no indexed E021 implementation. This gate
+reused E017's fixed-width `SCM_RIGHTS` transport and peer authentication,
+E020's Binder callback broker, and the existing protocol encoder/decoder. The
+next gate is E022: place the generated triangle batch in the Binder-delivered
+mapping, replay it through the visible Bionic renderer, and compare complete
+shared-path latency against E019's inline control.

@@ -1,0 +1,112 @@
+{
+  "schema_version": 1,
+  "gate": "E021",
+  "result": "pass",
+  "transport": "binder_then_same_uid_scm_rights",
+  "wrong_capability": {
+    "result": "fail",
+    "stage": "request_region",
+    "native_status": -13
+  },
+  "binder_helper": {
+    "result": "pass",
+    "binder_region_received": true,
+    "relay": "same_uid_scm_rights",
+    "relay_round_trip_ns": 1602656
+  },
+  "glibc_consumer": {
+    "result": "pass",
+    "transport": "binder_then_same_uid_scm_rights",
+    "peer_uid": 10469,
+    "peer_pid": 30349,
+    "region_bytes": 4096,
+    "seals": 7,
+    "writable_mapping": true,
+    "receive_validate_ns": 178750
+  },
+  "authenticated_lifecycle_events": [
+    {
+      "event": 1,
+      "sequence": 1,
+      "pid": 26028,
+      "width": 0,
+      "height": 0
+    },
+    {
+      "event": 2,
+      "sequence": 2,
+      "pid": 26028,
+      "width": 0,
+      "height": 0
+    },
+    {
+      "event": 3,
+      "sequence": 3,
+      "pid": 26028,
+      "width": 0,
+      "height": 0
+    },
+    {
+      "event": 7,
+      "sequence": 4,
+      "pid": 26028,
+      "width": 2800,
+      "height": 1752
+    },
+    {
+      "event": 10,
+      "sequence": 5,
+      "pid": 26028,
+      "width": 0,
+      "height": 0
+    },
+    {
+      "event": 11,
+      "sequence": 6,
+      "pid": 26028,
+      "width": 2800,
+      "height": 1752
+    },
+    {
+      "event": 9,
+      "sequence": 7,
+      "pid": 26028,
+      "width": 0,
+      "height": 0
+    },
+    {
+      "event": 8,
+      "sequence": 8,
+      "pid": 26028,
+      "width": 0,
+      "height": 0
+    },
+    {
+      "event": 5,
+      "sequence": 9,
+      "pid": 26028,
+      "width": 0,
+      "height": 0
+    }
+  ],
+  "activity_status": {
+    "ingress_configured": true,
+    "authenticated_event_count": 9,
+    "rejected_event_count": 0,
+    "last_sequence": 9,
+    "last_event": 5,
+    "state_flags": 1,
+    "created": true,
+    "started": false,
+    "resumed": false,
+    "window_present": false,
+    "renderer_ready": false,
+    "focused": false,
+    "destroyed": false,
+    "width": 0,
+    "height": 0,
+    "activity_pid": 26028,
+    "last_event_monotonic_ns": 946477758159414,
+    "last_event_received_ns": 946477759609309
+  }
+}
