@@ -114,13 +114,10 @@ while ! grep -q 'activity_event=11 ' "$service_stdout"; do
     sleep 0.05
 done
 
-if env -u LD_LIBRARY_PATH -u LD_PRELOAD CLASSPATH="$helper_apk" \
-    /system/bin/app_process -Xnoimage-dex2oat / "$client_class" \
-    "$wrong_token" "$wrong_json" unused-e036-socket external \
-    >/dev/null 2> "$wrong_stderr"; then
-    printf 'wrong external-memory capability unexpectedly succeeded\n' >&2
-    exit 6
-fi
+"$control_client" --socket "$control_socket" --activity-status \
+    > "$status_json"
+wait "$service_pid"
+service_pid=
 
 "$receiver" --socket "$socket_name" \
     > "$receiver_stdout" 2> "$receiver_stderr" &
@@ -142,10 +139,13 @@ env -u LD_LIBRARY_PATH -u LD_PRELOAD CLASSPATH="$helper_apk" \
     >/dev/null 2> "$valid_stderr"
 wait "$receiver_pid"
 receiver_pid=
-"$control_client" --socket "$control_socket" --activity-status \
-    > "$status_json"
-wait "$service_pid"
-service_pid=
+if env -u LD_LIBRARY_PATH -u LD_PRELOAD CLASSPATH="$helper_apk" \
+    /system/bin/app_process -Xnoimage-dex2oat / "$client_class" \
+    "$wrong_token" "$wrong_json" unused-e036-socket external \
+    >/dev/null 2> "$wrong_stderr"; then
+    printf 'wrong external-memory capability unexpectedly succeeded\n' >&2
+    exit 6
+fi
 activity_pid=$(sed -n \
     's/.*activity_event=7 .* pid=\([0-9][0-9]*\).*/\1/p' \
     "$service_stdout" | tail -n 1)
