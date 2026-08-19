@@ -39,6 +39,18 @@ struct bvb_vulkan_selftest_result {
     uint64_t submit_wait_elapsed_ns;
 };
 
+struct bvb_vulkan_batch_context;
+
+int bvb_vulkan_batch_context_create(
+    const char *loader_path, struct bvb_vulkan_batch_context **context,
+    char *error, size_t error_size);
+int bvb_vulkan_batch_context_execute(
+    struct bvb_vulkan_batch_context *context, const uint8_t *batch,
+    size_t batch_length, struct bvb_vulkan_selftest_result *result,
+    char *error, size_t error_size);
+void bvb_vulkan_batch_context_destroy(
+    struct bvb_vulkan_batch_context *context);
+
 int bvb_vulkan_run_selftest(const char *loader_path,
                             struct bvb_vulkan_selftest_result *result,
                             char *error, size_t error_size);

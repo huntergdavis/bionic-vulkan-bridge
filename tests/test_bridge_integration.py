@@ -18,21 +18,25 @@ def run_exchange(
     lifecycle: bool = False,
     batched: bool = False,
     shared: bool = False,
+    shared_iterations: int = 0,
 ) -> dict[str, object]:
     service_command = [service, "--socket", str(socket_path), "--once"]
     client_command = [client, "--socket", str(socket_path)]
     if loader is not None:
         service_command.extend(["--loader", loader])
-        client_command.extend(
-            [
-                "--vulkan-caps",
+        client_command.append("--vulkan-caps")
+        if shared_iterations:
+            client_command.extend(
+                ["--vulkan-shared-batch-benchmark", str(shared_iterations)]
+            )
+        else:
+            client_command.append(
                 "--vulkan-shared-batch-selftest"
                 if shared
                 else "--vulkan-batch-selftest"
                 if batched
-                else "--vulkan-selftest",
-            ]
-        )
+                else "--vulkan-selftest"
+            )
     token = bytes.fromhex(
         "00112233445566778899aabbccddeeff"
         "fedcba98765432100123456789abcdef"
@@ -189,6 +193,26 @@ def main() -> int:
         assert shared_selftest["buffer_bytes"] == 4096
         assert shared_selftest["fill_word"] == 0xA5C3F00D
         assert shared_selftest["mismatched_words"] == 0
+
+        benchmark_document = run_exchange(
+            service,
+            client,
+            temp_path / "benchmark" / "bridge.sock",
+            fake_loader,
+            shared_iterations=4,
+        )
+        benchmark_selftest = benchmark_document["vulkan_shared_batch_selftest"]
+        assert isinstance(benchmark_selftest, dict)
+        assert benchmark_selftest["mismatched_words"] == 0
+        benchmark = benchmark_document["shared_batch_benchmark"]
+        assert isinstance(benchmark, dict)
+        assert benchmark["warmup_iterations"] == 1
+        assert benchmark["measured_iterations"] == 4
+        assert benchmark["control_total_ns"] >= benchmark["control_min_ns"]
+        assert benchmark["control_max_ns"] >= benchmark["control_mean_ns"]
+        assert benchmark["submit_wait_total_ns"] >= benchmark["submit_wait_min_ns"]
+        assert benchmark["submit_wait_max_ns"] >= benchmark["submit_wait_mean_ns"]
+        assert benchmark["mismatched_words"] == 0
 
         lifecycle_document = run_exchange(
             service,

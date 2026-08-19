@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -36,6 +37,7 @@ struct shared_batch_region {
     const uint8_t *address;
     size_t length;
     uint64_t generation;
+    uint64_t last_sequence;
 };
 
 static void usage(const char *program) {
@@ -557,11 +559,12 @@ static int answer_shared_batch_setup(
 
 static int answer_shared_batch_execute(
     int client_fd, const struct bvb_protocol_packet *request,
-    const char *loader_path, bool negotiated,
-    const struct shared_batch_region *region) {
+    const char *loader_path, bool negotiated, struct shared_batch_region *region,
+    struct bvb_vulkan_batch_context **context) {
     struct bvb_protocol_packet response;
     prepare_response(&response, request);
     if (!negotiated || region == NULL || region->address == NULL ||
+        context == NULL ||
         request->header.payload_length != BVB_SHARED_BATCH_EXECUTE_SIZE) {
         response.header.status = -EPROTO;
         return bvb_transport_send(client_fd, &response);
@@ -572,6 +575,9 @@ static int answer_shared_batch_execute(
     if (result == 0 && execute.generation != region->generation) {
         result = -ESTALE;
     }
+    if (result == 0 && execute.sequence <= region->last_sequence) {
+        result = -ESTALE;
+    }
     if (result == 0 &&
         (execute.offset > region->length ||
          execute.length > region->length - execute.offset)) {
@@ -580,6 +586,7 @@ static int answer_shared_batch_execute(
     const uint8_t *batch = NULL;
     struct bvb_command_batch_info batch_info;
     if (result == 0) {
+        atomic_thread_fence(memory_order_acquire);
         batch = region->address + execute.offset;
         result = bvb_command_batch_validate(batch, execute.length, &batch_info);
     }
@@ -588,9 +595,17 @@ static int answer_shared_batch_execute(
     }
     struct bvb_vulkan_selftest_result selftest;
     char diagnostic[512];
+    if (result == 0 && *context == NULL) {
+        result = bvb_vulkan_batch_context_create(
+            loader_path, context, diagnostic, sizeof(diagnostic));
+        if (result != 0) {
+            fprintf(stderr, "bvb: persistent Vulkan context failed: %s\n",
+                    diagnostic);
+        }
+    }
     if (result == 0) {
-        result = bvb_vulkan_run_batched_selftest(
-            loader_path, batch, execute.length, &selftest, diagnostic,
+        result = bvb_vulkan_batch_context_execute(
+            *context, batch, execute.length, &selftest, diagnostic,
             sizeof(diagnostic));
         if (result != 0) {
             fprintf(stderr, "bvb: shared Vulkan batch self-test failed: %s\n",
@@ -598,6 +613,7 @@ static int answer_shared_batch_execute(
         }
     }
     if (result == 0) {
+        region->last_sequence = execute.sequence;
         result = bvb_protocol_encode_vulkan_selftest(response.payload,
                                                      &selftest);
         if (result == 0) {
@@ -615,6 +631,7 @@ static int serve_connection(int client_fd, const char *loader_path,
                             const struct bvb_activity_status *activity_status) {
     bool negotiated = false;
     struct shared_batch_region shared_region = {0};
+    struct bvb_vulkan_batch_context *vulkan_context = NULL;
     int connection_status = 0;
     while (true) {
         struct bvb_protocol_packet request;
@@ -661,7 +678,8 @@ static int serve_connection(int client_fd, const char *loader_path,
             received_fd = -1;
         } else if (request.header.opcode == BVB_OPCODE_SHARED_BATCH_EXECUTE) {
             result = answer_shared_batch_execute(
-                client_fd, &request, loader_path, negotiated, &shared_region);
+                client_fd, &request, loader_path, negotiated, &shared_region,
+                &vulkan_context);
         } else {
             result = -EPROTO;
         }
@@ -673,6 +691,7 @@ static int serve_connection(int client_fd, const char *loader_path,
             break;
         }
     }
+    bvb_vulkan_batch_context_destroy(vulkan_context);
     if (shared_region.address != NULL) {
         if (munmap((void *)shared_region.address, shared_region.length) != 0 &&
             connection_status == 0) {

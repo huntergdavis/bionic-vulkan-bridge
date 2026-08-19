@@ -19,6 +19,7 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/syscall.h>
+#include <time.h>
 #include <unistd.h>
 
 struct client_options {
@@ -27,14 +28,29 @@ struct client_options {
     bool request_vulkan_selftest;
     bool request_vulkan_batch_selftest;
     bool request_vulkan_shared_batch_selftest;
+    bool request_vulkan_shared_batch_benchmark;
+    uint32_t shared_batch_iterations;
     bool request_activity_status;
+};
+
+struct shared_batch_benchmark_result {
+    uint32_t warmup_iterations;
+    uint32_t measured_iterations;
+    uint64_t control_total_ns;
+    uint64_t control_min_ns;
+    uint64_t control_max_ns;
+    uint64_t submit_wait_total_ns;
+    uint64_t submit_wait_min_ns;
+    uint64_t submit_wait_max_ns;
+    uint64_t mismatched_words;
 };
 
 static void usage(const char *program) {
     fprintf(stderr,
             "usage: %s --socket ABSOLUTE_PATH "
             "[--vulkan-caps] [--vulkan-selftest | "
-            "--vulkan-batch-selftest | --vulkan-shared-batch-selftest] "
+            "--vulkan-batch-selftest | --vulkan-shared-batch-selftest | "
+            "--vulkan-shared-batch-benchmark ITERATIONS] "
             "[--activity-status]\n",
             program);
 }
@@ -54,6 +70,19 @@ static int parse_arguments(int argc, char **argv,
             options->request_vulkan_batch_selftest = true;
         } else if (strcmp(argv[index], "--vulkan-shared-batch-selftest") == 0) {
             options->request_vulkan_shared_batch_selftest = true;
+        } else if (strcmp(argv[index],
+                          "--vulkan-shared-batch-benchmark") == 0 &&
+                   index + 1 < argc) {
+            char *end = NULL;
+            errno = 0;
+            unsigned long iterations = strtoul(argv[++index], &end, 10);
+            if (errno != 0 || end == argv[index] || *end != '\0' ||
+                iterations == 0U || iterations > 10000U) {
+                usage(argv[0]);
+                return 2;
+            }
+            options->request_vulkan_shared_batch_benchmark = true;
+            options->shared_batch_iterations = (uint32_t)iterations;
         } else if (strcmp(argv[index], "--activity-status") == 0) {
             options->request_activity_status = true;
         } else {
@@ -64,11 +93,25 @@ static int parse_arguments(int argc, char **argv,
     unsigned int selftest_count =
         (options->request_vulkan_selftest ? 1U : 0U) +
         (options->request_vulkan_batch_selftest ? 1U : 0U) +
-        (options->request_vulkan_shared_batch_selftest ? 1U : 0U);
+        (options->request_vulkan_shared_batch_selftest ? 1U : 0U) +
+        (options->request_vulkan_shared_batch_benchmark ? 1U : 0U);
     if (options->socket_path == NULL || selftest_count > 1U) {
         usage(argv[0]);
         return 2;
     }
+    return 0;
+}
+
+static int monotonic_ns(uint64_t *output) {
+    struct timespec timestamp;
+    if (output == NULL) {
+        return -EINVAL;
+    }
+    if (clock_gettime(CLOCK_MONOTONIC, &timestamp) != 0) {
+        return -errno;
+    }
+    *output = (uint64_t)timestamp.tv_sec * UINT64_C(1000000000) +
+              (uint64_t)timestamp.tv_nsec;
     return 0;
 }
 
@@ -198,7 +241,9 @@ static int build_transfer_batch(uint8_t *bytes, size_t capacity,
 }
 
 static int request_shared_batch_selftest(
-    int socket_fd, struct bvb_vulkan_selftest_result *selftest) {
+    int socket_fd, uint32_t measured_iterations,
+    struct bvb_vulkan_selftest_result *selftest,
+    struct shared_batch_benchmark_result *benchmark) {
     enum {
         REGION_BYTES = 4096,
         BATCH_OFFSET = 64,
@@ -206,6 +251,13 @@ static int request_shared_batch_selftest(
     int memory_fd = -1;
     void *mapping = MAP_FAILED;
     int result = 0;
+    if (selftest == NULL ||
+        (measured_iterations != 0U && benchmark == NULL)) {
+        return -EINVAL;
+    }
+    if (benchmark != NULL) {
+        memset(benchmark, 0, sizeof(*benchmark));
+    }
     uint64_t generation = 0U;
     ssize_t random_bytes =
         syscall(SYS_getrandom, &generation, sizeof(generation), 0);
@@ -266,31 +318,87 @@ static int request_shared_batch_selftest(
         goto done;
     }
 
-    memset(&request, 0, sizeof(request));
-    request.header = (struct bvb_protocol_header){
-        .version = BVB_PROTOCOL_VERSION,
-        .kind = BVB_PROTOCOL_REQUEST,
-        .opcode = BVB_OPCODE_SHARED_BATCH_EXECUTE,
-        .request_id = 0x42564207U,
-        .payload_length = BVB_SHARED_BATCH_EXECUTE_SIZE,
-    };
-    const struct bvb_shared_batch_execute execute = {
-        .generation = generation,
-        .offset = BATCH_OFFSET,
-        .length = (uint32_t)batch_length,
-        .sequence = 1U,
-    };
-    result = bvb_protocol_encode_shared_batch_execute(request.payload,
-                                                      &execute);
-    if (result == 0) {
-        result = exchange(socket_fd, &request, &response);
+    const uint32_t total_iterations =
+        measured_iterations == 0U ? 1U : measured_iterations + 1U;
+    for (uint32_t index = 0; index < total_iterations; ++index) {
+        const uint64_t sequence = (uint64_t)index + 1U;
+        result = build_transfer_batch(
+            (uint8_t *)mapping + BATCH_OFFSET, REGION_BYTES - BATCH_OFFSET,
+            sequence, &batch_length);
+        if (result != 0 || batch_length > UINT32_MAX) {
+            result = result != 0 ? result : -EOVERFLOW;
+            goto done;
+        }
+        atomic_thread_fence(memory_order_release);
+
+        memset(&request, 0, sizeof(request));
+        request.header = (struct bvb_protocol_header){
+            .version = BVB_PROTOCOL_VERSION,
+            .kind = BVB_PROTOCOL_REQUEST,
+            .opcode = BVB_OPCODE_SHARED_BATCH_EXECUTE,
+            .request_id = UINT32_C(0x42564300) + index,
+            .payload_length = BVB_SHARED_BATCH_EXECUTE_SIZE,
+        };
+        const struct bvb_shared_batch_execute execute = {
+            .generation = generation,
+            .offset = BATCH_OFFSET,
+            .length = (uint32_t)batch_length,
+            .sequence = sequence,
+        };
+        result = bvb_protocol_encode_shared_batch_execute(request.payload,
+                                                          &execute);
+        uint64_t control_start_ns = 0U;
+        uint64_t control_end_ns = 0U;
+        const bool measured = measured_iterations != 0U && index != 0U;
+        if (result == 0 && measured) {
+            result = monotonic_ns(&control_start_ns);
+        }
+        if (result == 0) {
+            result = exchange(socket_fd, &request, &response);
+        }
+        if (result == 0 && measured) {
+            result = monotonic_ns(&control_end_ns);
+        }
+        if (result != 0 || response.header.status != 0 ||
+            response.header.payload_length != BVB_VULKAN_SELFTEST_SIZE) {
+            result = result != 0 ? result : -EPROTO;
+            goto done;
+        }
+        result = bvb_protocol_decode_vulkan_selftest(response.payload,
+                                                     selftest);
+        if (result != 0) {
+            goto done;
+        }
+        if (measured) {
+            const uint64_t control_ns = control_end_ns - control_start_ns;
+            if (benchmark->measured_iterations == 0U ||
+                control_ns < benchmark->control_min_ns) {
+                benchmark->control_min_ns = control_ns;
+            }
+            if (control_ns > benchmark->control_max_ns) {
+                benchmark->control_max_ns = control_ns;
+            }
+            if (benchmark->measured_iterations == 0U ||
+                selftest->submit_wait_elapsed_ns <
+                    benchmark->submit_wait_min_ns) {
+                benchmark->submit_wait_min_ns =
+                    selftest->submit_wait_elapsed_ns;
+            }
+            if (selftest->submit_wait_elapsed_ns >
+                benchmark->submit_wait_max_ns) {
+                benchmark->submit_wait_max_ns =
+                    selftest->submit_wait_elapsed_ns;
+            }
+            benchmark->control_total_ns += control_ns;
+            benchmark->submit_wait_total_ns +=
+                selftest->submit_wait_elapsed_ns;
+            benchmark->mismatched_words += selftest->mismatched_words;
+            benchmark->measured_iterations += 1U;
+        }
     }
-    if (result != 0 || response.header.status != 0 ||
-        response.header.payload_length != BVB_VULKAN_SELFTEST_SIZE) {
-        result = result != 0 ? result : -EPROTO;
-        goto done;
+    if (benchmark != NULL) {
+        benchmark->warmup_iterations = measured_iterations == 0U ? 0U : 1U;
     }
-    result = bvb_protocol_decode_vulkan_selftest(response.payload, selftest);
 
 done:
     if (mapping != MAP_FAILED) {
@@ -346,6 +454,7 @@ static void print_document(const struct bvb_protocol_packet *hello_packet,
                            const struct bvb_vulkan_caps *caps,
                            const struct bvb_vulkan_selftest_result *selftest,
                            const char *selftest_key,
+                           const struct shared_batch_benchmark_result *benchmark,
                            const struct bvb_activity_status *activity) {
     printf("{\"schema_version\":1,\"protocol_version\":%u,"
            "\"request_id\":%" PRIu32 ",\"service_flags\":%" PRIu32
@@ -425,6 +534,32 @@ static void print_document(const struct bvb_protocol_packet *hello_packet,
                selftest->fill_word,
                selftest->mismatched_words,
                selftest->submit_wait_elapsed_ns);
+    }
+    if (benchmark != NULL && benchmark->measured_iterations != 0U) {
+        printf(",\"shared_batch_benchmark\":{\"warmup_iterations\":%" PRIu32
+               ",\"measured_iterations\":%" PRIu32
+               ",\"control_total_ns\":%" PRIu64
+               ",\"control_min_ns\":%" PRIu64
+               ",\"control_mean_ns\":%" PRIu64
+               ",\"control_max_ns\":%" PRIu64
+               ",\"submit_wait_total_ns\":%" PRIu64
+               ",\"submit_wait_min_ns\":%" PRIu64
+               ",\"submit_wait_mean_ns\":%" PRIu64
+               ",\"submit_wait_max_ns\":%" PRIu64
+               ",\"mismatched_words\":%" PRIu64 "}",
+               benchmark->warmup_iterations,
+               benchmark->measured_iterations,
+               benchmark->control_total_ns,
+               benchmark->control_min_ns,
+               benchmark->control_total_ns /
+                   benchmark->measured_iterations,
+               benchmark->control_max_ns,
+               benchmark->submit_wait_total_ns,
+               benchmark->submit_wait_min_ns,
+               benchmark->submit_wait_total_ns /
+                   benchmark->measured_iterations,
+               benchmark->submit_wait_max_ns,
+               benchmark->mismatched_words);
     }
     if (activity != NULL) {
         printf(",\"activity_status\":{\"ingress_configured\":%s"
@@ -546,6 +681,8 @@ int main(int argc, char **argv) {
 
     struct bvb_vulkan_selftest_result selftest;
     struct bvb_vulkan_selftest_result *selftest_pointer = NULL;
+    struct shared_batch_benchmark_result benchmark;
+    struct shared_batch_benchmark_result *benchmark_pointer = NULL;
     if (options.request_vulkan_selftest) {
         memset(&request, 0, sizeof(request));
         request.header.version = BVB_PROTOCOL_VERSION;
@@ -606,8 +743,14 @@ int main(int argc, char **argv) {
         selftest_pointer = &selftest;
     }
 
-    if (options.request_vulkan_shared_batch_selftest) {
-        result = request_shared_batch_selftest(socket_fd, &selftest);
+    if (options.request_vulkan_shared_batch_selftest ||
+        options.request_vulkan_shared_batch_benchmark) {
+        if (options.request_vulkan_shared_batch_benchmark) {
+            benchmark_pointer = &benchmark;
+        }
+        result = request_shared_batch_selftest(
+            socket_fd, options.shared_batch_iterations, &selftest,
+            benchmark_pointer);
         if (result != 0) {
             (void)close(socket_fd);
             fprintf(stderr, "bvb: Vulkan shared-batch self-test failed: %s\n",
@@ -645,13 +788,15 @@ int main(int argc, char **argv) {
     }
 
     (void)close(socket_fd);
-    const char *selftest_key = options.request_vulkan_shared_batch_selftest
+    const char *selftest_key =
+        (options.request_vulkan_shared_batch_selftest ||
+         options.request_vulkan_shared_batch_benchmark)
                                    ? "vulkan_shared_batch_selftest"
                                : options.request_vulkan_batch_selftest
                                    ? "vulkan_batch_selftest"
                                    : "vulkan_selftest";
     print_document(&hello_packet, &hello, caps_pointer, selftest_pointer,
-                   selftest_key,
+                   selftest_key, benchmark_pointer,
                    activity_status_pointer);
     return 0;
 }

@@ -29,11 +29,30 @@ struct bvb_vulkan_objects {
     VkBuffer buffer;
     VkDeviceMemory memory;
     VkCommandPool command_pool;
+    void *mapped_memory;
     PFN_vkDestroyInstance destroy_instance;
     PFN_vkDestroyDevice destroy_device;
     PFN_vkDestroyBuffer destroy_buffer;
     PFN_vkFreeMemory free_memory;
     PFN_vkDestroyCommandPool destroy_command_pool;
+    PFN_vkUnmapMemory unmap_memory;
+};
+
+struct bvb_vulkan_batch_context {
+    struct bvb_vulkan_objects objects;
+    struct bvb_vulkan_selftest_result base_result;
+    VkQueue queue;
+    VkCommandBuffer command_buffer;
+    struct bvb_handle_entry handle_entries[8];
+    struct bvb_handle_table handles;
+    PFN_vkResetCommandPool reset_command_pool;
+    PFN_vkBeginCommandBuffer begin_command_buffer;
+    PFN_vkEndCommandBuffer end_command_buffer;
+    PFN_vkCmdFillBuffer fill_buffer;
+    PFN_vkCmdPipelineBarrier pipeline_barrier;
+    PFN_vkQueueSubmit queue_submit;
+    PFN_vkQueueWaitIdle queue_wait_idle;
+    PFN_vkInvalidateMappedMemoryRanges invalidate_mapped_memory_ranges;
 };
 
 static void set_error(char *output, size_t output_size, const char *format, ...) {
@@ -118,6 +137,10 @@ static int monotonic_ns(uint64_t *output) {
 
 static void cleanup(struct bvb_vulkan_objects *objects) {
     if (objects->device != VK_NULL_HANDLE) {
+        if (objects->mapped_memory != NULL && objects->memory != VK_NULL_HANDLE &&
+            objects->unmap_memory != NULL) {
+            objects->unmap_memory(objects->device, objects->memory);
+        }
         if (objects->command_pool != VK_NULL_HANDLE &&
             objects->destroy_command_pool != NULL) {
             objects->destroy_command_pool(objects->device,
@@ -159,10 +182,8 @@ static VkBuffer buffer_from_bits(uint64_t bits) {
 }
 
 static int replay_transfer_batch(
-    const uint8_t *batch, size_t batch_length, VkCommandBuffer command_buffer,
-    VkBuffer buffer, PFN_vkCmdFillBuffer fill_buffer,
-    PFN_vkCmdPipelineBarrier pipeline_barrier, char *error,
-    size_t error_size) {
+    const uint8_t *batch, size_t batch_length,
+    struct bvb_vulkan_batch_context *context, char *error, size_t error_size) {
     struct bvb_command_batch_info info;
     int result = bvb_command_batch_validate(batch, batch_length, &info);
     if (result != 0) {
@@ -172,32 +193,15 @@ static int replay_transfer_batch(
     }
 
     const uint64_t buffer_id = bvb_handle_id(BVB_OBJECT_BUFFER, 1U);
-    struct bvb_handle_entry entries[8];
-    struct bvb_handle_table handles;
-    result = bvb_handle_table_init(&handles, entries, 8U);
-    if (result == 0) {
-        result = bvb_handle_table_insert(
-            &handles, info.command_buffer_id, 0U,
-            vulkan_handle_bits(&command_buffer, sizeof(command_buffer)));
-    }
-    if (result == 0) {
-        result = bvb_handle_table_insert(
-            &handles, buffer_id, 0U,
-            vulkan_handle_bits(&buffer, sizeof(buffer)));
-    }
-    if (result != 0) {
-        set_error(error, error_size, "could not establish handle ownership: %d",
-                  result);
-        return result;
-    }
 
     uint64_t command_buffer_bits = 0U;
-    result = bvb_handle_table_lookup(&handles, info.command_buffer_id,
+    result = bvb_handle_table_lookup(&context->handles, info.command_buffer_id,
                                      BVB_OBJECT_COMMAND_BUFFER, NULL,
                                      &command_buffer_bits);
     if (result != 0 ||
         command_buffer_bits !=
-            vulkan_handle_bits(&command_buffer, sizeof(command_buffer))) {
+            vulkan_handle_bits(&context->command_buffer,
+                               sizeof(context->command_buffer))) {
         set_error(error, error_size, "command-buffer ownership mismatch");
         return -EPROTO;
     }
@@ -224,15 +228,17 @@ static int replay_transfer_batch(
                 return -EPROTO;
             }
             uint64_t native_bits = 0U;
-            result = bvb_handle_table_lookup(&handles, command.buffer_id,
+            result = bvb_handle_table_lookup(&context->handles,
+                                             command.buffer_id,
                                              BVB_OBJECT_BUFFER, NULL,
                                              &native_bits);
             if (result != 0) {
                 set_error(error, error_size, "unknown fill-buffer handle");
                 return result;
             }
-            fill_buffer(command_buffer, buffer_from_bits(native_bits),
-                        command.offset, command.size, command.data);
+            context->fill_buffer(context->command_buffer,
+                                 buffer_from_bits(native_bits), command.offset,
+                                 command.size, command.data);
             fill_seen = true;
         } else if (record.opcode == BVB_COMMAND_BUFFER_HOST_READ_BARRIER &&
                    fill_seen && !barrier_seen) {
@@ -247,7 +253,8 @@ static int replay_transfer_batch(
                 return -EPROTO;
             }
             uint64_t native_bits = 0U;
-            result = bvb_handle_table_lookup(&handles, command.buffer_id,
+            result = bvb_handle_table_lookup(&context->handles,
+                                             command.buffer_id,
                                              BVB_OBJECT_BUFFER, NULL,
                                              &native_bits);
             if (result != 0) {
@@ -264,9 +271,9 @@ static int replay_transfer_batch(
                 .offset = command.offset,
                 .size = command.size,
             };
-            pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_HOST_BIT, 0, 0, NULL, 1,
-                             &barrier, 0, NULL);
+            context->pipeline_barrier(
+                context->command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                VK_PIPELINE_STAGE_HOST_BIT, 0, 0, NULL, 1, &barrier, 0, NULL);
             barrier_seen = true;
         } else {
             set_error(error, error_size,
@@ -282,21 +289,22 @@ static int replay_transfer_batch(
     return 0;
 }
 
-static int run_selftest(const char *loader_path, const uint8_t *batch,
-                        size_t batch_length,
-                        struct bvb_vulkan_selftest_result *output, char *error,
-                        size_t error_size) {
+int bvb_vulkan_batch_context_create(
+    const char *loader_path, struct bvb_vulkan_batch_context **context_output,
+    char *error, size_t error_size) {
     struct bvb_vulkan_objects objects;
+    struct bvb_vulkan_selftest_result initialized_result;
+    struct bvb_vulkan_selftest_result *output = &initialized_result;
     memset(&objects, 0, sizeof(objects));
     if (error != NULL && error_size > 0U) {
         error[0] = '\0';
     }
-    if (loader_path == NULL || loader_path[0] != '/' || output == NULL ||
-        (batch == NULL && batch_length != 0U) ||
-        (batch != NULL && batch_length == 0U)) {
+    if (loader_path == NULL || loader_path[0] != '/' ||
+        context_output == NULL) {
         set_error(error, error_size, "loader path must be absolute");
         return -EINVAL;
     }
+    *context_output = NULL;
     memset(output, 0, sizeof(*output));
     output->buffer_bytes = BVB_SELFTEST_BUFFER_BYTES;
     output->fill_word = BVB_SELFTEST_FILL_WORD;
@@ -535,6 +543,7 @@ static int run_selftest(const char *loader_path, const uint8_t *batch,
     LOAD_DEVICE(vkBindBufferMemory);
     LOAD_DEVICE(vkCreateCommandPool);
     LOAD_DEVICE(vkDestroyCommandPool);
+    LOAD_DEVICE(vkResetCommandPool);
     LOAD_DEVICE(vkAllocateCommandBuffers);
     LOAD_DEVICE(vkBeginCommandBuffer);
     LOAD_DEVICE(vkEndCommandBuffer);
@@ -550,12 +559,14 @@ static int run_selftest(const char *loader_path, const uint8_t *batch,
     objects.destroy_buffer = vkDestroyBuffer;
     objects.free_memory = vkFreeMemory;
     objects.destroy_command_pool = vkDestroyCommandPool;
+    objects.unmap_memory = vkUnmapMemory;
     if (vkDestroyDevice == NULL || vkGetDeviceQueue == NULL ||
         vkCreateBuffer == NULL || vkDestroyBuffer == NULL ||
         vkGetBufferMemoryRequirements == NULL || vkAllocateMemory == NULL ||
         vkFreeMemory == NULL || vkBindBufferMemory == NULL ||
         vkCreateCommandPool == NULL || vkDestroyCommandPool == NULL ||
-        vkAllocateCommandBuffers == NULL || vkBeginCommandBuffer == NULL ||
+        vkResetCommandPool == NULL || vkAllocateCommandBuffers == NULL ||
+        vkBeginCommandBuffer == NULL ||
         vkEndCommandBuffer == NULL || vkCmdFillBuffer == NULL ||
         vkCmdPipelineBarrier == NULL || vkQueueSubmit == NULL ||
         vkQueueWaitIdle == NULL || vkMapMemory == NULL ||
@@ -666,120 +677,215 @@ static int run_selftest(const char *loader_path, const uint8_t *batch,
         status = -EIO;
         goto done;
     }
+
+    vk_result = vkMapMemory(objects.device, objects.memory, 0,
+                            BVB_SELFTEST_BUFFER_BYTES, 0,
+                            &objects.mapped_memory);
+    if (vk_result != VK_SUCCESS || objects.mapped_memory == NULL) {
+        set_error(error, error_size, "vkMapMemory failed: %d", (int)vk_result);
+        status = -EIO;
+        goto done;
+    }
+
+    struct bvb_vulkan_batch_context *context = calloc(1, sizeof(*context));
+    if (context == NULL) {
+        set_error(error, error_size, "could not allocate Vulkan context");
+        status = -ENOMEM;
+        goto done;
+    }
+    context->objects = objects;
+    memset(&objects, 0, sizeof(objects));
+    context->base_result = *output;
+    context->queue = queue;
+    context->command_buffer = command_buffer;
+    context->reset_command_pool = vkResetCommandPool;
+    context->begin_command_buffer = vkBeginCommandBuffer;
+    context->end_command_buffer = vkEndCommandBuffer;
+    context->fill_buffer = vkCmdFillBuffer;
+    context->pipeline_barrier = vkCmdPipelineBarrier;
+    context->queue_submit = vkQueueSubmit;
+    context->queue_wait_idle = vkQueueWaitIdle;
+    context->invalidate_mapped_memory_ranges = vkInvalidateMappedMemoryRanges;
+
+    status = bvb_handle_table_init(&context->handles,
+                                   context->handle_entries,
+                                   sizeof(context->handle_entries) /
+                                       sizeof(context->handle_entries[0]));
+    const uint64_t command_buffer_id =
+        bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 1U);
+    const uint64_t buffer_id = bvb_handle_id(BVB_OBJECT_BUFFER, 1U);
+    if (status == 0) {
+        status = bvb_handle_table_insert(
+            &context->handles, command_buffer_id, 0U,
+            vulkan_handle_bits(&context->command_buffer,
+                               sizeof(context->command_buffer)));
+    }
+    if (status == 0) {
+        status = bvb_handle_table_insert(
+            &context->handles, buffer_id, 0U,
+            vulkan_handle_bits(&context->objects.buffer,
+                               sizeof(context->objects.buffer)));
+    }
+    if (status != 0) {
+        set_error(error, error_size, "could not establish handle ownership: %d",
+                  status);
+        bvb_vulkan_batch_context_destroy(context);
+        return status;
+    }
+    *context_output = context;
+    return 0;
+
+done:
+    cleanup(&objects);
+    return status;
+}
+
+int bvb_vulkan_batch_context_execute(
+    struct bvb_vulkan_batch_context *context, const uint8_t *batch,
+    size_t batch_length, struct bvb_vulkan_selftest_result *output,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size > 0U) {
+        error[0] = '\0';
+    }
+    if (context == NULL || output == NULL ||
+        (batch == NULL && batch_length != 0U) ||
+        (batch != NULL && batch_length == 0U)) {
+        set_error(error, error_size, "invalid Vulkan batch execution");
+        return -EINVAL;
+    }
+    *output = context->base_result;
+    output->mismatched_words = 0U;
+    output->submit_wait_elapsed_ns = 0U;
+
+    VkResult vk_result = context->reset_command_pool(
+        context->objects.device, context->objects.command_pool, 0);
+    if (vk_result != VK_SUCCESS) {
+        set_error(error, error_size, "vkResetCommandPool failed: %d",
+                  (int)vk_result);
+        return -EIO;
+    }
     const VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
-    vk_result = vkBeginCommandBuffer(command_buffer, &begin_info);
+    vk_result = context->begin_command_buffer(context->command_buffer,
+                                               &begin_info);
     if (vk_result != VK_SUCCESS) {
         set_error(error, error_size, "vkBeginCommandBuffer failed: %d",
                   (int)vk_result);
-        status = -EIO;
-        goto done;
+        return -EIO;
     }
     if (batch != NULL) {
-        status = replay_transfer_batch(
-            batch, batch_length, command_buffer, objects.buffer,
-            vkCmdFillBuffer, vkCmdPipelineBarrier, error, error_size);
+        int status = replay_transfer_batch(batch, batch_length, context, error,
+                                           error_size);
         if (status != 0) {
-            goto done;
+            return status;
         }
     } else {
-        vkCmdFillBuffer(command_buffer, objects.buffer, 0,
-                        BVB_SELFTEST_BUFFER_BYTES, BVB_SELFTEST_FILL_WORD);
+        context->fill_buffer(context->command_buffer, context->objects.buffer,
+                             0, BVB_SELFTEST_BUFFER_BYTES,
+                             BVB_SELFTEST_FILL_WORD);
         const VkBufferMemoryBarrier barrier = {
             .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
             .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
             .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .buffer = objects.buffer,
+            .buffer = context->objects.buffer,
             .offset = 0,
             .size = BVB_SELFTEST_BUFFER_BYTES,
         };
-        vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                             VK_PIPELINE_STAGE_HOST_BIT, 0, 0, NULL, 1,
-                             &barrier, 0, NULL);
+        context->pipeline_barrier(
+            context->command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_HOST_BIT, 0, 0, NULL, 1, &barrier, 0, NULL);
     }
-    vk_result = vkEndCommandBuffer(command_buffer);
+    vk_result = context->end_command_buffer(context->command_buffer);
     if (vk_result != VK_SUCCESS) {
         set_error(error, error_size, "vkEndCommandBuffer failed: %d",
                   (int)vk_result);
-        status = -EIO;
-        goto done;
+        return -EIO;
     }
     const VkSubmitInfo submit_info = {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .commandBufferCount = 1,
-        .pCommandBuffers = &command_buffer,
+        .pCommandBuffers = &context->command_buffer,
     };
     uint64_t start_ns = 0;
     uint64_t end_ns = 0;
-    status = monotonic_ns(&start_ns);
+    int status = monotonic_ns(&start_ns);
     if (status != 0) {
         set_error(error, error_size, "could not read monotonic clock");
-        goto done;
+        return status;
     }
-    vk_result = vkQueueSubmit(queue, 1, &submit_info, VK_NULL_HANDLE);
+    vk_result = context->queue_submit(context->queue, 1, &submit_info,
+                                      VK_NULL_HANDLE);
     if (vk_result == VK_SUCCESS) {
-        vk_result = vkQueueWaitIdle(queue);
+        vk_result = context->queue_wait_idle(context->queue);
     }
     if (vk_result != VK_SUCCESS) {
         set_error(error, error_size, "GPU submission failed: %d",
                   (int)vk_result);
-        status = -EIO;
-        goto done;
+        return -EIO;
     }
     status = monotonic_ns(&end_ns);
     if (status != 0) {
         set_error(error, error_size, "could not read monotonic clock");
-        goto done;
+        return status;
     }
     output->submit_wait_elapsed_ns = end_ns - start_ns;
 
-    void *mapped = NULL;
-    vk_result = vkMapMemory(objects.device, objects.memory, 0,
-                            BVB_SELFTEST_BUFFER_BYTES, 0, &mapped);
-    if (vk_result != VK_SUCCESS || mapped == NULL) {
-        set_error(error, error_size, "vkMapMemory failed: %d", (int)vk_result);
-        status = -EIO;
-        goto done;
-    }
     if ((output->memory_property_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) ==
         0U) {
         const VkMappedMemoryRange range = {
             .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
-            .memory = objects.memory,
+            .memory = context->objects.memory,
             .offset = 0,
             .size = VK_WHOLE_SIZE,
         };
-        vk_result = vkInvalidateMappedMemoryRanges(objects.device, 1, &range);
+        vk_result = context->invalidate_mapped_memory_ranges(
+            context->objects.device, 1, &range);
         if (vk_result != VK_SUCCESS) {
-            vkUnmapMemory(objects.device, objects.memory);
             set_error(error, error_size,
                       "vkInvalidateMappedMemoryRanges failed: %d",
                       (int)vk_result);
-            status = -EIO;
-            goto done;
+            return -EIO;
         }
     }
-    const uint32_t *words = mapped;
+    const uint32_t *words = context->objects.mapped_memory;
     for (uint32_t index = 0;
          index < BVB_SELFTEST_BUFFER_BYTES / sizeof(uint32_t); ++index) {
         if (words[index] != BVB_SELFTEST_FILL_WORD) {
             ++output->mismatched_words;
         }
     }
-    vkUnmapMemory(objects.device, objects.memory);
     if (output->mismatched_words != 0U) {
         set_error(error, error_size, "GPU fill verification found %u mismatches",
                   output->mismatched_words);
-        status = -EIO;
-        goto done;
+        return -EIO;
     }
+    return 0;
+}
 
-done:
-    cleanup(&objects);
+void bvb_vulkan_batch_context_destroy(
+    struct bvb_vulkan_batch_context *context) {
+    if (context != NULL) {
+        cleanup(&context->objects);
+        free(context);
+    }
+}
+
+static int run_selftest(const char *loader_path, const uint8_t *batch,
+                        size_t batch_length,
+                        struct bvb_vulkan_selftest_result *output, char *error,
+                        size_t error_size) {
+    struct bvb_vulkan_batch_context *context = NULL;
+    int status = bvb_vulkan_batch_context_create(
+        loader_path, &context, error, error_size);
+    if (status == 0) {
+        status = bvb_vulkan_batch_context_execute(
+            context, batch, batch_length, output, error, error_size);
+    }
+    bvb_vulkan_batch_context_destroy(context);
     return status;
 }
 

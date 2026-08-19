@@ -648,6 +648,15 @@ static VkResult VKAPI_CALL fake_queue_wait_idle(VkQueue queue) {
     return VK_SUCCESS;
 }
 
+static VkResult VKAPI_CALL fake_reset_command_pool(
+    VkDevice device, VkCommandPool command_pool,
+    VkCommandPoolResetFlags flags) {
+    (void)device;
+    (void)command_pool;
+    (void)flags;
+    return VK_SUCCESS;
+}
+
 static VkResult VKAPI_CALL fake_device_wait_idle(VkDevice device) {
     (void)device;
     return VK_SUCCESS;
@@ -749,6 +758,7 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkBindBufferMemory", fake_bind_buffer_memory)
     BVB_DEVICE_MATCH("vkCreateCommandPool", fake_create_command_pool)
     BVB_DEVICE_MATCH("vkDestroyCommandPool", fake_destroy_command_pool)
+    BVB_DEVICE_MATCH("vkResetCommandPool", fake_reset_command_pool)
     BVB_DEVICE_MATCH("vkAllocateCommandBuffers", fake_allocate_command_buffers)
     BVB_DEVICE_MATCH("vkBeginCommandBuffer", fake_begin_command_buffer)
     BVB_DEVICE_MATCH("vkEndCommandBuffer", fake_end_command_buffer)

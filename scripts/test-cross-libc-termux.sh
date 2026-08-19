@@ -132,6 +132,35 @@ shared_end_ns=$(date +%s%N)
 wait "$service_pid"
 service_pid=
 
+warm_socket_path="$runtime_dir/warm.sock"
+"$build_dir/bvb-bridge-service" --socket "$warm_socket_path" --once \
+    > "$out_dir/cross-libc-warm-service.stdout" \
+    2> "$out_dir/cross-libc-warm-service.stderr" &
+service_pid=$!
+
+attempt=0
+while [ ! -S "$warm_socket_path" ] && kill -0 "$service_pid" 2>/dev/null; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 100 ]; then
+        printf 'Bionic warm service readiness timed out\n' >&2
+        exit 4
+    fi
+    sleep 0.05
+done
+if [ ! -S "$warm_socket_path" ]; then
+    printf 'Bionic warm service exited before creating its socket\n' >&2
+    exit 4
+fi
+
+warm_start_ns=$(date +%s%N)
+grun "$glibc_client" --socket "$warm_socket_path" \
+    --vulkan-shared-batch-benchmark 100 \
+    > "$out_dir/cross-libc-warm.json" \
+    2> "$out_dir/cross-libc-warm-client.stderr"
+warm_end_ns=$(date +%s%N)
+wait "$service_pid"
+service_pid=
+
 "$build_dir/bvb-vulkan-probe" > "$out_dir/direct-vulkan-caps.json"
 "$build_dir/bvb-vulkan-selftest" > "$out_dir/direct-vulkan-selftest.json"
 
@@ -140,7 +169,8 @@ python - \
     "$out_dir/direct-vulkan-caps.json" \
     "$out_dir/direct-vulkan-selftest.json" \
     "$out_dir/cross-libc-batch.json" \
-    "$out_dir/cross-libc-shared.json" <<'PY'
+    "$out_dir/cross-libc-shared.json" \
+    "$out_dir/cross-libc-warm.json" <<'PY'
 import json
 import pathlib
 import sys
@@ -150,6 +180,7 @@ direct = json.loads(pathlib.Path(sys.argv[2]).read_text())
 direct_selftest = json.loads(pathlib.Path(sys.argv[3]).read_text())
 batched = json.loads(pathlib.Path(sys.argv[4]).read_text())
 shared = json.loads(pathlib.Path(sys.argv[5]).read_text())
+warm = json.loads(pathlib.Path(sys.argv[6]).read_text())
 assert bridged["schema_version"] == 1
 assert bridged["protocol_version"] == 1
 assert bridged["bionic_service"] is True
@@ -225,9 +256,34 @@ print(
     "shared_submit_wait_elapsed_ns="
     f"{shared_selftest['submit_wait_elapsed_ns']}"
 )
+warm_selftest = warm["vulkan_shared_batch_selftest"]
+for field in selftest_fields:
+    assert warm_selftest[field] == direct_selftest[field], field
+benchmark = warm["shared_batch_benchmark"]
+assert benchmark["warmup_iterations"] == 1
+assert benchmark["measured_iterations"] == 100
+assert benchmark["mismatched_words"] == 0
+assert benchmark["control_min_ns"] <= benchmark["control_mean_ns"]
+assert benchmark["control_mean_ns"] <= benchmark["control_max_ns"]
+assert benchmark["submit_wait_min_ns"] <= benchmark["submit_wait_mean_ns"]
+assert benchmark["submit_wait_mean_ns"] <= benchmark["submit_wait_max_ns"]
+print("warm_shared_command_parity=PASS")
+print(
+    "warm_control_ns="
+    f"{benchmark['control_min_ns']}/"
+    f"{benchmark['control_mean_ns']}/"
+    f"{benchmark['control_max_ns']}"
+)
+print(
+    "warm_submit_wait_ns="
+    f"{benchmark['submit_wait_min_ns']}/"
+    f"{benchmark['submit_wait_mean_ns']}/"
+    f"{benchmark['submit_wait_max_ns']}"
+)
 PY
 
 printf 'bridge_caps_elapsed_ns=%s\n' "$((end_ns - start_ns))"
 printf 'bridge_batch_elapsed_ns=%s\n' "$((batch_end_ns - batch_start_ns))"
 printf 'bridge_shared_elapsed_ns=%s\n' "$((shared_end_ns - shared_start_ns))"
+printf 'bridge_warm_100_elapsed_ns=%s\n' "$((warm_end_ns - warm_start_ns))"
 printf 'glibc_client=%s\n' "$glibc_client"
