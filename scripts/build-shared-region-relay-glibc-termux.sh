@@ -17,7 +17,9 @@ done
 for required_file in "$project_dir/src/lifecycle.c" \
     "$project_dir/src/protocol.c" "$project_dir/src/transport.c" \
     "$project_dir/src/handle.c" "$project_dir/src/command_batch.c" \
+    "$project_dir/src/vulkan_discovery.c" \
     "$project_dir/src/dxvk_dispatch_policy.c" \
+    "$project_dir/src/global_dispatch.c" \
     "$project_dir/src/triangle_dispatch.c" \
     "$project_dir/src/triangle_batch_builder.c" \
     "$project_dir/src/shared_region_relay.c" \
@@ -31,7 +33,8 @@ done
 mkdir -p "$object_dir"
 cmake --build "$build_dir" --parallel --target bvb-triangle-batch-builder
 for source_name in lifecycle protocol transport handle command_batch \
-    dxvk_dispatch_policy triangle_dispatch triangle_batch_builder \
+    vulkan_discovery dxvk_dispatch_policy global_dispatch triangle_dispatch \
+    triangle_batch_builder \
     shared_region_relay; do
     grun -s gcc -std=c17 -O3 -DNDEBUG -Wall -Wextra -Werror \
         -I"$project_dir/include" -I"$build_dir/generated" \
@@ -42,10 +45,11 @@ done
 grun -s gcc \
     "$object_dir/lifecycle.o" "$object_dir/protocol.o" \
     "$object_dir/transport.o" "$object_dir/handle.o" \
-    "$object_dir/command_batch.o" "$object_dir/dxvk_dispatch_policy.o" \
+    "$object_dir/command_batch.o" "$object_dir/vulkan_discovery.o" \
+    "$object_dir/dxvk_dispatch_policy.o" "$object_dir/global_dispatch.o" \
     "$object_dir/triangle_dispatch.o" \
     "$object_dir/triangle_batch_builder.o" \
-    "$object_dir/shared_region_relay.o" -o "$relay_binary"
+    "$object_dir/shared_region_relay.o" -pthread -o "$relay_binary"
 if ! readelf -l "$relay_binary" | \
     grep -q '/glibc/lib/ld-linux-aarch64.so.1'; then
     printf 'relay does not use the expected Termux glibc interpreter\n' >&2
