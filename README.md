@@ -77,8 +77,12 @@ boundary: APK v8 accepts an authenticated inline batch over loopback TCP. The
 real glibc client delivered its 200-byte six-command stream, and Bionic
 validated, replayed, submitted, and presented it through Adreno at 2800x1752 in
 a 14.6 ms synchronous round trip. This proves visible external replay across
-Android UIDs. Inline TCP is the bounded correctness path; shared-memory game
-batching still requires an Android-supported descriptor broker.
+Android UIDs. E020 then adds the Android-supported descriptor broker: APK v10
+returns a sealed 4 KiB memfd through a capability-authenticated Binder callback
+to a Termux-UID helper. A wrong capability returns `-EACCES`; the valid region
+and exact marker validate with no TCP payload copy. The remaining E021 step is
+to relay that already-delivered descriptor once from the Termux helper to the
+glibc/FEX client with same-UID `SCM_RIGHTS`.
 
 ## Build and test on a normal Linux host
 

@@ -999,3 +999,56 @@ The next performance gate is an Android descriptor broker that hands shared
 memory to a Termux-UID Bionic shim, which can then pass that descriptor to the
 glibc/FEX side locally with `SCM_RIGHTS`. That restores zero-copy batching while
 respecting Android's cross-UID security model.
+
+## E020 — cross-UID Binder shared-region delivery (2026-08-19)
+
+Status: passed on hardware at commit `25bad27` with signed APK v10 (0.1.9).
+
+Hypothesis: Android Binder can transfer a `ParcelFileDescriptor` from the
+visible-host APK UID to a Termux-UID helper even though SELinux denied E018's
+direct cross-UID Unix socket. Once the descriptor is in a Termux process, the
+already-proven E017 same-UID Unix transport can relay it to glibc/FEX.
+
+The first implementation used an exported `ContentProvider.openFile`. It
+isolated three independent bootstrap boundaries rather than passing the gate:
+raw `app_process` initially lacked a prepared main `Looper`; a synthetic system
+context then identified its operation package as `android` instead of
+`com.termux`; and the corrected package context was still rejected because its
+`IApplicationThread` was not an AMS-registered application process. Android's
+privileged external-provider route was also unavailable to an ordinary Termux
+UID. These are retained as failed observations rather than treated as a
+working transport.
+
+The passing implementation reuses Termux:X11's established callback shape. A
+raw Termux `app_process` creates a Binder callback, embeds that Binder in a
+package-targeted broadcast, and sends the broadcast through an intent sender
+owned by the real `com.termux` package. The registered visible-host receiver
+validates the fresh 256-bit lifecycle capability in native code, creates a
+sealed 4 KiB memfd, and writes its `ParcelFileDescriptor` into a synchronous
+Binder callback transaction. Binder installs the descriptor directly in the
+Termux helper; no provider acquisition, privileged permission, filesystem
+exchange, or TCP payload copy is involved.
+
+Result: a deliberately wrong capability returned `-EACCES` (`-13`). The valid
+request delivered exactly 4,096 bytes and the helper validated
+`BVB_E020_SHARED_REGION binder_parcel_fd=PASS`. Both helper stderr artifacts
+were empty. The authenticated Activity event history reached a renderer-ready
+2,800 x 1,752 window with zero rejected lifecycle events; the final status
+snapshot correctly records that the Activity later stopped and lost its
+window, so the gate validates event history rather than transient final focus.
+
+Evidence and artifact identities:
+
+- evidence: `docs/evidence/e020-binder-fd-gate.json`, 1,924 bytes, SHA-256
+  `ace84aa3445f8f63dad8fbd295262c48e08e71c697f36dd2281c83393f81c5c2`;
+- signed v10 APK and staged helper: 49,577 bytes, SHA-256
+  `6c24d6a0d4a27062219beea1078501c0d9d2a761c740774268e8900a6c2ce32e`;
+- valid and wrong-token stderr: empty, SHA-256
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+
+The required recall searches returned no indexed provider or Binder-relay
+implementation. E020 reused E016's visible renderer and lifecycle capability,
+E017's sealed-region format and same-UID descriptor plan, and the Binder
+callback mechanism from pinned Termux:X11 commit `139f219`. The next gate is
+E021: detach the Binder-delivered descriptor and relay it once over a
+Termux-owned Unix socket with `SCM_RIGHTS` to the real glibc client.

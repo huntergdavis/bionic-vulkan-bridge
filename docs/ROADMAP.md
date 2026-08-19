@@ -52,10 +52,13 @@
 - [x] Generate executable triangle-subset Vulkan entry-point dispatch
 - [x] Pass the generated glibc triangle batch to the reusable Bionic ingress
   receiver
+- [x] Transfer a sealed shared region across Android UIDs with a Binder callback
+- [ ] Relay the Binder-delivered descriptor to glibc/FEX with same-UID
+  `SCM_RIGHTS`
 - [ ] Expand generated dispatch to the measured DXVK startup subset
 - [ ] Implement GPU external-memory and synchronization strategy
 - [x] Reach a rendered test triangle
-- [ ] Deliver the glibc-generated triangle batch to the visible host
+- [x] Deliver the glibc-generated triangle batch to the visible host
 - [ ] Reach a DXVK sample
 - [ ] Run the fixed native-resolution Tomb Raider 2013 benchmark
 - [ ] Compare FPS, frame pacing, startup time, peak RSS, and thermals against the
