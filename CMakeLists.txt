@@ -11,6 +11,7 @@ include(CTest)
 include(FetchContent)
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
+find_package(Threads REQUIRED)
 
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
@@ -132,6 +133,19 @@ target_include_directories(
 target_link_libraries(bvb-visible-batch PRIVATE bvb-wire bvb-command-batch)
 bvb_enable_warnings(bvb-visible-batch)
 
+add_library(bvb-visible-ingress STATIC src/visible_ingress.c)
+set_target_properties(bvb-visible-ingress PROPERTIES C_VISIBILITY_PRESET hidden)
+target_include_directories(
+  bvb-visible-ingress
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
+)
+target_link_libraries(
+  bvb-visible-ingress PRIVATE bvb-visible-batch bvb-wire Threads::Threads
+)
+bvb_enable_warnings(bvb-visible-ingress)
+
 set(
   bvb_triangle_dispatch_include
   "${CMAKE_CURRENT_BINARY_DIR}/generated/bvb_triangle_dispatch.inc"
@@ -248,6 +262,13 @@ if(BUILD_TESTING)
   bvb_enable_warnings(bvb-visible-batch-test)
   add_test(NAME visible-batch-contract COMMAND bvb-visible-batch-test)
 
+  add_executable(bvb-visible-ingress-host-test tests/visible_ingress_host.c)
+  target_link_libraries(
+    bvb-visible-ingress-host-test
+    PRIVATE bvb-visible-ingress bvb-command-batch
+  )
+  bvb_enable_warnings(bvb-visible-ingress-host-test)
+
   add_executable(bvb-triangle-dispatch-test tests/triangle_dispatch.c)
   target_link_libraries(
     bvb-triangle-dispatch-test
@@ -261,6 +282,15 @@ if(BUILD_TESTING)
     COMMAND
       "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_visible_triangle_client.py"
+      "$<TARGET_FILE:bvb-visible-triangle-client>"
+  )
+
+  add_test(
+    NAME visible-ingress-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_visible_ingress.py"
+      "$<TARGET_FILE:bvb-visible-ingress-host-test>"
       "$<TARGET_FILE:bvb-visible-triangle-client>"
   )
 
