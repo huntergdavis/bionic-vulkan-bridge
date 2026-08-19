@@ -10,10 +10,6 @@ import java.io.FileNotFoundException;
 import java.util.List;
 
 public final class SharedRegionProvider extends ContentProvider {
-    static {
-        System.loadLibrary("bvb-visible-host");
-    }
-
     static native int nativeOpenRegion(String token);
     static native long[] nativeOpenExternalMemory(String token);
 
