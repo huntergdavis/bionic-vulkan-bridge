@@ -17,6 +17,7 @@
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -87,13 +88,17 @@ static struct bvb_visible_state state;
 static struct bvb_lifecycle_client lifecycle;
 static struct bvb_visible_ingress *visible_ingress;
 static bool visible_inline_ingress;
+static atomic_bool visible_brokered_ingress;
 static pthread_mutex_t lifecycle_mutex = PTHREAD_MUTEX_INITIALIZER;
 static struct bvb_renderer_control renderer = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
     .condition = PTHREAD_COND_INITIALIZER,
 };
 
-enum { BVB_E020_REGION_BYTES = 4096 };
+enum {
+    BVB_E020_REGION_BYTES = 4096,
+    BVB_E022_REGION_GENERATION = 1,
+};
 
 static bool token_matches(const uint8_t *left, const uint8_t *right) {
     uint8_t difference = 0U;
@@ -155,6 +160,28 @@ Java_io_github_huntergdavis_bvb_visiblehost_SharedRegionProvider_nativeOpenRegio
         int saved_error = errno;
         (void)close(memory_fd);
         return -saved_error;
+    }
+    (void)pthread_mutex_lock(&lifecycle_mutex);
+    bool install_required = lifecycle.configured && visible_inline_ingress &&
+                            visible_ingress != NULL;
+    if (install_required &&
+        !token_matches(parsed_token, lifecycle.token)) {
+        result = -EACCES;
+    } else if (install_required) {
+        result = bvb_visible_ingress_install_region(
+            visible_ingress, memory_fd, BVB_E020_REGION_BYTES,
+            BVB_E022_REGION_GENERATION);
+    }
+    (void)pthread_mutex_unlock(&lifecycle_mutex);
+    if (result != 0) {
+        (void)close(memory_fd);
+        BVB_LOGE("E022_REGION_INSTALL_FAIL status=%d", result);
+        return result;
+    }
+    if (install_required) {
+        atomic_store(&visible_brokered_ingress, true);
+        BVB_LOGI("E022_REGION_INSTALLED bytes=%u generation=%u",
+                 BVB_E020_REGION_BYTES, BVB_E022_REGION_GENERATION);
     }
     BVB_LOGI("E020_REGION_OPEN bytes=%u", BVB_E020_REGION_BYTES);
     return memory_fd;
@@ -238,6 +265,7 @@ static void configure_lifecycle(ANativeActivity *activity) {
     }
     if (visible_ingress == NULL) {
         visible_inline_ingress = false;
+        atomic_store(&visible_brokered_ingress, false);
     }
     if (token_valid && visible_port > 0 && visible_port <= UINT16_MAX &&
         visible_ingress == NULL) {
@@ -1323,7 +1351,11 @@ static bool create_renderer(ANativeWindow *window) {
             &external_sequence);
         if (batch_status == 0) {
             external_claimed = true;
-            if (visible_inline_ingress) {
+            if (atomic_load(&visible_brokered_ingress)) {
+                BVB_LOGI("E022_BATCH_CLAIM sequence=%llu bytes=%zu",
+                         (unsigned long long)external_sequence,
+                         render_batch_length);
+            } else if (visible_inline_ingress) {
                 BVB_LOGI("E019_BATCH_CLAIM sequence=%llu bytes=%zu",
                          (unsigned long long)external_sequence,
                          render_batch_length);
@@ -1446,7 +1478,11 @@ static bool create_renderer(ANativeWindow *window) {
              "source=%s",
              render_batch_length, external_claimed ? "glibc" : "local");
     if (external_claimed) {
-        if (visible_inline_ingress) {
+        if (atomic_load(&visible_brokered_ingress)) {
+            BVB_LOGI("E022_PASS sequence=%llu bytes=%zu",
+                     (unsigned long long)external_sequence,
+                     render_batch_length);
+        } else if (visible_inline_ingress) {
             BVB_LOGI("E019_PASS sequence=%llu bytes=%zu",
                      (unsigned long long)external_sequence,
                      render_batch_length);
