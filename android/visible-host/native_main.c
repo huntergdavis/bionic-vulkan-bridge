@@ -48,6 +48,8 @@ struct bvb_visible_state {
     VkQueue queue;
     VkSwapchainKHR swapchain;
     VkImageView image_view;
+    VkRenderPass render_pass;
+    VkFramebuffer framebuffer;
     VkShaderModule vertex_shader;
     VkShaderModule fragment_shader;
     VkPipelineLayout pipeline_layout;
@@ -325,6 +327,9 @@ static void destroy_renderer(void) {
         if (state.acquire_semaphore != VK_NULL_HANDLE) {
             vkDestroySemaphore(state.device, state.acquire_semaphore, NULL);
         }
+        if (state.framebuffer != VK_NULL_HANDLE) {
+            vkDestroyFramebuffer(state.device, state.framebuffer, NULL);
+        }
         if (state.pipeline != VK_NULL_HANDLE) {
             vkDestroyPipeline(state.device, state.pipeline, NULL);
         }
@@ -336,6 +341,9 @@ static void destroy_renderer(void) {
         }
         if (state.vertex_shader != VK_NULL_HANDLE) {
             vkDestroyShaderModule(state.device, state.vertex_shader, NULL);
+        }
+        if (state.render_pass != VK_NULL_HANDLE) {
+            vkDestroyRenderPass(state.device, state.render_pass, NULL);
         }
         if (state.image_view != VK_NULL_HANDLE) {
             vkDestroyImageView(state.device, state.image_view, NULL);
@@ -519,13 +527,12 @@ static int build_triangle_batch(uint8_t *batch, size_t capacity,
 
 static int replay_triangle_batch(
     const uint8_t *batch, size_t length, VkCommandBuffer command_buffer,
-    VkImageView image_view, VkPipeline pipeline,
-    PFN_vkCmdBeginRenderingKHR begin_rendering,
-    PFN_vkCmdEndRenderingKHR end_rendering) {
+    VkImageView image_view, VkPipeline pipeline, VkRenderPass render_pass,
+    VkFramebuffer framebuffer) {
     struct bvb_command_batch_info info;
     int result = bvb_command_batch_validate(batch, length, &info);
     if (result != 0 || info.command_count != 6U ||
-        begin_rendering == NULL || end_rendering == NULL) {
+        render_pass == VK_NULL_HANDLE || framebuffer == VK_NULL_HANDLE) {
         return result != 0 ? result : -EPROTO;
     }
     const uint64_t image_view_id =
@@ -584,29 +591,34 @@ static int replay_triangle_batch(
             if (result != 0) {
                 return result;
             }
-            const VkRenderingAttachmentInfoKHR attachment = {
-                .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR,
-                .imageView = image_view_from_bits(image_view_bits),
-                .imageLayout = (VkImageLayout)command.image_layout,
-                .resolveMode = VK_RESOLVE_MODE_NONE,
-                .loadOp = (VkAttachmentLoadOp)command.load_op,
-                .storeOp = (VkAttachmentStoreOp)command.store_op,
-                .clearValue.color.float32 = {
+            if (image_view_from_bits(image_view_bits) != image_view ||
+                command.image_layout !=
+                    (uint32_t)VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL ||
+                command.load_op != (uint32_t)VK_ATTACHMENT_LOAD_OP_CLEAR ||
+                command.store_op != (uint32_t)VK_ATTACHMENT_STORE_OP_STORE ||
+                command.layer_count != 1U || command.width == 0U ||
+                command.height == 0U) {
+                return -ENOTSUP;
+            }
+            const VkClearValue clear_value = {
+                .color.float32 = {
                     command.clear_color[0], command.clear_color[1],
                     command.clear_color[2], command.clear_color[3],
                 },
             };
-            const VkRenderingInfoKHR rendering = {
-                .sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR,
+            const VkRenderPassBeginInfo render_pass_begin = {
+                .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+                .renderPass = render_pass,
+                .framebuffer = framebuffer,
                 .renderArea = {
                     .offset = {0, 0},
                     .extent = {command.width, command.height},
                 },
-                .layerCount = command.layer_count,
-                .colorAttachmentCount = 1U,
-                .pColorAttachments = &attachment,
+                .clearValueCount = 1U,
+                .pClearValues = &clear_value,
             };
-            begin_rendering(command_buffer, &rendering);
+            vkCmdBeginRenderPass(command_buffer, &render_pass_begin,
+                                 VK_SUBPASS_CONTENTS_INLINE);
         } else if (index == 1U &&
                    record.opcode == BVB_COMMAND_BIND_GRAPHICS_PIPELINE) {
             struct bvb_bind_graphics_pipeline_command command;
@@ -660,7 +672,7 @@ static int replay_triangle_batch(
                       command.first_instance);
         } else if (index == 5U &&
                    record.opcode == BVB_COMMAND_END_RENDERING) {
-            end_rendering(command_buffer);
+            vkCmdEndRenderPass(command_buffer);
         } else {
             return -EPROTO;
         }
@@ -718,23 +730,8 @@ static bool create_renderer(ANativeWindow *window) {
     }
     VkPhysicalDevice physical_device = devices[0];
     if (!has_device_extension(physical_device,
-                              VK_KHR_SWAPCHAIN_EXTENSION_NAME) ||
-        !has_device_extension(physical_device,
-                              VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME)) {
+                              VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
         BVB_LOGE("E016_FAIL required_device_extension");
-        return false;
-    }
-    VkPhysicalDeviceDynamicRenderingFeaturesKHR dynamic_rendering = {
-        .sType =
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_FEATURES_KHR,
-    };
-    VkPhysicalDeviceFeatures2 features = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-        .pNext = &dynamic_rendering,
-    };
-    vkGetPhysicalDeviceFeatures2(physical_device, &features);
-    if (dynamic_rendering.dynamicRendering != VK_TRUE) {
-        BVB_LOGE("E016_FAIL dynamic_rendering_feature");
         return false;
     }
 
@@ -833,15 +830,12 @@ static bool create_renderer(ANativeWindow *window) {
     };
     static const char *const device_extensions[] = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-        VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
     };
-    dynamic_rendering.dynamicRendering = VK_TRUE;
     const VkDeviceCreateInfo device_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pNext = &dynamic_rendering,
         .queueCreateInfoCount = 1,
         .pQueueCreateInfos = &queue_info,
-        .enabledExtensionCount = 2,
+        .enabledExtensionCount = 1,
         .ppEnabledExtensionNames = device_extensions,
     };
     result = vkCreateDevice(physical_device, &device_info, NULL,
@@ -888,6 +882,39 @@ static bool create_renderer(ANativeWindow *window) {
                                      &image_count, images);
     if (result != VK_SUCCESS) {
         BVB_LOGE("E008_FAIL swapchain_image_list=%d", (int)result);
+        return false;
+    }
+
+    const VkAttachmentDescription render_attachment = {
+        .format = surface_format.format,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    };
+    const VkAttachmentReference render_attachment_reference = {
+        .attachment = 0U,
+        .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    };
+    const VkSubpassDescription render_subpass = {
+        .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+        .colorAttachmentCount = 1U,
+        .pColorAttachments = &render_attachment_reference,
+    };
+    const VkRenderPassCreateInfo render_pass_info = {
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .attachmentCount = 1U,
+        .pAttachments = &render_attachment,
+        .subpassCount = 1U,
+        .pSubpasses = &render_subpass,
+    };
+    result = vkCreateRenderPass(state.device, &render_pass_info, NULL,
+                                &state.render_pass);
+    if (result != VK_SUCCESS) {
+        BVB_LOGE("E016_FAIL render_pass=%d", (int)result);
         return false;
     }
 
@@ -977,14 +1004,8 @@ static bool create_renderer(ANativeWindow *window) {
         .dynamicStateCount = 2U,
         .pDynamicStates = dynamic_states,
     };
-    const VkPipelineRenderingCreateInfoKHR rendering_info = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR,
-        .colorAttachmentCount = 1U,
-        .pColorAttachmentFormats = &surface_format.format,
-    };
     const VkGraphicsPipelineCreateInfo pipeline_info = {
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-        .pNext = &rendering_info,
         .stageCount = 2U,
         .pStages = shader_stages,
         .pVertexInputState = &vertex_input,
@@ -995,6 +1016,8 @@ static bool create_renderer(ANativeWindow *window) {
         .pColorBlendState = &color_blend,
         .pDynamicState = &dynamic_state,
         .layout = state.pipeline_layout,
+        .renderPass = state.render_pass,
+        .subpass = 0U,
     };
     result = vkCreateGraphicsPipelines(state.device, VK_NULL_HANDLE, 1U,
                                        &pipeline_info, NULL, &state.pipeline);
@@ -1075,20 +1098,19 @@ static bool create_renderer(ANativeWindow *window) {
         BVB_LOGE("E016_FAIL image_view=%d", (int)result);
         return false;
     }
-    PFN_vkVoidFunction begin_raw =
-        vkGetDeviceProcAddr(state.device, "vkCmdBeginRenderingKHR");
-    PFN_vkVoidFunction end_raw =
-        vkGetDeviceProcAddr(state.device, "vkCmdEndRenderingKHR");
-    PFN_vkCmdBeginRenderingKHR begin_rendering = NULL;
-    PFN_vkCmdEndRenderingKHR end_rendering = NULL;
-    _Static_assert(sizeof(begin_rendering) == sizeof(begin_raw),
-                   "Vulkan function pointer size mismatch");
-    _Static_assert(sizeof(end_rendering) == sizeof(end_raw),
-                   "Vulkan function pointer size mismatch");
-    memcpy(&begin_rendering, &begin_raw, sizeof(begin_rendering));
-    memcpy(&end_rendering, &end_raw, sizeof(end_rendering));
-    if (begin_rendering == NULL || end_rendering == NULL) {
-        BVB_LOGE("E016_FAIL dynamic_rendering_entry_points");
+    const VkFramebufferCreateInfo framebuffer_info = {
+        .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+        .renderPass = state.render_pass,
+        .attachmentCount = 1U,
+        .pAttachments = &state.image_view,
+        .width = extent.width,
+        .height = extent.height,
+        .layers = 1U,
+    };
+    result = vkCreateFramebuffer(state.device, &framebuffer_info, NULL,
+                                 &state.framebuffer);
+    if (result != VK_SUCCESS) {
+        BVB_LOGE("E016_FAIL framebuffer=%d", (int)result);
         return false;
     }
     uint8_t triangle_batch[512];
@@ -1131,7 +1153,8 @@ static bool create_renderer(ANativeWindow *window) {
                          NULL, 0, NULL, 1, &to_render);
     batch_status = replay_triangle_batch(
         triangle_batch, triangle_batch_length, command_buffer,
-        state.image_view, state.pipeline, begin_rendering, end_rendering);
+        state.image_view, state.pipeline, state.render_pass,
+        state.framebuffer);
     if (batch_status != 0) {
         BVB_LOGE("E016_FAIL batch_replay=%d", batch_status);
         return false;
@@ -1192,7 +1215,8 @@ static bool create_renderer(ANativeWindow *window) {
         return false;
     }
     state.window = window;
-    BVB_LOGI("E016_PASS batch_bytes=%zu commands=6", triangle_batch_length);
+    BVB_LOGI("E016_PASS batch_bytes=%zu commands=6 backend=render_pass",
+             triangle_batch_length);
     BVB_LOGI("E008_PASS width=%u height=%u images=%u index=%u format=%d",
              extent.width, extent.height, image_count, image_index,
              (int)surface_format.format);
