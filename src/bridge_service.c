@@ -340,8 +340,10 @@ static int handle_activity_connection(
         ack_result = send_exact(connection, ack_wire, sizeof(ack_wire));
     }
     if (result == 0) {
-        printf("bvb-bridge-service: activity_event=%u sequence=%u pid=%u\n",
-               (unsigned int)record.event, record.sequence, record.activity_pid);
+        printf("bvb-bridge-service: activity_event=%u sequence=%u pid=%u "
+               "width=%u height=%u\n",
+               (unsigned int)record.event, record.sequence,
+               record.activity_pid, record.width, record.height);
         fflush(stdout);
     }
     return ack_result != 0 ? ack_result : result;
