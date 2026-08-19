@@ -73,7 +73,7 @@
   the real glibc-to-Bionic device path
 - [x] Add command-pool and command-buffer proxy ownership, recording, and one
   bounded non-empty queue submission
-- [ ] Add buffer/memory proxy ownership and record one deterministic GPU write
+- [x] Add buffer/memory proxy ownership and record one deterministic GPU write
   through the game-facing command buffer
 - [ ] Expand generated dispatch to the measured DXVK startup subset
 - [ ] Implement GPU external-memory and synchronization strategy

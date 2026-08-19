@@ -1658,3 +1658,56 @@ The next bounded gate is buffer/device-memory ownership and one deterministic
 recorded GPU write through this command buffer. E030's submit array is genuinely
 non-empty, but its command buffer contains no GPU commands; it does not claim
 resource creation, rendering, game-facing animation, or an FPS change.
+
+## E031 — Deterministic buffer fill and readback (2026-08-19)
+
+Status: passed on real hardware from a Termux ARM64 glibc client through the
+Android Bionic service at source commit `5ac7cde`.
+
+Hypothesis: E030's command-buffer and submission path can own ordinary buffer
+and device-memory resources, record one deterministic GPU transfer command,
+and preserve the result across the libc boundary for native readback.
+
+Method: protocol opcodes 34–41 add bounded create/destroy, requirements,
+allocate/free, bind, command-fill, and verification records. The current
+contract deliberately accepts only an exclusive transfer-destination buffer,
+no allocation callbacks or `pNext` chains, and allocations up to 16 MiB. The
+glibc test creates a 4 KiB buffer, selects compatible host-visible/coherent
+memory, binds it, records `vkCmdFillBuffer` with word `0xa5c3f00d` followed by
+a transfer-write-to-host-read barrier, submits and waits, then asks the Bionic
+service to map and verify all 1,024 words. Buffer and memory IDs remain typed,
+parented device children and are explicitly released.
+
+Result: the real Adreno 730 created buffer proxy `0x1300000000000001` and
+device-memory proxy `0x0900000000000001`, using memory type 6. Submission,
+queue wait, command-pool reset, readback, and explicit teardown all succeeded.
+Every one of 1,024 words matched, and both client and service stderr were
+empty. The E031 policy classifies 40 of 742 measured names executable, 400
+resolved names required-but-unimplemented, and 302 observed-null names
+unavailable.
+
+All 18 host contracts and all 16 contracts available under Termux ARM64 passed.
+Canonical evidence is `docs/evidence/e031-buffer-fill.json`, 6,746 bytes,
+SHA-256
+`8ed3e99014865629a8f76875b3e11216ee17853f936bdb674eab27d5de676d51`.
+The canonical artifacts are:
+
+- generated E031 policy: 2,068 bytes, SHA-256
+  `b1f6d5539e2ba405cf4e62745c3c1b855875ec3fb6fb7475671dd4c8c62c56a5`;
+- glibc `libvulkan-bvb` bridge: 215,960 bytes, SHA-256
+  `34e945ea2d30d65f6bc12db138a8cbc3db106b75886d0e6bc06688908d4ac675`;
+- glibc integration client: 72,000 bytes, SHA-256
+  `eb7819381cbbd948c6d68329f4c32aecded5610699c49b9a3098fdfe9b5e3993`;
+- Bionic bridge service: 118,056 bytes, SHA-256
+  `64b10b202c540b76646ec18df2d9012a263d1fa693eaf21112a6b1372bda8f72`.
+
+The required
+`deja "vkCreateBuffer vkAllocateMemory vkBindBufferMemory vkCmdFillBuffer glibc Bionic bridge"`
+query found no earlier cross-libc implementation. E031 reused the repository's
+proven native fill/barrier/map/readback sequence, E025's persistent
+authenticated connection, and E026–E030's parented proxy-handle lifecycle.
+
+The next bounded gate is to expand the generated dispatch from this proven
+resource operation toward the measured DXVK startup subset. E031 does not yet
+claim image or shader resources, WSI/presentation through this game-facing
+path, DXVK startup, animation, an FPS result, or removal of Termux.

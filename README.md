@@ -137,6 +137,11 @@ the Adreno queue, then waited, reset, freed, and destroyed it explicitly. This
 is a non-empty submit array, but the recorded buffer intentionally contains no
 GPU commands yet. The policy now marks 33 names executable and leaves 407
 resolved names unavailable.
+E031 adds typed buffer and device-memory ownership to that path. The glibc
+client recorded a real `vkCmdFillBuffer`, submitted it to Adreno 730, and the
+Bionic service read back all 1,024 expected words with zero mismatches before
+explicit resource teardown. The policy now marks 40 names executable and
+leaves 400 resolved names unavailable.
 
 ## Build and test on a normal Linux host
 
