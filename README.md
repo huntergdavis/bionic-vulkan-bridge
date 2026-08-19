@@ -142,6 +142,10 @@ client recorded a real `vkCmdFillBuffer`, submitted it to Adreno 730, and the
 Bionic service read back all 1,024 expected words with zero mismatches before
 explicit resource teardown. The policy now marks 40 names executable and
 leaves 400 resolved names unavailable.
+E032 adds typed fence ownership and asynchronous completion. The same GPU fill
+now submits with a real fence, transitions from `VK_NOT_READY` to signaled,
+waits without a queue-idle barrier, resets to `VK_NOT_READY`, and tears down
+cleanly. The policy now marks 45 names executable and leaves 395 unavailable.
 
 ## Build and test on a normal Linux host
 

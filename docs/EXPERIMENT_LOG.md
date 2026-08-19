@@ -1711,3 +1711,32 @@ The next bounded gate is to expand the generated dispatch from this proven
 resource operation toward the measured DXVK startup subset. E031 does not yet
 claim image or shader resources, WSI/presentation through this game-facing
 path, DXVK startup, animation, an FPS result, or removal of Termux.
+
+## E032 — Fence-backed asynchronous GPU submission (2026-08-19)
+
+Status: passed on real hardware from a Termux ARM64 glibc client through the
+Android Bionic service at source commit `1e06ab4`.
+
+Method: fixed-width opcodes 42–47 add typed fence create/destroy, status,
+one-fence wait/reset, and a fenced variant of E031's one-command-buffer submit.
+The client and service both require the queue, command buffer, and fence to
+share one device. The test creates an unsignaled fence, submits the 4 KiB
+`vkCmdFillBuffer`, waits on the fence rather than idling the whole queue,
+verifies all 1,024 words, resets the fence, and destroys every object.
+
+Result: Adreno 730 reported `VK_NOT_READY` before submit, `VK_SUCCESS` after
+submit and wait, and `VK_NOT_READY` after reset. Readback had zero mismatches;
+both stderr streams were empty. All 18 host and all 16 Termux ARM64 contracts
+passed. The E032 policy classifies 45 of 742 names executable, 395
+required-but-unimplemented, and 302 observed-null.
+
+Canonical evidence is `docs/evidence/e032-fence-submit.json`, 7,372 bytes,
+SHA-256
+`c01dc3b12143db9edcb96965503a128b07e5aa01a195706be96edee53d560119`.
+The required recall query found no earlier fence-backed cross-libc bridge;
+E032 reused E025's persistent connection and E026–E031's parented handles,
+command recording, and deterministic fill/readback.
+
+The next visual gate adds a per-frame rotation push constant to the existing
+shared frame ring. E032 does not yet claim mapped-memory sharing, general
+semaphore support, DXVK startup, or a game FPS change.
