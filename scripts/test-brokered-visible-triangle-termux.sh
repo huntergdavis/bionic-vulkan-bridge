@@ -17,7 +17,7 @@ control_client="$build_dir/bvb-bridge-client"
 screencap_command=/system/bin/screencap
 
 for command_name in am aapt chmod cmake cp env grun logcat od pm python \
-    pidof readelf sed sha256sum sleep tr; do
+    readelf sed sha256sum sleep tr; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         printf 'missing required command: %s\n' "$command_name" >&2
         exit 2
@@ -137,12 +137,7 @@ if [ -z "$port" ] || [ ! -S "$control_socket" ]; then
     exit 4
 fi
 
-if pidof "$package_name" >/dev/null 2>&1; then
-    printf 'visible-host process is already running; close it before E022\n' \
-        >&2
-    exit 5
-fi
-am start -W -n "$package_name/$activity_name" \
+am start -S -W -n "$package_name/$activity_name" \
     --ei bvb_activity_port "$port" \
     --es bvb_activity_token "$token" \
     --ei bvb_visible_port "$visible_port" > "$launch_stdout"
