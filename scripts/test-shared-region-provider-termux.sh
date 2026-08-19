@@ -7,7 +7,6 @@ out_dir="$project_dir/out"
 runtime_parent=${TMPDIR:-/tmp}
 package_name=io.github.huntergdavis.bvb.visiblehost
 activity_name=android.app.NativeActivity
-provider_authority=io.github.huntergdavis.bvb.visiblehost.shared
 client_class=io.github.huntergdavis.bvb.visiblehost.SharedRegionClient
 manifest="$project_dir/android/visible-host/AndroidManifest.xml"
 signed_apk="$out_dir/visible-host/bvb-visible-host-debug.apk"
@@ -150,10 +149,9 @@ run_helper() {
     result_path=$2
     stdout_path=$3
     stderr_path=$4
-    uri="content://$provider_authority/region/$helper_token"
     env -u LD_LIBRARY_PATH -u LD_PRELOAD CLASSPATH="$helper_apk" \
         /system/bin/app_process -Xnoimage-dex2oat / "$client_class" \
-        "$uri" "$result_path" > "$stdout_path" 2> "$stderr_path"
+        "$helper_token" "$result_path" > "$stdout_path" 2> "$stderr_path"
 }
 
 if run_helper "$wrong_token" "$wrong_json" "$wrong_stdout" \
@@ -200,7 +198,7 @@ document = {
     "schema_version": 1,
     "gate": "E020",
     "result": "pass",
-    "provider": "content_provider_parcel_file_descriptor",
+    "provider": "broadcast_binder_callback_parcel_file_descriptor",
     "caller_uid": "termux",
     "wrong_capability": wrong,
     "valid_capability": valid,

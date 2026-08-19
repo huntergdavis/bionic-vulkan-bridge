@@ -14,7 +14,7 @@ public final class SharedRegionProvider extends ContentProvider {
         System.loadLibrary("bvb-visible-host");
     }
 
-    private static native int nativeOpenRegion(String token);
+    static native int nativeOpenRegion(String token);
 
     @Override
     public boolean onCreate() {

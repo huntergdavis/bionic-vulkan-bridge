@@ -10,6 +10,7 @@ source_file="$project_dir/android/visible-host/native_main.c"
 java_dir="$project_dir/android/visible-host/java/io/github/huntergdavis/bvb/visiblehost"
 provider_java="$java_dir/SharedRegionProvider.java"
 client_java="$java_dir/SharedRegionClient.java"
+receiver_java="$java_dir/SharedRegionReceiver.java"
 lifecycle_source="$project_dir/src/lifecycle.c"
 protocol_source="$project_dir/src/protocol.c"
 handle_source="$project_dir/src/handle.c"
@@ -49,7 +50,7 @@ for command_name in clang aapt zipalign apksigner keytool readelf \
     fi
 done
 for required_file in "$manifest" "$source_file" "$provider_java" \
-    "$client_java" \
+    "$client_java" "$receiver_java" \
     "$lifecycle_source" \
     "$protocol_source" "$handle_source" "$batch_source" \
     "$transport_source" "$visible_batch_source" "$visible_ingress_source" \
@@ -99,13 +100,14 @@ fetch_pinned "$r8_url" "$r8_sha256" "$r8_jar"
 fetch_pinned "$android_jar_url" "$android_jar_sha256" "$android_jar"
 
 javac --release 8 -classpath "$android_jar" -d "$java_classes" \
-    "$provider_java" "$client_java"
+    "$provider_java" "$client_java" "$receiver_java"
 rm -f "$dex_dir/classes.dex"
 java -cp "$r8_jar" com.android.tools.r8.D8 \
     --release --no-desugaring --min-api 24 --lib "$android_jar" \
     --output "$dex_dir" \
     "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionProvider.class" \
-    "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionClient.class"
+    "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionClient.class" \
+    "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionReceiver.class"
 if [ ! -f "$dex_dir/classes.dex" ]; then
     printf 'D8 did not produce classes.dex\n' >&2
     exit 4

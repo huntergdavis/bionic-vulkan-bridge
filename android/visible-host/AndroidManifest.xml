@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.huntergdavis.bvb.visiblehost"
-    android:versionCode="9"
-    android:versionName="0.1.8">
+    android:versionCode="10"
+    android:versionName="0.1.9">
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="36" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -23,6 +23,13 @@
             android:authorities="io.github.huntergdavis.bvb.visiblehost.shared"
             android:exported="true"
             android:grantUriPermissions="false" />
+        <receiver
+            android:name="io.github.huntergdavis.bvb.visiblehost.SharedRegionReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="io.github.huntergdavis.bvb.visiblehost.REQUEST_SHARED_REGION" />
+            </intent-filter>
+        </receiver>
         <activity
             android:name="android.app.NativeActivity"
             android:configChanges="orientation|keyboardHidden|screenSize"
