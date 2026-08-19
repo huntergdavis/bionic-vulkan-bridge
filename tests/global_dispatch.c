@@ -262,12 +262,24 @@ int main(void) {
 
     PFN_vkGetDeviceQueue get_device_queue = NULL;
     PFN_vkDestroyDevice destroy_device = NULL;
+    PFN_vkQueueSubmit queue_submit = NULL;
+    PFN_vkQueueWaitIdle queue_wait_idle = NULL;
+    PFN_vkDeviceWaitIdle device_wait_idle = NULL;
     erased = vkGetDeviceProcAddr(device, "vkGetDeviceQueue");
     CHECK(erased != NULL);
     memcpy(&get_device_queue, &erased, sizeof(get_device_queue));
     erased = vkGetDeviceProcAddr(device, "vkDestroyDevice");
     CHECK(erased != NULL);
     memcpy(&destroy_device, &erased, sizeof(destroy_device));
+    erased = vkGetDeviceProcAddr(device, "vkQueueSubmit");
+    CHECK(erased != NULL);
+    memcpy(&queue_submit, &erased, sizeof(queue_submit));
+    erased = vkGetDeviceProcAddr(device, "vkQueueWaitIdle");
+    CHECK(erased != NULL);
+    memcpy(&queue_wait_idle, &erased, sizeof(queue_wait_idle));
+    erased = vkGetDeviceProcAddr(device, "vkDeviceWaitIdle");
+    CHECK(erased != NULL);
+    memcpy(&device_wait_idle, &erased, sizeof(device_wait_idle));
     CHECK(vkGetDeviceProcAddr(device, "vkCmdDraw") != NULL);
     VkQueue queue = VK_NULL_HANDLE;
     get_device_queue(device, queue_family_index, 0U, &queue);
@@ -278,6 +290,14 @@ int main(void) {
     VkQueue repeated_queue = VK_NULL_HANDLE;
     get_device_queue(device, queue_family_index, 0U, &repeated_queue);
     CHECK(repeated_queue == queue);
+    CHECK(queue_submit(queue, 0U, NULL, VK_NULL_HANDLE) == VK_SUCCESS);
+    const VkSubmitInfo unsupported_submit = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+    };
+    CHECK(queue_submit(queue, 1U, &unsupported_submit, VK_NULL_HANDLE) ==
+          VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(queue_wait_idle(queue) == VK_SUCCESS);
+    CHECK(device_wait_idle(device) == VK_SUCCESS);
     destroy_device(device, NULL);
 
     VkInstance instance_two = VK_NULL_HANDLE;
@@ -301,7 +321,8 @@ int main(void) {
            "instance_one=%llu instance_two=%llu physical_device=%llu "
            "device=%s device_api=%u driver=%u vendor=%u device_id=%u "
            "queues=%u memory_types=%u memory_heaps=%u device_extensions=%u "
-           "sampler_anisotropy=%u logical_device=%llu queue=%llu\n",
+           "sampler_anisotropy=%u logical_device=%llu queue=%llu "
+           "empty_submit=0 queue_wait=0 device_wait=0\n",
            api_version, (unsigned long long)instance_one_id,
            (unsigned long long)instance_two_id,
            (unsigned long long)physical_id, properties.deviceName,

@@ -936,3 +936,111 @@ int bvb_vulkan_global_context_get_device_queue(
     *queue_id = wire_id;
     return 0;
 }
+
+static int resolve_queue(
+    const struct bvb_vulkan_global_context *context, uint64_t queue_id,
+    VkDevice *device, VkQueue *queue) {
+    if (context == NULL || device == NULL || queue == NULL) {
+        return -EINVAL;
+    }
+    uint64_t device_id = 0U;
+    uint64_t queue_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, queue_id, BVB_OBJECT_QUEUE, &device_id, &queue_bits);
+    uint64_t device_bits = 0U;
+    if (result == 0) {
+        result = bvb_handle_table_lookup(
+            &context->objects, device_id, BVB_OBJECT_DEVICE, NULL,
+            &device_bits);
+    }
+    if (result == 0) {
+        *device = device_from_bits(device_bits);
+        *queue = VK_NULL_HANDLE;
+        _Static_assert(sizeof(*queue) <= sizeof(queue_bits),
+                       "VkQueue exceeds bridge handle width");
+        memcpy(queue, &queue_bits, sizeof(*queue));
+    }
+    return result;
+}
+
+int bvb_vulkan_global_context_queue_submit_empty(
+    const struct bvb_vulkan_global_context *context, uint64_t queue_id,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (vulkan_result == NULL) {
+        return -EINVAL;
+    }
+    VkDevice device = VK_NULL_HANDLE;
+    VkQueue queue = VK_NULL_HANDLE;
+    int result = resolve_queue(context, queue_id, &device, &queue);
+    if (result != 0) {
+        set_error(error, error_size, "unknown queue handle");
+        return result;
+    }
+    PFN_vkQueueSubmit submit =
+        (PFN_vkQueueSubmit)context->get_device_proc_addr(
+            device, "vkQueueSubmit");
+    if (submit == NULL) {
+        set_error(error, error_size, "device has no vkQueueSubmit");
+        return -ENOSYS;
+    }
+    *vulkan_result = submit(queue, 0U, NULL, VK_NULL_HANDLE);
+    return 0;
+}
+
+int bvb_vulkan_global_context_queue_wait_idle(
+    const struct bvb_vulkan_global_context *context, uint64_t queue_id,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (vulkan_result == NULL) {
+        return -EINVAL;
+    }
+    VkDevice device = VK_NULL_HANDLE;
+    VkQueue queue = VK_NULL_HANDLE;
+    int result = resolve_queue(context, queue_id, &device, &queue);
+    if (result != 0) {
+        set_error(error, error_size, "unknown queue handle");
+        return result;
+    }
+    PFN_vkQueueWaitIdle wait_idle =
+        (PFN_vkQueueWaitIdle)context->get_device_proc_addr(
+            device, "vkQueueWaitIdle");
+    if (wait_idle == NULL) {
+        set_error(error, error_size, "device has no vkQueueWaitIdle");
+        return -ENOSYS;
+    }
+    *vulkan_result = wait_idle(queue);
+    return 0;
+}
+
+int bvb_vulkan_global_context_device_wait_idle(
+    const struct bvb_vulkan_global_context *context, uint64_t device_id,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (context == NULL || vulkan_result == NULL) {
+        return -EINVAL;
+    }
+    uint64_t device_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, device_id, BVB_OBJECT_DEVICE, NULL, &device_bits);
+    if (result != 0) {
+        set_error(error, error_size, "unknown device handle");
+        return result;
+    }
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkDeviceWaitIdle wait_idle =
+        (PFN_vkDeviceWaitIdle)context->get_device_proc_addr(
+            device, "vkDeviceWaitIdle");
+    if (wait_idle == NULL) {
+        set_error(error, error_size, "device has no vkDeviceWaitIdle");
+        return -ENOSYS;
+    }
+    *vulkan_result = wait_idle(device);
+    return 0;
+}

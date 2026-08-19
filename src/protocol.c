@@ -59,7 +59,7 @@ static int header_is_valid(const struct bvb_protocol_header *header) {
         return -EPROTO;
     }
     if (header->opcode < BVB_OPCODE_HELLO ||
-        header->opcode > BVB_OPCODE_VULKAN_DEVICE_QUEUE) {
+        header->opcode > BVB_OPCODE_VULKAN_DEVICE_WAIT_IDLE) {
         return -EPROTO;
     }
     if (header->payload_length > BVB_PROTOCOL_MAX_PAYLOAD) {
@@ -451,6 +451,24 @@ int bvb_protocol_decode_vulkan_queue_id(
         return -EPROTO;
     }
     *queue_id = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_result(
+    uint8_t output[BVB_VULKAN_RESULT_SIZE], int32_t vulkan_result) {
+    if (output == NULL) {
+        return -EINVAL;
+    }
+    bvb_wire_put_i32(output, vulkan_result);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_result(
+    const uint8_t input[BVB_VULKAN_RESULT_SIZE], int32_t *vulkan_result) {
+    if (input == NULL || vulkan_result == NULL) {
+        return -EINVAL;
+    }
+    *vulkan_result = bvb_wire_get_i32(input);
     return 0;
 }
 

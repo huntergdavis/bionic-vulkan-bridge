@@ -271,6 +271,14 @@ int main(void) {
     CHECK(bvb_protocol_decode_vulkan_device_id(
               queue_id_wire, &device_id_decoded) == -EPROTO);
 
+    uint8_t vulkan_result_wire[BVB_VULKAN_RESULT_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_result(
+              vulkan_result_wire, -4) == 0);
+    int32_t vulkan_result_decoded = 0;
+    CHECK(bvb_protocol_decode_vulkan_result(
+              vulkan_result_wire, &vulkan_result_decoded) == 0);
+    CHECK(vulkan_result_decoded == -4);
+
     const struct bvb_shared_batch_setup shared_setup = {
         .region_bytes = 4096U,
         .generation = UINT64_C(0x1122334455667788),

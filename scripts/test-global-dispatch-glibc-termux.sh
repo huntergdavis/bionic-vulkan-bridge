@@ -8,7 +8,7 @@ library="$out_dir/libvulkan-bvb-glibc.so"
 client="$out_dir/bvb-global-dispatch-test-glibc"
 service="$build_dir/bvb-bridge-service"
 policy_json="$out_dir/generated/bvb_dxvk_dispatch_policy.json"
-evidence="$project_dir/out/e028-logical-device.json"
+evidence="$project_dir/out/e029-empty-submit.json"
 vulkan_headers="$build_dir/_deps/vulkanheaders-src/include"
 runtime_parent=${TMPDIR:-$PREFIX/tmp}
 runtime_dir=
@@ -22,7 +22,7 @@ cleanup() {
     if [ -n "$runtime_dir" ] && [ -d "$runtime_dir" ] &&
         [ ! -L "$runtime_dir" ]; then
         case "$runtime_dir" in
-            "$runtime_parent"/bvb-e028.*) rmdir "$runtime_dir" 2>/dev/null || true ;;
+            "$runtime_parent"/bvb-e029.*) rmdir "$runtime_dir" 2>/dev/null || true ;;
         esac
     fi
 }
@@ -55,16 +55,16 @@ if ! readelf -l "$service" | grep -Fq "$bionic_interpreter"; then
     exit 3
 fi
 
-runtime_dir=$(mktemp -d "$runtime_parent/bvb-e028.XXXXXX")
+runtime_dir=$(mktemp -d "$runtime_parent/bvb-e029.XXXXXX")
 case "$runtime_dir" in
-    "$runtime_parent"/bvb-e028.*) ;;
+    "$runtime_parent"/bvb-e029.*) ;;
     *) printf 'unexpected runtime directory: %s\n' "$runtime_dir" >&2; exit 3 ;;
 esac
 control_socket="$runtime_dir/bridge.sock"
-client_stdout="$out_dir/e028-client.stdout"
-client_stderr="$out_dir/e028-client.stderr"
-service_stdout="$out_dir/e028-service.stdout"
-service_stderr="$out_dir/e028-service.stderr"
+client_stdout="$out_dir/e029-client.stdout"
+client_stderr="$out_dir/e029-client.stderr"
+service_stdout="$out_dir/e029-service.stdout"
+service_stderr="$out_dir/e029-service.stderr"
 
 "$service" --socket "$control_socket" --once \
     >"$service_stdout" 2>"$service_stderr" &
@@ -87,7 +87,7 @@ BVB_BRIDGE_SOCKET="$control_socket" grun "$client" \
 wait "$service_pid"
 service_pid=
 if [ -s "$client_stderr" ] || [ -s "$service_stderr" ]; then
-    printf 'E028 emitted unexpected stderr\n' >&2
+    printf 'E029 emitted unexpected stderr\n' >&2
     exit 5
 fi
 
@@ -126,13 +126,13 @@ def artifact(path):
 
 
 policy = json.loads(policy_path.read_text())
-assert policy["gate"] == "E028"
+assert policy["gate"] == "E029"
 assert policy["summary"]["command_count"] == 742
-assert policy["summary"]["executable_name_count"] == 23
+assert policy["summary"]["executable_name_count"] == 26
 assert policy["summary"]["support_counts"] == {
     "probed_null": 302,
-    "required_unimplemented": 417,
-    "executable": 23,
+    "required_unimplemented": 414,
+    "executable": 26,
 }
 client_stdout = client_stdout_path.read_text().strip()
 match = re.fullmatch(
@@ -142,7 +142,8 @@ match = re.fullmatch(
     r"device=(.*?) device_api=(\d+) driver=(\d+) vendor=(\d+) "
     r"device_id=(\d+) queues=(\d+) memory_types=(\d+) "
     r"memory_heaps=(\d+) device_extensions=(\d+) "
-    r"sampler_anisotropy=(\d+) logical_device=(\d+) queue=(\d+)",
+    r"sampler_anisotropy=(\d+) logical_device=(\d+) queue=(\d+) "
+    r"empty_submit=(-?\d+) queue_wait=(-?\d+) device_wait=(-?\d+)",
     client_stdout,
 )
 assert match is not None, client_stdout
@@ -163,6 +164,9 @@ assert match is not None, client_stdout
     sampler_anisotropy_text,
     logical_device_text,
     logical_queue_text,
+    empty_submit_text,
+    queue_wait_text,
+    device_wait_text,
 ) = match.groups()
 (
     api_version,
@@ -180,6 +184,9 @@ assert match is not None, client_stdout
     sampler_anisotropy,
     logical_device,
     logical_queue,
+    empty_submit_result,
+    queue_wait_result,
+    device_wait_result,
 ) = map(int, (
     api_version_text,
     instance_one_text,
@@ -196,6 +203,9 @@ assert match is not None, client_stdout
     sampler_anisotropy_text,
     logical_device_text,
     logical_queue_text,
+    empty_submit_text,
+    queue_wait_text,
+    device_wait_text,
 ))
 assert api_version == 0x00404000
 assert instance_one == 0x0100000000000001
@@ -211,6 +221,9 @@ assert device_extension_count > 15
 assert sampler_anisotropy == 1
 assert logical_device == 0x0300000000000001
 assert logical_queue == 0x0400000000000001
+assert empty_submit_result == 0
+assert queue_wait_result == 0
+assert device_wait_result == 0
 
 symbols = subprocess.run(
     ["readelf", "--wide", "--dyn-syms", str(library_path)],
@@ -235,7 +248,7 @@ assert expected_exports <= symbol_names
 
 document = {
     "schema_version": 1,
-    "gate": "E028",
+    "gate": "E029",
     "result": "pass",
     "source_commit": source_commit,
     "target": "Galaxy Tab S8+ Termux ARM64 glibc to Android Bionic",
@@ -273,6 +286,10 @@ document = {
         "queue_type": 4,
         "queue_serial": 1,
         "queue_identity_stable": True,
+        "empty_submit_result": empty_submit_result,
+        "nonempty_submit_rejected_client_side": True,
+        "queue_wait_idle_result": queue_wait_result,
+        "device_wait_idle_result": device_wait_result,
         "logical_device_destroyed_explicitly": True,
         "instances_destroyed_explicitly": True,
         "client_stdout": client_stdout,
@@ -291,7 +308,7 @@ document = {
 assert document["physical_device_discovery"]["service_ready"] is True
 evidence_path.write_text(json.dumps(document, indent=2) + "\n")
 print(json.dumps(document, indent=2))
-print("e028_logical_device=PASS")
+print("e029_empty_submit=PASS")
 PY
 
 printf 'evidence=%s\n' "$evidence"

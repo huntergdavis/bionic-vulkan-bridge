@@ -62,6 +62,7 @@ def main() -> int:
             assert "sampler_anisotropy=1" in completed.stdout
             assert f"logical_device={0x0300000000000001}" in completed.stdout
             assert f"queue={0x0400000000000001}" in completed.stdout
+            assert "empty_submit=0 queue_wait=0 device_wait=0" in completed.stdout
             server_stdout, server_stderr = server.communicate(timeout=5.0)
             assert server.returncode == 0, server_stderr
             assert server_stdout == ""
@@ -71,7 +72,7 @@ def main() -> int:
             if server.poll() is None:
                 server.terminate()
                 server.wait(timeout=5.0)
-    print("PASS: E028 logical-device and queue integration")
+    print("PASS: E029 empty-submit and idle integration")
     return 0
 
 

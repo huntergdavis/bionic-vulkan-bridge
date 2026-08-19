@@ -1058,6 +1058,98 @@ static void VKAPI_CALL bvb_bridge_vkGetDeviceQueue(
     }
 }
 
+static VkResult queue_result_operation(
+    uint16_t opcode, VkQueue queue) {
+    struct bvb_queue_proxy *proxy = queue_proxy(queue);
+    if (proxy == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    int result = connect_locked();
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = opcode,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_QUEUE_ID_SIZE,
+    };
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_queue_id(
+            request.payload, proxy->wire_id);
+    }
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        result = exchange_locked(&request, &response);
+    }
+    if (result == 0 &&
+        (response.header.status != 0 ||
+         response.header.payload_length != BVB_VULKAN_RESULT_SIZE)) {
+        result = -EPROTO;
+    }
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    if (result == 0) {
+        result = bvb_protocol_decode_vulkan_result(
+            response.payload, &vulkan_result);
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return result == 0 ? (VkResult)vulkan_result
+                       : VK_ERROR_INITIALIZATION_FAILED;
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkQueueSubmit(
+    VkQueue queue, uint32_t submit_count, const VkSubmitInfo *submits,
+    VkFence fence) {
+    (void)submits;
+    if (submit_count != 0U || fence != VK_NULL_HANDLE) {
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    return queue_result_operation(
+        BVB_OPCODE_VULKAN_QUEUE_SUBMIT_EMPTY, queue);
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkQueueWaitIdle(VkQueue queue) {
+    return queue_result_operation(BVB_OPCODE_VULKAN_QUEUE_WAIT_IDLE, queue);
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkDeviceWaitIdle(VkDevice device) {
+    struct bvb_device_proxy *proxy = device_proxy(device);
+    if (proxy == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    int result = connect_locked();
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_DEVICE_WAIT_IDLE,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_DEVICE_ID_SIZE,
+    };
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_device_id(
+            request.payload, proxy->wire_id);
+    }
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        result = exchange_locked(&request, &response);
+    }
+    if (result == 0 &&
+        (response.header.status != 0 ||
+         response.header.payload_length != BVB_VULKAN_RESULT_SIZE)) {
+        result = -EPROTO;
+    }
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    if (result == 0) {
+        result = bvb_protocol_decode_vulkan_result(
+            response.payload, &vulkan_result);
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return result == 0 ? (VkResult)vulkan_result
+                       : VK_ERROR_INITIALIZATION_FAILED;
+}
+
 PFN_vkVoidFunction bvb_global_device_proc_addr(
     VkDevice device, const char *name) {
     if (device_proxy(device) == NULL || name == NULL) {
@@ -1070,6 +1162,9 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     BVB_DEVICE_MATCH("vkGetDeviceProcAddr", vkGetDeviceProcAddr)
     BVB_DEVICE_MATCH("vkDestroyDevice", bvb_bridge_vkDestroyDevice)
     BVB_DEVICE_MATCH("vkGetDeviceQueue", bvb_bridge_vkGetDeviceQueue)
+    BVB_DEVICE_MATCH("vkQueueSubmit", bvb_bridge_vkQueueSubmit)
+    BVB_DEVICE_MATCH("vkQueueWaitIdle", bvb_bridge_vkQueueWaitIdle)
+    BVB_DEVICE_MATCH("vkDeviceWaitIdle", bvb_bridge_vkDeviceWaitIdle)
 #undef BVB_DEVICE_MATCH
     return NULL;
 }

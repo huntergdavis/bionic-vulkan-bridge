@@ -61,5 +61,14 @@ int bvb_vulkan_global_context_get_device_queue(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_device_queue_request *request,
     uint64_t *queue_id, char *error, size_t error_size);
+int bvb_vulkan_global_context_queue_submit_empty(
+    const struct bvb_vulkan_global_context *context, uint64_t queue_id,
+    int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_queue_wait_idle(
+    const struct bvb_vulkan_global_context *context, uint64_t queue_id,
+    int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_device_wait_idle(
+    const struct bvb_vulkan_global_context *context, uint64_t device_id,
+    int32_t *vulkan_result, char *error, size_t error_size);
 
 #endif

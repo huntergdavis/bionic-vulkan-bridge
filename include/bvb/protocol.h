@@ -37,6 +37,9 @@ enum {
     BVB_OPCODE_VULKAN_DEVICE_CREATE = 20,
     BVB_OPCODE_VULKAN_DEVICE_DESTROY = 21,
     BVB_OPCODE_VULKAN_DEVICE_QUEUE = 22,
+    BVB_OPCODE_VULKAN_QUEUE_SUBMIT_EMPTY = 23,
+    BVB_OPCODE_VULKAN_QUEUE_WAIT_IDLE = 24,
+    BVB_OPCODE_VULKAN_DEVICE_WAIT_IDLE = 25,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -63,6 +66,7 @@ enum {
     BVB_VULKAN_DEVICE_ID_SIZE = 8,
     BVB_VULKAN_DEVICE_QUEUE_REQUEST_SIZE = 16,
     BVB_VULKAN_QUEUE_ID_SIZE = 8,
+    BVB_VULKAN_RESULT_SIZE = 4,
     BVB_VULKAN_PHYSICAL_DEVICES_PREFIX_SIZE = 8,
     BVB_VULKAN_MAX_PHYSICAL_DEVICES = 8,
     BVB_SHARED_BATCH_MIN_BYTES = 4096,
@@ -311,6 +315,10 @@ int bvb_protocol_encode_vulkan_queue_id(
     uint8_t output[BVB_VULKAN_QUEUE_ID_SIZE], uint64_t queue_id);
 int bvb_protocol_decode_vulkan_queue_id(
     const uint8_t input[BVB_VULKAN_QUEUE_ID_SIZE], uint64_t *queue_id);
+int bvb_protocol_encode_vulkan_result(
+    uint8_t output[BVB_VULKAN_RESULT_SIZE], int32_t vulkan_result);
+int bvb_protocol_decode_vulkan_result(
+    const uint8_t input[BVB_VULKAN_RESULT_SIZE], int32_t *vulkan_result);
 
 void bvb_wire_put_u16(uint8_t *output, uint16_t value);
 void bvb_wire_put_u32(uint8_t *output, uint32_t value);

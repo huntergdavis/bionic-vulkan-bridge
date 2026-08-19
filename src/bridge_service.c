@@ -868,6 +868,79 @@ static int answer_vulkan_device_queue(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_queue_operation(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length != BVB_VULKAN_QUEUE_ID_SIZE ||
+        (request->header.opcode != BVB_OPCODE_VULKAN_QUEUE_SUBMIT_EMPTY &&
+         request->header.opcode != BVB_OPCODE_VULKAN_QUEUE_WAIT_IDLE)) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    uint64_t queue_id = 0U;
+    int result = bvb_protocol_decode_vulkan_queue_id(
+        request->payload, &queue_id);
+    int32_t vulkan_result = 0;
+    char diagnostic[512] = {0};
+    if (result == 0 && request->header.opcode ==
+                           BVB_OPCODE_VULKAN_QUEUE_SUBMIT_EMPTY) {
+        result = bvb_vulkan_global_context_queue_submit_empty(
+            context, queue_id, &vulkan_result, diagnostic, sizeof(diagnostic));
+    } else if (result == 0) {
+        result = bvb_vulkan_global_context_queue_wait_idle(
+            context, queue_id, &vulkan_result, diagnostic, sizeof(diagnostic));
+    }
+    if (result != 0) {
+        fprintf(stderr, "bvb: queue operation failed: %s\n", diagnostic);
+    } else {
+        result = bvb_protocol_encode_vulkan_result(
+            response.payload, vulkan_result);
+    }
+    if (result == 0) {
+        response.header.payload_length = BVB_VULKAN_RESULT_SIZE;
+    } else {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_device_wait_idle(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length != BVB_VULKAN_DEVICE_ID_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    uint64_t device_id = 0U;
+    int result = bvb_protocol_decode_vulkan_device_id(
+        request->payload, &device_id);
+    int32_t vulkan_result = 0;
+    char diagnostic[512] = {0};
+    if (result == 0) {
+        result = bvb_vulkan_global_context_device_wait_idle(
+            context, device_id, &vulkan_result,
+            diagnostic, sizeof(diagnostic));
+    }
+    if (result != 0) {
+        fprintf(stderr, "bvb: device wait idle failed: %s\n", diagnostic);
+    } else {
+        result = bvb_protocol_encode_vulkan_result(
+            response.payload, vulkan_result);
+    }
+    if (result == 0) {
+        response.header.payload_length = BVB_VULKAN_RESULT_SIZE;
+    } else {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_selftest(int client_fd,
                                   const struct bvb_protocol_packet *request,
                                   const char *loader_path,
@@ -1144,6 +1217,16 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_DEVICE_QUEUE) {
             result = answer_vulkan_device_queue(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                       BVB_OPCODE_VULKAN_QUEUE_SUBMIT_EMPTY ||
+                   request.header.opcode ==
+                       BVB_OPCODE_VULKAN_QUEUE_WAIT_IDLE) {
+            result = answer_vulkan_queue_operation(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_DEVICE_WAIT_IDLE) {
+            result = answer_vulkan_device_wait_idle(
                 client_fd, &request, negotiated, global_context);
         } else {
             result = -EPROTO;
