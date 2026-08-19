@@ -343,8 +343,9 @@ PY
 if grep -q 'E022_PASS' "$app_log"; then
     printf 'app_log_e022_pass=PASS\n'
 else
-    printf 'warning: E022_PASS was not readable through logcat; protocol and ' \
-        'lifecycle gates passed\n' >&2
+    printf '%s\n' \
+        'warning: E022_PASS was not readable through logcat; protocol and lifecycle gates passed' \
+        >&2
 fi
 printf 'evidence_json=%s\n' "$evidence_json"
 printf 'relay_stdout=%s\n' "$relay_stdout"

@@ -1102,3 +1102,64 @@ E020's Binder callback broker, and the existing protocol encoder/decoder. The
 next gate is E022: place the generated triangle batch in the Binder-delivered
 mapping, replay it through the visible Bionic renderer, and compare complete
 shared-path latency against E019's inline control.
+
+## E022 — Binder-brokered shared visible replay (2026-08-19)
+
+Status: passed twice consecutively on hardware with signed APK v12 (0.1.11).
+
+Hypothesis: E019's visible loopback path can retain its authenticated control
+plane while replacing the 200-byte inline batch with a 56-byte execute record
+that points into E020/E021's Binder-brokered shared mapping. This should remove
+the per-frame payload copy without changing the generated six-command workload,
+Bionic validator, Vulkan replay, or presentation boundary.
+
+Method: the visible host retains a read-only mapping when its Binder receiver
+returns the sealed 4 KiB memfd. The real Termux-glibc relay receives the same FD
+through same-UID `SCM_RIGHTS`, maps it read/write, and calls the exact builder
+shared with E019. It writes the 200-byte batch at offset 64, applies a release
+fence, sends authenticated opcode-9 generation/offset/length/sequence metadata
+over loopback, and waits for the response. The Activity responds only after
+validation, command replay, `vkQueuePresentKHR`, `vkQueueWaitIdle`, and ingress
+completion. A wrong 256-bit capability still returns `-EACCES` before any FD is
+delivered. The required recall query found no indexed E022 implementation; the
+gate reused E019's visible renderer and E021's Binder/SCM_RIGHTS ownership chain.
+
+Result: both v12 runs rendered at the authenticated 2,800 x 1,752 window with a
+4,096-byte writable shared mapping, seals value 7, a 200-byte batch, six
+commands, and no rejected lifecycle events. Run 1 measured 536,614 ns for FD
+receive/validation, 10,224,687 ns for execute-to-present, 12,105,625 ns from FD
+receive through present, and 13,171,145 ns for Java's full relay round trip. The
+canonical consecutive run measured 673,281 ns, 13,586,771 ns, 16,723,906 ns,
+and 17,301,145 ns respectively. Against E019's comparable 14,618,177 ns inline
+execute round trip, E022 was 30.05% faster on run 1 and 7.06% faster on run 2.
+The full broker interval varied from 9.90% faster to 18.35% slower, identifying
+Binder/connect setup as a separate one-shot cost rather than hiding it inside
+the graphics measurement.
+
+The first retry exposed `-EALREADY`: Android stopped the Activity but retained
+its PID and native globals, so the previous token, listener, and mapping
+survived. APK v12 resets and destroys stale ingress at the next Activity
+configuration. The immediately consecutive passing run used the same Activity
+PID, proving restart repeatability without reinstalling or relying on shell
+force-stop permission. The final status snapshot records the later stopped
+window; it is not a render failure because the opcode-9 response had already
+acknowledged present and queue idle. Android denied readable app logcat and the
+Termux UID produced no `screencap` file, so no screenshot is claimed.
+
+Evidence and artifact identities:
+
+- canonical evidence: `docs/evidence/e022-brokered-visible-gate.json`, SHA-256
+  `6bc2255a2526de5a20bd731232fec7861f92e9e419b3471c5f95a0b6930adbef`;
+- signed v12 APK: 49,577 bytes, SHA-256
+  `cb12988a7fa5d56989d25616c4138e6dd292d8c356d2425c51203d89ba56d715`;
+- standalone glibc relay: SHA-256
+  `d213ce94e932a3121ed61dbc490fc23791841550d8e7a8471c03dd3821e97a33`,
+  requesting Termux glibc's AArch64 loader and only `libc.so.6` plus that loader;
+- all 15 host protocol, dispatch, ingress, relay, Vulkan, and bridge contracts
+  passed before the hardware gate.
+
+Conclusion: the Android-supported, zero-copy command-batch path is now complete
+for one visible frame and is at least as fast as the inline control in both
+measured execute-to-present runs. E023 should retain the mapping and connection
+across a frame ring, add explicit producer/consumer synchronization, and report
+a multi-frame latency distribution before expanding dispatch toward DXVK.

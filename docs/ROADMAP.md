@@ -55,8 +55,10 @@
 - [x] Transfer a sealed shared region across Android UIDs with a Binder callback
 - [x] Relay the Binder-delivered descriptor to glibc/FEX with same-UID
   `SCM_RIGHTS`
-- [ ] Replay a Binder-brokered shared triangle batch through the visible host
+- [x] Replay a Binder-brokered shared triangle batch through the visible host
   and compare complete latency with the inline control
+- [ ] Replace the one-shot shared region with a reusable frame ring and explicit
+  producer/consumer synchronization, then measure steady-state replay
 - [ ] Expand generated dispatch to the measured DXVK startup subset
 - [ ] Implement GPU external-memory and synchronization strategy
 - [x] Reach a rendered test triangle
