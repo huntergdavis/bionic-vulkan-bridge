@@ -36,11 +36,12 @@ static VkPipeline pipeline_from_id(uint64_t wire_id) {
         memcpy(&name, &generic, sizeof(name));                                  \
     } while (0)
 
-int bvb_triangle_batch_build(uint8_t *bytes, size_t capacity,
-                             uint32_t width, uint32_t height,
-                             size_t *batch_length) {
+int bvb_triangle_batch_build_sequence(uint8_t *bytes, size_t capacity,
+                                      uint32_t width, uint32_t height,
+                                      uint64_t sequence,
+                                      size_t *batch_length) {
     if (bytes == NULL || capacity == 0U || width == 0U || height == 0U ||
-        batch_length == NULL) {
+        sequence == 0U || batch_length == NULL) {
         return -EINVAL;
     }
     RESOLVE_OR_FAIL(vkCmdBeginRendering);
@@ -55,7 +56,7 @@ int bvb_triangle_batch_build(uint8_t *bytes, size_t capacity,
     const uint64_t image_view_id = bvb_handle_id(BVB_OBJECT_IMAGE_VIEW, 1U);
     const uint64_t pipeline_id = bvb_handle_id(BVB_OBJECT_PIPELINE, 1U);
     VkCommandBuffer command_buffer = bvb_triangle_command_buffer_create(
-        bytes, capacity, command_buffer_id, 1U);
+        bytes, capacity, command_buffer_id, sequence);
     if (command_buffer == VK_NULL_HANDLE) {
         return -ENOMEM;
     }
@@ -108,8 +109,15 @@ int bvb_triangle_batch_build(uint8_t *bytes, size_t capacity,
     struct bvb_command_batch_info info;
     result = bvb_command_batch_validate(bytes, *batch_length, &info);
     if (result != 0 || info.command_buffer_id != command_buffer_id ||
-        info.sequence != 1U || info.command_count != 6U) {
+        info.sequence != sequence || info.command_count != 6U) {
         return result != 0 ? result : -EPROTO;
     }
     return 0;
+}
+
+int bvb_triangle_batch_build(uint8_t *bytes, size_t capacity,
+                             uint32_t width, uint32_t height,
+                             size_t *batch_length) {
+    return bvb_triangle_batch_build_sequence(bytes, capacity, width, height,
+                                             1U, batch_length);
 }

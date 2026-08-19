@@ -23,6 +23,8 @@
 enum {
     BROKERED_REGION_BYTES = 4096,
     BROKERED_BATCH_OFFSET = 64,
+    BROKERED_BATCH_STRIDE = 256,
+    BROKERED_RING_FRAMES = 2,
 };
 
 static int validate_triangle(const uint8_t *batch, size_t batch_length,
@@ -73,7 +75,8 @@ static int validate_triangle(const uint8_t *batch, size_t batch_length,
 int main(int argc, char **argv) {
     if (argc != 5) {
         fprintf(stderr,
-                "usage: %s (SOCKET_NAME | --tcp | --tcp-brokered) "
+                "usage: %s (SOCKET_NAME | --tcp | --tcp-brokered | "
+                "--tcp-brokered-ring) "
                 "TOKEN_HEX WIDTH HEIGHT\n",
                 argv[0]);
         return EXIT_FAILURE;
@@ -93,7 +96,12 @@ int main(int argc, char **argv) {
 
     struct bvb_visible_ingress *ingress = NULL;
     uint16_t bound_port = 0U;
-    const bool brokered = strcmp(argv[1], "--tcp-brokered") == 0;
+    const bool brokered = strcmp(argv[1], "--tcp-brokered") == 0 ||
+                          strcmp(argv[1], "--tcp-brokered-ring") == 0;
+    const size_t frame_count =
+        strcmp(argv[1], "--tcp-brokered-ring") == 0
+            ? BROKERED_RING_FRAMES
+            : 1U;
     int result = (strcmp(argv[1], "--tcp") == 0 || brokered)
                      ? bvb_visible_ingress_create_loopback(
                            &ingress, 0U, &bound_port, token)
@@ -121,16 +129,18 @@ int main(int argc, char **argv) {
                 result = -errno;
             }
         }
-        size_t encoded_length = 0U;
-        if (result == 0) {
-            result = bvb_triangle_batch_build(
-                region_mapping + BROKERED_BATCH_OFFSET,
-                BROKERED_REGION_BYTES - BROKERED_BATCH_OFFSET,
-                (uint32_t)width_value, (uint32_t)height_value,
+        for (size_t index = 0U; result == 0 && index < frame_count;
+             ++index) {
+            const size_t offset =
+                BROKERED_BATCH_OFFSET + index * BROKERED_BATCH_STRIDE;
+            size_t encoded_length = 0U;
+            result = bvb_triangle_batch_build_sequence(
+                region_mapping + offset, BROKERED_REGION_BYTES - offset,
+                (uint32_t)width_value, (uint32_t)height_value, index + 1U,
                 &encoded_length);
-        }
-        if (result == 0 && encoded_length != 200U) {
-            result = -EPROTO;
+            if (result == 0 && encoded_length != 200U) {
+                result = -EPROTO;
+            }
         }
         if (result == 0 &&
             fcntl(region_fd, F_ADD_SEALS,
@@ -160,18 +170,21 @@ int main(int argc, char **argv) {
     }
     (void)fflush(stdout);
 
-    const uint8_t *batch = NULL;
     size_t batch_length = 0U;
     uint64_t sequence = 0U;
-    result = bvb_visible_ingress_wait_batch(
-        ingress, 5000U, &batch, &batch_length, &sequence);
-    if (result == 0) {
-        result = validate_triangle(batch, batch_length, sequence,
-                                   (uint32_t)width_value,
-                                   (uint32_t)height_value);
-        int complete_status = bvb_visible_ingress_complete(ingress, result);
+    for (size_t index = 0U; result == 0 && index < frame_count; ++index) {
+        const uint8_t *batch = NULL;
+        result = bvb_visible_ingress_wait_batch(
+            ingress, 5000U, &batch, &batch_length, &sequence);
         if (result == 0) {
-            result = complete_status;
+            result = validate_triangle(batch, batch_length, sequence,
+                                       (uint32_t)width_value,
+                                       (uint32_t)height_value);
+            int complete_status =
+                bvb_visible_ingress_complete(ingress, result);
+            if (result == 0) {
+                result = complete_status;
+            }
         }
     }
     bvb_visible_ingress_destroy(ingress);
@@ -186,7 +199,7 @@ int main(int argc, char **argv) {
         return EXIT_FAILURE;
     }
     printf("{\"batch_bytes\":%zu,\"sequence\":%" PRIu64
-           ",\"commands\":6}\n",
-           batch_length, sequence);
+           ",\"commands\":6,\"frames\":%zu}\n",
+           batch_length, sequence, frame_count);
     return EXIT_SUCCESS;
 }

@@ -80,6 +80,7 @@ def run_contract(server_path: str, client_path: str, tcp: bool) -> None:
             "batch_bytes": 200,
             "sequence": 1,
             "commands": 6,
+            "frames": 1,
         }
     finally:
         if server.poll() is None:
@@ -87,20 +88,21 @@ def run_contract(server_path: str, client_path: str, tcp: bool) -> None:
             server.wait(timeout=5.0)
 
 
-def brokered_exchange(port: int, token: bytes) -> int:
-    payload = token + struct.pack("<QIIQ", 1, 64, 200, 1)
-    request_id = 0x42564209
+def send_brokered_execute(
+    client: socket.socket, token: bytes, offset: int, sequence: int
+) -> int:
+    payload = token + struct.pack("<QIIQ", 1, offset, 200, sequence)
+    request_id = 0x42564200 + sequence
     header = struct.pack(
         "<IHHHHIIi", 0x31425642, 1, 1, 9, 0, request_id, len(payload), 0
     )
-    with socket.create_connection(("127.0.0.1", port), timeout=5.0) as client:
-        client.sendall(header + payload)
-        response = b""
-        while len(response) < 24:
-            part = client.recv(24 - len(response))
-            if not part:
-                raise AssertionError("brokered response ended early")
-            response += part
+    client.sendall(header + payload)
+    response = b""
+    while len(response) < 24:
+        part = client.recv(24 - len(response))
+        if not part:
+            raise AssertionError("brokered response ended early")
+        response += part
     magic, version, kind, opcode, reserved, received_id, length, status = (
         struct.unpack("<IHHHHIIi", response)
     )
@@ -114,6 +116,11 @@ def brokered_exchange(port: int, token: bytes) -> int:
         0,
     )
     return status
+
+
+def brokered_exchange(port: int, token: bytes) -> int:
+    with socket.create_connection(("127.0.0.1", port), timeout=5.0) as client:
+        return send_brokered_execute(client, token, 64, 1)
 
 
 def run_brokered_contract(server_path: str) -> None:
@@ -137,6 +144,38 @@ def run_brokered_contract(server_path: str) -> None:
             "batch_bytes": 200,
             "sequence": 1,
             "commands": 6,
+            "frames": 1,
+        }
+    finally:
+        if server.poll() is None:
+            server.terminate()
+            server.wait(timeout=5.0)
+
+
+def run_brokered_ring_contract(server_path: str) -> None:
+    token = bytes(range(1, 33))
+    server = subprocess.Popen(
+        [server_path, "--tcp-brokered-ring", token.hex(), "1280", "720"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert server.stdout is not None
+        prefix, port_text = server.stdout.readline().strip().split()
+        assert prefix == "READY"
+        with socket.create_connection(
+            ("127.0.0.1", int(port_text)), timeout=5.0
+        ) as client:
+            assert send_brokered_execute(client, token, 64, 1) == 0
+            assert send_brokered_execute(client, token, 320, 2) == 0
+        server_stdout, server_stderr = server.communicate(timeout=10.0)
+        assert server.returncode == 0, server_stderr
+        assert json.loads(server_stdout) == {
+            "batch_bytes": 200,
+            "sequence": 2,
+            "commands": 6,
+            "frames": 2,
         }
     finally:
         if server.poll() is None:
@@ -152,9 +191,10 @@ def main() -> int:
     run_contract(server_path, client_path, tcp=False)
     run_contract(server_path, client_path, tcp=True)
     run_brokered_contract(server_path)
+    run_brokered_ring_contract(server_path)
     print(
         "PASS: authenticated Unix/memfd, TCP/inline, and "
-        "TCP/brokered visible ingress"
+        "persistent TCP/brokered visible ingress"
     )
     return 0
 

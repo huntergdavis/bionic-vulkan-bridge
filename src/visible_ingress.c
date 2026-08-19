@@ -210,49 +210,61 @@ static void process_shared_connection(struct bvb_visible_ingress *ingress,
 
 static void process_inline_connection(struct bvb_visible_ingress *ingress,
                                       int socket_fd) {
-    struct bvb_protocol_packet request;
-    memset(&request, 0, sizeof(request));
-    int result = bvb_transport_receive(socket_fd, &request);
-    bool request_received = result == 0;
-    const uint8_t *batch = NULL;
-    size_t batch_length = 0U;
-    uint64_t sequence = 0U;
-    if (result == 0 &&
-        request.header.opcode == BVB_OPCODE_VISIBLE_BATCH_INLINE) {
-        if (request.header.version != BVB_PROTOCOL_VERSION ||
-            request.header.kind != BVB_PROTOCOL_REQUEST ||
-            request.header.status != 0) {
+    for (;;) {
+        struct bvb_protocol_packet request;
+        memset(&request, 0, sizeof(request));
+        int result = bvb_transport_receive(socket_fd, &request);
+        if (result != 0) {
+            return;
+        }
+        const uint8_t *batch = NULL;
+        size_t batch_length = 0U;
+        uint64_t sequence = 0U;
+        if (request.header.opcode == BVB_OPCODE_VISIBLE_BATCH_INLINE) {
+            if (request.header.version != BVB_PROTOCOL_VERSION ||
+                request.header.kind != BVB_PROTOCOL_REQUEST ||
+                request.header.status != 0) {
+                result = -EPROTO;
+            }
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VISIBLE_BATCH_EXECUTE) {
+            result = request_status(&request,
+                                    BVB_OPCODE_VISIBLE_BATCH_EXECUTE,
+                                    BVB_VISIBLE_BATCH_EXECUTE_SIZE);
+        } else {
             result = -EPROTO;
         }
-    } else if (result == 0 &&
-               request.header.opcode == BVB_OPCODE_VISIBLE_BATCH_EXECUTE) {
-        result = request_status(&request, BVB_OPCODE_VISIBLE_BATCH_EXECUTE,
-                                BVB_VISIBLE_BATCH_EXECUTE_SIZE);
-    } else if (result == 0) {
-        result = -EPROTO;
-    }
-    if (result == 0 &&
-        request.header.opcode == BVB_OPCODE_VISIBLE_BATCH_INLINE) {
-        result = bvb_visible_batch_inline_decode(
-            ingress->token, request.payload, request.header.payload_length,
-            &batch, &batch_length, &sequence);
-    } else if (result == 0) {
+        if (result == 0 &&
+            request.header.opcode == BVB_OPCODE_VISIBLE_BATCH_INLINE) {
+            result = bvb_visible_batch_inline_decode(
+                ingress->token, request.payload,
+                request.header.payload_length, &batch, &batch_length,
+                &sequence);
+        } else if (result == 0) {
+            (void)pthread_mutex_lock(&ingress->mutex);
+            result = ingress->brokered_region_ready
+                         ? bvb_visible_batch_region_execute(
+                               &ingress->brokered_region, request.payload,
+                               request.header.payload_length, &batch,
+                               &batch_length, &sequence)
+                         : -ENXIO;
+            (void)pthread_mutex_unlock(&ingress->mutex);
+        }
+        if (result == 0) {
+            result = submit_batch(ingress, batch, batch_length, sequence);
+        }
+        const bool supported =
+            request.header.opcode == BVB_OPCODE_VISIBLE_BATCH_INLINE ||
+            request.header.opcode == BVB_OPCODE_VISIBLE_BATCH_EXECUTE;
+        const int response_result =
+            supported ? send_response(socket_fd, &request, result) : -EPROTO;
         (void)pthread_mutex_lock(&ingress->mutex);
-        result = ingress->brokered_region_ready
-                     ? bvb_visible_batch_region_execute(
-                           &ingress->brokered_region, request.payload,
-                           request.header.payload_length, &batch,
-                           &batch_length, &sequence)
-                     : -ENXIO;
+        ingress->completion_pending_response = false;
+        (void)pthread_cond_broadcast(&ingress->condition);
         (void)pthread_mutex_unlock(&ingress->mutex);
-    }
-    if (result == 0) {
-        result = submit_batch(ingress, batch, batch_length, sequence);
-    }
-    if (request_received &&
-        (request.header.opcode == BVB_OPCODE_VISIBLE_BATCH_INLINE ||
-         request.header.opcode == BVB_OPCODE_VISIBLE_BATCH_EXECUTE)) {
-        (void)send_response(socket_fd, &request, result);
+        if (!supported || response_result != 0 || result != 0) {
+            return;
+        }
     }
 }
 
@@ -486,7 +498,8 @@ int bvb_visible_ingress_wait_batch(struct bvb_visible_ingress *ingress,
     }
     (void)pthread_mutex_lock(&ingress->mutex);
     ingress->accepting = true;
-    while (!ingress->batch_ready && !ingress->stop && result == 0) {
+    while ((!ingress->batch_ready || ingress->batch_claimed) &&
+           !ingress->stop && result == 0) {
         result = pthread_cond_timedwait(&ingress->condition, &ingress->mutex,
                                         &deadline);
     }
@@ -498,10 +511,6 @@ int bvb_visible_ingress_wait_batch(struct bvb_visible_ingress *ingress,
     if (result != 0 || ingress->stop) {
         (void)pthread_mutex_unlock(&ingress->mutex);
         return result != 0 ? -result : -ECANCELED;
-    }
-    if (ingress->batch_claimed) {
-        (void)pthread_mutex_unlock(&ingress->mutex);
-        return -EBUSY;
     }
     ingress->accepting = false;
     ingress->batch_claimed = true;
