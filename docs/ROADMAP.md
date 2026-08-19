@@ -69,6 +69,10 @@
   device-extension enumeration without sharing C structure layout across libc
 - [x] Bridge base features and constrained logical-device/queue creation with
   typed device/queue proxies and explicit descendant teardown
+- [x] Submit an empty queue operation and execute queue/device idle waits through
+  the real glibc-to-Bionic device path
+- [ ] Add command-pool and command-buffer proxy ownership, recording, and
+  non-empty queue submission
 - [ ] Expand generated dispatch to the measured DXVK startup subset
 - [ ] Implement GPU external-memory and synchronization strategy
 - [x] Reach a rendered test triangle

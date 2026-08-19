@@ -125,6 +125,12 @@ the Adreno driver, observed stable queue identity, then explicitly destroyed
 the native device. The policy now marks 23 names executable and leaves 417
 resolved names unavailable; normal Vulkan resource and submission APIs remain
 unimplemented.
+E029 crosses the first queue-synchronization boundary. The real Adreno queue
+accepted an empty `vkQueueSubmit`, `vkQueueWaitIdle`, and `vkDeviceWaitIdle`
+through the glibc-to-Bionic RPC path, with both stderr streams empty. Non-empty
+submissions and fences remain explicitly rejected until command-buffer and
+synchronization-object proxies exist. The measured policy now marks 26 names
+executable and leaves 414 resolved names unavailable.
 
 ## Build and test on a normal Linux host
 

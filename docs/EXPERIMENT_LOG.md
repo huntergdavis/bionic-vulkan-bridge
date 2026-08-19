@@ -1549,3 +1549,55 @@ persistent connection and E026/E027's parented physical-device ownership. The
 next bounded gate should bridge ordinary command-pool/buffer submission and
 synchronization through these device/queue proxies; this gate does not claim
 DXVK resource creation, WSI, animation, or an FPS change.
+
+## E029 — Empty queue submit and idle synchronization (2026-08-19)
+
+Status: passed on real hardware from a Termux ARM64 glibc client through the
+Android Bionic service at source commit `98faeae`.
+
+Hypothesis: E028's typed device and queue proxies can carry ordinary
+device-dispatch traffic to the native Adreno driver before the bridge has
+command-buffer, fence, or semaphore objects. Vulkan permits a zero-count
+`vkQueueSubmit`, making it the smallest honest queue-execution gate; queue and
+device idle calls then prove device-scoped synchronous result transport.
+
+Method: protocol opcodes 23–25 transport a queue or device proxy ID and return a
+fixed-width signed `VkResult`. The Bionic owner resolves the queue's parent
+device, loads `vkQueueSubmit`, `vkQueueWaitIdle`, and `vkDeviceWaitIdle` through
+the native device proc-address function, and invokes them on the owned native
+handles. The glibc dispatch library exposes those names only for a valid device
+proxy. `vkQueueSubmit` accepts only `submitCount == 0`, a null submit array, and
+a null fence; it returns `VK_ERROR_FEATURE_NOT_PRESENT` locally for all
+non-empty or fenced work. This boundary is deliberate: E029 transports no
+pointers and does not claim command-buffer or synchronization-object support.
+
+Result: the real Adreno 730 returned `VK_SUCCESS` for the empty queue submit,
+queue idle wait, and device idle wait. A non-empty submission was rejected on
+the client side as designed, so it never crossed the protocol. The logical
+device and stable queue retained E028's type-3/type-4 IDs, then underwent
+explicit teardown. Both client and service stderr were empty. The E029 policy
+classifies 26 of 742 measured names executable, 414 resolved names
+required-but-unimplemented, and 302 observed-null names unavailable.
+
+All 18 host contracts and all 16 contracts available under Termux ARM64 passed.
+Canonical evidence is `docs/evidence/e029-empty-submit.json`, 5,284 bytes,
+SHA-256
+`a11c8483133cf254e4d5caa386514ed177e4876d5e40107b6da44200d75d2616`.
+The canonical artifacts are:
+
+- generated E029 policy: 1,698 bytes, SHA-256
+  `39d702bf6caec788ca9f5013e36ab67ce9c5e09cd33948e1ce59279f8a947ecc`;
+- glibc `libvulkan-bvb` bridge: 211,864 bytes, SHA-256
+  `6081fe2814d9de12ae1790503a7c572787ad12e0e3a2dc4ea9632750a73b4aec`;
+- glibc integration client: 71,720 bytes, SHA-256
+  `ec2b52f24db09eb94d2d60ba0c41cf53ef86f9fbe0a73212cd2482a20251ec2e`;
+- Bionic bridge service: 92,680 bytes, SHA-256
+  `48d15e8d95e7a18f78b2989c086940ca129e62fa85da5e0c213f66d96de5ebfc`.
+
+The required `deja "vkQueueSubmit vkQueueWaitIdle device proxy bridge"` recall
+query found no earlier bridge implementation. E029 reused E025's persistent
+authenticated connection, E026–E028's parented proxy-handle model, and the
+repository's older native/fake Vulkan queue-submit and idle implementations.
+The next bounded gate is command-pool and command-buffer ownership followed by
+one real non-empty submission. E029 does not claim DXVK resource creation, WSI,
+game-facing animation, or an FPS change.
