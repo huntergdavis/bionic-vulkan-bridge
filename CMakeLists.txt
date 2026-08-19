@@ -108,6 +108,15 @@ add_executable(bvb-vulkan-selftest src/vulkan_selftest_main.c)
 target_link_libraries(bvb-vulkan-selftest PRIVATE bvb-vulkan-selftest-core)
 bvb_enable_warnings(bvb-vulkan-selftest)
 
+add_executable(
+  bvb-vulkan-external-memory-selftest
+  src/vulkan_external_memory_selftest_main.c
+)
+target_link_libraries(
+  bvb-vulkan-external-memory-selftest PRIVATE bvb-vulkan-selftest-core
+)
+bvb_enable_warnings(bvb-vulkan-external-memory-selftest)
+
 add_library(bvb-vulkan-surface-core STATIC src/vulkan_surface_probe.c)
 target_include_directories(
   bvb-vulkan-surface-core
@@ -310,6 +319,7 @@ bvb_enable_warnings(bvb-shared-region-relay)
 install(
   TARGETS bvb-vulkan-probe bvb-bridge-service bvb-bridge-client
           bvb-vulkan-selftest bvb-vulkan-surface-probe
+          bvb-vulkan-external-memory-selftest
           bvb-vulkan-present-selftest bvb-vulkan-client-dispatch
           bvb-visible-triangle-client bvb-shared-region-relay
   RUNTIME DESTINATION bin
@@ -484,6 +494,15 @@ if(BUILD_TESTING)
       "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_selftest.py"
       "$<TARGET_FILE:bvb-vulkan-selftest>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+  )
+
+  add_test(
+    NAME vulkan-external-memory-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_external_memory.py"
+      "$<TARGET_FILE:bvb-vulkan-external-memory-selftest>"
       "$<TARGET_FILE:bvb-fake-vulkan>"
   )
 

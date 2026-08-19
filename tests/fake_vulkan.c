@@ -1,12 +1,19 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #define VK_NO_PROTOTYPES
 
 #include <vulkan/vulkan.h>
 
+#include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 #if defined(_WIN32)
 #define BVB_EXPORT __declspec(dllexport)
@@ -27,6 +34,35 @@ static int fake_fence_created;
 static int fake_fence_signaled;
 static const VkFence fake_fence_handle =
     (VkFence)(uintptr_t)UINT64_C(0x9000);
+
+enum { BVB_FAKE_MEMORY_CAPACITY = 8 };
+
+struct bvb_fake_memory_record {
+    void *address;
+    size_t size;
+    int fd;
+};
+
+static struct bvb_fake_memory_record
+    fake_memory_records[BVB_FAKE_MEMORY_CAPACITY];
+
+static struct bvb_fake_memory_record *fake_memory_record(void *address) {
+    for (size_t index = 0U; index < BVB_FAKE_MEMORY_CAPACITY; ++index) {
+        if (fake_memory_records[index].address == address) {
+            return &fake_memory_records[index];
+        }
+    }
+    return NULL;
+}
+
+static struct bvb_fake_memory_record *fake_memory_slot(void) {
+    for (size_t index = 0U; index < BVB_FAKE_MEMORY_CAPACITY; ++index) {
+        if (fake_memory_records[index].address == NULL) {
+            return &fake_memory_records[index];
+        }
+    }
+    return NULL;
+}
 
 struct ANativeWindow;
 typedef VkFlags VkAndroidSurfaceCreateFlagsKHR;
@@ -54,6 +90,7 @@ static VkResult VKAPI_CALL fake_enumerate_extensions(
         "VK_KHR_surface",
         "VK_KHR_android_surface",
         "VK_KHR_get_physical_device_properties2",
+        "VK_KHR_external_memory_capabilities",
     };
     const uint32_t available = (uint32_t)(sizeof(names) / sizeof(names[0]));
     if (properties == NULL) {
@@ -288,6 +325,29 @@ static void VKAPI_CALL fake_get_memory_properties(
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+}
+
+static void VKAPI_CALL fake_get_external_buffer_properties(
+    VkPhysicalDevice device,
+    const VkPhysicalDeviceExternalBufferInfo *info,
+    VkExternalBufferProperties *properties) {
+    (void)device;
+    *properties = (VkExternalBufferProperties){
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_BUFFER_PROPERTIES,
+    };
+    if (info != NULL &&
+        info->handleType == VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT &&
+        info->usage != 0U) {
+        properties->externalMemoryProperties = (VkExternalMemoryProperties){
+            .externalMemoryFeatures =
+                VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT |
+                VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT,
+            .exportFromImportedHandleTypes =
+                VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+            .compatibleHandleTypes =
+                VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+        };
+    }
 }
 
 static VkResult VKAPI_CALL fake_enumerate_device_extensions(
@@ -554,10 +614,55 @@ static VkResult VKAPI_CALL fake_allocate_memory(
     VkDeviceMemory *memory) {
     (void)device;
     (void)allocator;
-    void *allocation = calloc(1, (size_t)allocate_info->allocationSize);
+    const VkImportMemoryFdInfoKHR *import_info = NULL;
+    const VkExportMemoryAllocateInfo *export_info = NULL;
+    for (const VkBaseInStructure *next = allocate_info->pNext;
+         next != NULL; next = next->pNext) {
+        if (next->sType == VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR) {
+            import_info = (const VkImportMemoryFdInfoKHR *)next;
+        } else if (next->sType ==
+                   VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO) {
+            export_info = (const VkExportMemoryAllocateInfo *)next;
+        }
+    }
+    struct bvb_fake_memory_record *record = fake_memory_slot();
+    if (record == NULL) return VK_ERROR_TOO_MANY_OBJECTS;
+    const size_t size = (size_t)allocate_info->allocationSize;
+    void *allocation = NULL;
+    int descriptor = -1;
+    if (import_info != NULL) {
+        if (import_info->handleType !=
+                VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT ||
+            import_info->fd < 0) {
+            return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+        }
+        descriptor = import_info->fd;
+        allocation = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                          descriptor, 0);
+        if (allocation == MAP_FAILED) allocation = NULL;
+    } else if (export_info != NULL) {
+        if ((export_info->handleTypes &
+             VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT) == 0U) {
+            return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+        }
+        descriptor = memfd_create("bvb-fake-external", MFD_CLOEXEC);
+        if (descriptor >= 0 && ftruncate(descriptor, (off_t)size) == 0) {
+            allocation = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED,
+                              descriptor, 0);
+            if (allocation == MAP_FAILED) allocation = NULL;
+        }
+    } else {
+        allocation = calloc(1, size);
+    }
     if (allocation == NULL) {
+        if (descriptor >= 0 && import_info == NULL) (void)close(descriptor);
         return VK_ERROR_OUT_OF_HOST_MEMORY;
     }
+    *record = (struct bvb_fake_memory_record){
+        .address = allocation,
+        .size = size,
+        .fd = descriptor,
+    };
     *memory = (VkDeviceMemory)(uintptr_t)allocation;
     return VK_SUCCESS;
 }
@@ -571,7 +676,36 @@ static void VKAPI_CALL fake_free_memory(
     if (fake_bound_memory == memory) {
         fake_bound_memory = VK_NULL_HANDLE;
     }
-    free((void *)(uintptr_t)memory);
+    void *address = (void *)(uintptr_t)memory;
+    struct bvb_fake_memory_record *record = fake_memory_record(address);
+    if (record == NULL) {
+        free(address);
+        return;
+    }
+    if (record->fd >= 0) {
+        (void)munmap(record->address, record->size);
+        (void)close(record->fd);
+    } else {
+        free(record->address);
+    }
+    *record = (struct bvb_fake_memory_record){0};
+    record->fd = -1;
+}
+
+static VkResult VKAPI_CALL fake_get_memory_fd(
+    VkDevice device, const VkMemoryGetFdInfoKHR *info, int *descriptor) {
+    (void)device;
+    if (info == NULL || descriptor == NULL ||
+        info->handleType != VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT) {
+        return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+    }
+    struct bvb_fake_memory_record *record = fake_memory_record(
+        (void *)(uintptr_t)info->memory);
+    if (record == NULL || record->fd < 0) {
+        return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+    }
+    *descriptor = dup(record->fd);
+    return *descriptor >= 0 ? VK_SUCCESS : VK_ERROR_OUT_OF_HOST_MEMORY;
 }
 
 static VkResult VKAPI_CALL fake_bind_buffer_memory(
@@ -833,6 +967,10 @@ static PFN_vkVoidFunction function_pointer(const char *name) {
     BVB_MATCH("vkGetPhysicalDeviceFeatures", fake_get_device_features)
     BVB_MATCH("vkGetPhysicalDeviceQueueFamilyProperties", fake_get_queue_properties)
     BVB_MATCH("vkGetPhysicalDeviceMemoryProperties", fake_get_memory_properties)
+    BVB_MATCH("vkGetPhysicalDeviceExternalBufferProperties",
+              fake_get_external_buffer_properties)
+    BVB_MATCH("vkGetPhysicalDeviceExternalBufferPropertiesKHR",
+              fake_get_external_buffer_properties)
     BVB_MATCH("vkEnumerateDeviceExtensionProperties", fake_enumerate_device_extensions)
     BVB_MATCH("vkCreateDevice", fake_create_device)
     BVB_MATCH("vkGetDeviceProcAddr", fake_get_device_proc_addr)
@@ -896,6 +1034,7 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkFlushMappedMemoryRanges", fake_flush_mapped_ranges)
     BVB_DEVICE_MATCH("vkInvalidateMappedMemoryRanges",
                      fake_invalidate_mapped_ranges)
+    BVB_DEVICE_MATCH("vkGetMemoryFdKHR", fake_get_memory_fd)
 #undef BVB_DEVICE_MATCH
     return NULL;
 }

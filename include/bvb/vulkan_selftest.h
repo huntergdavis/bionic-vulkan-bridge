@@ -40,6 +40,16 @@ struct bvb_vulkan_selftest_result {
     uint64_t submit_wait_elapsed_ns;
 };
 
+struct bvb_vulkan_external_memory_result {
+    uint32_t external_memory_features;
+    uint32_t compatible_handle_types;
+    uint32_t export_from_imported_handle_types;
+    uint32_t memory_type_index;
+    uint32_t memory_property_flags;
+    uint32_t buffer_bytes;
+    uint32_t mismatched_bytes;
+};
+
 struct bvb_vulkan_batch_context;
 
 int bvb_vulkan_batch_context_create(
@@ -48,6 +58,10 @@ int bvb_vulkan_batch_context_create(
 int bvb_vulkan_batch_context_execute(
     struct bvb_vulkan_batch_context *context, const uint8_t *batch,
     size_t batch_length, struct bvb_vulkan_selftest_result *result,
+    char *error, size_t error_size);
+int bvb_vulkan_batch_context_external_memory_test(
+    struct bvb_vulkan_batch_context *context,
+    struct bvb_vulkan_external_memory_result *result,
     char *error, size_t error_size);
 void bvb_vulkan_batch_context_destroy(
     struct bvb_vulkan_batch_context *context);
