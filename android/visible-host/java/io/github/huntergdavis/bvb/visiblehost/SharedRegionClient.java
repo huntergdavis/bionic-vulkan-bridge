@@ -8,6 +8,7 @@ import android.os.ParcelFileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.OutputStreamWriter;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
 public final class SharedRegionClient {
@@ -25,8 +26,24 @@ public final class SharedRegionClient {
                 activityThreadClass.getDeclaredMethod("getSystemContext");
         getSystemContext.setAccessible(true);
         Context systemContext = (Context)getSystemContext.invoke(activityThread);
-        return systemContext.createPackageContext(
+        Context packageContext = systemContext.createPackageContext(
                 "com.termux", Context.CONTEXT_IGNORE_SECURITY);
+
+        Class<?> contextImplClass = Class.forName("android.app.ContextImpl");
+        Method getImpl = contextImplClass.getDeclaredMethod(
+                "getImpl", Context.class);
+        getImpl.setAccessible(true);
+        Object contextImpl = getImpl.invoke(null, packageContext);
+        Field packageInfo = contextImplClass.getDeclaredField("mPackageInfo");
+        packageInfo.setAccessible(true);
+        Object loadedApk = packageInfo.get(contextImpl);
+        Class<?> loadedApkClass = Class.forName("android.app.LoadedApk");
+        Method createAppContext = contextImplClass.getDeclaredMethod(
+                "createAppContext", activityThreadClass, loadedApkClass,
+                String.class);
+        createAppContext.setAccessible(true);
+        return (Context)createAppContext.invoke(
+                null, activityThread, loadedApk, "com.termux");
     }
 
     private static void writeResult(String path, String json) throws Exception {
