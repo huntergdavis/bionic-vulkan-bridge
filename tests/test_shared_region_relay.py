@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import array
+import ctypes
 import fcntl
 import json
 import mmap
@@ -14,6 +15,21 @@ import sys
 
 MAGIC = 0x31425642
 TOKEN = bytes(range(1, 33))
+MFD_ALLOW_SEALING = 0x0002
+
+
+def create_memfd(name: str) -> int:
+    if hasattr(os, "memfd_create"):
+        return os.memfd_create(name, MFD_ALLOW_SEALING)
+    libc = ctypes.CDLL(None, use_errno=True)
+    native_memfd_create = libc.memfd_create
+    native_memfd_create.argtypes = [ctypes.c_char_p, ctypes.c_uint]
+    native_memfd_create.restype = ctypes.c_int
+    descriptor = native_memfd_create(name.encode(), MFD_ALLOW_SEALING)
+    if descriptor < 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    return descriptor
 
 
 def header(kind: int, opcode: int, request_id: int, length: int,
@@ -39,7 +55,7 @@ def run_contract(relay_path: str, frames: int, ring_slots: int) -> None:
     visible_listener.bind(("127.0.0.1", 0))
     visible_listener.listen(1)
     visible_port = visible_listener.getsockname()[1]
-    region_fd = os.memfd_create("bvb-relay-contract", os.MFD_ALLOW_SEALING)
+    region_fd = create_memfd("bvb-relay-contract")
     os.ftruncate(region_fd, 4096)
     region = mmap.mmap(region_fd, 4096)
     marker = b"BVB_E020_SHARED_REGION binder_parcel_fd=PASS\n"
