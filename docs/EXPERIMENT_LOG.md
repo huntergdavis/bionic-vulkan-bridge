@@ -1291,3 +1291,76 @@ the four observed global bootstrap calls (`vkCreateInstance`,
 `vkEnumerateInstanceLayerProperties`, and `vkEnumerateInstanceVersion`) against
 the Bionic control path, introduce proxy instance ownership, and expose only
 extensions the bridge can actually support.
+
+## E025 — Real glibc-to-Bionic Vulkan global bootstrap (2026-08-19)
+
+Status: passed on the Galaxy Tab S8+ with the real Termux AArch64 glibc client,
+Android Bionic service, and `/system/lib64/libvulkan.so`.
+
+Hypothesis: the four global calls observed during E011 can execute across the
+existing authenticated control boundary without claiming any extension or
+layer semantics the bridge does not yet implement. A native instance can remain
+owned by the Bionic connection while glibc receives only a typed proxy handle.
+
+Method: protocol-v1 opcodes 11 and 12 add fixed-width global-info and
+instance-create records. The Bionic context loads `vkGetInstanceProcAddr` from
+the selected loader; executes `vkEnumerateInstanceVersion`,
+`vkEnumerateInstanceExtensionProperties`, and
+`vkEnumerateInstanceLayerProperties`; and caches both native inventory counts
+and an intentionally empty exposed inventory. It sanitizes instance creation,
+rejecting extensions, layers, flags, `pNext`, and custom allocation callbacks
+that cannot cross the current bridge. Successful native instances enter E012's
+typed handle table and are destroyed when the authenticated connection closes.
+
+The glibc shared library now exports `vkGetInstanceProcAddr`, keeps one
+same-UID authenticated Unix connection selected by `BVB_BRIDGE_SOCKET`, and
+implements the four real Vulkan signatures. Its dispatchable instance proxy has
+a stable dispatch anchor, a magic value, and the returned 64-bit typed ID. The
+E025 executable-name input advances the generated E024 policy from 8 to 12
+working semantic names. The other 428 resolved names and 302 originally-null
+names still return null.
+
+Result: the canonical hardware client used the Termux glibc interpreter while
+the service used `/system/bin/linker64`. Android's loader reported Vulkan
+1.4.0 (`4210688`). Both extension and layer enumeration returned an exposed
+count of zero. Two valid `vkCreateInstance` calls returned proxy IDs
+`0x0100000000000001` and `0x0100000000000002`: object type 1 (`INSTANCE`) with
+serials 1 and 2. Client and service stderr were both empty, and both processes
+exited successfully.
+
+The first real-loader attempt failed before enumeration because the Bionic
+context asked `vkGetInstanceProcAddr(VK_NULL_HANDLE, "vkDestroyInstance")`.
+Android correctly returned null for that instance-scoped command, whereas the
+host fake loader had permissively returned it and masked the error. Commit
+`4171bc1` retained GIPA and resolves destruction only after a native instance
+exists. The unchanged real-loader procedure then passed. This is evidence for
+the four global calls and instance ownership; physical-device discovery,
+instance-command dispatch, supported extensions, and DXVK execution remain
+unimplemented.
+
+Validation and artifact identities:
+
+- all 17 normal-host contracts and all 15 contracts available under Termux
+  ARM64 passed after the Android-specific correction; the real glibc/Bionic
+  hardware gate passed at source commit `feade5e`;
+- canonical evidence:
+  `docs/evidence/e025-global-vulkan-bootstrap.json`, 3,496 bytes, SHA-256
+  `e27a42248ecc0302a38becf972203e3453314d0729b616d7c962e9aa9ca081d0`;
+- generated E025 policy summary: 1,268 bytes, SHA-256
+  `adc5d1f5bc4bba61dbb45ff520b3fc1bdcea4ec48290ae50cd08a70805d3799c`;
+- glibc `libvulkan-bvb` bridge: 143,080 bytes, SHA-256
+  `efbf49ca7decc938d2e29ca618cb73c12b637b75cd027ac55c97a40c0afdd7ca`;
+- glibc bootstrap client: 71,408 bytes, SHA-256
+  `8b5ba663b0923071e9adbcad51e5f8cc2c31903ff0f4662654ab40f4a723932d`;
+- Bionic bridge service: 62,608 bytes, SHA-256
+  `27eefa8ab39aa8d7b46f9c3cd775ca947f01fed3255ac5bb0d63be9064dbc448`.
+
+The required recall queries—`Vulkan global bootstrap vkCreateInstance
+vkEnumerateInstanceExtensionProperties vkEnumerateInstanceLayerProperties
+vkEnumerateInstanceVersion proxy instance Bionic bridge E025` and the broader
+`vkCreateInstance proxy handle Vulkan bridge`—found no indexed prior
+implementation. E025 reused E003's authenticated control discipline, E012's
+typed handle IDs, E015's generated client-dispatch pattern, and E024's measured
+truth table. E026 should add explicit `vkDestroyInstance` dispatch plus
+`vkEnumeratePhysicalDevices`, returning connection-owned physical-device proxy
+IDs without yet advertising unimplemented property or WSI calls.

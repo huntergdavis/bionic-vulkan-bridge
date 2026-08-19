@@ -61,6 +61,8 @@
   producer/consumer synchronization, then measure steady-state replay
 - [x] Generate an auditable runtime support policy for every measured DXVK
   startup lookup without advertising unimplemented commands
+- [x] Execute the four measured global Vulkan bootstrap calls through Bionic
+  and return typed glibc instance proxies
 - [ ] Expand generated dispatch to the measured DXVK startup subset
 - [ ] Implement GPU external-memory and synchronization strategy
 - [x] Reach a rendered test triangle

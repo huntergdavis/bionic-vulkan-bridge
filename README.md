@@ -100,6 +100,12 @@ the eight names already backed by executable triangle dispatch return non-null;
 the other 432 remain explicitly unsupported, as do the 302 names that originally
 probed null. The real Termux ARM64 glibc target validates every lookup without
 falsely advertising Vulkan functionality that the bridge cannot execute yet.
+E025 makes the four measured global bootstrap calls executable through a
+persistent glibc-to-Bionic control connection. On the tablet, the real Android
+loader reported Vulkan 1.4.0 and created two native instances represented to
+glibc by sequential type-safe proxy IDs. The bridge currently advertises zero
+instance extensions and layers; this is intentional until their semantics are
+implemented.
 
 ## Build and test on a normal Linux host
 
