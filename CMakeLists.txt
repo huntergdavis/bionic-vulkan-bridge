@@ -10,6 +10,8 @@ project(
 include(CTest)
 include(FetchContent)
 
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -98,6 +100,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
 endif()
 
 add_library(bvb-wire STATIC src/lifecycle.c src/protocol.c src/transport.c)
+set_target_properties(bvb-wire PROPERTIES C_VISIBILITY_PRESET hidden)
 target_include_directories(
   bvb-wire
   PUBLIC
@@ -107,6 +110,7 @@ target_include_directories(
 bvb_enable_warnings(bvb-wire)
 
 add_library(bvb-command-batch STATIC src/handle.c src/command_batch.c)
+set_target_properties(bvb-command-batch PROPERTIES C_VISIBILITY_PRESET hidden)
 target_include_directories(
   bvb-command-batch
   PUBLIC
@@ -116,6 +120,45 @@ target_include_directories(
 target_link_libraries(bvb-command-batch PRIVATE bvb-wire)
 bvb_enable_warnings(bvb-command-batch)
 target_link_libraries(bvb-vulkan-selftest-core PRIVATE bvb-command-batch)
+
+set(
+  bvb_triangle_dispatch_include
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/bvb_triangle_dispatch.inc"
+)
+add_custom_command(
+  OUTPUT "${bvb_triangle_dispatch_include}"
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-triangle-dispatch.py"
+    "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
+    "${bvb_triangle_dispatch_include}"
+  DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-triangle-dispatch.py"
+    "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
+  VERBATIM
+)
+add_library(
+  bvb-vulkan-client-dispatch SHARED
+  src/triangle_dispatch.c
+  "${bvb_triangle_dispatch_include}"
+)
+target_include_directories(
+  bvb-vulkan-client-dispatch
+  PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated"
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
+)
+target_link_libraries(
+  bvb-vulkan-client-dispatch PRIVATE bvb-command-batch Vulkan::Headers
+)
+set_target_properties(
+  bvb-vulkan-client-dispatch
+  PROPERTIES C_VISIBILITY_PRESET hidden OUTPUT_NAME vulkan-bvb
+)
+bvb_enable_warnings(bvb-vulkan-client-dispatch)
 
 add_executable(bvb-bridge-service src/bridge_service.c)
 target_link_libraries(
@@ -131,7 +174,7 @@ bvb_enable_warnings(bvb-bridge-client)
 install(
   TARGETS bvb-vulkan-probe bvb-bridge-service bvb-bridge-client
           bvb-vulkan-selftest bvb-vulkan-surface-probe
-          bvb-vulkan-present-selftest
+          bvb-vulkan-present-selftest bvb-vulkan-client-dispatch
   RUNTIME DESTINATION bin
 )
 
@@ -140,8 +183,6 @@ if(TARGET bvb-vulkan-resolve-trace)
 endif()
 
 if(BUILD_TESTING)
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
-
   add_library(bvb-fake-vulkan SHARED tests/fake_vulkan.c)
   target_link_libraries(bvb-fake-vulkan PRIVATE Vulkan::Headers)
   set_target_properties(
@@ -176,6 +217,14 @@ if(BUILD_TESTING)
   target_link_libraries(bvb-command-batch-test PRIVATE bvb-command-batch)
   bvb_enable_warnings(bvb-command-batch-test)
   add_test(NAME command-batch-contract COMMAND bvb-command-batch-test)
+
+  add_executable(bvb-triangle-dispatch-test tests/triangle_dispatch.c)
+  target_link_libraries(
+    bvb-triangle-dispatch-test
+    PRIVATE bvb-vulkan-client-dispatch bvb-command-batch Vulkan::Headers
+  )
+  bvb_enable_warnings(bvb-triangle-dispatch-test)
+  add_test(NAME triangle-dispatch-contract COMMAND bvb-triangle-dispatch-test)
 
   if(TARGET bvb-vulkan-resolve-trace)
     add_library(bvb-fake-vulkan-resolve SHARED tests/fake_vulkan_resolve.c)

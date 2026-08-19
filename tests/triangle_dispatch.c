@@ -1,0 +1,151 @@
+#define VK_NO_PROTOTYPES
+
+#include <bvb/command_batch.h>
+#include <bvb/triangle_dispatch.h>
+
+#include <errno.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+#define CHECK(expression)                                                        \
+    do {                                                                         \
+        if (!(expression)) {                                                     \
+            fprintf(stderr, "CHECK failed at %s:%d: %s\n", __FILE__, __LINE__, \
+                    #expression);                                                \
+            return 1;                                                            \
+        }                                                                        \
+    } while (0)
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
+vkGetDeviceProcAddr(VkDevice device, const char *name);
+
+static VkImageView image_view_from_id(uint64_t wire_id) {
+    VkImageView handle = VK_NULL_HANDLE;
+    memcpy(&handle, &wire_id, sizeof(handle));
+    return handle;
+}
+
+static VkPipeline pipeline_from_id(uint64_t wire_id) {
+    VkPipeline handle = VK_NULL_HANDLE;
+    memcpy(&handle, &wire_id, sizeof(handle));
+    return handle;
+}
+
+#define RESOLVE(name)                                                           \
+    PFN_##name name = NULL;                                                     \
+    do {                                                                        \
+        PFN_vkVoidFunction generic = vkGetDeviceProcAddr(                       \
+            VK_NULL_HANDLE, #name);                                             \
+        CHECK(generic != NULL);                                                 \
+        _Static_assert(sizeof(name) == sizeof(generic),                         \
+                       "Vulkan function pointer size mismatch");               \
+        memcpy(&name, &generic, sizeof(name));                                  \
+    } while (0)
+
+int main(void) {
+    RESOLVE(vkCmdBeginRendering);
+    RESOLVE(vkCmdBindPipeline);
+    RESOLVE(vkCmdSetViewport);
+    RESOLVE(vkCmdSetScissor);
+    RESOLVE(vkCmdDraw);
+    RESOLVE(vkCmdEndRendering);
+
+    CHECK(vkGetDeviceProcAddr(VK_NULL_HANDLE, "vkCmdBeginRenderingKHR") ==
+          vkGetDeviceProcAddr(VK_NULL_HANDLE, "vkCmdBeginRendering"));
+    CHECK(vkGetDeviceProcAddr(VK_NULL_HANDLE, "vkCmdEndRenderingKHR") ==
+          vkGetDeviceProcAddr(VK_NULL_HANDLE, "vkCmdEndRendering"));
+    CHECK(vkGetDeviceProcAddr(VK_NULL_HANDLE, "vkCmdDispatch") == NULL);
+
+    uint8_t batch[512];
+    const uint64_t command_buffer_id =
+        bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 3U);
+    const uint64_t image_view_id =
+        bvb_handle_id(BVB_OBJECT_IMAGE_VIEW, 4U);
+    const uint64_t pipeline_id = bvb_handle_id(BVB_OBJECT_PIPELINE, 5U);
+    VkCommandBuffer command_buffer = bvb_triangle_command_buffer_create(
+        batch, sizeof(batch), command_buffer_id, 11U);
+    CHECK(command_buffer != VK_NULL_HANDLE);
+
+    const VkRenderingAttachmentInfo attachment = {
+        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .imageView = image_view_from_id(image_view_id),
+        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .resolveMode = VK_RESOLVE_MODE_NONE,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .clearValue.color.float32 = {0.1F, 0.2F, 0.3F, 1.0F},
+    };
+    const VkRenderingInfo rendering = {
+        .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+        .renderArea = {.offset = {0, 0}, .extent = {1280U, 720U}},
+        .layerCount = 1U,
+        .colorAttachmentCount = 1U,
+        .pColorAttachments = &attachment,
+    };
+    vkCmdBeginRendering(command_buffer, &rendering);
+    vkCmdBindPipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      pipeline_from_id(pipeline_id));
+    const VkViewport viewport = {
+        .x = 0.0F,
+        .y = 0.0F,
+        .width = 1280.0F,
+        .height = 720.0F,
+        .minDepth = 0.0F,
+        .maxDepth = 1.0F,
+    };
+    vkCmdSetViewport(command_buffer, 0U, 1U, &viewport);
+    const VkRect2D scissor = {
+        .offset = {0, 0},
+        .extent = {1280U, 720U},
+    };
+    vkCmdSetScissor(command_buffer, 0U, 1U, &scissor);
+    vkCmdDraw(command_buffer, 3U, 1U, 0U, 0U);
+    vkCmdEndRendering(command_buffer);
+
+    size_t length = 0U;
+    CHECK(bvb_triangle_command_buffer_finish(command_buffer, &length) == 0);
+    CHECK(bvb_triangle_command_buffer_status(command_buffer) == 0);
+    struct bvb_command_batch_info info;
+    CHECK(bvb_command_batch_validate(batch, length, &info) == 0);
+    CHECK(info.command_buffer_id == command_buffer_id);
+    CHECK(info.sequence == 11U);
+    CHECK(info.command_count == 6U);
+
+    struct bvb_command_batch_iterator iterator;
+    struct bvb_command_record record;
+    CHECK(bvb_command_batch_iterator_init(&iterator, batch, length) == 0);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    struct bvb_begin_rendering_command begin;
+    CHECK(bvb_command_decode_begin_rendering(&record, &begin) == 0);
+    CHECK(begin.color_image_view_id == image_view_id);
+    CHECK(begin.width == 1280U && begin.height == 720U);
+    CHECK(begin.clear_color[0] == 0.1F && begin.clear_color[3] == 1.0F);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    struct bvb_bind_graphics_pipeline_command bind;
+    CHECK(bvb_command_decode_bind_graphics_pipeline(&record, &bind) == 0);
+    CHECK(bind.pipeline_id == pipeline_id);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    CHECK(record.opcode == BVB_COMMAND_SET_VIEWPORT);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    CHECK(record.opcode == BVB_COMMAND_SET_SCISSOR);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    struct bvb_draw_command draw;
+    CHECK(bvb_command_decode_draw(&record, &draw) == 0);
+    CHECK(draw.vertex_count == 3U && draw.instance_count == 1U);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    CHECK(record.opcode == BVB_COMMAND_END_RENDERING);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 1);
+    bvb_triangle_command_buffer_destroy(command_buffer);
+
+    VkCommandBuffer rejected = bvb_triangle_command_buffer_create(
+        batch, sizeof(batch), command_buffer_id, 12U);
+    CHECK(rejected != VK_NULL_HANDLE);
+    vkCmdSetViewport(rejected, 0U, 2U, &viewport);
+    CHECK(bvb_triangle_command_buffer_status(rejected) == -ENOTSUP);
+    CHECK(bvb_triangle_command_buffer_finish(rejected, &length) == -ENOTSUP);
+    bvb_triangle_command_buffer_destroy(rejected);
+
+    puts("PASS: generated executable triangle dispatch");
+    return 0;
+}
