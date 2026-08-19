@@ -136,10 +136,15 @@ while ! grep -q '^bvb-external-memory-receiver: ready ' "$receiver_stdout"; do
     [ "$attempt" -lt 100 ] || { printf 'receiver readiness timed out\n' >&2; exit 6; }
     sleep 0.05
 done
-env -u LD_LIBRARY_PATH -u LD_PRELOAD CLASSPATH="$helper_apk" \
+if ! env -u LD_LIBRARY_PATH -u LD_PRELOAD CLASSPATH="$helper_apk" \
     /system/bin/app_process -Xnoimage-dex2oat / "$client_class" \
     "$token" "$valid_json" "$socket_name" external \
-    >/dev/null 2> "$valid_stderr"
+    >/dev/null 2> "$valid_stderr"; then
+    printf 'valid external-memory request failed\n' >&2
+    cat "$valid_json" >&2
+    cat "$valid_stderr" >&2
+    exit 7
+fi
 wait "$receiver_pid"
 receiver_pid=
 if env -u LD_LIBRARY_PATH -u LD_PRELOAD CLASSPATH="$helper_apk" \
