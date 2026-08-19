@@ -914,3 +914,43 @@ frame. E018 is the prepared hardware gate: install v7, launch it with the
 socket capability, replay this glibc-owned batch through the already visible
 render-pass backend, and retain the authenticated lifecycle and E018 logs as
 evidence.
+
+## E018 — Android cross-UID abstract-socket denial (2026-08-19)
+
+Status: failed at the transport boundary on hardware; renderer execution was
+not reached.
+
+Hypothesis: APK v7 can reuse E017's abstract Unix socket, `SCM_RIGHTS`, and
+sealed memfd path when the Bionic receiver runs inside the visible Android
+Activity under its own application UID.
+
+Method: installed signature-verified APK v7, manually force-stopped it to
+guarantee a fresh process, launched it with fresh lifecycle and ingress
+capabilities, waited for authenticated window creation, then ran the E017
+Termux-glibc triangle client with the Activity's native 2800x1752 dimensions.
+The client was instrumented to distinguish shared-region, connect, setup, and
+execute failures. All 14 host contracts passed before the hardware attempt.
+
+Result: Activity PID 16205 authenticated created, started, resumed,
+window-created, and focused events. The glibc client then returned
+`stage=connect_abstract: Permission denied (-13)`. No setup packet crossed the
+boundary and no renderer work began. This isolates the failure from token
+verification, memfd validation, Vulkan replay, and presentation. E017 passed
+only because its Bionic receiver was launched from Termux and therefore shared
+Termux's Android UID; moving the same receiver into the APK changed the Android
+security boundary.
+
+Evidence is recorded in
+`docs/evidence/e018-visible-cross-uid-ingress.json`. The local recall queries
+`Termux am wrapper unknown force-stop use am start -S`, `Android Termux
+NativeActivity abstract Unix socket EACCES cross UID SELinux token mismatch`,
+and `Termux grun FEX glibc ORIGIN runpath shared library not found` returned no
+matching prior solution.
+
+Conclusion: cross-libc correctness and sub-millisecond same-UID batching remain
+valid, but an abstract Unix socket cannot be the direct APK/Termux boundary on
+this stock device. The next A/B gate will keep the authenticated batch and
+renderer unchanged while copying the small proof batch over loopback TCP. A
+subsequent production path must use an Android-supported descriptor broker
+(for example Binder/`ParcelFileDescriptor`) to recover shared-memory batching;
+the inline TCP gate is diagnostic, not the final high-throughput design.

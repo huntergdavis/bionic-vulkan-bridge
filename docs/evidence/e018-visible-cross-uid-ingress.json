@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "gate": "E018",
+  "result": "fail",
+  "target": "Samsung Galaxy Tab S8+",
+  "source_libc": "glibc",
+  "host_libc": "bionic",
+  "transport": "abstract_unix_scm_rights_memfd",
+  "failure_stage": "connect_abstract",
+  "error": {
+    "errno": 13,
+    "name": "EACCES",
+    "message": "Permission denied"
+  },
+  "activity": {
+    "pid": 16205,
+    "width": 2800,
+    "height": 1752,
+    "events": [
+      "created",
+      "started",
+      "resumed",
+      "window_created",
+      "focused"
+    ]
+  },
+  "apk": {
+    "version_code": 7,
+    "sha256": "12a7380cd5bd08b2ffcd3aaa21455cca0a8b28eeed13b4a9de885e6a3ef7bbba"
+  },
+  "setup_reached": false,
+  "renderer_execution_reached": false,
+  "visible_external_rendering_claimed": false
+}

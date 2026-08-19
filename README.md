@@ -68,10 +68,14 @@ Android Vulkan 1.1 driver does not expose `VK_KHR_dynamic_rendering`, Bionic
 translates the encoded begin/end-rendering commands to a classic render pass.
 The authenticated hardware gate reported a focused, renderer-ready 2800x1752
 window, and the triangle was visually confirmed on the tablet. The batch is
-still constructed inside the Activity. E017 now passes that exact generated
-batch from a glibc process to the reusable Bionic ingress receiver in about
-0.250 ms on the tablet. APK v7 and the E018 hardware harness are staged for the
-remaining visible external-replay gate; that result is not claimed yet.
+still constructed inside the Activity. E017 passes that exact generated batch
+from a glibc process to a same-UID Bionic ingress receiver in about 0.250 ms on
+the tablet. E018 then isolated the real Android boundary: APK v7 reached a
+focused native-resolution window, but stock Android denied Termux's cross-UID
+abstract Unix socket connection before setup (`EACCES`). The next gate copies
+the small proof batch over authenticated loopback TCP; shared-memory production
+batching will require an Android-supported descriptor broker. Visible external
+replay is not claimed yet.
 
 ## Build and test on a normal Linux host
 
