@@ -206,7 +206,8 @@ Java_io_github_huntergdavis_bvb_visiblehost_SharedRegionProvider_nativeOpenRegio
     return memory_fd;
 }
 
-static int receive_exact(int socket_fd, uint8_t *output, size_t length) {
+static int receive_broker_token_exact(int socket_fd, uint8_t *output,
+                                      size_t length) {
     size_t offset = 0U;
     while (offset < length) {
         ssize_t count = recv(socket_fd, output + offset, length - offset, 0);
@@ -266,8 +267,8 @@ static void handle_external_broker_connection(int connection) {
     }
     uint8_t token_hex[BVB_E036_TOKEN_HEX_BYTES + 1U] = {0};
     if (status == 0) {
-        status = receive_exact(connection, token_hex,
-                               BVB_E036_TOKEN_HEX_BYTES);
+        status = receive_broker_token_exact(connection, token_hex,
+                                            BVB_E036_TOKEN_HEX_BYTES);
     }
     uint8_t parsed_token[BVB_LIFECYCLE_TOKEN_SIZE] = {0};
     if (status == 0) {
