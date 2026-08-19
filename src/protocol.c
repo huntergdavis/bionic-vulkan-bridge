@@ -52,7 +52,7 @@ static int header_is_valid(const struct bvb_protocol_header *header) {
         return -EPROTO;
     }
     if (header->opcode < BVB_OPCODE_HELLO ||
-        header->opcode > BVB_OPCODE_ACTIVITY_STATUS) {
+        header->opcode > BVB_OPCODE_VULKAN_BATCH_SELFTEST) {
         return -EPROTO;
     }
     if (header->payload_length > BVB_PROTOCOL_MAX_PAYLOAD) {

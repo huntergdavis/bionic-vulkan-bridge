@@ -181,9 +181,55 @@ static int test_batch(void) {
     return 0;
 }
 
+static int test_transfer_batch(void) {
+    uint8_t bytes[256];
+    const uint64_t command_buffer =
+        bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 1U);
+    const uint64_t buffer = bvb_handle_id(BVB_OBJECT_BUFFER, 1U);
+    struct bvb_command_batch_builder builder;
+    CHECK(bvb_command_batch_begin(&builder, bytes, sizeof(bytes), command_buffer,
+                                  7U) == 0);
+    CHECK(bvb_command_batch_append_fill_buffer(
+              &builder,
+              &(const struct bvb_fill_buffer_command){
+                  .buffer_id = buffer,
+                  .offset = 0U,
+                  .size = 4096U,
+                  .data = UINT32_C(0xa5c3f00d),
+              }) == 0);
+    CHECK(bvb_command_batch_append_buffer_host_read_barrier(
+              &builder,
+              &(const struct bvb_buffer_host_read_barrier_command){
+                  .buffer_id = buffer,
+                  .offset = 0U,
+                  .size = 4096U,
+              }) == 0);
+    size_t length;
+    CHECK(bvb_command_batch_finish(&builder, &length) == 0);
+    struct bvb_command_batch_info info;
+    CHECK(bvb_command_batch_validate(bytes, length, &info) == 0);
+    CHECK(info.command_count == 2U);
+
+    struct bvb_command_batch_iterator iterator;
+    struct bvb_command_record record;
+    CHECK(bvb_command_batch_iterator_init(&iterator, bytes, length) == 0);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    struct bvb_fill_buffer_command fill;
+    CHECK(bvb_command_decode_fill_buffer(&record, &fill) == 0);
+    CHECK(fill.buffer_id == buffer && fill.size == 4096U);
+    CHECK(fill.data == UINT32_C(0xa5c3f00d));
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    struct bvb_buffer_host_read_barrier_command barrier;
+    CHECK(bvb_command_decode_buffer_host_read_barrier(&record, &barrier) == 0);
+    CHECK(barrier.buffer_id == buffer && barrier.size == 4096U);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 1);
+    return 0;
+}
+
 int main(void) {
     CHECK(test_handles() == 0);
     CHECK(test_batch() == 0);
+    CHECK(test_transfer_batch() == 0);
     puts("PASS: proxy handles and triangle command batch");
     return 0;
 }

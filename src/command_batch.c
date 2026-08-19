@@ -10,6 +10,8 @@ enum {
     BVB_SET_VIEWPORT_SIZE = 24,
     BVB_SET_SCISSOR_SIZE = 16,
     BVB_DRAW_SIZE = 16,
+    BVB_FILL_BUFFER_SIZE = 32,
+    BVB_BUFFER_HOST_READ_BARRIER_SIZE = 24,
 };
 
 _Static_assert(sizeof(float) == sizeof(uint32_t),
@@ -188,6 +190,39 @@ int bvb_command_batch_append_end_rendering(
     return append_record(builder, BVB_COMMAND_END_RENDERING, NULL, 0U);
 }
 
+int bvb_command_batch_append_fill_buffer(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_fill_buffer_command *command) {
+    if (command == NULL || command->size == 0U ||
+        (command->offset & 3U) != 0U || (command->size & 3U) != 0U ||
+        bvb_handle_expect(command->buffer_id, BVB_OBJECT_BUFFER) != 0) {
+        return -EINVAL;
+    }
+    uint8_t payload[BVB_FILL_BUFFER_SIZE];
+    bvb_wire_put_u64(payload, command->buffer_id);
+    bvb_wire_put_u64(payload + 8, command->offset);
+    bvb_wire_put_u64(payload + 16, command->size);
+    bvb_wire_put_u32(payload + 24, command->data);
+    bvb_wire_put_u32(payload + 28, 0U);
+    return append_record(builder, BVB_COMMAND_FILL_BUFFER, payload,
+                         sizeof(payload));
+}
+
+int bvb_command_batch_append_buffer_host_read_barrier(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_buffer_host_read_barrier_command *command) {
+    if (command == NULL || command->size == 0U ||
+        bvb_handle_expect(command->buffer_id, BVB_OBJECT_BUFFER) != 0) {
+        return -EINVAL;
+    }
+    uint8_t payload[BVB_BUFFER_HOST_READ_BARRIER_SIZE];
+    bvb_wire_put_u64(payload, command->buffer_id);
+    bvb_wire_put_u64(payload + 8, command->offset);
+    bvb_wire_put_u64(payload + 16, command->size);
+    return append_record(builder, BVB_COMMAND_BUFFER_HOST_READ_BARRIER, payload,
+                         sizeof(payload));
+}
+
 int bvb_command_batch_finish(struct bvb_command_batch_builder *builder,
                              size_t *output_length) {
     if (builder == NULL || builder->bytes == NULL || output_length == NULL ||
@@ -230,6 +265,12 @@ static int expected_payload_size(uint16_t opcode, uint32_t *payload_size) {
             return 0;
         case BVB_COMMAND_END_RENDERING:
             *payload_size = 0U;
+            return 0;
+        case BVB_COMMAND_FILL_BUFFER:
+            *payload_size = BVB_FILL_BUFFER_SIZE;
+            return 0;
+        case BVB_COMMAND_BUFFER_HOST_READ_BARRIER:
+            *payload_size = BVB_BUFFER_HOST_READ_BARRIER_SIZE;
             return 0;
         default:
             return -EPROTO;
@@ -288,6 +329,21 @@ static int validate_payload(uint16_t opcode, const uint8_t *payload) {
                        : 0;
         case BVB_COMMAND_END_RENDERING:
             return 0;
+        case BVB_COMMAND_FILL_BUFFER:
+            return bvb_handle_expect(bvb_wire_get_u64(payload),
+                                     BVB_OBJECT_BUFFER) != 0 ||
+                           bvb_wire_get_u64(payload + 16) == 0U ||
+                           (bvb_wire_get_u64(payload + 8) & 3U) != 0U ||
+                           (bvb_wire_get_u64(payload + 16) & 3U) != 0U ||
+                           bvb_wire_get_u32(payload + 28) != 0U
+                       ? -EPROTO
+                       : 0;
+        case BVB_COMMAND_BUFFER_HOST_READ_BARRIER:
+            return bvb_handle_expect(bvb_wire_get_u64(payload),
+                                     BVB_OBJECT_BUFFER) != 0 ||
+                           bvb_wire_get_u64(payload + 16) == 0U
+                       ? -EPROTO
+                       : 0;
         default:
             return -EPROTO;
     }
@@ -467,6 +523,38 @@ int bvb_command_decode_draw(const struct bvb_command_record *record,
         .instance_count = bvb_wire_get_u32(record->payload + 4),
         .first_vertex = bvb_wire_get_u32(record->payload + 8),
         .first_instance = bvb_wire_get_u32(record->payload + 12),
+    };
+    return 0;
+}
+
+int bvb_command_decode_fill_buffer(const struct bvb_command_record *record,
+                                   struct bvb_fill_buffer_command *command) {
+    if (record == NULL || command == NULL ||
+        record->opcode != BVB_COMMAND_FILL_BUFFER ||
+        record->payload_length != BVB_FILL_BUFFER_SIZE) {
+        return -EINVAL;
+    }
+    *command = (struct bvb_fill_buffer_command){
+        .buffer_id = bvb_wire_get_u64(record->payload),
+        .offset = bvb_wire_get_u64(record->payload + 8),
+        .size = bvb_wire_get_u64(record->payload + 16),
+        .data = bvb_wire_get_u32(record->payload + 24),
+    };
+    return 0;
+}
+
+int bvb_command_decode_buffer_host_read_barrier(
+    const struct bvb_command_record *record,
+    struct bvb_buffer_host_read_barrier_command *command) {
+    if (record == NULL || command == NULL ||
+        record->opcode != BVB_COMMAND_BUFFER_HOST_READ_BARRIER ||
+        record->payload_length != BVB_BUFFER_HOST_READ_BARRIER_SIZE) {
+        return -EINVAL;
+    }
+    *command = (struct bvb_buffer_host_read_barrier_command){
+        .buffer_id = bvb_wire_get_u64(record->payload),
+        .offset = bvb_wire_get_u64(record->payload + 8),
+        .size = bvb_wire_get_u64(record->payload + 16),
     };
     return 0;
 }

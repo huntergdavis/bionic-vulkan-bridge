@@ -1,3 +1,4 @@
+#include <bvb/command_batch.h>
 #include <bvb/protocol.h>
 #include <bvb/transport.h>
 #include <bvb/vulkan_caps.h>
@@ -14,13 +15,15 @@ struct client_options {
     const char *socket_path;
     bool request_vulkan_caps;
     bool request_vulkan_selftest;
+    bool request_vulkan_batch_selftest;
     bool request_activity_status;
 };
 
 static void usage(const char *program) {
     fprintf(stderr,
             "usage: %s --socket ABSOLUTE_PATH "
-            "[--vulkan-caps] [--vulkan-selftest] [--activity-status]\n",
+            "[--vulkan-caps] [--vulkan-selftest | "
+            "--vulkan-batch-selftest] [--activity-status]\n",
             program);
 }
 
@@ -35,6 +38,8 @@ static int parse_arguments(int argc, char **argv,
             options->request_vulkan_caps = true;
         } else if (strcmp(argv[index], "--vulkan-selftest") == 0) {
             options->request_vulkan_selftest = true;
+        } else if (strcmp(argv[index], "--vulkan-batch-selftest") == 0) {
+            options->request_vulkan_batch_selftest = true;
         } else if (strcmp(argv[index], "--activity-status") == 0) {
             options->request_activity_status = true;
         } else {
@@ -42,7 +47,9 @@ static int parse_arguments(int argc, char **argv,
             return 2;
         }
     }
-    if (options->socket_path == NULL) {
+    if (options->socket_path == NULL ||
+        (options->request_vulkan_selftest &&
+         options->request_vulkan_batch_selftest)) {
         usage(argv[0]);
         return 2;
     }
@@ -161,6 +168,7 @@ static void print_document(const struct bvb_protocol_packet *hello_packet,
                            const struct bvb_hello_response *hello,
                            const struct bvb_vulkan_caps *caps,
                            const struct bvb_vulkan_selftest_result *selftest,
+                           bool selftest_is_batch,
                            const struct bvb_activity_status *activity) {
     printf("{\"schema_version\":1,\"protocol_version\":%u,"
            "\"request_id\":%" PRIu32 ",\"service_flags\":%" PRIu32
@@ -211,9 +219,11 @@ static void print_document(const struct bvb_protocol_packet *hello_packet,
         fputs("]}", stdout);
     }
     if (selftest != NULL) {
-        printf(",\"vulkan_selftest\":{\"instance_extension_count\":%" PRIu32
+        printf(",\"%s\":{\"instance_extension_count\":%" PRIu32
                ",\"instance_extension_flags\":%" PRIu64
                ",\"known_instance_extensions\":",
+               selftest_is_batch ? "vulkan_batch_selftest"
+                                 : "vulkan_selftest",
                selftest->instance_extension_count,
                selftest->instance_extension_flags);
         print_extension_array(selftest->instance_extension_flags, false);
@@ -385,6 +395,68 @@ int main(int argc, char **argv) {
         selftest_pointer = &selftest;
     }
 
+    if (options.request_vulkan_batch_selftest) {
+        memset(&request, 0, sizeof(request));
+        request.header.version = BVB_PROTOCOL_VERSION;
+        request.header.kind = BVB_PROTOCOL_REQUEST;
+        request.header.opcode = BVB_OPCODE_VULKAN_BATCH_SELFTEST;
+        request.header.request_id = 0x42564205U;
+
+        struct bvb_command_batch_builder builder;
+        const uint64_t command_buffer_id =
+            bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 1U);
+        const uint64_t buffer_id = bvb_handle_id(BVB_OBJECT_BUFFER, 1U);
+        size_t batch_length = 0U;
+        result = bvb_command_batch_begin(
+            &builder, request.payload, sizeof(request.payload),
+            command_buffer_id, 1U);
+        if (result == 0) {
+            result = bvb_command_batch_append_fill_buffer(
+                &builder,
+                &(const struct bvb_fill_buffer_command){
+                    .buffer_id = buffer_id,
+                    .offset = 0U,
+                    .size = 4096U,
+                    .data = UINT32_C(0xa5c3f00d),
+                });
+        }
+        if (result == 0) {
+            result = bvb_command_batch_append_buffer_host_read_barrier(
+                &builder,
+                &(const struct bvb_buffer_host_read_barrier_command){
+                    .buffer_id = buffer_id,
+                    .offset = 0U,
+                    .size = 4096U,
+                });
+        }
+        if (result == 0) {
+            result = bvb_command_batch_finish(&builder, &batch_length);
+        }
+        if (result != 0 || batch_length > UINT32_MAX) {
+            (void)close(socket_fd);
+            fputs("bvb: could not construct Vulkan command batch\n", stderr);
+            return 7;
+        }
+        request.header.payload_length = (uint32_t)batch_length;
+
+        struct bvb_protocol_packet selftest_packet;
+        result = exchange(socket_fd, &request, &selftest_packet);
+        if (result != 0 || selftest_packet.header.status != 0 ||
+            selftest_packet.header.payload_length != BVB_VULKAN_SELFTEST_SIZE) {
+            (void)close(socket_fd);
+            fputs("bvb: Vulkan batch self-test request failed\n", stderr);
+            return 7;
+        }
+        result = bvb_protocol_decode_vulkan_selftest(selftest_packet.payload,
+                                                     &selftest);
+        if (result != 0) {
+            (void)close(socket_fd);
+            fputs("bvb: invalid Vulkan batch self-test response\n", stderr);
+            return 7;
+        }
+        selftest_pointer = &selftest;
+    }
+
     struct bvb_activity_status activity_status;
     struct bvb_activity_status *activity_status_pointer = NULL;
     if (options.request_activity_status) {
@@ -414,6 +486,7 @@ int main(int argc, char **argv) {
 
     (void)close(socket_fd);
     print_document(&hello_packet, &hello, caps_pointer, selftest_pointer,
+                   options.request_vulkan_batch_selftest,
                    activity_status_pointer);
     return 0;
 }

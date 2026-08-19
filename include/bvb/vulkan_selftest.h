@@ -42,6 +42,8 @@ struct bvb_vulkan_selftest_result {
 int bvb_vulkan_run_selftest(const char *loader_path,
                             struct bvb_vulkan_selftest_result *result,
                             char *error, size_t error_size);
+int bvb_vulkan_run_batched_selftest(
+    const char *loader_path, const uint8_t *batch, size_t batch_length,
+    struct bvb_vulkan_selftest_result *result, char *error, size_t error_size);
 
 #endif
-

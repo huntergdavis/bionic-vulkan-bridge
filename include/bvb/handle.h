@@ -24,6 +24,7 @@ enum bvb_object_type {
     BVB_OBJECT_PIPELINE = 16,
     BVB_OBJECT_SEMAPHORE = 17,
     BVB_OBJECT_FENCE = 18,
+    BVB_OBJECT_BUFFER = 19,
 };
 
 enum {

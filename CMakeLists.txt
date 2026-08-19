@@ -115,16 +115,17 @@ target_include_directories(
 )
 target_link_libraries(bvb-command-batch PRIVATE bvb-wire)
 bvb_enable_warnings(bvb-command-batch)
+target_link_libraries(bvb-vulkan-selftest-core PRIVATE bvb-command-batch)
 
 add_executable(bvb-bridge-service src/bridge_service.c)
 target_link_libraries(
   bvb-bridge-service
-  PRIVATE bvb-wire bvb-vulkan-caps bvb-vulkan-selftest-core
+  PRIVATE bvb-wire bvb-command-batch bvb-vulkan-caps bvb-vulkan-selftest-core
 )
 bvb_enable_warnings(bvb-bridge-service)
 
 add_executable(bvb-bridge-client src/bridge_client.c)
-target_link_libraries(bvb-bridge-client PRIVATE bvb-wire)
+target_link_libraries(bvb-bridge-client PRIVATE bvb-wire bvb-command-batch)
 bvb_enable_warnings(bvb-bridge-client)
 
 install(

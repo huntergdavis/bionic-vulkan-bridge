@@ -16,12 +16,18 @@ def run_exchange(
     socket_path: pathlib.Path,
     loader: str | None = None,
     lifecycle: bool = False,
+    batched: bool = False,
 ) -> dict[str, object]:
     service_command = [service, "--socket", str(socket_path), "--once"]
     client_command = [client, "--socket", str(socket_path)]
     if loader is not None:
         service_command.extend(["--loader", loader])
-        client_command.extend(["--vulkan-caps", "--vulkan-selftest"])
+        client_command.extend(
+            [
+                "--vulkan-caps",
+                "--vulkan-batch-selftest" if batched else "--vulkan-selftest",
+            ]
+        )
     token = bytes.fromhex(
         "00112233445566778899aabbccddeeff"
         "fedcba98765432100123456789abcdef"
@@ -152,6 +158,19 @@ def main() -> int:
         assert selftest["mismatched_words"] == 0
         assert "VK_KHR_surface" in selftest["known_instance_extensions"]
         assert "VK_KHR_swapchain" in selftest["known_device_extensions"]
+
+        batch_document = run_exchange(
+            service,
+            client,
+            temp_path / "batch" / "bridge.sock",
+            fake_loader,
+            batched=True,
+        )
+        batch_selftest = batch_document["vulkan_batch_selftest"]
+        assert isinstance(batch_selftest, dict)
+        assert batch_selftest["buffer_bytes"] == 4096
+        assert batch_selftest["fill_word"] == 0xA5C3F00D
+        assert batch_selftest["mismatched_words"] == 0
 
         lifecycle_document = run_exchange(
             service,

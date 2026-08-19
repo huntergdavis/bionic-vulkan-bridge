@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #define VK_NO_PROTOTYPES
 
+#include <bvb/command_batch.h>
 #include <bvb/vulkan_selftest.h>
 
 #include <vulkan/vulkan.h>
@@ -142,15 +143,157 @@ static void cleanup(struct bvb_vulkan_objects *objects) {
     }
 }
 
-int bvb_vulkan_run_selftest(const char *loader_path,
-                            struct bvb_vulkan_selftest_result *output,
-                            char *error, size_t error_size) {
+static uint64_t vulkan_handle_bits(const void *handle, size_t handle_size) {
+    uint64_t bits = 0U;
+    if (handle != NULL && handle_size <= sizeof(bits)) {
+        memcpy(&bits, handle, handle_size);
+    }
+    return bits;
+}
+
+static VkBuffer buffer_from_bits(uint64_t bits) {
+    VkBuffer buffer = VK_NULL_HANDLE;
+    _Static_assert(sizeof(buffer) <= sizeof(bits), "VkBuffer exceeds wire bits");
+    memcpy(&buffer, &bits, sizeof(buffer));
+    return buffer;
+}
+
+static int replay_transfer_batch(
+    const uint8_t *batch, size_t batch_length, VkCommandBuffer command_buffer,
+    VkBuffer buffer, PFN_vkCmdFillBuffer fill_buffer,
+    PFN_vkCmdPipelineBarrier pipeline_barrier, char *error,
+    size_t error_size) {
+    struct bvb_command_batch_info info;
+    int result = bvb_command_batch_validate(batch, batch_length, &info);
+    if (result != 0) {
+        set_error(error, error_size, "command batch validation failed: %d",
+                  result);
+        return result;
+    }
+
+    const uint64_t buffer_id = bvb_handle_id(BVB_OBJECT_BUFFER, 1U);
+    struct bvb_handle_entry entries[8];
+    struct bvb_handle_table handles;
+    result = bvb_handle_table_init(&handles, entries, 8U);
+    if (result == 0) {
+        result = bvb_handle_table_insert(
+            &handles, info.command_buffer_id, 0U,
+            vulkan_handle_bits(&command_buffer, sizeof(command_buffer)));
+    }
+    if (result == 0) {
+        result = bvb_handle_table_insert(
+            &handles, buffer_id, 0U,
+            vulkan_handle_bits(&buffer, sizeof(buffer)));
+    }
+    if (result != 0) {
+        set_error(error, error_size, "could not establish handle ownership: %d",
+                  result);
+        return result;
+    }
+
+    uint64_t command_buffer_bits = 0U;
+    result = bvb_handle_table_lookup(&handles, info.command_buffer_id,
+                                     BVB_OBJECT_COMMAND_BUFFER, NULL,
+                                     &command_buffer_bits);
+    if (result != 0 ||
+        command_buffer_bits !=
+            vulkan_handle_bits(&command_buffer, sizeof(command_buffer))) {
+        set_error(error, error_size, "command-buffer ownership mismatch");
+        return -EPROTO;
+    }
+
+    struct bvb_command_batch_iterator iterator;
+    result = bvb_command_batch_iterator_init(&iterator, batch, batch_length);
+    if (result != 0) {
+        set_error(error, error_size, "could not iterate command batch: %d",
+                  result);
+        return result;
+    }
+    bool fill_seen = false;
+    bool barrier_seen = false;
+    struct bvb_command_record record;
+    while ((result = bvb_command_batch_next(&iterator, &record)) == 0) {
+        if (record.opcode == BVB_COMMAND_FILL_BUFFER && !fill_seen &&
+            !barrier_seen) {
+            struct bvb_fill_buffer_command command;
+            result = bvb_command_decode_fill_buffer(&record, &command);
+            if (result != 0 || command.buffer_id != buffer_id ||
+                command.offset > BVB_SELFTEST_BUFFER_BYTES ||
+                command.size > BVB_SELFTEST_BUFFER_BYTES - command.offset) {
+                set_error(error, error_size, "invalid fill-buffer command");
+                return -EPROTO;
+            }
+            uint64_t native_bits = 0U;
+            result = bvb_handle_table_lookup(&handles, command.buffer_id,
+                                             BVB_OBJECT_BUFFER, NULL,
+                                             &native_bits);
+            if (result != 0) {
+                set_error(error, error_size, "unknown fill-buffer handle");
+                return result;
+            }
+            fill_buffer(command_buffer, buffer_from_bits(native_bits),
+                        command.offset, command.size, command.data);
+            fill_seen = true;
+        } else if (record.opcode == BVB_COMMAND_BUFFER_HOST_READ_BARRIER &&
+                   fill_seen && !barrier_seen) {
+            struct bvb_buffer_host_read_barrier_command command;
+            result = bvb_command_decode_buffer_host_read_barrier(&record,
+                                                                  &command);
+            if (result != 0 || command.buffer_id != buffer_id ||
+                command.offset > BVB_SELFTEST_BUFFER_BYTES ||
+                command.size > BVB_SELFTEST_BUFFER_BYTES - command.offset) {
+                set_error(error, error_size,
+                          "invalid buffer host-read barrier command");
+                return -EPROTO;
+            }
+            uint64_t native_bits = 0U;
+            result = bvb_handle_table_lookup(&handles, command.buffer_id,
+                                             BVB_OBJECT_BUFFER, NULL,
+                                             &native_bits);
+            if (result != 0) {
+                set_error(error, error_size, "unknown barrier buffer handle");
+                return result;
+            }
+            const VkBufferMemoryBarrier barrier = {
+                .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+                .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .buffer = buffer_from_bits(native_bits),
+                .offset = command.offset,
+                .size = command.size,
+            };
+            pipeline_barrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_HOST_BIT, 0, 0, NULL, 1,
+                             &barrier, 0, NULL);
+            barrier_seen = true;
+        } else {
+            set_error(error, error_size,
+                      "unsupported or out-of-order command opcode: %u",
+                      (unsigned int)record.opcode);
+            return -EPROTO;
+        }
+    }
+    if (result != 1 || !fill_seen || !barrier_seen) {
+        set_error(error, error_size, "incomplete transfer command batch");
+        return -EPROTO;
+    }
+    return 0;
+}
+
+static int run_selftest(const char *loader_path, const uint8_t *batch,
+                        size_t batch_length,
+                        struct bvb_vulkan_selftest_result *output, char *error,
+                        size_t error_size) {
     struct bvb_vulkan_objects objects;
     memset(&objects, 0, sizeof(objects));
     if (error != NULL && error_size > 0U) {
         error[0] = '\0';
     }
-    if (loader_path == NULL || loader_path[0] != '/' || output == NULL) {
+    if (loader_path == NULL || loader_path[0] != '/' || output == NULL ||
+        (batch == NULL && batch_length != 0U) ||
+        (batch != NULL && batch_length == 0U)) {
         set_error(error, error_size, "loader path must be absolute");
         return -EINVAL;
     }
@@ -534,21 +677,30 @@ int bvb_vulkan_run_selftest(const char *loader_path,
         status = -EIO;
         goto done;
     }
-    vkCmdFillBuffer(command_buffer, objects.buffer, 0,
-                    BVB_SELFTEST_BUFFER_BYTES, BVB_SELFTEST_FILL_WORD);
-    const VkBufferMemoryBarrier barrier = {
-        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
-        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-        .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .buffer = objects.buffer,
-        .offset = 0,
-        .size = BVB_SELFTEST_BUFFER_BYTES,
-    };
-    vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
-                         VK_PIPELINE_STAGE_HOST_BIT, 0, 0, NULL, 1, &barrier,
-                         0, NULL);
+    if (batch != NULL) {
+        status = replay_transfer_batch(
+            batch, batch_length, command_buffer, objects.buffer,
+            vkCmdFillBuffer, vkCmdPipelineBarrier, error, error_size);
+        if (status != 0) {
+            goto done;
+        }
+    } else {
+        vkCmdFillBuffer(command_buffer, objects.buffer, 0,
+                        BVB_SELFTEST_BUFFER_BYTES, BVB_SELFTEST_FILL_WORD);
+        const VkBufferMemoryBarrier barrier = {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer = objects.buffer,
+            .offset = 0,
+            .size = BVB_SELFTEST_BUFFER_BYTES,
+        };
+        vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_HOST_BIT, 0, 0, NULL, 1,
+                             &barrier, 0, NULL);
+    }
     vk_result = vkEndCommandBuffer(command_buffer);
     if (vk_result != VK_SUCCESS) {
         set_error(error, error_size, "vkEndCommandBuffer failed: %d",
@@ -629,4 +781,17 @@ int bvb_vulkan_run_selftest(const char *loader_path,
 done:
     cleanup(&objects);
     return status;
+}
+
+int bvb_vulkan_run_selftest(const char *loader_path,
+                            struct bvb_vulkan_selftest_result *output,
+                            char *error, size_t error_size) {
+    return run_selftest(loader_path, NULL, 0U, output, error, error_size);
+}
+
+int bvb_vulkan_run_batched_selftest(
+    const char *loader_path, const uint8_t *batch, size_t batch_length,
+    struct bvb_vulkan_selftest_result *output, char *error, size_t error_size) {
+    return run_selftest(loader_path, batch, batch_length, output, error,
+                        error_size);
 }

@@ -468,6 +468,35 @@ static int answer_vulkan_selftest(int client_fd,
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_batch_selftest(
+    int client_fd, const struct bvb_protocol_packet *request,
+    const char *loader_path, bool negotiated) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || request->header.payload_length == 0U) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+
+    struct bvb_vulkan_selftest_result selftest;
+    char diagnostic[512];
+    int result = bvb_vulkan_run_batched_selftest(
+        loader_path, request->payload, request->header.payload_length,
+        &selftest, diagnostic, sizeof(diagnostic));
+    if (result != 0) {
+        fprintf(stderr, "bvb: Vulkan batch self-test failed: %s\n",
+                diagnostic);
+        response.header.status = result;
+        return bvb_transport_send(client_fd, &response);
+    }
+    result = bvb_protocol_encode_vulkan_selftest(response.payload, &selftest);
+    if (result != 0) {
+        return result;
+    }
+    response.header.payload_length = BVB_VULKAN_SELFTEST_SIZE;
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int serve_connection(int client_fd, const char *loader_path,
                             bool activity_ingress,
                             const struct bvb_activity_status *activity_status) {
@@ -498,6 +527,10 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode == BVB_OPCODE_ACTIVITY_STATUS) {
             result = answer_activity_status(client_fd, &request, negotiated,
                                             activity_status);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_BATCH_SELFTEST) {
+            result = answer_vulkan_batch_selftest(
+                client_fd, &request, loader_path, negotiated);
         } else {
             result = -EPROTO;
         }

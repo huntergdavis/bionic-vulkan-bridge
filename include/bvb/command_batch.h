@@ -20,6 +20,8 @@ enum {
     BVB_COMMAND_SET_SCISSOR = 4,
     BVB_COMMAND_DRAW = 5,
     BVB_COMMAND_END_RENDERING = 6,
+    BVB_COMMAND_FILL_BUFFER = 7,
+    BVB_COMMAND_BUFFER_HOST_READ_BARRIER = 8,
 };
 
 struct bvb_begin_rendering_command {
@@ -58,6 +60,19 @@ struct bvb_draw_command {
     uint32_t instance_count;
     uint32_t first_vertex;
     uint32_t first_instance;
+};
+
+struct bvb_fill_buffer_command {
+    uint64_t buffer_id;
+    uint64_t offset;
+    uint64_t size;
+    uint32_t data;
+};
+
+struct bvb_buffer_host_read_barrier_command {
+    uint64_t buffer_id;
+    uint64_t offset;
+    uint64_t size;
 };
 
 struct bvb_command_batch_builder {
@@ -109,6 +124,12 @@ int bvb_command_batch_append_draw(struct bvb_command_batch_builder *builder,
                                   const struct bvb_draw_command *command);
 int bvb_command_batch_append_end_rendering(
     struct bvb_command_batch_builder *builder);
+int bvb_command_batch_append_fill_buffer(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_fill_buffer_command *command);
+int bvb_command_batch_append_buffer_host_read_barrier(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_buffer_host_read_barrier_command *command);
 int bvb_command_batch_finish(struct bvb_command_batch_builder *builder,
                              size_t *output_length);
 
@@ -130,5 +151,10 @@ int bvb_command_decode_set_scissor(const struct bvb_command_record *record,
                                    struct bvb_set_scissor_command *command);
 int bvb_command_decode_draw(const struct bvb_command_record *record,
                             struct bvb_draw_command *command);
+int bvb_command_decode_fill_buffer(const struct bvb_command_record *record,
+                                   struct bvb_fill_buffer_command *command);
+int bvb_command_decode_buffer_host_read_barrier(
+    const struct bvb_command_record *record,
+    struct bvb_buffer_host_read_barrier_command *command);
 
 #endif
