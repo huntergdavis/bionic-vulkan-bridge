@@ -46,6 +46,9 @@ for binary in "$receiver" "$control_client" "$build_dir/bvb-bridge-service"; do
         exit 3
     fi
 done
+if [ -e "$helper_apk" ]; then
+    chmod 0600 "$helper_apk"
+fi
 cp "$signed_apk" "$helper_apk"
 chmod 0400 "$helper_apk"
 
