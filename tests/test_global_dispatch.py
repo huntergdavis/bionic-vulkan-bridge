@@ -52,9 +52,13 @@ def main() -> int:
             )
             assert completed.returncode == 0, completed.stderr
             assert completed.stderr == ""
-            assert completed.stdout.startswith("PASS: global Vulkan bootstrap")
+            assert completed.stdout.startswith("PASS: global Vulkan discovery")
             assert f"api={0x00400000 | (4 << 12) | 354}" in completed.stdout
             assert "exposed_extensions=0 exposed_layers=0" in completed.stdout
+            assert 'device=BVB Fake Adreno 730 "quoted"' in completed.stdout
+            assert f"device_api={0x00400000 | (3 << 12) | 275}" in completed.stdout
+            assert "driver=16909060 vendor=20803 device_id=1840" in completed.stdout
+            assert "queues=2 memory_types=1 memory_heaps=2 device_extensions=5" in completed.stdout
             server_stdout, server_stderr = server.communicate(timeout=5.0)
             assert server.returncode == 0, server_stderr
             assert server_stdout == ""
@@ -64,7 +68,7 @@ def main() -> int:
             if server.poll() is None:
                 server.terminate()
                 server.wait(timeout=5.0)
-    print("PASS: E025 global dispatch integration")
+    print("PASS: E027 physical-device discovery integration")
     return 0
 
 

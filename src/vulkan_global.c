@@ -64,6 +64,39 @@ static VkInstance instance_from_bits(uint64_t bits) {
     return instance;
 }
 
+static VkPhysicalDevice physical_device_from_bits(uint64_t bits) {
+    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+    _Static_assert(sizeof(physical_device) <= sizeof(bits),
+                   "VkPhysicalDevice exceeds bridge handle width");
+    memcpy(&physical_device, &bits, sizeof(physical_device));
+    return physical_device;
+}
+
+static int resolve_physical_device(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t physical_device_id, VkInstance *instance,
+    VkPhysicalDevice *physical_device) {
+    if (context == NULL || instance == NULL || physical_device == NULL) {
+        return -EINVAL;
+    }
+    uint64_t parent_id = 0U;
+    uint64_t physical_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, physical_device_id, BVB_OBJECT_PHYSICAL_DEVICE,
+        &parent_id, &physical_bits);
+    uint64_t instance_bits = 0U;
+    if (result == 0) {
+        result = bvb_handle_table_lookup(
+            &context->objects, parent_id, BVB_OBJECT_INSTANCE, NULL,
+            &instance_bits);
+    }
+    if (result == 0) {
+        *instance = instance_from_bits(instance_bits);
+        *physical_device = physical_device_from_bits(physical_bits);
+    }
+    return result;
+}
+
 int bvb_vulkan_global_context_create(
     const char *loader_path, struct bvb_vulkan_global_context **output,
     char *error, size_t error_size) {
@@ -372,5 +405,208 @@ int bvb_vulkan_global_context_enumerate_physical_devices(
         }
         devices->ids[index] = wire_id;
     }
+    return 0;
+}
+
+int bvb_vulkan_global_context_get_physical_device_properties(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t physical_device_id, VkPhysicalDeviceProperties *properties,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (properties == NULL) {
+        return -EINVAL;
+    }
+    VkInstance instance = VK_NULL_HANDLE;
+    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+    int result = resolve_physical_device(
+        context, physical_device_id, &instance, &physical_device);
+    if (result != 0) {
+        set_error(error, error_size, "unknown physical-device handle");
+        return result;
+    }
+    PFN_vkGetPhysicalDeviceProperties get_properties =
+        (PFN_vkGetPhysicalDeviceProperties)context->get_instance_proc_addr(
+            instance, "vkGetPhysicalDeviceProperties");
+    if (get_properties == NULL) {
+        set_error(error, error_size,
+                  "instance has no vkGetPhysicalDeviceProperties");
+        return -ENOSYS;
+    }
+    memset(properties, 0, sizeof(*properties));
+    get_properties(physical_device, properties);
+    if (memchr(properties->deviceName, '\0',
+               sizeof(properties->deviceName)) == NULL) {
+        set_error(error, error_size, "physical-device name is unterminated");
+        return -EPROTO;
+    }
+    return 0;
+}
+
+int bvb_vulkan_global_context_get_queue_family_properties(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t physical_device_id,
+    VkQueueFamilyProperties properties[BVB_VULKAN_MAX_QUEUE_FAMILIES],
+    uint32_t *count, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (properties == NULL || count == NULL) {
+        return -EINVAL;
+    }
+    VkInstance instance = VK_NULL_HANDLE;
+    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+    int result = resolve_physical_device(
+        context, physical_device_id, &instance, &physical_device);
+    if (result != 0) {
+        set_error(error, error_size, "unknown physical-device handle");
+        return result;
+    }
+    PFN_vkGetPhysicalDeviceQueueFamilyProperties get_properties =
+        (PFN_vkGetPhysicalDeviceQueueFamilyProperties)
+            context->get_instance_proc_addr(
+                instance, "vkGetPhysicalDeviceQueueFamilyProperties");
+    if (get_properties == NULL) {
+        set_error(error, error_size,
+                  "instance has no vkGetPhysicalDeviceQueueFamilyProperties");
+        return -ENOSYS;
+    }
+    uint32_t available = 0U;
+    get_properties(physical_device, &available, NULL);
+    if (available > BVB_VULKAN_MAX_QUEUE_FAMILIES) {
+        set_error(error, error_size,
+                  "queue-family count exceeds bridge bound: %u", available);
+        return -EOVERFLOW;
+    }
+    memset(properties, 0, sizeof(*properties) * BVB_VULKAN_MAX_QUEUE_FAMILIES);
+    uint32_t returned = available;
+    if (available != 0U) {
+        get_properties(physical_device, &returned, properties);
+    }
+    if (returned > available) {
+        set_error(error, error_size, "queue-family count changed unexpectedly");
+        return -EPROTO;
+    }
+    *count = returned;
+    return 0;
+}
+
+int bvb_vulkan_global_context_get_memory_properties(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t physical_device_id,
+    VkPhysicalDeviceMemoryProperties *properties,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (properties == NULL) {
+        return -EINVAL;
+    }
+    VkInstance instance = VK_NULL_HANDLE;
+    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+    int result = resolve_physical_device(
+        context, physical_device_id, &instance, &physical_device);
+    if (result != 0) {
+        set_error(error, error_size, "unknown physical-device handle");
+        return result;
+    }
+    PFN_vkGetPhysicalDeviceMemoryProperties get_properties =
+        (PFN_vkGetPhysicalDeviceMemoryProperties)
+            context->get_instance_proc_addr(
+                instance, "vkGetPhysicalDeviceMemoryProperties");
+    if (get_properties == NULL) {
+        set_error(error, error_size,
+                  "instance has no vkGetPhysicalDeviceMemoryProperties");
+        return -ENOSYS;
+    }
+    memset(properties, 0, sizeof(*properties));
+    get_properties(physical_device, properties);
+    if (properties->memoryTypeCount > VK_MAX_MEMORY_TYPES ||
+        properties->memoryHeapCount > VK_MAX_MEMORY_HEAPS) {
+        set_error(error, error_size, "invalid physical-device memory counts");
+        return -EPROTO;
+    }
+    return 0;
+}
+
+int bvb_vulkan_global_context_enumerate_device_extensions(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_device_extension_query *query,
+    struct bvb_vulkan_extension_page *page,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (query == NULL || page == NULL ||
+        query->max_count > BVB_VULKAN_EXTENSION_PAGE_CAPACITY) {
+        return -EINVAL;
+    }
+    *page = (struct bvb_vulkan_extension_page){0};
+    VkInstance instance = VK_NULL_HANDLE;
+    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+    int status = resolve_physical_device(
+        context, query->physical_device_id, &instance, &physical_device);
+    if (status != 0) {
+        set_error(error, error_size, "unknown physical-device handle");
+        return status;
+    }
+    PFN_vkEnumerateDeviceExtensionProperties enumerate =
+        (PFN_vkEnumerateDeviceExtensionProperties)
+            context->get_instance_proc_addr(
+                instance, "vkEnumerateDeviceExtensionProperties");
+    if (enumerate == NULL) {
+        set_error(error, error_size,
+                  "instance has no vkEnumerateDeviceExtensionProperties");
+        return -ENOSYS;
+    }
+    uint32_t available = 0U;
+    VkResult result = enumerate(physical_device, NULL, &available, NULL);
+    page->vulkan_result = result;
+    page->total_count = available;
+    page->first = query->first;
+    if (result != VK_SUCCESS || query->max_count == 0U) {
+        return 0;
+    }
+    if (available > BVB_VULKAN_MAX_DEVICE_EXTENSIONS) {
+        set_error(error, error_size,
+                  "device-extension count exceeds bridge bound: %u",
+                  available);
+        return -EOVERFLOW;
+    }
+    if (query->first > available) {
+        set_error(error, error_size,
+                  "device-extension page starts beyond available records");
+        return -ERANGE;
+    }
+    VkExtensionProperties *all = NULL;
+    if (available != 0U) {
+        all = calloc(available, sizeof(*all));
+        if (all == NULL) {
+            return -ENOMEM;
+        }
+    }
+    uint32_t returned = available;
+    if (available != 0U) {
+        result = enumerate(physical_device, NULL, &returned, all);
+    }
+    if ((result != VK_SUCCESS && result != VK_INCOMPLETE) ||
+        returned > available || query->first > returned) {
+        free(all);
+        page->vulkan_result = result;
+        set_error(error, error_size,
+                  "device-extension list changed unexpectedly: %d",
+                  (int)result);
+        return result == VK_SUCCESS ? -EPROTO : 0;
+    }
+    page->vulkan_result = result;
+    page->total_count = returned;
+    const uint32_t remaining = returned - query->first;
+    page->count = query->max_count < remaining ? query->max_count : remaining;
+    if (page->count != 0U) {
+        memcpy(page->properties, all + query->first,
+               page->count * sizeof(*page->properties));
+    }
+    free(all);
     return 0;
 }

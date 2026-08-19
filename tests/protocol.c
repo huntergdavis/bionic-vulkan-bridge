@@ -176,6 +176,32 @@ int main(void) {
     CHECK(physical_decoded.count == 2U);
     CHECK(physical_decoded.ids[1] == physical_devices.ids[1]);
 
+    uint8_t physical_id_wire[BVB_VULKAN_PHYSICAL_DEVICE_ID_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_physical_device_id(
+              physical_id_wire, physical_devices.ids[0]) == 0);
+    uint64_t physical_id_decoded = 0U;
+    CHECK(bvb_protocol_decode_vulkan_physical_device_id(
+              physical_id_wire, &physical_id_decoded) == 0);
+    CHECK(physical_id_decoded == physical_devices.ids[0]);
+    CHECK(bvb_protocol_decode_vulkan_instance_id(
+              physical_id_wire, &instance_id_decoded) == -EPROTO);
+
+    const struct bvb_vulkan_device_extension_query extension_query = {
+        .physical_device_id = physical_devices.ids[0],
+        .first = 15U,
+        .max_count = 15U,
+    };
+    uint8_t extension_query_wire[BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_device_extension_query(
+              extension_query_wire, &extension_query) == 0);
+    struct bvb_vulkan_device_extension_query extension_query_decoded;
+    CHECK(bvb_protocol_decode_vulkan_device_extension_query(
+              extension_query_wire, &extension_query_decoded) == 0);
+    CHECK(extension_query_decoded.physical_device_id ==
+          extension_query.physical_device_id);
+    CHECK(extension_query_decoded.first == 15U);
+    CHECK(extension_query_decoded.max_count == 15U);
+
     const struct bvb_shared_batch_setup shared_setup = {
         .region_bytes = 4096U,
         .generation = UINT64_C(0x1122334455667788),

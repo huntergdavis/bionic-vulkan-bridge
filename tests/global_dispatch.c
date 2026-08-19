@@ -2,9 +2,12 @@
 
 #include <bvb/global_dispatch.h>
 #include <bvb/handle.h>
+#include <bvb/vulkan_discovery.h>
 
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CHECK(expression)                                                       \
@@ -89,7 +92,7 @@ int main(void) {
     CHECK(bvb_handle_serial(instance_one_id) == 1U);
     CHECK(vkGetInstanceProcAddr(instance_one, "vkCmdDraw") != NULL);
     CHECK(vkGetInstanceProcAddr(instance_one,
-                                "vkGetPhysicalDeviceProperties") == NULL);
+                                "vkGetPhysicalDeviceProperties") != NULL);
 
     PFN_vkEnumeratePhysicalDevices enumerate_physical_devices = NULL;
     PFN_vkDestroyInstance destroy_instance = NULL;
@@ -120,6 +123,93 @@ int main(void) {
                                      &repeated_device) == VK_SUCCESS);
     CHECK(repeated_device == physical_device);
 
+    PFN_vkGetPhysicalDeviceProperties get_physical_device_properties = NULL;
+    PFN_vkGetPhysicalDeviceQueueFamilyProperties get_queue_properties = NULL;
+    PFN_vkGetPhysicalDeviceMemoryProperties get_memory_properties = NULL;
+    PFN_vkEnumerateDeviceExtensionProperties enumerate_device_extensions =
+        NULL;
+#define RESOLVE_INSTANCE(entry_name, variable)                                \
+    do {                                                                      \
+        erased = vkGetInstanceProcAddr(instance_one, #entry_name);            \
+        CHECK(erased != NULL);                                                \
+        memcpy(&(variable), &erased, sizeof(variable));                       \
+    } while (0)
+    RESOLVE_INSTANCE(vkGetPhysicalDeviceProperties,
+                     get_physical_device_properties);
+    RESOLVE_INSTANCE(vkGetPhysicalDeviceQueueFamilyProperties,
+                     get_queue_properties);
+    RESOLVE_INSTANCE(vkGetPhysicalDeviceMemoryProperties,
+                     get_memory_properties);
+    RESOLVE_INSTANCE(vkEnumerateDeviceExtensionProperties,
+                     enumerate_device_extensions);
+#undef RESOLVE_INSTANCE
+
+    VkPhysicalDeviceProperties properties;
+    get_physical_device_properties(physical_device, &properties);
+    CHECK(properties.apiVersion >= VK_API_VERSION_1_0);
+    CHECK(properties.vendorID != 0U);
+    CHECK(properties.deviceName[0] != '\0');
+
+    uint32_t queue_count = 0U;
+    get_queue_properties(physical_device, &queue_count, NULL);
+    CHECK(queue_count > 0U);
+    CHECK(queue_count <= BVB_VULKAN_MAX_QUEUE_FAMILIES);
+    const uint32_t available_queue_count = queue_count;
+    VkQueueFamilyProperties *queues =
+        calloc(available_queue_count, sizeof(*queues));
+    CHECK(queues != NULL);
+    queue_count = available_queue_count - 1U;
+    get_queue_properties(physical_device, &queue_count, queues);
+    CHECK(queue_count == available_queue_count - 1U);
+    queue_count = available_queue_count;
+    get_queue_properties(physical_device, &queue_count, queues);
+    CHECK(queue_count == available_queue_count);
+    bool usable_queue = false;
+    for (uint32_t index = 0U; index < queue_count; ++index) {
+        usable_queue |= queues[index].queueCount > 0U &&
+                        queues[index].queueFlags != 0U;
+    }
+    CHECK(usable_queue);
+    free(queues);
+
+    VkPhysicalDeviceMemoryProperties memory;
+    get_memory_properties(physical_device, &memory);
+    CHECK(memory.memoryTypeCount > 0U);
+    CHECK(memory.memoryTypeCount <= VK_MAX_MEMORY_TYPES);
+    CHECK(memory.memoryHeapCount > 0U);
+    CHECK(memory.memoryHeapCount <= VK_MAX_MEMORY_HEAPS);
+    for (uint32_t index = 0U; index < memory.memoryTypeCount; ++index) {
+        CHECK(memory.memoryTypes[index].heapIndex < memory.memoryHeapCount);
+    }
+
+    uint32_t device_extension_count = 0U;
+    CHECK(enumerate_device_extensions(
+              physical_device, NULL, &device_extension_count, NULL) ==
+          VK_SUCCESS);
+    CHECK(device_extension_count > 0U);
+    CHECK(device_extension_count <= BVB_VULKAN_MAX_DEVICE_EXTENSIONS);
+    const uint32_t available_device_extension_count = device_extension_count;
+    VkExtensionProperties *device_extensions =
+        calloc(available_device_extension_count, sizeof(*device_extensions));
+    CHECK(device_extensions != NULL);
+    device_extension_count = available_device_extension_count - 1U;
+    CHECK(enumerate_device_extensions(
+              physical_device, NULL, &device_extension_count,
+              device_extensions) == VK_INCOMPLETE);
+    CHECK(device_extension_count == available_device_extension_count - 1U);
+    device_extension_count = available_device_extension_count;
+    CHECK(enumerate_device_extensions(
+              physical_device, NULL, &device_extension_count,
+              device_extensions) == VK_SUCCESS);
+    CHECK(device_extension_count == available_device_extension_count);
+    for (uint32_t index = 0U; index < device_extension_count; ++index) {
+        CHECK(device_extensions[index].extensionName[0] != '\0');
+    }
+    CHECK(enumerate_device_extensions(
+              physical_device, "VK_LAYER_not_exposed",
+              &device_extension_count, NULL) == VK_ERROR_LAYER_NOT_PRESENT);
+    free(device_extensions);
+
     VkInstance instance_two = VK_NULL_HANDLE;
     create_info.pApplicationInfo = NULL;
     CHECK(vkCreateInstance(&create_info, NULL, &instance_two) == VK_SUCCESS);
@@ -136,11 +226,17 @@ int main(void) {
     memcpy(&destroy_instance_two, &erased, sizeof(destroy_instance_two));
     destroy_instance_two(instance_two, NULL);
 
-    printf("PASS: global Vulkan bootstrap api=%u "
+    printf("PASS: global Vulkan discovery api=%u "
            "exposed_extensions=0 exposed_layers=0 "
-           "instance_one=%llu instance_two=%llu physical_device=%llu\n",
+           "instance_one=%llu instance_two=%llu physical_device=%llu "
+           "device=%s device_api=%u driver=%u vendor=%u device_id=%u "
+           "queues=%u memory_types=%u memory_heaps=%u device_extensions=%u\n",
            api_version, (unsigned long long)instance_one_id,
            (unsigned long long)instance_two_id,
-           (unsigned long long)physical_id);
+           (unsigned long long)physical_id, properties.deviceName,
+           properties.apiVersion, properties.driverVersion,
+           properties.vendorID, properties.deviceID,
+           available_queue_count, memory.memoryTypeCount,
+           memory.memoryHeapCount, available_device_extension_count);
     return 0;
 }

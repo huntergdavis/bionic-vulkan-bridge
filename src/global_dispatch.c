@@ -4,6 +4,7 @@
 #include <bvb/handle.h>
 #include <bvb/protocol.h>
 #include <bvb/transport.h>
+#include <bvb/vulkan_discovery.h>
 
 #include <errno.h>
 #include <pthread.h>
@@ -503,6 +504,215 @@ static VkResult VKAPI_CALL bvb_bridge_vkEnumeratePhysicalDevices(
     return result == 0 ? vulkan_result : VK_ERROR_INITIALIZATION_FAILED;
 }
 
+static int physical_query_locked(
+    uint16_t opcode, const struct bvb_physical_device_proxy *proxy,
+    struct bvb_protocol_packet *response) {
+    if (proxy == NULL || response == NULL) {
+        return -EINVAL;
+    }
+    int result = connect_locked();
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = opcode,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_PHYSICAL_DEVICE_ID_SIZE,
+    };
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_physical_device_id(
+            request.payload, proxy->wire_id);
+    }
+    if (result == 0) {
+        result = exchange_locked(&request, response);
+    }
+    if (result == 0 && response->header.status != 0) {
+        result = response->header.status;
+    }
+    return result;
+}
+
+static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceProperties(
+    VkPhysicalDevice physical_device, VkPhysicalDeviceProperties *properties) {
+    if (properties == NULL) {
+        return;
+    }
+    memset(properties, 0, sizeof(*properties));
+    struct bvb_physical_device_proxy *proxy =
+        physical_device_proxy(physical_device);
+    if (proxy == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return;
+    }
+    struct bvb_protocol_packet response = {0};
+    int result = physical_query_locked(
+        BVB_OPCODE_VULKAN_PHYSICAL_DEVICE_PROPERTIES, proxy, &response);
+    if (result == 0) {
+        result = bvb_vulkan_decode_physical_device_properties(
+            response.payload, response.header.payload_length, properties);
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result != 0) {
+        memset(properties, 0, sizeof(*properties));
+    }
+}
+
+static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceQueueFamilyProperties(
+    VkPhysicalDevice physical_device, uint32_t *property_count,
+    VkQueueFamilyProperties *properties) {
+    if (property_count == NULL) {
+        return;
+    }
+    const uint32_t capacity = properties == NULL ? 0U : *property_count;
+    struct bvb_physical_device_proxy *proxy =
+        physical_device_proxy(physical_device);
+    if (proxy == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        *property_count = 0U;
+        return;
+    }
+    struct bvb_protocol_packet response = {0};
+    int result = physical_query_locked(
+        BVB_OPCODE_VULKAN_QUEUE_FAMILY_PROPERTIES, proxy, &response);
+    VkQueueFamilyProperties decoded[BVB_VULKAN_MAX_QUEUE_FAMILIES];
+    uint32_t available = 0U;
+    if (result == 0) {
+        result = bvb_vulkan_decode_queue_family_properties(
+            response.payload, response.header.payload_length,
+            decoded, &available);
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result != 0) {
+        *property_count = 0U;
+        return;
+    }
+    if (properties == NULL) {
+        *property_count = available;
+        return;
+    }
+    const uint32_t written = capacity < available ? capacity : available;
+    if (written != 0U) {
+        memcpy(properties, decoded, written * sizeof(*properties));
+    }
+    *property_count = written;
+}
+
+static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceMemoryProperties(
+    VkPhysicalDevice physical_device,
+    VkPhysicalDeviceMemoryProperties *properties) {
+    if (properties == NULL) {
+        return;
+    }
+    memset(properties, 0, sizeof(*properties));
+    struct bvb_physical_device_proxy *proxy =
+        physical_device_proxy(physical_device);
+    if (proxy == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return;
+    }
+    struct bvb_protocol_packet response = {0};
+    int result = physical_query_locked(
+        BVB_OPCODE_VULKAN_MEMORY_PROPERTIES, proxy, &response);
+    if (result == 0) {
+        result = bvb_vulkan_decode_memory_properties(
+            response.payload, response.header.payload_length, properties);
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result != 0) {
+        memset(properties, 0, sizeof(*properties));
+    }
+}
+
+static int extension_page_locked(
+    const struct bvb_physical_device_proxy *proxy, uint32_t first,
+    uint32_t max_count, struct bvb_vulkan_extension_page *page) {
+    int result = connect_locked();
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_DEVICE_EXTENSIONS,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE,
+    };
+    const struct bvb_vulkan_device_extension_query query = {
+        .physical_device_id = proxy->wire_id,
+        .first = first,
+        .max_count = max_count,
+    };
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_device_extension_query(
+            request.payload, &query);
+    }
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        result = exchange_locked(&request, &response);
+    }
+    if (result == 0 && response.header.status != 0) {
+        result = response.header.status;
+    }
+    if (result == 0) {
+        result = bvb_vulkan_decode_extension_page(
+            response.payload, response.header.payload_length, page);
+    }
+    return result;
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkEnumerateDeviceExtensionProperties(
+    VkPhysicalDevice physical_device, const char *layer_name,
+    uint32_t *property_count, VkExtensionProperties *properties) {
+    if (property_count == NULL) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (layer_name != NULL) {
+        return VK_ERROR_LAYER_NOT_PRESENT;
+    }
+    const uint32_t capacity = properties == NULL ? 0U : *property_count;
+    struct bvb_physical_device_proxy *proxy =
+        physical_device_proxy(physical_device);
+    if (proxy == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    struct bvb_vulkan_extension_page page;
+    int result = extension_page_locked(proxy, 0U, 0U, &page);
+    VkResult vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    uint32_t available = 0U;
+    if (result == 0) {
+        vulkan_result = (VkResult)page.vulkan_result;
+        available = page.total_count;
+    }
+    if (result == 0 && vulkan_result == VK_SUCCESS && properties != NULL) {
+        const uint32_t target = capacity < available ? capacity : available;
+        uint32_t written = 0U;
+        while (written < target) {
+            uint32_t requested = target - written;
+            if (requested > BVB_VULKAN_EXTENSION_PAGE_CAPACITY) {
+                requested = BVB_VULKAN_EXTENSION_PAGE_CAPACITY;
+            }
+            result = extension_page_locked(
+                proxy, written, requested, &page);
+            if (result != 0 || page.vulkan_result != VK_SUCCESS ||
+                page.total_count != available || page.first != written ||
+                page.count == 0U || page.count > requested) {
+                result = result != 0 ? result : -EPROTO;
+                break;
+            }
+            memcpy(properties + written, page.properties,
+                   page.count * sizeof(*properties));
+            written += page.count;
+        }
+        *property_count = written;
+        if (result == 0) {
+            vulkan_result = capacity < available ? VK_INCOMPLETE : VK_SUCCESS;
+        }
+    } else if (result == 0 && vulkan_result == VK_SUCCESS) {
+        *property_count = available;
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return result == 0 ? vulkan_result : VK_ERROR_INITIALIZATION_FAILED;
+}
+
 BVB_GLOBAL_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
 vkGetInstanceProcAddr(VkInstance instance, const char *name) {
     if (name == NULL ||
@@ -531,6 +741,14 @@ vkGetInstanceProcAddr(VkInstance instance, const char *name) {
                            bvb_bridge_vkDestroyInstance)
         BVB_INSTANCE_MATCH("vkEnumeratePhysicalDevices",
                            bvb_bridge_vkEnumeratePhysicalDevices)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceProperties",
+                           bvb_bridge_vkGetPhysicalDeviceProperties)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceQueueFamilyProperties",
+                           bvb_bridge_vkGetPhysicalDeviceQueueFamilyProperties)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceMemoryProperties",
+                           bvb_bridge_vkGetPhysicalDeviceMemoryProperties)
+        BVB_INSTANCE_MATCH("vkEnumerateDeviceExtensionProperties",
+                           bvb_bridge_vkEnumerateDeviceExtensionProperties)
 #undef BVB_INSTANCE_MATCH
         if (strcmp(name, "vkGetDeviceProcAddr") == 0) {
             return BVB_ERASE_FUNCTION(vkGetDeviceProcAddr,

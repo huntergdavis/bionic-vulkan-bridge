@@ -2,6 +2,7 @@
 #define BVB_VULKAN_GLOBAL_H
 
 #include <bvb/protocol.h>
+#include <bvb/vulkan_discovery.h>
 
 #include <stddef.h>
 
@@ -25,6 +26,25 @@ int bvb_vulkan_global_context_destroy_instance(
 int bvb_vulkan_global_context_enumerate_physical_devices(
     struct bvb_vulkan_global_context *context, uint64_t instance_id,
     struct bvb_vulkan_physical_devices *devices,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_get_physical_device_properties(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t physical_device_id, VkPhysicalDeviceProperties *properties,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_get_queue_family_properties(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t physical_device_id,
+    VkQueueFamilyProperties properties[BVB_VULKAN_MAX_QUEUE_FAMILIES],
+    uint32_t *count, char *error, size_t error_size);
+int bvb_vulkan_global_context_get_memory_properties(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t physical_device_id,
+    VkPhysicalDeviceMemoryProperties *properties,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_enumerate_device_extensions(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_device_extension_query *query,
+    struct bvb_vulkan_extension_page *page,
     char *error, size_t error_size);
 
 #endif

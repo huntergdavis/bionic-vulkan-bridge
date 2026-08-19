@@ -59,7 +59,7 @@ static int header_is_valid(const struct bvb_protocol_header *header) {
         return -EPROTO;
     }
     if (header->opcode < BVB_OPCODE_HELLO ||
-        header->opcode > BVB_OPCODE_VULKAN_PHYSICAL_DEVICES) {
+        header->opcode > BVB_OPCODE_VULKAN_DEVICE_EXTENSIONS) {
         return -EPROTO;
     }
     if (header->payload_length > BVB_PROTOCOL_MAX_PAYLOAD) {
@@ -245,6 +245,62 @@ int bvb_protocol_decode_vulkan_physical_devices(
         }
     }
     *devices = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_physical_device_id(
+    uint8_t output[BVB_VULKAN_PHYSICAL_DEVICE_ID_SIZE],
+    uint64_t physical_device_id) {
+    if (output == NULL || !wire_id_is_type(physical_device_id, 2U)) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u64(output, physical_device_id);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_physical_device_id(
+    const uint8_t input[BVB_VULKAN_PHYSICAL_DEVICE_ID_SIZE],
+    uint64_t *physical_device_id) {
+    if (input == NULL || physical_device_id == NULL) {
+        return -EINVAL;
+    }
+    const uint64_t decoded = bvb_wire_get_u64(input);
+    if (!wire_id_is_type(decoded, 2U)) {
+        return -EPROTO;
+    }
+    *physical_device_id = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_device_extension_query(
+    uint8_t output[BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE],
+    const struct bvb_vulkan_device_extension_query *query) {
+    if (output == NULL || query == NULL ||
+        !wire_id_is_type(query->physical_device_id, 2U)) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE);
+    bvb_wire_put_u64(output, query->physical_device_id);
+    bvb_wire_put_u32(output + 8, query->first);
+    bvb_wire_put_u32(output + 12, query->max_count);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_device_extension_query(
+    const uint8_t input[BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE],
+    struct bvb_vulkan_device_extension_query *query) {
+    if (input == NULL || query == NULL) {
+        return -EINVAL;
+    }
+    const struct bvb_vulkan_device_extension_query decoded = {
+        .physical_device_id = bvb_wire_get_u64(input),
+        .first = bvb_wire_get_u32(input + 8),
+        .max_count = bvb_wire_get_u32(input + 12),
+    };
+    if (!wire_id_is_type(decoded.physical_device_id, 2U)) {
+        return -EPROTO;
+    }
+    *query = decoded;
     return 0;
 }
 

@@ -593,6 +593,151 @@ static int answer_vulkan_physical_devices(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_physical_device_properties(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_PHYSICAL_DEVICE_ID_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    uint64_t physical_device_id = 0U;
+    int result = bvb_protocol_decode_vulkan_physical_device_id(
+        request->payload, &physical_device_id);
+    VkPhysicalDeviceProperties properties;
+    char diagnostic[512];
+    if (result == 0) {
+        result = bvb_vulkan_global_context_get_physical_device_properties(
+            context, physical_device_id, &properties,
+            diagnostic, sizeof(diagnostic));
+        if (result != 0) {
+            fprintf(stderr, "bvb: physical-device properties failed: %s\n",
+                    diagnostic);
+        }
+    }
+    if (result == 0) {
+        result = bvb_vulkan_encode_physical_device_properties(
+            response.payload, &properties, &response.header.payload_length);
+    }
+    if (result != 0) {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_queue_family_properties(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_PHYSICAL_DEVICE_ID_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    uint64_t physical_device_id = 0U;
+    int result = bvb_protocol_decode_vulkan_physical_device_id(
+        request->payload, &physical_device_id);
+    VkQueueFamilyProperties properties[BVB_VULKAN_MAX_QUEUE_FAMILIES];
+    uint32_t count = 0U;
+    char diagnostic[512];
+    if (result == 0) {
+        result = bvb_vulkan_global_context_get_queue_family_properties(
+            context, physical_device_id, properties, &count,
+            diagnostic, sizeof(diagnostic));
+        if (result != 0) {
+            fprintf(stderr, "bvb: queue-family properties failed: %s\n",
+                    diagnostic);
+        }
+    }
+    if (result == 0) {
+        result = bvb_vulkan_encode_queue_family_properties(
+            response.payload, properties, count,
+            &response.header.payload_length);
+    }
+    if (result != 0) {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_memory_properties(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_PHYSICAL_DEVICE_ID_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    uint64_t physical_device_id = 0U;
+    int result = bvb_protocol_decode_vulkan_physical_device_id(
+        request->payload, &physical_device_id);
+    VkPhysicalDeviceMemoryProperties properties;
+    char diagnostic[512];
+    if (result == 0) {
+        result = bvb_vulkan_global_context_get_memory_properties(
+            context, physical_device_id, &properties,
+            diagnostic, sizeof(diagnostic));
+        if (result != 0) {
+            fprintf(stderr, "bvb: memory properties failed: %s\n",
+                    diagnostic);
+        }
+    }
+    if (result == 0) {
+        result = bvb_vulkan_encode_memory_properties(
+            response.payload, &properties, &response.header.payload_length);
+    }
+    if (result != 0) {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_device_extensions(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_device_extension_query query;
+    int result = bvb_protocol_decode_vulkan_device_extension_query(
+        request->payload, &query);
+    if (result == 0 &&
+        query.max_count > BVB_VULKAN_EXTENSION_PAGE_CAPACITY) {
+        result = -ERANGE;
+    }
+    struct bvb_vulkan_extension_page page;
+    char diagnostic[512];
+    if (result == 0) {
+        result = bvb_vulkan_global_context_enumerate_device_extensions(
+            context, &query, &page, diagnostic, sizeof(diagnostic));
+        if (result != 0) {
+            fprintf(stderr, "bvb: device-extension enumeration failed: %s\n",
+                    diagnostic);
+        }
+    }
+    if (result == 0) {
+        result = bvb_vulkan_encode_extension_page(
+            response.payload, &page, &response.header.payload_length);
+    }
+    if (result != 0) {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_selftest(int client_fd,
                                   const struct bvb_protocol_packet *request,
                                   const char *loader_path,
@@ -837,6 +982,22 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_PHYSICAL_DEVICES) {
             result = answer_vulkan_physical_devices(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_PHYSICAL_DEVICE_PROPERTIES) {
+            result = answer_vulkan_physical_device_properties(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_QUEUE_FAMILY_PROPERTIES) {
+            result = answer_vulkan_queue_family_properties(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_MEMORY_PROPERTIES) {
+            result = answer_vulkan_memory_properties(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_DEVICE_EXTENSIONS) {
+            result = answer_vulkan_device_extensions(
                 client_fd, &request, negotiated, global_context);
         } else {
             result = -EPROTO;

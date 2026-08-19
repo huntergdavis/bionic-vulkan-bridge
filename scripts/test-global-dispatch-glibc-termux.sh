@@ -8,7 +8,7 @@ library="$out_dir/libvulkan-bvb-glibc.so"
 client="$out_dir/bvb-global-dispatch-test-glibc"
 service="$build_dir/bvb-bridge-service"
 policy_json="$out_dir/generated/bvb_dxvk_dispatch_policy.json"
-evidence="$project_dir/out/e026-instance-vulkan-bootstrap.json"
+evidence="$project_dir/out/e027-physical-device-discovery.json"
 vulkan_headers="$build_dir/_deps/vulkanheaders-src/include"
 runtime_parent=${TMPDIR:-$PREFIX/tmp}
 runtime_dir=
@@ -22,7 +22,7 @@ cleanup() {
     if [ -n "$runtime_dir" ] && [ -d "$runtime_dir" ] &&
         [ ! -L "$runtime_dir" ]; then
         case "$runtime_dir" in
-            "$runtime_parent"/bvb-e026.*) rmdir "$runtime_dir" 2>/dev/null || true ;;
+            "$runtime_parent"/bvb-e027.*) rmdir "$runtime_dir" 2>/dev/null || true ;;
         esac
     fi
 }
@@ -55,16 +55,16 @@ if ! readelf -l "$service" | grep -Fq "$bionic_interpreter"; then
     exit 3
 fi
 
-runtime_dir=$(mktemp -d "$runtime_parent/bvb-e026.XXXXXX")
+runtime_dir=$(mktemp -d "$runtime_parent/bvb-e027.XXXXXX")
 case "$runtime_dir" in
-    "$runtime_parent"/bvb-e026.*) ;;
+    "$runtime_parent"/bvb-e027.*) ;;
     *) printf 'unexpected runtime directory: %s\n' "$runtime_dir" >&2; exit 3 ;;
 esac
 control_socket="$runtime_dir/bridge.sock"
-client_stdout="$out_dir/e026-client.stdout"
-client_stderr="$out_dir/e026-client.stderr"
-service_stdout="$out_dir/e026-service.stdout"
-service_stderr="$out_dir/e026-service.stderr"
+client_stdout="$out_dir/e027-client.stdout"
+client_stderr="$out_dir/e027-client.stderr"
+service_stdout="$out_dir/e027-service.stdout"
+service_stderr="$out_dir/e027-service.stderr"
 
 "$service" --socket "$control_socket" --once \
     >"$service_stdout" 2>"$service_stderr" &
@@ -87,7 +87,7 @@ BVB_BRIDGE_SOCKET="$control_socket" grun "$client" \
 wait "$service_pid"
 service_pid=
 if [ -s "$client_stderr" ] || [ -s "$service_stderr" ]; then
-    printf 'E026 emitted unexpected stderr\n' >&2
+    printf 'E027 emitted unexpected stderr\n' >&2
     exit 5
 fi
 
@@ -126,29 +126,78 @@ def artifact(path):
 
 
 policy = json.loads(policy_path.read_text())
-assert policy["gate"] == "E026"
+assert policy["gate"] == "E027"
 assert policy["summary"]["command_count"] == 742
-assert policy["summary"]["executable_name_count"] == 14
+assert policy["summary"]["executable_name_count"] == 18
 assert policy["summary"]["support_counts"] == {
     "probed_null": 302,
-    "required_unimplemented": 426,
-    "executable": 14,
+    "required_unimplemented": 422,
+    "executable": 18,
 }
 client_stdout = client_stdout_path.read_text().strip()
 match = re.fullmatch(
-    r"PASS: global Vulkan bootstrap api=(\d+) "
+    r"PASS: global Vulkan discovery api=(\d+) "
     r"exposed_extensions=0 exposed_layers=0 "
-    r"instance_one=(\d+) instance_two=(\d+) physical_device=(\d+)",
+    r"instance_one=(\d+) instance_two=(\d+) physical_device=(\d+) "
+    r"device=(.*?) device_api=(\d+) driver=(\d+) vendor=(\d+) "
+    r"device_id=(\d+) queues=(\d+) memory_types=(\d+) "
+    r"memory_heaps=(\d+) device_extensions=(\d+)",
     client_stdout,
 )
 assert match is not None, client_stdout
-api_version, instance_one, instance_two, physical_device = map(
-    int, match.groups()
-)
+(
+    api_version_text,
+    instance_one_text,
+    instance_two_text,
+    physical_device_text,
+    device_name,
+    device_api_text,
+    driver_version_text,
+    vendor_id_text,
+    device_id_text,
+    queue_count_text,
+    memory_type_count_text,
+    memory_heap_count_text,
+    device_extension_count_text,
+) = match.groups()
+(
+    api_version,
+    instance_one,
+    instance_two,
+    physical_device,
+    device_api,
+    driver_version,
+    vendor_id,
+    device_id,
+    queue_count,
+    memory_type_count,
+    memory_heap_count,
+    device_extension_count,
+) = map(int, (
+    api_version_text,
+    instance_one_text,
+    instance_two_text,
+    physical_device_text,
+    device_api_text,
+    driver_version_text,
+    vendor_id_text,
+    device_id_text,
+    queue_count_text,
+    memory_type_count_text,
+    memory_heap_count_text,
+    device_extension_count_text,
+))
 assert api_version == 0x00404000
 assert instance_one == 0x0100000000000001
 assert instance_two == 0x0100000000000002
 assert physical_device == 0x0200000000000001
+assert device_name
+assert device_api >= 0x00400000
+assert vendor_id != 0
+assert queue_count > 0
+assert 0 < memory_type_count <= 32
+assert 0 < memory_heap_count <= 16
+assert device_extension_count > 15
 
 symbols = subprocess.run(
     ["readelf", "--wide", "--dyn-syms", str(library_path)],
@@ -171,7 +220,7 @@ assert expected_exports <= symbol_names
 
 document = {
     "schema_version": 1,
-    "gate": "E026",
+    "gate": "E027",
     "result": "pass",
     "source_commit": source_commit,
     "target": "Galaxy Tab S8+ Termux ARM64 glibc to Android Bionic",
@@ -180,7 +229,7 @@ document = {
     "bionic_interpreter": "/system/bin/linker64",
     "vulkan_loader": "/system/lib64/libvulkan.so",
     "policy": policy,
-    "global_bootstrap": {
+    "physical_device_discovery": {
         "loader_api_version": api_version,
         "loader_api_version_text": "1.4.0",
         "exposed_extension_count": 0,
@@ -191,6 +240,16 @@ document = {
         "physical_device_id": physical_device,
         "physical_device_type": 2,
         "physical_device_serial": 1,
+        "device_name": device_name,
+        "device_api_version": device_api,
+        "driver_version": driver_version,
+        "vendor_id": vendor_id,
+        "device_id": device_id,
+        "queue_family_count": queue_count,
+        "memory_type_count": memory_type_count,
+        "memory_heap_count": memory_heap_count,
+        "device_extension_count": device_extension_count,
+        "extension_transport_paginated": device_extension_count > 15,
         "instances_destroyed_explicitly": True,
         "client_stdout": client_stdout,
         "client_stderr_bytes": 0,
@@ -205,10 +264,10 @@ document = {
         "bionic_service": artifact(service_path),
     },
 }
-assert document["global_bootstrap"]["service_ready"] is True
+assert document["physical_device_discovery"]["service_ready"] is True
 evidence_path.write_text(json.dumps(document, indent=2) + "\n")
 print(json.dumps(document, indent=2))
-print("e026_instance_vulkan_bootstrap=PASS")
+print("e027_physical_device_discovery=PASS")
 PY
 
 printf 'evidence=%s\n' "$evidence"

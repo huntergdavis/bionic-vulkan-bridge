@@ -55,6 +55,37 @@ target_link_libraries(
 )
 bvb_enable_warnings(bvb-vulkan-selftest-core)
 
+set(
+  bvb_vulkan_discovery_wire_include
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/bvb_vulkan_discovery_wire.inc"
+)
+add_custom_command(
+  OUTPUT "${bvb_vulkan_discovery_wire_include}"
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-vulkan-discovery-wire.py"
+    "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
+    "${bvb_vulkan_discovery_wire_include}"
+  DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-vulkan-discovery-wire.py"
+    "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
+  VERBATIM
+)
+add_library(
+  bvb-vulkan-discovery STATIC
+  src/vulkan_discovery.c
+  "${bvb_vulkan_discovery_wire_include}"
+)
+target_include_directories(
+  bvb-vulkan-discovery
+  PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated"
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
+)
+target_link_libraries(bvb-vulkan-discovery PUBLIC Vulkan::Headers)
+bvb_enable_warnings(bvb-vulkan-discovery)
+
 add_library(bvb-vulkan-global STATIC src/vulkan_global.c)
 target_include_directories(
   bvb-vulkan-global
@@ -64,6 +95,7 @@ target_include_directories(
 )
 target_link_libraries(
   bvb-vulkan-global
+  PUBLIC bvb-vulkan-discovery
   PRIVATE bvb-command-batch Vulkan::Headers ${CMAKE_DL_LIBS}
 )
 bvb_enable_warnings(bvb-vulkan-global)
@@ -198,14 +230,14 @@ add_custom_command(
     "${bvb_dxvk_dispatch_policy_include}"
     "${bvb_dxvk_dispatch_policy_json}"
     --additional-executable
-    "${CMAKE_CURRENT_SOURCE_DIR}/config/e026-instance-dispatch.txt"
-    --gate E026
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e027-physical-device-dispatch.txt"
+    --gate E027
   DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-dxvk-dispatch-policy.py"
     "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
     "${bvb_triangle_dispatch_include}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/config/e026-instance-dispatch.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e027-physical-device-dispatch.txt"
   VERBATIM
 )
 add_library(
@@ -225,7 +257,8 @@ target_include_directories(
 )
 target_link_libraries(
   bvb-vulkan-client-dispatch
-  PRIVATE bvb-command-batch bvb-wire Threads::Threads Vulkan::Headers
+  PRIVATE bvb-command-batch bvb-vulkan-discovery bvb-wire Threads::Threads
+          Vulkan::Headers
 )
 set_target_properties(
   bvb-vulkan-client-dispatch
@@ -312,6 +345,13 @@ if(BUILD_TESTING)
 
   add_test(NAME protocol-contract COMMAND bvb-protocol-test)
 
+  add_executable(bvb-vulkan-discovery-test tests/vulkan_discovery.c)
+  target_link_libraries(
+    bvb-vulkan-discovery-test PRIVATE bvb-vulkan-discovery
+  )
+  bvb_enable_warnings(bvb-vulkan-discovery-test)
+  add_test(NAME vulkan-discovery-wire-contract COMMAND bvb-vulkan-discovery-test)
+
   add_executable(bvb-transport-fd-test tests/transport_fd.c)
   target_link_libraries(bvb-transport-fd-test PRIVATE bvb-wire)
   bvb_enable_warnings(bvb-transport-fd-test)
@@ -368,7 +408,7 @@ if(BUILD_TESTING)
       "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
       "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
       "${bvb_triangle_dispatch_include}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/config/e026-instance-dispatch.txt"
+      "${CMAKE_CURRENT_SOURCE_DIR}/config/e027-physical-device-dispatch.txt"
       "${bvb_dxvk_dispatch_policy_json}"
   )
 

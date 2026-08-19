@@ -34,8 +34,11 @@ python "$project_dir/scripts/generate-dxvk-dispatch-policy.py" \
     "$generated_dir/bvb_dxvk_dispatch_policy.inc" \
     "$generated_dir/bvb_dxvk_dispatch_policy.json" \
     --additional-executable \
-    "$project_dir/config/e026-instance-dispatch.txt" \
-    --gate E026
+    "$project_dir/config/e027-physical-device-dispatch.txt" \
+    --gate E027
+python "$project_dir/scripts/generate-vulkan-discovery-wire.py" \
+    "$registry" \
+    "$generated_dir/bvb_vulkan_discovery_wire.inc"
 
 library="$out_dir/libvulkan-bvb-glibc.so"
 client="$out_dir/bvb-visible-triangle-client-glibc"
@@ -47,6 +50,7 @@ grun -s gcc -std=c17 -O3 -DNDEBUG -fPIC -fvisibility=hidden \
     "$project_dir/src/transport.c" \
     "$project_dir/src/handle.c" \
     "$project_dir/src/command_batch.c" \
+    "$project_dir/src/vulkan_discovery.c" \
     "$project_dir/src/dxvk_dispatch_policy.c" \
     "$project_dir/src/global_dispatch.c" \
     "$project_dir/src/triangle_dispatch.c" \
