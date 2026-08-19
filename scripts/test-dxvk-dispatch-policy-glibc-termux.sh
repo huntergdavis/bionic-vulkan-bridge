@@ -2,6 +2,9 @@
 set -eu
 
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec "$project_dir/scripts/test-global-dispatch-glibc-termux.sh"
+
+: <<'E024_HISTORICAL_IMPLEMENTATION'
 out_dir="$project_dir/out/triangle-dispatch-glibc"
 policy_json="$out_dir/generated/bvb_dxvk_dispatch_policy.json"
 policy_include="$out_dir/generated/bvb_dxvk_dispatch_policy.inc"
@@ -133,3 +136,4 @@ print("e024_dxvk_dispatch_policy=PASS")
 PY
 
 printf 'evidence=%s\n' "$evidence"
+E024_HISTORICAL_IMPLEMENTATION
