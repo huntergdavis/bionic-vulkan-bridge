@@ -96,11 +96,12 @@ expected_exports = sorted(
         "vkGetDeviceProcAddr",
     }
 )
-exports = sorted(
-    name
-    for name in expected_exports
-    if any(line.split()[-1] == name for line in symbol_table.splitlines())
-)
+symbol_names = {
+    fields[-1]
+    for line in symbol_table.splitlines()
+    if (fields := line.split())
+}
+exports = sorted(set(expected_exports) & symbol_names)
 assert exports == expected_exports
 
 document = {
