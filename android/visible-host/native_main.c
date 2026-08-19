@@ -89,6 +89,7 @@ static struct bvb_lifecycle_client lifecycle;
 static struct bvb_visible_ingress *visible_ingress;
 static bool visible_inline_ingress;
 static atomic_bool visible_brokered_ingress;
+static atomic_uint visible_frame_count = 1U;
 static pthread_mutex_t lifecycle_mutex = PTHREAD_MUTEX_INITIALIZER;
 static struct bvb_renderer_control renderer = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
@@ -98,6 +99,7 @@ static struct bvb_renderer_control renderer = {
 enum {
     BVB_E020_REGION_BYTES = 4096,
     BVB_E022_REGION_GENERATION = 1,
+    BVB_E023_MAX_FRAMES = 4096,
 };
 
 static bool token_matches(const uint8_t *left, const uint8_t *right) {
@@ -198,6 +200,7 @@ static void configure_lifecycle(ANativeActivity *activity) {
         BVB_LOGI("E022_INGRESS_RESET");
     }
     memset(&lifecycle, 0, sizeof(lifecycle));
+    atomic_store(&visible_frame_count, 1U);
     JNIEnv *env = activity->env;
     jclass activity_class = (*env)->GetObjectClass(env, activity->clazz);
     jmethodID get_intent = activity_class == NULL
@@ -227,6 +230,8 @@ static void configure_lifecycle(ANativeActivity *activity) {
     jstring socket_key = (*env)->NewStringUTF(env, "bvb_visible_socket");
     jstring visible_port_key =
         (*env)->NewStringUTF(env, "bvb_visible_port");
+    jstring visible_frames_key =
+        (*env)->NewStringUTF(env, "bvb_visible_frames");
     jint port = get_int_extra == NULL || port_key == NULL
                     ? 0
                     : (*env)->CallIntMethod(env, intent, get_int_extra, port_key,
@@ -235,6 +240,11 @@ static void configure_lifecycle(ANativeActivity *activity) {
                             ? 0
                             : (*env)->CallIntMethod(env, intent, get_int_extra,
                                                     visible_port_key, 0);
+    jint visible_frames =
+        get_int_extra == NULL || visible_frames_key == NULL
+            ? 1
+            : (*env)->CallIntMethod(env, intent, get_int_extra,
+                                    visible_frames_key, 1);
     jstring token_string = get_string_extra == NULL || token_key == NULL
                                ? NULL
                                : (jstring)(*env)->CallObjectMethod(
@@ -259,6 +269,13 @@ static void configure_lifecycle(ANativeActivity *activity) {
     const bool token_valid = jni_ok && token != NULL &&
                              bvb_lifecycle_token_from_hex(token,
                                                           parsed_token) == 0;
+    if (visible_frames > 0 && visible_frames <= BVB_E023_MAX_FRAMES) {
+        atomic_store(&visible_frame_count, (unsigned int)visible_frames);
+    } else {
+        BVB_LOGE("E023_CONFIG_INVALID frames=%d fallback=1",
+                 (int)visible_frames);
+    }
+    BVB_LOGI("E023_CONFIG frames=%u", atomic_load(&visible_frame_count));
     if (token_valid && port > 0 && port <= UINT16_MAX) {
         lifecycle.configured = true;
         lifecycle.port = (uint16_t)port;
@@ -323,6 +340,9 @@ static void configure_lifecycle(ANativeActivity *activity) {
     }
     if (visible_port_key != NULL) {
         (*env)->DeleteLocalRef(env, visible_port_key);
+    }
+    if (visible_frames_key != NULL) {
+        (*env)->DeleteLocalRef(env, visible_frames_key);
     }
     if (token_key != NULL) {
         (*env)->DeleteLocalRef(env, token_key);
@@ -897,14 +917,213 @@ static int replay_triangle_batch(
     return bvb_command_batch_next(&iterator, &record) == 1 ? 0 : -EPROTO;
 }
 
-static void complete_external_batch(bool claimed, int status) {
+static int complete_external_batch_mode(bool claimed, int status,
+                                        bool accept_next) {
     if (!claimed || visible_ingress == NULL) {
-        return;
+        return 0;
     }
-    int result = bvb_visible_ingress_complete(visible_ingress, status);
+    int result = accept_next
+                     ? bvb_visible_ingress_complete_and_accept_next(
+                           visible_ingress, status)
+                     : bvb_visible_ingress_complete(visible_ingress, status);
     if (result != 0) {
         BVB_LOGE("E018_COMPLETE_FAIL status=%d result=%d", status, result);
     }
+    return result;
+}
+
+static void complete_external_batch(bool claimed, int status) {
+    (void)complete_external_batch_mode(claimed, status, false);
+}
+
+static int render_triangle_frame(
+    const uint8_t *render_batch, size_t render_batch_length,
+    const VkImage *images, uint32_t image_count, VkFormat image_format,
+    VkExtent2D extent, uint32_t *presented_image_index) {
+    uint32_t image_index = 0U;
+    VkResult result = vkAcquireNextImageKHR(
+        state.device, state.swapchain, UINT64_MAX, state.acquire_semaphore,
+        VK_NULL_HANDLE, &image_index);
+    if ((result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) ||
+        image_index >= image_count) {
+        BVB_LOGE("E008_FAIL acquire=%d index=%u", (int)result, image_index);
+        return -EIO;
+    }
+
+    VkImageView image_view = VK_NULL_HANDLE;
+    VkFramebuffer framebuffer = VK_NULL_HANDLE;
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    bool queue_submitted = false;
+    int status = 0;
+    const VkImageViewCreateInfo image_view_info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .image = images[image_index],
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = image_format,
+        .components = {
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+        },
+        .subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = 0U,
+            .levelCount = 1U,
+            .baseArrayLayer = 0U,
+            .layerCount = 1U,
+        },
+    };
+    result = vkCreateImageView(state.device, &image_view_info, NULL,
+                               &image_view);
+    if (result != VK_SUCCESS) {
+        BVB_LOGE("E016_FAIL image_view=%d", (int)result);
+        status = -EIO;
+        goto cleanup;
+    }
+    const VkFramebufferCreateInfo framebuffer_info = {
+        .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+        .renderPass = state.render_pass,
+        .attachmentCount = 1U,
+        .pAttachments = &image_view,
+        .width = extent.width,
+        .height = extent.height,
+        .layers = 1U,
+    };
+    result = vkCreateFramebuffer(state.device, &framebuffer_info, NULL,
+                                 &framebuffer);
+    if (result != VK_SUCCESS) {
+        BVB_LOGE("E016_FAIL framebuffer=%d", (int)result);
+        status = -EIO;
+        goto cleanup;
+    }
+    const VkCommandBufferAllocateInfo command_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = state.command_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1U,
+    };
+    result = vkAllocateCommandBuffers(state.device, &command_info,
+                                      &command_buffer);
+    if (result != VK_SUCCESS) {
+        BVB_LOGE("E008_FAIL command_buffer=%d", (int)result);
+        status = -EIO;
+        goto cleanup;
+    }
+    const VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    result = vkBeginCommandBuffer(command_buffer, &begin_info);
+    if (result != VK_SUCCESS) {
+        BVB_LOGE("E008_FAIL command_begin=%d", (int)result);
+        status = -EIO;
+        goto cleanup;
+    }
+    const VkImageSubresourceRange range = {
+        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .baseMipLevel = 0U,
+        .levelCount = 1U,
+        .baseArrayLayer = 0U,
+        .layerCount = 1U,
+    };
+    const VkImageMemoryBarrier to_render = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = images[image_index],
+        .subresourceRange = range,
+    };
+    vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0U,
+                         0U, NULL, 0U, NULL, 1U, &to_render);
+    status = replay_triangle_batch(
+        render_batch, render_batch_length, command_buffer, image_view,
+        state.pipeline, state.render_pass, framebuffer, extent);
+    if (status != 0) {
+        BVB_LOGE("E016_FAIL batch_replay=%d", status);
+        goto cleanup;
+    }
+    const VkImageMemoryBarrier to_present = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+        .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = images[image_index],
+        .subresourceRange = range,
+    };
+    vkCmdPipelineBarrier(command_buffer,
+                         VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0U, 0U, NULL,
+                         0U, NULL, 1U, &to_present);
+    result = vkEndCommandBuffer(command_buffer);
+    if (result != VK_SUCCESS) {
+        BVB_LOGE("E008_FAIL command_end=%d", (int)result);
+        status = -EIO;
+        goto cleanup;
+    }
+    const VkPipelineStageFlags wait_stage =
+        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    const VkSubmitInfo submit_info = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .waitSemaphoreCount = 1U,
+        .pWaitSemaphores = &state.acquire_semaphore,
+        .pWaitDstStageMask = &wait_stage,
+        .commandBufferCount = 1U,
+        .pCommandBuffers = &command_buffer,
+        .signalSemaphoreCount = 1U,
+        .pSignalSemaphores = &state.render_semaphore,
+    };
+    result = vkQueueSubmit(state.queue, 1U, &submit_info, VK_NULL_HANDLE);
+    if (result != VK_SUCCESS) {
+        BVB_LOGE("E008_FAIL submit=%d", (int)result);
+        status = -EIO;
+        goto cleanup;
+    }
+    queue_submitted = true;
+    const VkPresentInfoKHR present_info = {
+        .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .waitSemaphoreCount = 1U,
+        .pWaitSemaphores = &state.render_semaphore,
+        .swapchainCount = 1U,
+        .pSwapchains = &state.swapchain,
+        .pImageIndices = &image_index,
+    };
+    result = vkQueuePresentKHR(state.queue, &present_info);
+    if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+        BVB_LOGE("E008_FAIL present=%d", (int)result);
+        status = -EIO;
+        goto cleanup;
+    }
+    result = vkQueueWaitIdle(state.queue);
+    if (result != VK_SUCCESS) {
+        BVB_LOGE("E008_FAIL queue_idle=%d", (int)result);
+        status = -EIO;
+        goto cleanup;
+    }
+    queue_submitted = false;
+    *presented_image_index = image_index;
+
+cleanup:
+    if (queue_submitted) {
+        (void)vkQueueWaitIdle(state.queue);
+    }
+    if (command_buffer != VK_NULL_HANDLE) {
+        vkFreeCommandBuffers(state.device, state.command_pool, 1U,
+                             &command_buffer);
+    }
+    if (framebuffer != VK_NULL_HANDLE) {
+        vkDestroyFramebuffer(state.device, framebuffer, NULL);
+    }
+    if (image_view != VK_NULL_HANDLE) {
+        vkDestroyImageView(state.device, image_view, NULL);
+    }
+    return status;
 }
 
 static bool create_renderer(ANativeWindow *window) {
@@ -1289,6 +1508,49 @@ static bool create_renderer(ANativeWindow *window) {
     if (result != VK_SUCCESS) {
         BVB_LOGE("E008_FAIL semaphore=%d", (int)result);
         return false;
+    }
+
+    const uint32_t frame_count =
+        visible_ingress == NULL ? 1U : atomic_load(&visible_frame_count);
+    if (frame_count > 1U) {
+        BVB_LOGI("E023_RING_BEGIN frames=%u", frame_count);
+        for (uint32_t frame = 0U; frame < frame_count; ++frame) {
+            const uint8_t *render_batch = NULL;
+            size_t render_batch_length = 0U;
+            uint64_t external_sequence = 0U;
+            int batch_status = bvb_visible_ingress_wait_batch(
+                visible_ingress, 10000U, &render_batch,
+                &render_batch_length, &external_sequence);
+            if (batch_status != 0) {
+                BVB_LOGE("E023_BATCH_WAIT_FAIL frame=%u status=%d", frame,
+                         batch_status);
+                return false;
+            }
+            BVB_LOGI("E023_BATCH_CLAIM frame=%u sequence=%llu bytes=%zu",
+                     frame, (unsigned long long)external_sequence,
+                     render_batch_length);
+            uint32_t image_index = 0U;
+            batch_status = render_triangle_frame(
+                render_batch, render_batch_length, images, image_count,
+                surface_format.format, extent, &image_index);
+            const bool accept_next = frame + 1U < frame_count;
+            int complete_status = complete_external_batch_mode(
+                true, batch_status, accept_next);
+            if (batch_status != 0 || complete_status != 0) {
+                BVB_LOGE("E023_FRAME_FAIL frame=%u sequence=%llu "
+                         "render_status=%d complete_status=%d",
+                         frame, (unsigned long long)external_sequence,
+                         batch_status, complete_status);
+                return false;
+            }
+            BVB_LOGI("E023_FRAME_PASS frame=%u sequence=%llu index=%u",
+                     frame, (unsigned long long)external_sequence,
+                     image_index);
+        }
+        state.window = window;
+        BVB_LOGI("E023_PASS frames=%u width=%u height=%u images=%u",
+                 frame_count, extent.width, extent.height, image_count);
+        return true;
     }
 
     uint32_t image_index = 0;

@@ -521,8 +521,8 @@ int bvb_visible_ingress_wait_batch(struct bvb_visible_ingress *ingress,
     return 0;
 }
 
-int bvb_visible_ingress_complete(struct bvb_visible_ingress *ingress,
-                                 int status) {
+static int complete_batch(struct bvb_visible_ingress *ingress, int status,
+                          bool accept_next) {
     if (ingress == NULL || status > 0) {
         return -EINVAL;
     }
@@ -535,9 +535,20 @@ int bvb_visible_ingress_complete(struct bvb_visible_ingress *ingress,
     ingress->batch_status = status;
     ingress->batch_completed = true;
     ingress->completion_pending_response = true;
+    ingress->accepting = accept_next && status == 0;
     (void)pthread_cond_broadcast(&ingress->condition);
     (void)pthread_mutex_unlock(&ingress->mutex);
     return 0;
+}
+
+int bvb_visible_ingress_complete(struct bvb_visible_ingress *ingress,
+                                 int status) {
+    return complete_batch(ingress, status, false);
+}
+
+int bvb_visible_ingress_complete_and_accept_next(
+    struct bvb_visible_ingress *ingress, int status) {
+    return complete_batch(ingress, status, true);
 }
 
 void bvb_visible_ingress_destroy(struct bvb_visible_ingress *ingress) {

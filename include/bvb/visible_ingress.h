@@ -25,6 +25,8 @@ int bvb_visible_ingress_wait_batch(struct bvb_visible_ingress *ingress,
                                    size_t *batch_length, uint64_t *sequence);
 int bvb_visible_ingress_complete(struct bvb_visible_ingress *ingress,
                                  int status);
+int bvb_visible_ingress_complete_and_accept_next(
+    struct bvb_visible_ingress *ingress, int status);
 void bvb_visible_ingress_destroy(struct bvb_visible_ingress *ingress);
 
 #endif

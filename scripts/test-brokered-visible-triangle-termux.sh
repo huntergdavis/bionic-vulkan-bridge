@@ -15,6 +15,18 @@ relay_builder="$project_dir/scripts/build-shared-region-relay-glibc-termux.sh"
 relay_client="$out_dir/bvb-shared-region-relay-glibc"
 control_client="$build_dir/bvb-bridge-client"
 screencap_command=/system/bin/screencap
+gate=${BVB_VISIBLE_GATE:-E022}
+frames=${BVB_VISIBLE_FRAMES:-1}
+ring_slots=${BVB_VISIBLE_RING_SLOTS:-1}
+gate_lower=$(printf '%s' "$gate" | tr '[:upper:]' '[:lower:]')
+
+case "$frames:$ring_slots" in
+    *[!0-9:]*|0:*|*:0)
+        printf 'invalid frame-ring settings: frames=%s ring_slots=%s\n' \
+            "$frames" "$ring_slots" >&2
+        exit 2
+        ;;
+esac
 
 for command_name in am aapt chmod cmake cp env grun logcat od pm python \
     readelf sed sha256sum sleep tr; do
@@ -37,9 +49,8 @@ expected_version=$(sed -n \
     's/.*android:versionCode="\([0-9][0-9]*\)".*/\1/p' "$manifest")
 installed_version=$(pm list packages --show-versioncode 2>/dev/null | \
     sed -n "s/^package:$package_name versionCode:\([0-9][0-9]*\).*$/\1/p")
-if [ "$expected_version" != 12 ] || \
-    [ "$installed_version" != "$expected_version" ]; then
-    printf 'visible-host v12 required: installed=%s expected=%s\n' \
+if [ "$installed_version" != "$expected_version" ]; then
+    printf 'visible-host version mismatch: installed=%s expected=%s\n' \
         "${installed_version:-missing}" "${expected_version:-missing}" >&2
     exit 2
 fi
@@ -58,23 +69,23 @@ fi
 cp "$signed_apk" "$helper_apk"
 chmod 0400 "$helper_apk"
 
-runtime_dir=$(mktemp -d "$runtime_parent/bvb-e022.XXXXXX")
+runtime_dir=$(mktemp -d "$runtime_parent/bvb-$gate_lower.XXXXXX")
 control_socket="$runtime_dir/bridge.sock"
-service_stdout="$out_dir/e022-service.stdout"
-service_stderr="$out_dir/e022-service.stderr"
-launch_stdout="$out_dir/e022-activity-launch.stdout"
-wrong_json="$out_dir/e022-wrong-token.json"
-wrong_stdout="$out_dir/e022-wrong-token.stdout"
-wrong_stderr="$out_dir/e022-wrong-token.stderr"
-valid_json="$out_dir/e022-valid-token.json"
-valid_stdout="$out_dir/e022-valid-token.stdout"
-valid_stderr="$out_dir/e022-valid-token.stderr"
-relay_stdout="$out_dir/e022-relay.stdout"
-relay_stderr="$out_dir/e022-relay.stderr"
-status_json="$out_dir/e022-activity-status.json"
-evidence_json="$out_dir/e022-brokered-visible-gate.json"
-app_log="$out_dir/e022-visible-host.logcat"
-screenshot="$out_dir/e022-visible-triangle.png"
+service_stdout="$out_dir/$gate_lower-service.stdout"
+service_stderr="$out_dir/$gate_lower-service.stderr"
+launch_stdout="$out_dir/$gate_lower-activity-launch.stdout"
+wrong_json="$out_dir/$gate_lower-wrong-token.json"
+wrong_stdout="$out_dir/$gate_lower-wrong-token.stdout"
+wrong_stderr="$out_dir/$gate_lower-wrong-token.stderr"
+valid_json="$out_dir/$gate_lower-valid-token.json"
+valid_stdout="$out_dir/$gate_lower-valid-token.stdout"
+valid_stderr="$out_dir/$gate_lower-valid-token.stderr"
+relay_stdout="$out_dir/$gate_lower-relay.stdout"
+relay_stderr="$out_dir/$gate_lower-relay.stderr"
+status_json="$out_dir/$gate_lower-activity-status.json"
+evidence_json="$out_dir/$gate_lower-brokered-visible-gate.json"
+app_log="$out_dir/$gate_lower-visible-host.logcat"
+screenshot="$out_dir/$gate_lower-visible-triangle.png"
 token=$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')
 wrong_token=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 visible_port=$(python - <<'PY'
@@ -140,7 +151,8 @@ fi
 am start -S -W -n "$package_name/$activity_name" \
     --ei bvb_activity_port "$port" \
     --es bvb_activity_token "$token" \
-    --ei bvb_visible_port "$visible_port" > "$launch_stdout"
+    --ei bvb_visible_port "$visible_port" \
+    --ei bvb_visible_frames "$frames" > "$launch_stdout"
 attempt=0
 window_line=
 while [ -z "$window_line" ] && kill -0 "$service_pid" 2>/dev/null; do
@@ -194,10 +206,11 @@ if run_helper "$wrong_token" "$wrong_json" "$wrong_stdout" \
     exit 6
 fi
 
-relay_socket="bvb-e022-$(printf '%.16s' "$token")"
+relay_socket="bvb-$gate_lower-$(printf '%.16s' "$token")"
 grun "$relay_client" --socket "$relay_socket" \
     --visible-port "$visible_port" --token "$token" \
     --width "$width" --height "$height" \
+    --frames "$frames" --ring-slots "$ring_slots" \
     > "$relay_stdout" 2> "$relay_stderr" &
 relay_pid=$!
 attempt=0
@@ -244,7 +257,8 @@ service_pid=
 logcat -d --pid "$activity_pid" -v threadtime > "$app_log" 2>/dev/null || true
 
 python - "$wrong_json" "$valid_json" "$relay_stdout" "$status_json" \
-    "$service_stdout" "$evidence_json" "$screenshot" <<'PY'
+    "$service_stdout" "$evidence_json" "$screenshot" "$gate" \
+    "$frames" "$ring_slots" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -252,8 +266,11 @@ import re
 import sys
 
 wrong_path, valid_path, relay_path, status_path, service_path, evidence_path, screenshot_path = map(
-    pathlib.Path, sys.argv[1:]
+    pathlib.Path, sys.argv[1:8]
 )
+gate = sys.argv[8]
+frames = int(sys.argv[9])
+ring_slots = int(sys.argv[10])
 wrong = json.loads(wrong_path.read_text())
 valid = json.loads(valid_path.read_text())
 relay = json.loads(next(
@@ -296,7 +313,10 @@ assert relay["height"] == window_events[-1]["height"]
 assert relay["batch_offset"] == 64
 assert relay["batch_bytes"] == 200
 assert relay["commands"] == 6
-assert relay["sequence"] == 1
+assert relay["sequence"] == frames
+assert relay["frames"] == frames
+assert relay["ring_slots"] == ring_slots
+assert relay["batch_stride"] == 256
 assert relay["receive_validate_ns"] > 0
 assert relay["execute_round_trip_ns"] > 0
 assert relay["receive_to_present_ns"] >= relay["execute_round_trip_ns"]
@@ -314,7 +334,7 @@ if screenshot_path.is_file() and screenshot_path.stat().st_size > 0:
     }
 document = {
     "schema_version": 1,
-    "gate": "E022",
+    "gate": gate,
     "result": "pass",
     "source_libc": "glibc",
     "host_libc": "bionic",
@@ -325,11 +345,11 @@ document = {
     "activity_status": activity,
     "authenticated_lifecycle_events": events,
     "e019_inline_baseline_round_trip_ns": baseline_ns,
-    "e022_execute_vs_e019_percent": round(
+    "execute_vs_e019_percent": round(
         (relay["execute_round_trip_ns"] - baseline_ns) / baseline_ns * 100.0,
         2,
     ),
-    "e022_full_relay_vs_e019_percent": round(
+    "full_relay_vs_e019_percent": round(
         (valid["relay_round_trip_ns"] - baseline_ns) / baseline_ns * 100.0,
         2,
     ),
@@ -337,14 +357,14 @@ document = {
 }
 evidence_path.write_text(json.dumps(document, indent=2) + "\n")
 print(json.dumps(document, indent=2))
-print("brokered_visible_triangle=PASS")
+print(f"{gate.lower()}_brokered_visible=PASS")
 PY
 
-if grep -q 'E022_PASS' "$app_log"; then
-    printf 'app_log_e022_pass=PASS\n'
+if grep -q "${gate}_PASS" "$app_log"; then
+    printf 'app_log_%s_pass=PASS\n' "$gate_lower"
 else
     printf '%s\n' \
-        'warning: E022_PASS was not readable through logcat; protocol and lifecycle gates passed' \
+        "warning: ${gate}_PASS was not readable through logcat; protocol and lifecycle gates passed" \
         >&2
 fi
 printf 'evidence_json=%s\n' "$evidence_json"

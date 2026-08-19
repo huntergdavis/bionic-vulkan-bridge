@@ -181,7 +181,10 @@ int main(int argc, char **argv) {
                                        (uint32_t)width_value,
                                        (uint32_t)height_value);
             int complete_status =
-                bvb_visible_ingress_complete(ingress, result);
+                index + 1U < frame_count
+                    ? bvb_visible_ingress_complete_and_accept_next(ingress,
+                                                                   result)
+                    : bvb_visible_ingress_complete(ingress, result);
             if (result == 0) {
                 result = complete_status;
             }
