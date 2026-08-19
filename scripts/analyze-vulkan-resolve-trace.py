@@ -176,6 +176,28 @@ def analyze(trace: Path, registry: Path) -> dict[str, object]:
     thread_ids = sorted(
         {int(record["tid"]) for record in records if record["tid"] is not None}
     )
+    processes = []
+    for pid in process_ids:
+        process_records = [record for record in records if record["pid"] == pid]
+        processes.append(
+            {
+                "pid": pid,
+                "record_count": len(process_records),
+                "thread_ids": sorted(
+                    {int(record["tid"]) for record in process_records}
+                ),
+                "unique_name_count": len(
+                    {str(record["name"]) for record in process_records}
+                ),
+                "resolved_name_count": len(
+                    {
+                        str(record["name"])
+                        for record in process_records
+                        if bool(record["resolved"])
+                    }
+                ),
+            }
+        )
     resolved_names = {
         str(record["name"]) for record in records if bool(record["resolved"])
     }
@@ -191,10 +213,10 @@ def analyze(trace: Path, registry: Path) -> dict[str, object]:
             "record_count": len(records),
             "unique_name_count": len(grouped),
             "resolved_name_count": len(resolved_names),
-            "process_ids": process_ids,
             "thread_count": len(thread_ids),
             "dispatch_scope_counts": dict(sorted(scope_counts.items())),
         },
+        "processes": processes,
         "commands": entries,
     }
 

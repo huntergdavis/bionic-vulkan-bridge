@@ -32,12 +32,20 @@ def main() -> None:
                 "instance": 1,
                 "private": 1,
             },
-            "process_ids": [100],
             "record_count": 4,
             "resolved_name_count": 3,
             "thread_count": 2,
             "unique_name_count": 4,
         }
+        assert document["processes"] == [
+            {
+                "pid": 100,
+                "record_count": 4,
+                "resolved_name_count": 3,
+                "thread_ids": [101, 102],
+                "unique_name_count": 4,
+            }
+        ]
         commands = {entry["name"]: entry for entry in document["commands"]}
         assert commands["vkCreateInstance"]["dispatch_scope"] == "global"
         assert commands["vkDestroySurfaceKHR"]["dispatch_scope"] == "instance"
