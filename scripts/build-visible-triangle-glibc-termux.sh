@@ -50,7 +50,7 @@ grun -s gcc -std=c17 -O3 -DNDEBUG -Wall -Wextra -Werror \
     "$project_dir/src/handle.c" \
     "$project_dir/src/command_batch.c" \
     "$project_dir/src/visible_triangle_client.c" \
-    -L"$out_dir" -Wl,-rpath,'$ORIGIN' -lvulkan-bvb-glibc \
+    -L"$out_dir" -Wl,-rpath,"$out_dir" -lvulkan-bvb-glibc \
     -o "$client"
 
 if ! readelf -l "$client" | grep -q '/glibc/lib/ld-linux-aarch64.so.1'; then
@@ -59,6 +59,11 @@ if ! readelf -l "$client" | grep -q '/glibc/lib/ld-linux-aarch64.so.1'; then
 fi
 if ! readelf -d "$client" | grep -q 'libvulkan-bvb-glibc.so'; then
     printf 'visible triangle client is not linked to generated dispatch\n' >&2
+    exit 4
+fi
+if ! readelf -d "$client" | grep -Fq "$out_dir"; then
+    printf 'visible triangle client is missing its explicit glibc runpath\n' \
+        >&2
     exit 4
 fi
 exports=$(readelf --wide --dyn-syms "$library" | \
