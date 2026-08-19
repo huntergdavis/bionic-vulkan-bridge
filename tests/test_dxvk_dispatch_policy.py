@@ -46,6 +46,8 @@ def main() -> int:
                 str(generated_json),
                 "--additional-executable",
                 str(additional),
+                "--gate",
+                "E026",
             ],
             check=True,
         )
@@ -56,11 +58,11 @@ def main() -> int:
         assert summary == {
             "command_count": 742,
             "resolved_name_count": 440,
-            "executable_name_count": 12,
+            "executable_name_count": 14,
             "support_counts": {
                 "probed_null": 302,
-                "required_unimplemented": 428,
-                "executable": 12,
+                "required_unimplemented": 426,
+                "executable": 14,
             },
             "dispatch_scope_counts": {
                 "global": 4,

@@ -27,6 +27,8 @@ enum {
     BVB_OPCODE_VISIBLE_BATCH_INLINE = 10,
     BVB_OPCODE_VULKAN_GLOBAL_INFO = 11,
     BVB_OPCODE_VULKAN_INSTANCE_CREATE = 12,
+    BVB_OPCODE_VULKAN_INSTANCE_DESTROY = 13,
+    BVB_OPCODE_VULKAN_PHYSICAL_DEVICES = 14,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -45,6 +47,9 @@ enum {
     BVB_VULKAN_GLOBAL_INFO_SIZE = 24,
     BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE = 16,
     BVB_VULKAN_INSTANCE_CREATE_RESPONSE_SIZE = 16,
+    BVB_VULKAN_INSTANCE_ID_SIZE = 8,
+    BVB_VULKAN_PHYSICAL_DEVICES_PREFIX_SIZE = 8,
+    BVB_VULKAN_MAX_PHYSICAL_DEVICES = 8,
     BVB_SHARED_BATCH_MIN_BYTES = 4096,
     BVB_SHARED_BATCH_MAX_BYTES = 16 * 1024 * 1024,
     BVB_SERVICE_BIONIC = 1U << 0,
@@ -119,6 +124,12 @@ struct bvb_vulkan_instance_create_request {
 struct bvb_vulkan_instance_create_response {
     int32_t vulkan_result;
     uint64_t instance_id;
+};
+
+struct bvb_vulkan_physical_devices {
+    int32_t vulkan_result;
+    uint32_t count;
+    uint64_t ids[BVB_VULKAN_MAX_PHYSICAL_DEVICES];
 };
 
 /*
@@ -209,6 +220,17 @@ int bvb_protocol_encode_vulkan_instance_create_response(
 int bvb_protocol_decode_vulkan_instance_create_response(
     const uint8_t input[BVB_VULKAN_INSTANCE_CREATE_RESPONSE_SIZE],
     struct bvb_vulkan_instance_create_response *response);
+int bvb_protocol_encode_vulkan_instance_id(
+    uint8_t output[BVB_VULKAN_INSTANCE_ID_SIZE], uint64_t instance_id);
+int bvb_protocol_decode_vulkan_instance_id(
+    const uint8_t input[BVB_VULKAN_INSTANCE_ID_SIZE], uint64_t *instance_id);
+int bvb_protocol_encode_vulkan_physical_devices(
+    uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
+    const struct bvb_vulkan_physical_devices *devices,
+    uint32_t *output_length);
+int bvb_protocol_decode_vulkan_physical_devices(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_physical_devices *devices);
 
 void bvb_wire_put_u16(uint8_t *output, uint16_t value);
 void bvb_wire_put_u32(uint8_t *output, uint32_t value);

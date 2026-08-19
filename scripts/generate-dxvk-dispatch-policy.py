@@ -89,7 +89,7 @@ def additional_executable_names(path: Path | None) -> set[str]:
 
 def generate(
     registry: Path, manifest: Path, triangle_dispatch: Path,
-    additional_dispatch: Path | None = None,
+    additional_dispatch: Path | None = None, gate: str | None = None,
 ) -> tuple[str, dict[str, object]]:
     registry_names = registry_canonical_names(registry)
     evidence = json.loads(manifest.read_text())
@@ -135,12 +135,11 @@ def generate(
             raise ValueError(f"registry identity mismatch: {name}")
         resolved = len(resolved_stages) != 0
         if name in executable:
-            expected_scope = (
-                "device" if name in triangle_executable else "global"
-            )
-            if not resolved or scope != expected_scope:
+            if not resolved or (
+                name in triangle_executable and scope != "device"
+            ):
                 raise ValueError(
-                    f"executable entry lacks {expected_scope} proof: {name}"
+                    f"executable entry lacks measured dispatch proof: {name}"
                 )
             support = "executable"
         elif resolved:
@@ -186,7 +185,7 @@ def generate(
     include = "\n".join(lines) + "\n"
     document: dict[str, object] = {
         "schema_version": 1,
-        "gate": "E025" if additional_dispatch is not None else "E024",
+        "gate": gate or ("E025" if additional_dispatch is not None else "E024"),
         "source": {
             "vk_xml_sha256": sha256(registry),
             "e011_manifest_sha256": sha256(manifest),
@@ -222,10 +221,11 @@ def main() -> None:
     parser.add_argument("output_include", type=Path)
     parser.add_argument("output_json", type=Path)
     parser.add_argument("--additional-executable", type=Path)
+    parser.add_argument("--gate")
     arguments = parser.parse_args()
     include, document = generate(
         arguments.registry, arguments.manifest, arguments.triangle_dispatch,
-        arguments.additional_executable,
+        arguments.additional_executable, arguments.gate,
     )
     arguments.output_include.parent.mkdir(parents=True, exist_ok=True)
     arguments.output_json.parent.mkdir(parents=True, exist_ok=True)

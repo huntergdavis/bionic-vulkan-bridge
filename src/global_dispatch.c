@@ -15,11 +15,21 @@
 
 static const uint64_t BVB_INSTANCE_PROXY_MAGIC =
     UINT64_C(0x425642494e535430);
+static const uint64_t BVB_PHYSICAL_DEVICE_PROXY_MAGIC =
+    UINT64_C(0x4256425048595330);
 
 struct bvb_instance_proxy {
     const void *dispatch;
     uint64_t magic;
     uint64_t wire_id;
+};
+
+struct bvb_physical_device_proxy {
+    const void *dispatch;
+    uint64_t magic;
+    uint64_t wire_id;
+    uint64_t parent_id;
+    struct bvb_physical_device_proxy *next;
 };
 
 struct bvb_global_client_state {
@@ -28,6 +38,7 @@ struct bvb_global_client_state {
     uint32_t next_request_id;
     bool info_valid;
     struct bvb_vulkan_global_info info;
+    struct bvb_physical_device_proxy *physical_devices;
 };
 
 static const uint64_t bvb_dispatch_anchor = UINT64_C(0x4256424449535030);
@@ -172,6 +183,63 @@ static struct bvb_instance_proxy *instance_proxy(VkInstance instance) {
 BVB_GLOBAL_EXPORT uint64_t bvb_instance_proxy_id(VkInstance instance) {
     struct bvb_instance_proxy *proxy = instance_proxy(instance);
     return proxy == NULL ? 0U : proxy->wire_id;
+}
+
+static struct bvb_physical_device_proxy *physical_device_proxy(
+    VkPhysicalDevice physical_device) {
+    struct bvb_physical_device_proxy *proxy =
+        (struct bvb_physical_device_proxy *)physical_device;
+    if (proxy == NULL || proxy->dispatch != &bvb_dispatch_anchor ||
+        proxy->magic != BVB_PHYSICAL_DEVICE_PROXY_MAGIC ||
+        bvb_handle_expect(proxy->wire_id, BVB_OBJECT_PHYSICAL_DEVICE) != 0 ||
+        bvb_handle_expect(proxy->parent_id, BVB_OBJECT_INSTANCE) != 0) {
+        return NULL;
+    }
+    return proxy;
+}
+
+BVB_GLOBAL_EXPORT uint64_t bvb_physical_device_proxy_id(
+    VkPhysicalDevice physical_device) {
+    struct bvb_physical_device_proxy *proxy =
+        physical_device_proxy(physical_device);
+    return proxy == NULL ? 0U : proxy->wire_id;
+}
+
+static struct bvb_physical_device_proxy *physical_proxy_locked(
+    uint64_t wire_id, uint64_t parent_id) {
+    for (struct bvb_physical_device_proxy *proxy =
+             bvb_global_client.physical_devices;
+         proxy != NULL; proxy = proxy->next) {
+        if (proxy->wire_id == wire_id) {
+            return proxy->parent_id == parent_id ? proxy : NULL;
+        }
+    }
+    struct bvb_physical_device_proxy *proxy = calloc(1, sizeof(*proxy));
+    if (proxy == NULL) {
+        return NULL;
+    }
+    proxy->dispatch = &bvb_dispatch_anchor;
+    proxy->magic = BVB_PHYSICAL_DEVICE_PROXY_MAGIC;
+    proxy->wire_id = wire_id;
+    proxy->parent_id = parent_id;
+    proxy->next = bvb_global_client.physical_devices;
+    bvb_global_client.physical_devices = proxy;
+    return proxy;
+}
+
+static void remove_physical_proxies_locked(uint64_t parent_id) {
+    struct bvb_physical_device_proxy **cursor =
+        &bvb_global_client.physical_devices;
+    while (*cursor != NULL) {
+        struct bvb_physical_device_proxy *proxy = *cursor;
+        if (proxy->parent_id == parent_id) {
+            *cursor = proxy->next;
+            proxy->magic = 0U;
+            free(proxy);
+        } else {
+            cursor = &proxy->next;
+        }
+    }
 }
 
 static VkResult VKAPI_CALL bvb_bridge_vkEnumerateInstanceVersion(
@@ -325,6 +393,116 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateInstance(
     return VK_SUCCESS;
 }
 
+static void VKAPI_CALL bvb_bridge_vkDestroyInstance(
+    VkInstance instance, const VkAllocationCallbacks *allocator) {
+    struct bvb_instance_proxy *proxy = instance_proxy(instance);
+    if (proxy == NULL || allocator != NULL) {
+        return;
+    }
+    int lock_result = pthread_mutex_lock(&bvb_global_client.mutex);
+    if (lock_result != 0) {
+        return;
+    }
+    int result = connect_locked();
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_INSTANCE_DESTROY,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_INSTANCE_ID_SIZE,
+    };
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_instance_id(
+            request.payload, proxy->wire_id);
+    }
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        result = exchange_locked(&request, &response);
+    }
+    if (result == 0 &&
+        (response.header.status != 0 || response.header.payload_length != 0U)) {
+        result = -EPROTO;
+    }
+    if (result == 0) {
+        remove_physical_proxies_locked(proxy->wire_id);
+        proxy->magic = 0U;
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result == 0) {
+        free(proxy);
+    }
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkEnumeratePhysicalDevices(
+    VkInstance instance, uint32_t *physical_device_count,
+    VkPhysicalDevice *physical_devices) {
+    struct bvb_instance_proxy *instance_state = instance_proxy(instance);
+    if (instance_state == NULL || physical_device_count == NULL) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    const uint32_t capacity =
+        physical_devices == NULL ? 0U : *physical_device_count;
+    int lock_result = pthread_mutex_lock(&bvb_global_client.mutex);
+    if (lock_result != 0) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    int result = connect_locked();
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_PHYSICAL_DEVICES,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_INSTANCE_ID_SIZE,
+    };
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_instance_id(
+            request.payload, instance_state->wire_id);
+    }
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        result = exchange_locked(&request, &response);
+    }
+    if (result == 0 && response.header.status != 0) {
+        result = -EPROTO;
+    }
+    struct bvb_vulkan_physical_devices decoded;
+    if (result == 0) {
+        result = bvb_protocol_decode_vulkan_physical_devices(
+            response.payload, response.header.payload_length, &decoded);
+    }
+    VkResult vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    if (result == 0) {
+        vulkan_result = (VkResult)decoded.vulkan_result;
+        if (vulkan_result == VK_SUCCESS || vulkan_result == VK_INCOMPLETE) {
+            if (physical_devices == NULL) {
+                *physical_device_count = decoded.count;
+            } else {
+                const uint32_t written =
+                    capacity < decoded.count ? capacity : decoded.count;
+                for (uint32_t index = 0U; index < written; ++index) {
+                    struct bvb_physical_device_proxy *proxy =
+                        physical_proxy_locked(decoded.ids[index],
+                                              instance_state->wire_id);
+                    if (proxy == NULL) {
+                        vulkan_result = VK_ERROR_OUT_OF_HOST_MEMORY;
+                        break;
+                    }
+                    physical_devices[index] = (VkPhysicalDevice)proxy;
+                }
+                *physical_device_count = written;
+                if (vulkan_result != VK_ERROR_OUT_OF_HOST_MEMORY &&
+                    capacity < decoded.count) {
+                    vulkan_result = VK_INCOMPLETE;
+                }
+            }
+        }
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return result == 0 ? vulkan_result : VK_ERROR_INITIALIZATION_FAILED;
+}
+
 BVB_GLOBAL_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
 vkGetInstanceProcAddr(VkInstance instance, const char *name) {
     if (name == NULL ||
@@ -345,6 +523,15 @@ vkGetInstanceProcAddr(VkInstance instance, const char *name) {
                      bvb_bridge_vkEnumerateInstanceVersion)
 #undef BVB_GLOBAL_MATCH
     if (instance != VK_NULL_HANDLE) {
+#define BVB_INSTANCE_MATCH(entry_name, function)                               \
+        if (strcmp(name, (entry_name)) == 0) {                                 \
+            return BVB_ERASE_FUNCTION((function), __typeof__(&(function)));    \
+        }
+        BVB_INSTANCE_MATCH("vkDestroyInstance",
+                           bvb_bridge_vkDestroyInstance)
+        BVB_INSTANCE_MATCH("vkEnumeratePhysicalDevices",
+                           bvb_bridge_vkEnumeratePhysicalDevices)
+#undef BVB_INSTANCE_MATCH
         if (strcmp(name, "vkGetDeviceProcAddr") == 0) {
             return BVB_ERASE_FUNCTION(vkGetDeviceProcAddr,
                                       PFN_vkGetDeviceProcAddr);

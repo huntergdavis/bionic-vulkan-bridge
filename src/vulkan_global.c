@@ -14,7 +14,7 @@
 #include <string.h>
 
 enum {
-    BVB_GLOBAL_INSTANCE_CAPACITY = 8,
+    BVB_GLOBAL_OBJECT_CAPACITY = 32,
 };
 
 struct bvb_vulkan_global_context {
@@ -23,9 +23,10 @@ struct bvb_vulkan_global_context {
     PFN_vkCreateInstance create_instance;
     PFN_vkDestroyInstance destroy_instance;
     struct bvb_vulkan_global_info info;
-    struct bvb_handle_entry instance_entries[BVB_GLOBAL_INSTANCE_CAPACITY];
-    struct bvb_handle_table instances;
+    struct bvb_handle_entry object_entries[BVB_GLOBAL_OBJECT_CAPACITY];
+    struct bvb_handle_table objects;
     uint64_t next_instance_serial;
+    uint64_t next_physical_device_serial;
 };
 
 static void set_error(char *output, size_t output_size, const char *format, ...) {
@@ -135,14 +136,15 @@ int bvb_vulkan_global_context_create(
     context->info.exposed_extension_count = 0U;
     context->info.exposed_layer_count = 0U;
     int status = bvb_handle_table_init(
-        &context->instances, context->instance_entries,
-        BVB_GLOBAL_INSTANCE_CAPACITY);
+        &context->objects, context->object_entries,
+        BVB_GLOBAL_OBJECT_CAPACITY);
     if (status != 0) {
         set_error(error, error_size, "instance table init failed: %d", status);
         bvb_vulkan_global_context_destroy(context);
         return status;
     }
     context->next_instance_serial = 1U;
+    context->next_physical_device_serial = 1U;
     *output = context;
     return 0;
 }
@@ -153,10 +155,11 @@ void bvb_vulkan_global_context_destroy(
         return;
     }
     if (context->destroy_instance != NULL) {
-        for (size_t index = 0U; index < BVB_GLOBAL_INSTANCE_CAPACITY; ++index) {
+        for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
             const struct bvb_handle_entry *entry =
-                &context->instance_entries[index];
-            if (entry->wire_id != 0U && entry->native_bits != 0U) {
+                &context->object_entries[index];
+            if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_INSTANCE &&
+                entry->native_bits != 0U) {
                 context->destroy_instance(
                     instance_from_bits(entry->native_bits), NULL);
             }
@@ -202,7 +205,7 @@ int bvb_vulkan_global_context_create_instance(
         response->vulkan_result = VK_ERROR_EXTENSION_NOT_PRESENT;
         return 0;
     }
-    if (context->instances.count == context->instances.capacity) {
+    if (context->objects.count == context->objects.capacity) {
         response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
         return 0;
     }
@@ -239,7 +242,7 @@ int bvb_vulkan_global_context_create_instance(
     const uint64_t wire_id = bvb_handle_id(
         BVB_OBJECT_INSTANCE, context->next_instance_serial++);
     int status = bvb_handle_table_insert(
-        &context->instances, wire_id, 0U, native_bits);
+        &context->objects, wire_id, 0U, native_bits);
     if (status != 0) {
         context->destroy_instance(instance, NULL);
         set_error(error, error_size, "instance ownership failed: %d", status);
@@ -248,5 +251,126 @@ int bvb_vulkan_global_context_create_instance(
     }
     response->vulkan_result = VK_SUCCESS;
     response->instance_id = wire_id;
+    return 0;
+}
+
+int bvb_vulkan_global_context_destroy_instance(
+    struct bvb_vulkan_global_context *context, uint64_t instance_id) {
+    if (context == NULL || context->destroy_instance == NULL) {
+        return -EINVAL;
+    }
+    uint64_t native_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, instance_id, BVB_OBJECT_INSTANCE, NULL,
+        &native_bits);
+    if (result != 0) {
+        return result;
+    }
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_PHYSICAL_DEVICE &&
+            entry->parent_id == instance_id) {
+            const uint64_t child_id = entry->wire_id;
+            result = bvb_handle_table_remove(
+                &context->objects, child_id, BVB_OBJECT_PHYSICAL_DEVICE, NULL);
+            if (result != 0) {
+                return result;
+            }
+        }
+    }
+    result = bvb_handle_table_remove(
+        &context->objects, instance_id, BVB_OBJECT_INSTANCE, &native_bits);
+    if (result != 0) {
+        return result;
+    }
+    context->destroy_instance(instance_from_bits(native_bits), NULL);
+    return 0;
+}
+
+static uint64_t existing_physical_device_id(
+    const struct bvb_vulkan_global_context *context, uint64_t instance_id,
+    uint64_t native_bits) {
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_PHYSICAL_DEVICE &&
+            entry->parent_id == instance_id &&
+            entry->native_bits == native_bits) {
+            return entry->wire_id;
+        }
+    }
+    return 0U;
+}
+
+int bvb_vulkan_global_context_enumerate_physical_devices(
+    struct bvb_vulkan_global_context *context, uint64_t instance_id,
+    struct bvb_vulkan_physical_devices *devices,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (context == NULL || devices == NULL) {
+        return -EINVAL;
+    }
+    *devices = (struct bvb_vulkan_physical_devices){0};
+    uint64_t instance_bits = 0U;
+    int status = bvb_handle_table_lookup(
+        &context->objects, instance_id, BVB_OBJECT_INSTANCE, NULL,
+        &instance_bits);
+    if (status != 0) {
+        return status;
+    }
+    const VkInstance instance = instance_from_bits(instance_bits);
+    PFN_vkEnumeratePhysicalDevices enumerate_devices =
+        (PFN_vkEnumeratePhysicalDevices)context->get_instance_proc_addr(
+            instance, "vkEnumeratePhysicalDevices");
+    if (enumerate_devices == NULL) {
+        set_error(error, error_size,
+                  "created instance has no vkEnumeratePhysicalDevices");
+        return -ENOSYS;
+    }
+    uint32_t count = 0U;
+    VkResult result = enumerate_devices(instance, &count, NULL);
+    if (result != VK_SUCCESS) {
+        devices->vulkan_result = result;
+        return 0;
+    }
+    if (count > BVB_VULKAN_MAX_PHYSICAL_DEVICES) {
+        set_error(error, error_size,
+                  "physical-device count exceeds bridge bound: %u", count);
+        return -EOVERFLOW;
+    }
+    VkPhysicalDevice native_devices[BVB_VULKAN_MAX_PHYSICAL_DEVICES] = {0};
+    uint32_t returned = count;
+    if (count != 0U) {
+        result = enumerate_devices(instance, &returned, native_devices);
+        if (result != VK_SUCCESS && result != VK_INCOMPLETE) {
+            devices->vulkan_result = result;
+            return 0;
+        }
+        if (returned > count) {
+            return -EPROTO;
+        }
+    }
+    devices->vulkan_result = result;
+    devices->count = returned;
+    for (uint32_t index = 0U; index < returned; ++index) {
+        const uint64_t native_bits =
+            handle_bits(&native_devices[index], sizeof(native_devices[index]));
+        uint64_t wire_id = existing_physical_device_id(
+            context, instance_id, native_bits);
+        if (wire_id == 0U) {
+            wire_id = bvb_handle_id(
+                BVB_OBJECT_PHYSICAL_DEVICE,
+                context->next_physical_device_serial++);
+            status = bvb_handle_table_insert(
+                &context->objects, wire_id, instance_id, native_bits);
+            if (status != 0) {
+                set_error(error, error_size,
+                          "physical-device ownership failed: %d", status);
+                return status;
+            }
+        }
+        devices->ids[index] = wire_id;
+    }
     return 0;
 }

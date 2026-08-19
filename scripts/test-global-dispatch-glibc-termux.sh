@@ -8,7 +8,7 @@ library="$out_dir/libvulkan-bvb-glibc.so"
 client="$out_dir/bvb-global-dispatch-test-glibc"
 service="$build_dir/bvb-bridge-service"
 policy_json="$out_dir/generated/bvb_dxvk_dispatch_policy.json"
-evidence="$project_dir/out/e025-global-vulkan-bootstrap.json"
+evidence="$project_dir/out/e026-instance-vulkan-bootstrap.json"
 vulkan_headers="$build_dir/_deps/vulkanheaders-src/include"
 runtime_parent=${TMPDIR:-$PREFIX/tmp}
 runtime_dir=
@@ -22,7 +22,7 @@ cleanup() {
     if [ -n "$runtime_dir" ] && [ -d "$runtime_dir" ] &&
         [ ! -L "$runtime_dir" ]; then
         case "$runtime_dir" in
-            "$runtime_parent"/bvb-e025.*) rmdir "$runtime_dir" 2>/dev/null || true ;;
+            "$runtime_parent"/bvb-e026.*) rmdir "$runtime_dir" 2>/dev/null || true ;;
         esac
     fi
 }
@@ -55,16 +55,16 @@ if ! readelf -l "$service" | grep -Fq "$bionic_interpreter"; then
     exit 3
 fi
 
-runtime_dir=$(mktemp -d "$runtime_parent/bvb-e025.XXXXXX")
+runtime_dir=$(mktemp -d "$runtime_parent/bvb-e026.XXXXXX")
 case "$runtime_dir" in
-    "$runtime_parent"/bvb-e025.*) ;;
+    "$runtime_parent"/bvb-e026.*) ;;
     *) printf 'unexpected runtime directory: %s\n' "$runtime_dir" >&2; exit 3 ;;
 esac
 control_socket="$runtime_dir/bridge.sock"
-client_stdout="$out_dir/e025-client.stdout"
-client_stderr="$out_dir/e025-client.stderr"
-service_stdout="$out_dir/e025-service.stdout"
-service_stderr="$out_dir/e025-service.stderr"
+client_stdout="$out_dir/e026-client.stdout"
+client_stderr="$out_dir/e026-client.stderr"
+service_stdout="$out_dir/e026-service.stdout"
+service_stderr="$out_dir/e026-service.stderr"
 
 "$service" --socket "$control_socket" --once \
     >"$service_stdout" 2>"$service_stderr" &
@@ -87,7 +87,7 @@ BVB_BRIDGE_SOCKET="$control_socket" grun "$client" \
 wait "$service_pid"
 service_pid=
 if [ -s "$client_stderr" ] || [ -s "$service_stderr" ]; then
-    printf 'E025 emitted unexpected stderr\n' >&2
+    printf 'E026 emitted unexpected stderr\n' >&2
     exit 5
 fi
 
@@ -126,26 +126,29 @@ def artifact(path):
 
 
 policy = json.loads(policy_path.read_text())
-assert policy["gate"] == "E025"
+assert policy["gate"] == "E026"
 assert policy["summary"]["command_count"] == 742
-assert policy["summary"]["executable_name_count"] == 12
+assert policy["summary"]["executable_name_count"] == 14
 assert policy["summary"]["support_counts"] == {
     "probed_null": 302,
-    "required_unimplemented": 428,
-    "executable": 12,
+    "required_unimplemented": 426,
+    "executable": 14,
 }
 client_stdout = client_stdout_path.read_text().strip()
 match = re.fullmatch(
     r"PASS: global Vulkan bootstrap api=(\d+) "
     r"exposed_extensions=0 exposed_layers=0 "
-    r"instance_one=(\d+) instance_two=(\d+)",
+    r"instance_one=(\d+) instance_two=(\d+) physical_device=(\d+)",
     client_stdout,
 )
 assert match is not None, client_stdout
-api_version, instance_one, instance_two = map(int, match.groups())
+api_version, instance_one, instance_two, physical_device = map(
+    int, match.groups()
+)
 assert api_version == 0x00404000
 assert instance_one == 0x0100000000000001
 assert instance_two == 0x0100000000000002
+assert physical_device == 0x0200000000000001
 
 symbols = subprocess.run(
     ["readelf", "--wide", "--dyn-syms", str(library_path)],
@@ -160,6 +163,7 @@ symbol_names = {
 }
 expected_exports = {
     "bvb_instance_proxy_id",
+    "bvb_physical_device_proxy_id",
     "vkGetDeviceProcAddr",
     "vkGetInstanceProcAddr",
 }
@@ -167,7 +171,7 @@ assert expected_exports <= symbol_names
 
 document = {
     "schema_version": 1,
-    "gate": "E025",
+    "gate": "E026",
     "result": "pass",
     "source_commit": source_commit,
     "target": "Galaxy Tab S8+ Termux ARM64 glibc to Android Bionic",
@@ -184,6 +188,10 @@ document = {
         "instance_ids": [instance_one, instance_two],
         "instance_type": 1,
         "instance_serials": [1, 2],
+        "physical_device_id": physical_device,
+        "physical_device_type": 2,
+        "physical_device_serial": 1,
+        "instances_destroyed_explicitly": True,
         "client_stdout": client_stdout,
         "client_stderr_bytes": 0,
         "service_stderr_bytes": 0,
@@ -200,7 +208,7 @@ document = {
 assert document["global_bootstrap"]["service_ready"] is True
 evidence_path.write_text(json.dumps(document, indent=2) + "\n")
 print(json.dumps(document, indent=2))
-print("e025_global_vulkan_bootstrap=PASS")
+print("e026_instance_vulkan_bootstrap=PASS")
 PY
 
 printf 'evidence=%s\n' "$evidence"

@@ -34,7 +34,8 @@ python "$project_dir/scripts/generate-dxvk-dispatch-policy.py" \
     "$generated_dir/bvb_dxvk_dispatch_policy.inc" \
     "$generated_dir/bvb_dxvk_dispatch_policy.json" \
     --additional-executable \
-    "$project_dir/config/e025-global-dispatch.txt"
+    "$project_dir/config/e026-instance-dispatch.txt" \
+    --gate E026
 
 library="$out_dir/libvulkan-bvb-glibc.so"
 test_binary="$out_dir/bvb-triangle-dispatch-test-glibc"
@@ -69,10 +70,10 @@ if ! readelf -l "$test_binary" | grep -q '/glibc/lib/ld-linux-aarch64.so.1'; the
     exit 4
 fi
 exports=$(readelf --wide --dyn-syms "$library" | \
-    awk '$7 != "UND" && $8 ~ /^(vkGet(Instance|Device)ProcAddr|bvb_triangle_|bvb_instance_proxy_id)/ {print $8}' | \
+    awk '$7 != "UND" && $8 ~ /^(vkGet(Instance|Device)ProcAddr|bvb_triangle_|bvb_(instance|physical_device)_proxy_id)/ {print $8}' | \
     sort -u)
 export_count=$(printf '%s\n' "$exports" | sed '/^$/d' | wc -l)
-if [ "$export_count" -ne 7 ]; then
+if [ "$export_count" -ne 8 ]; then
     printf 'unexpected triangle dispatch export surface:\n%s\n' "$exports" >&2
     exit 4
 fi

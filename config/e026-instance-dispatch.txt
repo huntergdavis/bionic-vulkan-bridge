@@ -1,0 +1,6 @@
+vkCreateInstance
+vkDestroyInstance
+vkEnumerateInstanceExtensionProperties
+vkEnumerateInstanceLayerProperties
+vkEnumerateInstanceVersion
+vkEnumeratePhysicalDevices

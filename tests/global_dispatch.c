@@ -89,7 +89,36 @@ int main(void) {
     CHECK(bvb_handle_serial(instance_one_id) == 1U);
     CHECK(vkGetInstanceProcAddr(instance_one, "vkCmdDraw") != NULL);
     CHECK(vkGetInstanceProcAddr(instance_one,
-                                "vkEnumeratePhysicalDevices") == NULL);
+                                "vkGetPhysicalDeviceProperties") == NULL);
+
+    PFN_vkEnumeratePhysicalDevices enumerate_physical_devices = NULL;
+    PFN_vkDestroyInstance destroy_instance = NULL;
+    PFN_vkVoidFunction erased = vkGetInstanceProcAddr(
+        instance_one, "vkEnumeratePhysicalDevices");
+    CHECK(erased != NULL);
+    memcpy(&enumerate_physical_devices, &erased,
+           sizeof(enumerate_physical_devices));
+    erased = vkGetInstanceProcAddr(instance_one, "vkDestroyInstance");
+    CHECK(erased != NULL);
+    memcpy(&destroy_instance, &erased, sizeof(destroy_instance));
+    uint32_t physical_count = 0U;
+    CHECK(enumerate_physical_devices(instance_one, &physical_count, NULL) ==
+          VK_SUCCESS);
+    CHECK(physical_count == 1U);
+    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+    CHECK(enumerate_physical_devices(instance_one, &physical_count,
+                                     &physical_device) == VK_SUCCESS);
+    CHECK(physical_count == 1U);
+    CHECK(physical_device != VK_NULL_HANDLE);
+    const uint64_t physical_id =
+        bvb_physical_device_proxy_id(physical_device);
+    CHECK(bvb_handle_type(physical_id) == BVB_OBJECT_PHYSICAL_DEVICE);
+    CHECK(bvb_handle_serial(physical_id) == 1U);
+    VkPhysicalDevice repeated_device = VK_NULL_HANDLE;
+    physical_count = 1U;
+    CHECK(enumerate_physical_devices(instance_one, &physical_count,
+                                     &repeated_device) == VK_SUCCESS);
+    CHECK(repeated_device == physical_device);
 
     VkInstance instance_two = VK_NULL_HANDLE;
     create_info.pApplicationInfo = NULL;
@@ -100,10 +129,18 @@ int main(void) {
     CHECK(bvb_handle_serial(instance_two_id) == 2U);
     CHECK(instance_two_id != instance_one_id);
 
+    destroy_instance(instance_one, NULL);
+    PFN_vkDestroyInstance destroy_instance_two = NULL;
+    erased = vkGetInstanceProcAddr(instance_two, "vkDestroyInstance");
+    CHECK(erased != NULL);
+    memcpy(&destroy_instance_two, &erased, sizeof(destroy_instance_two));
+    destroy_instance_two(instance_two, NULL);
+
     printf("PASS: global Vulkan bootstrap api=%u "
            "exposed_extensions=0 exposed_layers=0 "
-           "instance_one=%llu instance_two=%llu\n",
+           "instance_one=%llu instance_two=%llu physical_device=%llu\n",
            api_version, (unsigned long long)instance_one_id,
-           (unsigned long long)instance_two_id);
+           (unsigned long long)instance_two_id,
+           (unsigned long long)physical_id);
     return 0;
 }

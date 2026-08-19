@@ -45,6 +45,11 @@ uint64_t bvb_wire_get_u64(const uint8_t *input) {
            ((uint64_t)bvb_wire_get_u32(input + 4) << 32);
 }
 
+static int wire_id_is_type(uint64_t wire_id, uint8_t type) {
+    return (uint8_t)(wire_id >> 56) == type &&
+           (wire_id & UINT64_C(0x00ffffffffffffff)) != 0U;
+}
+
 static int header_is_valid(const struct bvb_protocol_header *header) {
     if (header == NULL || header->version != BVB_PROTOCOL_VERSION) {
         return -EPROTO;
@@ -54,7 +59,7 @@ static int header_is_valid(const struct bvb_protocol_header *header) {
         return -EPROTO;
     }
     if (header->opcode < BVB_OPCODE_HELLO ||
-        header->opcode > BVB_OPCODE_VULKAN_INSTANCE_CREATE) {
+        header->opcode > BVB_OPCODE_VULKAN_PHYSICAL_DEVICES) {
         return -EPROTO;
     }
     if (header->payload_length > BVB_PROTOCOL_MAX_PAYLOAD) {
@@ -164,6 +169,82 @@ int bvb_protocol_decode_vulkan_instance_create_response(
         return -EPROTO;
     }
     *response = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_instance_id(
+    uint8_t output[BVB_VULKAN_INSTANCE_ID_SIZE], uint64_t instance_id) {
+    if (output == NULL || !wire_id_is_type(instance_id, 1U)) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u64(output, instance_id);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_instance_id(
+    const uint8_t input[BVB_VULKAN_INSTANCE_ID_SIZE], uint64_t *instance_id) {
+    if (input == NULL || instance_id == NULL) {
+        return -EINVAL;
+    }
+    uint64_t decoded = bvb_wire_get_u64(input);
+    if (!wire_id_is_type(decoded, 1U)) {
+        return -EPROTO;
+    }
+    *instance_id = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_physical_devices(
+    uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
+    const struct bvb_vulkan_physical_devices *devices,
+    uint32_t *output_length) {
+    if (output == NULL || devices == NULL || output_length == NULL ||
+        devices->count > BVB_VULKAN_MAX_PHYSICAL_DEVICES) {
+        return -EINVAL;
+    }
+    for (uint32_t index = 0U; index < devices->count; ++index) {
+        if (!wire_id_is_type(devices->ids[index], 2U)) {
+            return -EINVAL;
+        }
+    }
+    const uint32_t length = BVB_VULKAN_PHYSICAL_DEVICES_PREFIX_SIZE +
+                            devices->count * 8U;
+    memset(output, 0, length);
+    bvb_wire_put_i32(output, devices->vulkan_result);
+    bvb_wire_put_u32(output + 4, devices->count);
+    for (uint32_t index = 0U; index < devices->count; ++index) {
+        bvb_wire_put_u64(output + BVB_VULKAN_PHYSICAL_DEVICES_PREFIX_SIZE +
+                             index * 8U,
+                         devices->ids[index]);
+    }
+    *output_length = length;
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_physical_devices(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_physical_devices *devices) {
+    if (input == NULL || devices == NULL ||
+        input_length < BVB_VULKAN_PHYSICAL_DEVICES_PREFIX_SIZE) {
+        return -EINVAL;
+    }
+    const uint32_t count = bvb_wire_get_u32(input + 4);
+    if (count > BVB_VULKAN_MAX_PHYSICAL_DEVICES ||
+        input_length != BVB_VULKAN_PHYSICAL_DEVICES_PREFIX_SIZE + count * 8U) {
+        return -EPROTO;
+    }
+    struct bvb_vulkan_physical_devices decoded = {
+        .vulkan_result = bvb_wire_get_i32(input),
+        .count = count,
+    };
+    for (uint32_t index = 0U; index < count; ++index) {
+        decoded.ids[index] = bvb_wire_get_u64(
+            input + BVB_VULKAN_PHYSICAL_DEVICES_PREFIX_SIZE + index * 8U);
+        if (!wire_id_is_type(decoded.ids[index], 2U)) {
+            return -EPROTO;
+        }
+    }
+    *devices = decoded;
     return 0;
 }
 

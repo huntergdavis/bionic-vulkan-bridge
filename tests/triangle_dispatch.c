@@ -65,7 +65,14 @@ int main(void) {
                 : vkGetDeviceProcAddr(VK_NULL_HANDLE, entry->name);
         if (entry->support == BVB_DXVK_SUPPORT_EXECUTABLE) {
             ++executable_count;
-            CHECK(resolved != NULL);
+            if (entry->scope == BVB_DXVK_SCOPE_INSTANCE) {
+                CHECK(resolved == NULL);
+                CHECK(strcmp(entry->name, "vkDestroyInstance") == 0 ||
+                      strcmp(entry->name,
+                             "vkEnumeratePhysicalDevices") == 0);
+            } else {
+                CHECK(resolved != NULL);
+            }
         } else {
             CHECK(resolved == NULL);
             if (entry->support ==
@@ -81,8 +88,8 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 12U);
-    CHECK(required_count == 428U);
+    CHECK(executable_count == 14U);
+    CHECK(required_count == 426U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");

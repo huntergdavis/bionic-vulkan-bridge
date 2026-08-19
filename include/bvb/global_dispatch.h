@@ -16,6 +16,8 @@ extern "C" {
 #endif
 
 BVB_GLOBAL_EXPORT uint64_t bvb_instance_proxy_id(VkInstance instance);
+BVB_GLOBAL_EXPORT uint64_t bvb_physical_device_proxy_id(
+    VkPhysicalDevice physical_device);
 
 #ifdef __cplusplus
 }

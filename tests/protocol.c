@@ -149,6 +149,33 @@ int main(void) {
     CHECK(create_response_decoded.vulkan_result == 0);
     CHECK(create_response_decoded.instance_id == create_response.instance_id);
 
+    uint8_t instance_id_wire[BVB_VULKAN_INSTANCE_ID_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_instance_id(
+              instance_id_wire, create_response.instance_id) == 0);
+    uint64_t instance_id_decoded = 0U;
+    CHECK(bvb_protocol_decode_vulkan_instance_id(
+              instance_id_wire, &instance_id_decoded) == 0);
+    CHECK(instance_id_decoded == create_response.instance_id);
+
+    const struct bvb_vulkan_physical_devices physical_devices = {
+        .vulkan_result = 0,
+        .count = 2U,
+        .ids = {
+            UINT64_C(0x0200000000000001),
+            UINT64_C(0x0200000000000002),
+        },
+    };
+    uint8_t physical_wire[BVB_PROTOCOL_MAX_PAYLOAD];
+    uint32_t physical_length = 0U;
+    CHECK(bvb_protocol_encode_vulkan_physical_devices(
+              physical_wire, &physical_devices, &physical_length) == 0);
+    CHECK(physical_length == 24U);
+    struct bvb_vulkan_physical_devices physical_decoded;
+    CHECK(bvb_protocol_decode_vulkan_physical_devices(
+              physical_wire, physical_length, &physical_decoded) == 0);
+    CHECK(physical_decoded.count == 2U);
+    CHECK(physical_decoded.ids[1] == physical_devices.ids[1]);
+
     const struct bvb_shared_batch_setup shared_setup = {
         .region_bytes = 4096U,
         .generation = UINT64_C(0x1122334455667788),
