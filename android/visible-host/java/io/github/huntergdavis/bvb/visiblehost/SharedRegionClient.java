@@ -2,6 +2,7 @@ package io.github.huntergdavis.bvb.visiblehost;
 
 import android.content.Context;
 import android.net.Uri;
+import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 
 import java.io.FileInputStream;
@@ -13,6 +14,9 @@ public final class SharedRegionClient {
     private SharedRegionClient() {}
 
     private static Context termuxContext() throws Exception {
+        if (Looper.myLooper() == null) {
+            Looper.prepareMainLooper();
+        }
         Class<?> activityThreadClass = Class.forName("android.app.ActivityThread");
         Method systemMain = activityThreadClass.getDeclaredMethod("systemMain");
         systemMain.setAccessible(true);
