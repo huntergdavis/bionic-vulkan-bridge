@@ -39,7 +39,7 @@ int main(void) {
     CHECK(vkGetInstanceProcAddr(VK_NULL_HANDLE, "vkNotARealCommand") == NULL);
     uint32_t api_version = 0U;
     CHECK(vkEnumerateInstanceVersion(&api_version) == VK_SUCCESS);
-    CHECK(api_version == VK_MAKE_API_VERSION(0, 1, 4, 354));
+    CHECK(api_version >= VK_API_VERSION_1_0);
 
     uint32_t extension_count = 99U;
     CHECK(vkEnumerateInstanceExtensionProperties(
@@ -100,8 +100,8 @@ int main(void) {
     CHECK(bvb_handle_serial(instance_two_id) == 2U);
     CHECK(instance_two_id != instance_one_id);
 
-    printf("PASS: global Vulkan bootstrap api=%u native_extensions=3 "
-           "exposed_extensions=0 native_layers=1 exposed_layers=0 "
+    printf("PASS: global Vulkan bootstrap api=%u "
+           "exposed_extensions=0 exposed_layers=0 "
            "instance_one=%llu instance_two=%llu\n",
            api_version, (unsigned long long)instance_one_id,
            (unsigned long long)instance_two_id);

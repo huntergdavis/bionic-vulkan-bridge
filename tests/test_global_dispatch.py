@@ -53,6 +53,8 @@ def main() -> int:
             assert completed.returncode == 0, completed.stderr
             assert completed.stderr == ""
             assert completed.stdout.startswith("PASS: global Vulkan bootstrap")
+            assert f"api={0x00400000 | (4 << 12) | 354}" in completed.stdout
+            assert "exposed_extensions=0 exposed_layers=0" in completed.stdout
             server_stdout, server_stderr = server.communicate(timeout=5.0)
             assert server.returncode == 0, server_stderr
             assert server_stdout == ""
