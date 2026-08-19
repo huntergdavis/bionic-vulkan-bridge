@@ -1,0 +1,11 @@
+/* Generated; do not edit. */
+/* vk.xml sha256: 80e7394d0e787d6ec78b67aa324add6f96129fdd042ba640cc336a5481a208ee */
+/* E011 manifest sha256: 6a78ddd1f1b34773e4123d3612233fab2270ed0ff418d01204ad41af1cab8afc */
+BVB_TRIANGLE_DISPATCH_ENTRY(vkCmdBeginRendering, bvb_bridge_vkCmdBeginRendering, PFN_vkCmdBeginRendering)
+BVB_TRIANGLE_DISPATCH_ENTRY(vkCmdBeginRenderingKHR, bvb_bridge_vkCmdBeginRendering, PFN_vkCmdBeginRenderingKHR)
+BVB_TRIANGLE_DISPATCH_ENTRY(vkCmdBindPipeline, bvb_bridge_vkCmdBindPipeline, PFN_vkCmdBindPipeline)
+BVB_TRIANGLE_DISPATCH_ENTRY(vkCmdDraw, bvb_bridge_vkCmdDraw, PFN_vkCmdDraw)
+BVB_TRIANGLE_DISPATCH_ENTRY(vkCmdEndRendering, bvb_bridge_vkCmdEndRendering, PFN_vkCmdEndRendering)
+BVB_TRIANGLE_DISPATCH_ENTRY(vkCmdEndRenderingKHR, bvb_bridge_vkCmdEndRendering, PFN_vkCmdEndRenderingKHR)
+BVB_TRIANGLE_DISPATCH_ENTRY(vkCmdSetScissor, bvb_bridge_vkCmdSetScissor, PFN_vkCmdSetScissor)
+BVB_TRIANGLE_DISPATCH_ENTRY(vkCmdSetViewport, bvb_bridge_vkCmdSetViewport, PFN_vkCmdSetViewport)

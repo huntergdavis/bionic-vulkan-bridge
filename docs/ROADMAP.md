@@ -49,7 +49,8 @@
 - [x] Replay a bounded client-built command batch on the Android driver
 - [x] Pass and map a sealed shared-memory command region across libc
 - [x] Keep Vulkan objects alive and measure repeated warm batch replay
-- [ ] Generate executable Vulkan entry-point dispatch
+- [x] Generate executable triangle-subset Vulkan entry-point dispatch
+- [ ] Expand generated dispatch to the measured DXVK startup subset
 - [ ] Implement GPU external-memory and synchronization strategy
 - [ ] Reach a rendered test triangle
 - [ ] Reach a DXVK sample

@@ -707,3 +707,79 @@ remaining measured bridge overhead is sub-millisecond for this small
 synchronous proof. The next gate is generated executable client dispatch for
 the minimal triangle subset, backed by this persistent service and followed by
 asynchronous external-memory/synchronization work for real frames.
+
+## E015 — generated executable glibc triangle dispatch (2026-08-18)
+
+Status: passed on the target glibc ABI at commit
+`0188ee9c2bf4f4fb3a1aa4d4696bc7e25de28ccb`.
+
+Hypothesis: the E011 trace and pinned Vulkan registry can generate a reviewable
+device-dispatch table whose returned functions accept real Vulkan signatures
+and encode the already-tested triangle batch, without hand-maintaining aliases
+or exposing internal encoder symbols.
+
+Method: the generator reads pinned `vk.xml` and the exact E011 manifest. It
+requires each canonical command to return `void`, dispatch first on
+`VkCommandBuffer`, and have resolved at device stage in the Tomb Raider trace.
+Observed aliases are discovered from registry identity rather than a parallel
+alias list. The generated include contains eight names: six canonical commands
+(`vkCmdBeginRendering`, `vkCmdBindPipeline`, `vkCmdSetViewport`,
+`vkCmdSetScissor`, `vkCmdDraw`, and `vkCmdEndRendering`) plus the observed KHR
+begin/end aliases. Compile-time `_Generic` assertions require every wrapper to
+match its generated `PFN_vk*` type exactly.
+
+The glibc library's `vkGetDeviceProcAddr` returns those internal wrappers and
+returns null for an unimplemented name. A proxy command buffer owns a bounded
+builder and sticky error state. The initial supported dynamic-rendering shape
+is deliberately narrow: one color attachment, origin-zero render area, no
+depth/stencil, no multiview or resolve, one viewport/scissor, and a graphics
+pipeline. Unsupported shapes fail deterministically instead of being silently
+misencoded.
+
+Result: the executable ABI test resolved all canonical functions, proved the
+KHR aliases return their canonical function pointers, invoked real Vulkan C
+signatures, and produced a valid six-record, sequence-11 batch with typed
+command-buffer, image-view, and pipeline IDs. Decoding recovered the exact
+1,280 × 720 render area, clear color, pipeline, viewport/scissor, and
+three-vertex draw. A two-viewport request correctly produced `-ENOTSUP`.
+
+The same test passed under a focused ASan/UBSan host build, the normal host
+suite passed all 11 cases, and the Bionic tablet build passed all nine
+Android-supported cases. A separate `grun` harness compiled the shared library
+with `-O3` on the tablet, linked and ran a glibc test executable, and observed
+empty stderr. The library exports only `vkGetDeviceProcAddr` and four
+bridge-owned command-buffer helpers; individual wrapper and encoder symbols
+remain hidden.
+
+Evidence identities:
+
+- generated table: `docs/evidence/e015-triangle-dispatch.inc`, 1,000 bytes,
+  SHA-256
+  `c3e4aac0e16abdb218d34adb7cc83c23118b2be0e0047e9e5668d30a16185839`
+- tablet glibc library: 73,680 bytes, SHA-256
+  `d3c0c5497c57afa0168364dce77851b99108a1987c821c6484fa931bb8b3ae9a`
+- tablet glibc test executable: 74,416 bytes, SHA-256
+  `ee16a02a54bd71ba240f57448c92152974c0ed856109179803648b0c6a6d3b17`
+- test stdout: 45 bytes, SHA-256
+  `4b71acdf604cc2cb9cc9a648ee76088a490dff103e25b1b01d0502262890e44c`
+- empty test stderr: SHA-256
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
+
+The test executable requests Termux glibc's
+`ld-linux-aarch64.so.1`; the generated library needs only `libc.so.6` and that
+loader. The generated table embeds pinned `vk.xml` SHA-256
+`80e7394d0e787d6ec78b67aa324add6f96129fdd042ba640cc336a5481a208ee`
+and E011 manifest SHA-256
+`6a78ddd1f1b34773e4123d3612233fab2270ed9fcab218b47db48af1cab8afc`.
+
+The required recall query—`generated Vulkan client ICD dispatch
+vkGetInstanceProcAddr triangle subset shared command batch vk.xml`—returned no
+indexed implementation. E015 reused E011's process-proven registry metadata,
+E012's typed proxy handles, and the six triangle records already covered by the
+command-batch contract.
+
+Conclusion: Vulkan command calls can now enter generated executable dispatch
+on the real glibc client ABI and become validated bridge batches. This is not
+yet a rendered triangle: the Bionic side still needs real image-view/pipeline
+ownership and triangle replay, and the visible host then needs an explicit
+external-image/synchronization path.

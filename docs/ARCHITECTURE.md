@@ -103,7 +103,11 @@ command buffer, and typed-handle table alive. On Adreno 730, 100 executions
 after one excluded warm-up averaged 0.854 ms for the complete control exchange,
 validation, GPU replay/wait, verification, and response; GPU submit/wait alone
 averaged 0.503 ms. This synchronous transfer proof is not an FPS prediction.
-The next controlled gates are generated glibc Vulkan entry points and the
-triangle subset described in
-[decision 0003](decisions/0003-batched-game-dispatch.md). Game input and a
-bridged game frame remain outside the completed result.
+E015 adds a generated glibc client dispatch for the six-command dynamic-
+rendering triangle subset plus the two observed KHR aliases. Calls resolved
+through `vkGetDeviceProcAddr` now encode the existing typed batch on the real
+target glibc ABI. The next controlled gate is Bionic-side image/pipeline
+ownership and replay of that batch, followed by external-image synchronization
+with the visible host as described in
+[decision 0003](decisions/0003-batched-game-dispatch.md). Game input, a GPU-
+drawn triangle, and a bridged game frame remain outside the completed result.
