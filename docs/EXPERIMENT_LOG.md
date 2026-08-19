@@ -860,3 +860,57 @@ triangle. This proves Bionic-side compatibility lowering, not yet the complete
 cross-process path: the Activity constructed the batch locally. The next gate
 is to transfer the E015 glibc-generated batch into this visible executor while
 preserving batching, handle ownership, and explicit synchronization.
+
+## E017 — authenticated cross-libc visible-ingress preflight (2026-08-18)
+
+Status: passed below the Android surface boundary at commit `72890aa`.
+
+Hypothesis: the exact E015 generated glibc dispatch can encode the triangle in
+a shared region, pass its sealed memfd to a persistent Bionic receiver through
+an abstract Unix socket, authenticate both control messages with a fresh
+256-bit capability, and receive completion without per-command socket RPC.
+
+Method: a glibc executable resolves the same six real Vulkan command
+signatures from `libvulkan-bvb-glibc.so`, records typed command-buffer,
+image-view, and pipeline IDs into a 4 KiB memfd at offset 64, applies grow and
+shrink seals, and sends one 72-byte setup packet with `SCM_RIGHTS` followed by
+one 80-byte execute packet. The reusable Bionic ingress worker checks the
+token in constant time, verifies the regular-file size and seals, maps it
+read-only, validates generation, sequence, bounds, batch header, and every
+record, then exposes the batch through a renderer-thread claim/complete API.
+The client does not receive execute success until the consumer calls complete.
+
+Result: all 14 Linux-host tests passed, including a wrong-token connection
+followed by a valid connection and a focused ASan/UBSan client/worker test. All
+12 tests available in the Android/Bionic build then passed on the tablet. The
+actual ARM64 glibc producer connected to the actual Bionic receiver on the
+tablet, transferred and independently decoded a 200-byte six-command batch,
+and completed its synchronous execute round trip in 249,636 ns (about 0.250
+ms). Both processes reported sequence 1 and empty receiver stderr.
+
+The first preflight attempt also found a packaging defect: `grun -s` consumed
+the intended `$ORIGIN` runpath and emitted an empty dynamic tag. The builder
+now writes and asserts the explicit Termux glibc output path; `readelf` confirms
+that runpath plus dependencies on the generated dispatch, `libc.so.6`, and the
+AArch64 glibc loader.
+
+Artifact identities are recorded in
+`docs/evidence/e017-cross-libc-visible-ingress.json`. APK v7 (version 0.1.6)
+also compiles and signature-verifies with the ingress receiver and ANR-safe
+renderer worker, but remains deliberately uninstalled while the user is away.
+It is staged as `/sdcard/Download/bvb-visible-host-v7.apk`; the installed APK
+is still v5, and the E018 hardware script correctly refuses that stale version
+before force-stop or launch.
+
+The required recall queries—`Android cross UID abstract Unix socket SCM_RIGHTS
+memfd NativeActivity Termux service Vulkan batch` and `Termux grun FEX glibc
+ORIGIN runpath shared library not found`—returned no indexed implementation.
+E017 reuses E012-E015's fixed-width batch, typed handles, shared-memory
+validation, and generated dispatch rather than introducing a second encoding.
+
+Conclusion: the cross-libc batch boundary is now real and sub-millisecond for
+this synchronous triangle proof. It does not yet claim a visible external
+frame. E018 is the prepared hardware gate: install v7, launch it with the
+socket capability, replay this glibc-owned batch through the already visible
+render-pass backend, and retain the authenticated lifecycle and E018 logs as
+evidence.

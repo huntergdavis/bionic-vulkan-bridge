@@ -50,6 +50,8 @@
 - [x] Pass and map a sealed shared-memory command region across libc
 - [x] Keep Vulkan objects alive and measure repeated warm batch replay
 - [x] Generate executable triangle-subset Vulkan entry-point dispatch
+- [x] Pass the generated glibc triangle batch to the reusable Bionic ingress
+  receiver
 - [ ] Expand generated dispatch to the measured DXVK startup subset
 - [ ] Implement GPU external-memory and synchronization strategy
 - [x] Reach a rendered test triangle

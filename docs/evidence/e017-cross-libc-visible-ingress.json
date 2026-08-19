@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "gate": "E017",
+  "result": "pass",
+  "target": "Samsung Galaxy Tab S8+",
+  "source_libc": "glibc",
+  "receiver_libc": "bionic",
+  "transport": "abstract_unix_scm_rights_memfd",
+  "width": 1280,
+  "height": 720,
+  "region_bytes": 4096,
+  "batch_offset": 64,
+  "batch_bytes": 200,
+  "command_count": 6,
+  "sequence": 1,
+  "setup_packet_bytes": 72,
+  "execute_packet_bytes": 80,
+  "execute_round_trip_ns": 249636,
+  "receiver": {
+    "batch_bytes": 200,
+    "sequence": 1,
+    "command_count": 6
+  },
+  "artifacts": {
+    "glibc_dispatch_sha256": "6e7f4cac0581ecc5c4429e690c61359a79035a0bb0da0ee1b4017dc4f7cac578",
+    "glibc_client_sha256": "7f899f3cb8e577ec5acb5c3bbe6bd63935f000d01d4c7be2d19ec27791ca349d",
+    "bionic_receiver_sha256": "81e3bdbfa47ac2677fdde64109bf69a01e4444f3cd656436f3ec33c5afd3f928",
+    "apk_v7_sha256": "12a7380cd5bd08b2ffcd3aaa21455cca0a8b28eeed13b4a9de885e6a3ef7bbba"
+  },
+  "visible_external_rendering_claimed": false
+}
