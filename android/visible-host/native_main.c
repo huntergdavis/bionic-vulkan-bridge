@@ -83,6 +83,7 @@ struct bvb_renderer_control {
 static struct bvb_visible_state state;
 static struct bvb_lifecycle_client lifecycle;
 static struct bvb_visible_ingress *visible_ingress;
+static bool visible_inline_ingress;
 static pthread_mutex_t lifecycle_mutex = PTHREAD_MUTEX_INITIALIZER;
 static struct bvb_renderer_control renderer = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
@@ -119,10 +120,16 @@ static void configure_lifecycle(ANativeActivity *activity) {
     jstring port_key = (*env)->NewStringUTF(env, "bvb_activity_port");
     jstring token_key = (*env)->NewStringUTF(env, "bvb_activity_token");
     jstring socket_key = (*env)->NewStringUTF(env, "bvb_visible_socket");
+    jstring visible_port_key =
+        (*env)->NewStringUTF(env, "bvb_visible_port");
     jint port = get_int_extra == NULL || port_key == NULL
                     ? 0
                     : (*env)->CallIntMethod(env, intent, get_int_extra, port_key,
                                             0);
+    jint visible_port = get_int_extra == NULL || visible_port_key == NULL
+                            ? 0
+                            : (*env)->CallIntMethod(env, intent, get_int_extra,
+                                                    visible_port_key, 0);
     jstring token_string = get_string_extra == NULL || token_key == NULL
                                ? NULL
                                : (jstring)(*env)->CallObjectMethod(
@@ -159,8 +166,28 @@ static void configure_lifecycle(ANativeActivity *activity) {
         }
         BVB_LOGI("E010_LIFECYCLE_DISABLED");
     }
-    if (token_valid && socket_name != NULL && socket_name[0] != '\0' &&
+    if (visible_ingress == NULL) {
+        visible_inline_ingress = false;
+    }
+    if (token_valid && visible_port > 0 && visible_port <= UINT16_MAX &&
         visible_ingress == NULL) {
+        uint16_t bound_port = 0U;
+        int result = bvb_visible_ingress_create_loopback(
+            &visible_ingress, (uint16_t)visible_port, &bound_port,
+            parsed_token);
+        if (result == 0 && bound_port == (uint16_t)visible_port) {
+            visible_inline_ingress = true;
+            BVB_LOGI("E019_INGRESS_READY port=%u", (unsigned int)bound_port);
+        } else {
+            if (result == 0) {
+                bvb_visible_ingress_destroy(visible_ingress);
+                visible_ingress = NULL;
+                result = -EADDRNOTAVAIL;
+            }
+            BVB_LOGE("E019_INGRESS_FAIL status=%d", result);
+        }
+    } else if (token_valid && socket_name != NULL &&
+               socket_name[0] != '\0' && visible_ingress == NULL) {
         int result = bvb_visible_ingress_create(
             &visible_ingress, (const uint8_t *)socket_name,
             strlen(socket_name), parsed_token);
@@ -169,7 +196,8 @@ static void configure_lifecycle(ANativeActivity *activity) {
         } else {
             BVB_LOGE("E018_INGRESS_FAIL status=%d", result);
         }
-    } else if (socket_name == NULL || socket_name[0] == '\0') {
+    } else if ((socket_name == NULL || socket_name[0] == '\0') &&
+               visible_port == 0) {
         BVB_LOGI("E018_INGRESS_DISABLED");
     }
     if (socket_name != NULL) {
@@ -186,6 +214,9 @@ static void configure_lifecycle(ANativeActivity *activity) {
     }
     if (socket_key != NULL) {
         (*env)->DeleteLocalRef(env, socket_key);
+    }
+    if (visible_port_key != NULL) {
+        (*env)->DeleteLocalRef(env, visible_port_key);
     }
     if (token_key != NULL) {
         (*env)->DeleteLocalRef(env, token_key);
@@ -1222,9 +1253,15 @@ static bool create_renderer(ANativeWindow *window) {
             &external_sequence);
         if (batch_status == 0) {
             external_claimed = true;
-            BVB_LOGI("E018_BATCH_CLAIM sequence=%llu bytes=%zu",
-                     (unsigned long long)external_sequence,
-                     render_batch_length);
+            if (visible_inline_ingress) {
+                BVB_LOGI("E019_BATCH_CLAIM sequence=%llu bytes=%zu",
+                         (unsigned long long)external_sequence,
+                         render_batch_length);
+            } else {
+                BVB_LOGI("E018_BATCH_CLAIM sequence=%llu bytes=%zu",
+                         (unsigned long long)external_sequence,
+                         render_batch_length);
+            }
         } else if (batch_status == -ETIMEDOUT) {
             render_batch = triangle_batch;
             render_batch_length = triangle_batch_length;
@@ -1339,9 +1376,15 @@ static bool create_renderer(ANativeWindow *window) {
              "source=%s",
              render_batch_length, external_claimed ? "glibc" : "local");
     if (external_claimed) {
-        BVB_LOGI("E018_PASS sequence=%llu bytes=%zu",
-                 (unsigned long long)external_sequence,
-                 render_batch_length);
+        if (visible_inline_ingress) {
+            BVB_LOGI("E019_PASS sequence=%llu bytes=%zu",
+                     (unsigned long long)external_sequence,
+                     render_batch_length);
+        } else {
+            BVB_LOGI("E018_PASS sequence=%llu bytes=%zu",
+                     (unsigned long long)external_sequence,
+                     render_batch_length);
+        }
     }
     BVB_LOGI("E008_PASS width=%u height=%u images=%u index=%u format=%d",
              extent.width, extent.height, image_count, image_index,
