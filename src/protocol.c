@@ -59,7 +59,7 @@ static int header_is_valid(const struct bvb_protocol_header *header) {
         return -EPROTO;
     }
     if (header->opcode < BVB_OPCODE_HELLO ||
-        header->opcode > BVB_OPCODE_VULKAN_DEVICE_EXTENSIONS) {
+        header->opcode > BVB_OPCODE_VULKAN_DEVICE_QUEUE) {
         return -EPROTO;
     }
     if (header->payload_length > BVB_PROTOCOL_MAX_PAYLOAD) {
@@ -301,6 +301,156 @@ int bvb_protocol_decode_vulkan_device_extension_query(
         return -EPROTO;
     }
     *query = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_device_create_request(
+    uint8_t output[BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE],
+    const struct bvb_vulkan_device_create_request *request) {
+    if (output == NULL || request == NULL ||
+        !wire_id_is_type(request->physical_device_id, 2U)) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE);
+    bvb_wire_put_u64(output, request->physical_device_id);
+    bvb_wire_put_u32(output + 8, request->flags);
+    bvb_wire_put_u32(output + 12, request->queue_family_index);
+    bvb_wire_put_u32(output + 16, request->queue_count);
+    bvb_wire_put_u32(output + 20, request->queue_priority_bits);
+    bvb_wire_put_u32(output + 24, request->enabled_layer_count);
+    bvb_wire_put_u32(output + 28, request->enabled_extension_count);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_device_create_request(
+    const uint8_t input[BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE],
+    struct bvb_vulkan_device_create_request *request) {
+    if (input == NULL || request == NULL) {
+        return -EINVAL;
+    }
+    const struct bvb_vulkan_device_create_request decoded = {
+        .physical_device_id = bvb_wire_get_u64(input),
+        .flags = bvb_wire_get_u32(input + 8),
+        .queue_family_index = bvb_wire_get_u32(input + 12),
+        .queue_count = bvb_wire_get_u32(input + 16),
+        .queue_priority_bits = bvb_wire_get_u32(input + 20),
+        .enabled_layer_count = bvb_wire_get_u32(input + 24),
+        .enabled_extension_count = bvb_wire_get_u32(input + 28),
+    };
+    if (!wire_id_is_type(decoded.physical_device_id, 2U)) {
+        return -EPROTO;
+    }
+    *request = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_device_create_response(
+    uint8_t output[BVB_VULKAN_DEVICE_CREATE_RESPONSE_SIZE],
+    const struct bvb_vulkan_device_create_response *response) {
+    if (output == NULL || response == NULL ||
+        (response->vulkan_result == 0 &&
+         !wire_id_is_type(response->device_id, 3U)) ||
+        (response->vulkan_result != 0 && response->device_id != 0U)) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_DEVICE_CREATE_RESPONSE_SIZE);
+    bvb_wire_put_i32(output, response->vulkan_result);
+    bvb_wire_put_u64(output + 8, response->device_id);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_device_create_response(
+    const uint8_t input[BVB_VULKAN_DEVICE_CREATE_RESPONSE_SIZE],
+    struct bvb_vulkan_device_create_response *response) {
+    if (input == NULL || response == NULL || bvb_wire_get_u32(input + 4) != 0U) {
+        return -EINVAL;
+    }
+    const struct bvb_vulkan_device_create_response decoded = {
+        .vulkan_result = bvb_wire_get_i32(input),
+        .device_id = bvb_wire_get_u64(input + 8),
+    };
+    if ((decoded.vulkan_result == 0 &&
+         !wire_id_is_type(decoded.device_id, 3U)) ||
+        (decoded.vulkan_result != 0 && decoded.device_id != 0U)) {
+        return -EPROTO;
+    }
+    *response = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_device_id(
+    uint8_t output[BVB_VULKAN_DEVICE_ID_SIZE], uint64_t device_id) {
+    if (output == NULL || !wire_id_is_type(device_id, 3U)) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u64(output, device_id);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_device_id(
+    const uint8_t input[BVB_VULKAN_DEVICE_ID_SIZE], uint64_t *device_id) {
+    if (input == NULL || device_id == NULL) {
+        return -EINVAL;
+    }
+    const uint64_t decoded = bvb_wire_get_u64(input);
+    if (!wire_id_is_type(decoded, 3U)) {
+        return -EPROTO;
+    }
+    *device_id = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_device_queue_request(
+    uint8_t output[BVB_VULKAN_DEVICE_QUEUE_REQUEST_SIZE],
+    const struct bvb_vulkan_device_queue_request *request) {
+    if (output == NULL || request == NULL ||
+        !wire_id_is_type(request->device_id, 3U)) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_DEVICE_QUEUE_REQUEST_SIZE);
+    bvb_wire_put_u64(output, request->device_id);
+    bvb_wire_put_u32(output + 8, request->queue_family_index);
+    bvb_wire_put_u32(output + 12, request->queue_index);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_device_queue_request(
+    const uint8_t input[BVB_VULKAN_DEVICE_QUEUE_REQUEST_SIZE],
+    struct bvb_vulkan_device_queue_request *request) {
+    if (input == NULL || request == NULL) {
+        return -EINVAL;
+    }
+    const struct bvb_vulkan_device_queue_request decoded = {
+        .device_id = bvb_wire_get_u64(input),
+        .queue_family_index = bvb_wire_get_u32(input + 8),
+        .queue_index = bvb_wire_get_u32(input + 12),
+    };
+    if (!wire_id_is_type(decoded.device_id, 3U)) {
+        return -EPROTO;
+    }
+    *request = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_queue_id(
+    uint8_t output[BVB_VULKAN_QUEUE_ID_SIZE], uint64_t queue_id) {
+    if (output == NULL || !wire_id_is_type(queue_id, 4U)) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u64(output, queue_id);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_queue_id(
+    const uint8_t input[BVB_VULKAN_QUEUE_ID_SIZE], uint64_t *queue_id) {
+    if (input == NULL || queue_id == NULL) {
+        return -EINVAL;
+    }
+    const uint64_t decoded = bvb_wire_get_u64(input);
+    if (!wire_id_is_type(decoded, 4U)) {
+        return -EPROTO;
+    }
+    *queue_id = decoded;
     return 0;
 }
 

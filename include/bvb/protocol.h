@@ -33,6 +33,10 @@ enum {
     BVB_OPCODE_VULKAN_QUEUE_FAMILY_PROPERTIES = 16,
     BVB_OPCODE_VULKAN_MEMORY_PROPERTIES = 17,
     BVB_OPCODE_VULKAN_DEVICE_EXTENSIONS = 18,
+    BVB_OPCODE_VULKAN_PHYSICAL_DEVICE_FEATURES = 19,
+    BVB_OPCODE_VULKAN_DEVICE_CREATE = 20,
+    BVB_OPCODE_VULKAN_DEVICE_DESTROY = 21,
+    BVB_OPCODE_VULKAN_DEVICE_QUEUE = 22,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -54,6 +58,11 @@ enum {
     BVB_VULKAN_INSTANCE_ID_SIZE = 8,
     BVB_VULKAN_PHYSICAL_DEVICE_ID_SIZE = 8,
     BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE = 16,
+    BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE = 32,
+    BVB_VULKAN_DEVICE_CREATE_RESPONSE_SIZE = 16,
+    BVB_VULKAN_DEVICE_ID_SIZE = 8,
+    BVB_VULKAN_DEVICE_QUEUE_REQUEST_SIZE = 16,
+    BVB_VULKAN_QUEUE_ID_SIZE = 8,
     BVB_VULKAN_PHYSICAL_DEVICES_PREFIX_SIZE = 8,
     BVB_VULKAN_MAX_PHYSICAL_DEVICES = 8,
     BVB_SHARED_BATCH_MIN_BYTES = 4096,
@@ -142,6 +151,27 @@ struct bvb_vulkan_device_extension_query {
     uint64_t physical_device_id;
     uint32_t first;
     uint32_t max_count;
+};
+
+struct bvb_vulkan_device_create_request {
+    uint64_t physical_device_id;
+    uint32_t flags;
+    uint32_t queue_family_index;
+    uint32_t queue_count;
+    uint32_t queue_priority_bits;
+    uint32_t enabled_layer_count;
+    uint32_t enabled_extension_count;
+};
+
+struct bvb_vulkan_device_create_response {
+    int32_t vulkan_result;
+    uint64_t device_id;
+};
+
+struct bvb_vulkan_device_queue_request {
+    uint64_t device_id;
+    uint32_t queue_family_index;
+    uint32_t queue_index;
 };
 
 /*
@@ -255,6 +285,32 @@ int bvb_protocol_encode_vulkan_device_extension_query(
 int bvb_protocol_decode_vulkan_device_extension_query(
     const uint8_t input[BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE],
     struct bvb_vulkan_device_extension_query *query);
+int bvb_protocol_encode_vulkan_device_create_request(
+    uint8_t output[BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE],
+    const struct bvb_vulkan_device_create_request *request);
+int bvb_protocol_decode_vulkan_device_create_request(
+    const uint8_t input[BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE],
+    struct bvb_vulkan_device_create_request *request);
+int bvb_protocol_encode_vulkan_device_create_response(
+    uint8_t output[BVB_VULKAN_DEVICE_CREATE_RESPONSE_SIZE],
+    const struct bvb_vulkan_device_create_response *response);
+int bvb_protocol_decode_vulkan_device_create_response(
+    const uint8_t input[BVB_VULKAN_DEVICE_CREATE_RESPONSE_SIZE],
+    struct bvb_vulkan_device_create_response *response);
+int bvb_protocol_encode_vulkan_device_id(
+    uint8_t output[BVB_VULKAN_DEVICE_ID_SIZE], uint64_t device_id);
+int bvb_protocol_decode_vulkan_device_id(
+    const uint8_t input[BVB_VULKAN_DEVICE_ID_SIZE], uint64_t *device_id);
+int bvb_protocol_encode_vulkan_device_queue_request(
+    uint8_t output[BVB_VULKAN_DEVICE_QUEUE_REQUEST_SIZE],
+    const struct bvb_vulkan_device_queue_request *request);
+int bvb_protocol_decode_vulkan_device_queue_request(
+    const uint8_t input[BVB_VULKAN_DEVICE_QUEUE_REQUEST_SIZE],
+    struct bvb_vulkan_device_queue_request *request);
+int bvb_protocol_encode_vulkan_queue_id(
+    uint8_t output[BVB_VULKAN_QUEUE_ID_SIZE], uint64_t queue_id);
+int bvb_protocol_decode_vulkan_queue_id(
+    const uint8_t input[BVB_VULKAN_QUEUE_ID_SIZE], uint64_t *queue_id);
 
 void bvb_wire_put_u16(uint8_t *output, uint16_t value);
 void bvb_wire_put_u32(uint8_t *output, uint32_t value);

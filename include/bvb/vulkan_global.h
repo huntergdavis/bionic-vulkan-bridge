@@ -46,5 +46,20 @@ int bvb_vulkan_global_context_enumerate_device_extensions(
     const struct bvb_vulkan_device_extension_query *query,
     struct bvb_vulkan_extension_page *page,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_get_physical_device_features(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t physical_device_id, VkPhysicalDeviceFeatures *features,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_create_device(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_device_create_request *request,
+    struct bvb_vulkan_device_create_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_destroy_device(
+    struct bvb_vulkan_global_context *context, uint64_t device_id);
+int bvb_vulkan_global_context_get_device_queue(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_device_queue_request *request,
+    uint64_t *queue_id, char *error, size_t error_size);
 
 #endif

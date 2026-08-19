@@ -230,14 +230,14 @@ add_custom_command(
     "${bvb_dxvk_dispatch_policy_include}"
     "${bvb_dxvk_dispatch_policy_json}"
     --additional-executable
-    "${CMAKE_CURRENT_SOURCE_DIR}/config/e027-physical-device-dispatch.txt"
-    --gate E027
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e028-logical-device-dispatch.txt"
+    --gate E028
   DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-dxvk-dispatch-policy.py"
     "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
     "${bvb_triangle_dispatch_include}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/config/e027-physical-device-dispatch.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e028-logical-device-dispatch.txt"
   VERBATIM
 )
 add_library(
@@ -408,7 +408,7 @@ if(BUILD_TESTING)
       "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
       "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
       "${bvb_triangle_dispatch_include}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/config/e027-physical-device-dispatch.txt"
+      "${CMAKE_CURRENT_SOURCE_DIR}/config/e028-logical-device-dispatch.txt"
       "${bvb_dxvk_dispatch_policy_json}"
   )
 

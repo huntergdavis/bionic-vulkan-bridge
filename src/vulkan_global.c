@@ -14,7 +14,13 @@
 #include <string.h>
 
 enum {
-    BVB_GLOBAL_OBJECT_CAPACITY = 32,
+    BVB_GLOBAL_OBJECT_CAPACITY = 64,
+};
+
+struct bvb_device_metadata {
+    uint64_t device_id;
+    uint32_t queue_family_index;
+    uint32_t queue_count;
 };
 
 struct bvb_vulkan_global_context {
@@ -22,11 +28,15 @@ struct bvb_vulkan_global_context {
     PFN_vkGetInstanceProcAddr get_instance_proc_addr;
     PFN_vkCreateInstance create_instance;
     PFN_vkDestroyInstance destroy_instance;
+    PFN_vkGetDeviceProcAddr get_device_proc_addr;
     struct bvb_vulkan_global_info info;
     struct bvb_handle_entry object_entries[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_handle_table objects;
     uint64_t next_instance_serial;
     uint64_t next_physical_device_serial;
+    uint64_t next_device_serial;
+    uint64_t next_queue_serial;
+    struct bvb_device_metadata device_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
 };
 
 static void set_error(char *output, size_t output_size, const char *format, ...) {
@@ -70,6 +80,14 @@ static VkPhysicalDevice physical_device_from_bits(uint64_t bits) {
                    "VkPhysicalDevice exceeds bridge handle width");
     memcpy(&physical_device, &bits, sizeof(physical_device));
     return physical_device;
+}
+
+static VkDevice device_from_bits(uint64_t bits) {
+    VkDevice device = VK_NULL_HANDLE;
+    _Static_assert(sizeof(device) <= sizeof(bits),
+                   "VkDevice exceeds bridge handle width");
+    memcpy(&device, &bits, sizeof(device));
+    return device;
 }
 
 static int resolve_physical_device(
@@ -128,6 +146,14 @@ int bvb_vulkan_global_context_create(
         bvb_vulkan_global_context_destroy(context);
         return -ENOSYS;
     }
+    context->get_device_proc_addr =
+        (PFN_vkGetDeviceProcAddr)symbol_from_loader(
+            context->loader, "vkGetDeviceProcAddr");
+    if (context->get_device_proc_addr == NULL) {
+        set_error(error, error_size, "loader has no vkGetDeviceProcAddr");
+        bvb_vulkan_global_context_destroy(context);
+        return -ENOSYS;
+    }
     PFN_vkEnumerateInstanceVersion enumerate_version =
         (PFN_vkEnumerateInstanceVersion)context->get_instance_proc_addr(
             VK_NULL_HANDLE, "vkEnumerateInstanceVersion");
@@ -178,6 +204,8 @@ int bvb_vulkan_global_context_create(
     }
     context->next_instance_serial = 1U;
     context->next_physical_device_serial = 1U;
+    context->next_device_serial = 1U;
+    context->next_queue_serial = 1U;
     *output = context;
     return 0;
 }
@@ -186,6 +214,22 @@ void bvb_vulkan_global_context_destroy(
     struct bvb_vulkan_global_context *context) {
     if (context == NULL) {
         return;
+    }
+    if (context->get_device_proc_addr != NULL) {
+        for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+            const struct bvb_handle_entry *entry =
+                &context->object_entries[index];
+            if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_DEVICE &&
+                entry->native_bits != 0U) {
+                const VkDevice device = device_from_bits(entry->native_bits);
+                PFN_vkDestroyDevice destroy_device =
+                    (PFN_vkDestroyDevice)context->get_device_proc_addr(
+                        device, "vkDestroyDevice");
+                if (destroy_device != NULL) {
+                    destroy_device(device, NULL);
+                }
+            }
+        }
     }
     if (context->destroy_instance != NULL) {
         for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
@@ -298,6 +342,24 @@ int bvb_vulkan_global_context_destroy_instance(
         &native_bits);
     if (result != 0) {
         return result;
+    }
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) != BVB_OBJECT_DEVICE) {
+            continue;
+        }
+        uint64_t physical_bits = 0U;
+        uint64_t physical_parent = 0U;
+        result = bvb_handle_table_lookup(
+            &context->objects, entry->parent_id, BVB_OBJECT_PHYSICAL_DEVICE,
+            &physical_parent, &physical_bits);
+        if (result == 0 && physical_parent == instance_id) {
+            result = bvb_vulkan_global_context_destroy_device(
+                context, entry->wire_id);
+            if (result != 0) {
+                return result;
+            }
+        }
     }
     for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
         const struct bvb_handle_entry *entry = &context->object_entries[index];
@@ -608,5 +670,269 @@ int bvb_vulkan_global_context_enumerate_device_extensions(
                page->count * sizeof(*page->properties));
     }
     free(all);
+    return 0;
+}
+
+int bvb_vulkan_global_context_get_physical_device_features(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t physical_device_id, VkPhysicalDeviceFeatures *features,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (features == NULL) {
+        return -EINVAL;
+    }
+    VkInstance instance = VK_NULL_HANDLE;
+    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+    int result = resolve_physical_device(
+        context, physical_device_id, &instance, &physical_device);
+    if (result != 0) {
+        set_error(error, error_size, "unknown physical-device handle");
+        return result;
+    }
+    PFN_vkGetPhysicalDeviceFeatures get_features =
+        (PFN_vkGetPhysicalDeviceFeatures)context->get_instance_proc_addr(
+            instance, "vkGetPhysicalDeviceFeatures");
+    if (get_features == NULL) {
+        set_error(error, error_size,
+                  "instance has no vkGetPhysicalDeviceFeatures");
+        return -ENOSYS;
+    }
+    memset(features, 0, sizeof(*features));
+    get_features(physical_device, features);
+    return 0;
+}
+
+static struct bvb_device_metadata *device_metadata_slot(
+    struct bvb_vulkan_global_context *context, uint64_t device_id) {
+    struct bvb_device_metadata *empty = NULL;
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        struct bvb_device_metadata *metadata = &context->device_metadata[index];
+        if (metadata->device_id == device_id) {
+            return metadata;
+        }
+        if (metadata->device_id == 0U && empty == NULL) {
+            empty = metadata;
+        }
+    }
+    return empty;
+}
+
+int bvb_vulkan_global_context_create_device(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_device_create_request *request,
+    struct bvb_vulkan_device_create_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (context == NULL || request == NULL || response == NULL) {
+        return -EINVAL;
+    }
+    *response = (struct bvb_vulkan_device_create_response){0};
+    float queue_priority = 0.0F;
+    memcpy(&queue_priority, &request->queue_priority_bits,
+           sizeof(queue_priority));
+    if (request->flags != 0U || request->queue_count != 1U ||
+        request->enabled_layer_count != 0U ||
+        request->enabled_extension_count != 0U ||
+        !(queue_priority >= 0.0F && queue_priority <= 1.0F)) {
+        response->vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+        return 0;
+    }
+    if (context->objects.count == context->objects.capacity) {
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    VkInstance instance = VK_NULL_HANDLE;
+    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+    int status = resolve_physical_device(
+        context, request->physical_device_id, &instance, &physical_device);
+    if (status != 0) {
+        return status;
+    }
+    VkQueueFamilyProperties queue_properties[BVB_VULKAN_MAX_QUEUE_FAMILIES];
+    uint32_t queue_family_count = 0U;
+    status = bvb_vulkan_global_context_get_queue_family_properties(
+        context, request->physical_device_id, queue_properties,
+        &queue_family_count, error, error_size);
+    if (status != 0) {
+        return status;
+    }
+    if (request->queue_family_index >= queue_family_count ||
+        queue_properties[request->queue_family_index].queueCount <
+            request->queue_count) {
+        response->vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+        return 0;
+    }
+    PFN_vkCreateDevice create_device =
+        (PFN_vkCreateDevice)context->get_instance_proc_addr(
+            instance, "vkCreateDevice");
+    if (create_device == NULL) {
+        set_error(error, error_size, "instance has no vkCreateDevice");
+        return -ENOSYS;
+    }
+    const VkDeviceQueueCreateInfo queue_info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .queueFamilyIndex = request->queue_family_index,
+        .queueCount = 1U,
+        .pQueuePriorities = &queue_priority,
+    };
+    const VkDeviceCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .queueCreateInfoCount = 1U,
+        .pQueueCreateInfos = &queue_info,
+    };
+    VkDevice device = VK_NULL_HANDLE;
+    VkResult result = create_device(
+        physical_device, &create_info, NULL, &device);
+    response->vulkan_result = result;
+    if (result != VK_SUCCESS) {
+        return 0;
+    }
+    PFN_vkDestroyDevice destroy_device =
+        (PFN_vkDestroyDevice)context->get_device_proc_addr(
+            device, "vkDestroyDevice");
+    if (destroy_device == NULL) {
+        set_error(error, error_size, "created device has no vkDestroyDevice");
+        response->vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+        return 0;
+    }
+    const uint64_t native_bits = handle_bits(&device, sizeof(device));
+    const uint64_t wire_id = bvb_handle_id(
+        BVB_OBJECT_DEVICE, context->next_device_serial++);
+    struct bvb_device_metadata *metadata = device_metadata_slot(context, 0U);
+    if (metadata == NULL) {
+        destroy_device(device, NULL);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    status = bvb_handle_table_insert(
+        &context->objects, wire_id, request->physical_device_id, native_bits);
+    if (status != 0) {
+        destroy_device(device, NULL);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    *metadata = (struct bvb_device_metadata){
+        .device_id = wire_id,
+        .queue_family_index = request->queue_family_index,
+        .queue_count = request->queue_count,
+    };
+    response->device_id = wire_id;
+    return 0;
+}
+
+int bvb_vulkan_global_context_destroy_device(
+    struct bvb_vulkan_global_context *context, uint64_t device_id) {
+    if (context == NULL || context->get_device_proc_addr == NULL) {
+        return -EINVAL;
+    }
+    uint64_t device_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, device_id, BVB_OBJECT_DEVICE, NULL, &device_bits);
+    if (result != 0) {
+        return result;
+    }
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkDestroyDevice destroy_device =
+        (PFN_vkDestroyDevice)context->get_device_proc_addr(
+            device, "vkDestroyDevice");
+    if (destroy_device == NULL) {
+        return -ENOSYS;
+    }
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_QUEUE &&
+            entry->parent_id == device_id) {
+            result = bvb_handle_table_remove(
+                &context->objects, entry->wire_id, BVB_OBJECT_QUEUE, NULL);
+            if (result != 0) {
+                return result;
+            }
+        }
+    }
+    result = bvb_handle_table_remove(
+        &context->objects, device_id, BVB_OBJECT_DEVICE, &device_bits);
+    if (result != 0) {
+        return result;
+    }
+    struct bvb_device_metadata *metadata =
+        device_metadata_slot(context, device_id);
+    if (metadata != NULL && metadata->device_id == device_id) {
+        *metadata = (struct bvb_device_metadata){0};
+    }
+    destroy_device(device, NULL);
+    return 0;
+}
+
+static uint64_t existing_queue_id(
+    const struct bvb_vulkan_global_context *context, uint64_t device_id,
+    uint64_t native_bits) {
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_QUEUE &&
+            entry->parent_id == device_id && entry->native_bits == native_bits) {
+            return entry->wire_id;
+        }
+    }
+    return 0U;
+}
+
+int bvb_vulkan_global_context_get_device_queue(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_device_queue_request *request,
+    uint64_t *queue_id, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (context == NULL || request == NULL || queue_id == NULL) {
+        return -EINVAL;
+    }
+    *queue_id = 0U;
+    uint64_t device_bits = 0U;
+    int status = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE, NULL,
+        &device_bits);
+    struct bvb_device_metadata *metadata =
+        device_metadata_slot(context, request->device_id);
+    if (status != 0 || metadata == NULL ||
+        metadata->device_id != request->device_id) {
+        set_error(error, error_size, "unknown device handle");
+        return status != 0 ? status : -ENOENT;
+    }
+    if (request->queue_family_index != metadata->queue_family_index ||
+        request->queue_index >= metadata->queue_count) {
+        set_error(error, error_size, "queue index was not created");
+        return -ERANGE;
+    }
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkGetDeviceQueue get_queue =
+        (PFN_vkGetDeviceQueue)context->get_device_proc_addr(
+            device, "vkGetDeviceQueue");
+    if (get_queue == NULL) {
+        set_error(error, error_size, "device has no vkGetDeviceQueue");
+        return -ENOSYS;
+    }
+    VkQueue queue = VK_NULL_HANDLE;
+    get_queue(device, request->queue_family_index, request->queue_index, &queue);
+    if (queue == VK_NULL_HANDLE) {
+        set_error(error, error_size, "vkGetDeviceQueue returned null");
+        return -EIO;
+    }
+    const uint64_t native_bits = handle_bits(&queue, sizeof(queue));
+    uint64_t wire_id = existing_queue_id(
+        context, request->device_id, native_bits);
+    if (wire_id == 0U) {
+        wire_id = bvb_handle_id(
+            BVB_OBJECT_QUEUE, context->next_queue_serial++);
+        status = bvb_handle_table_insert(
+            &context->objects, wire_id, request->device_id, native_bits);
+        if (status != 0) {
+            return status;
+        }
+    }
+    *queue_id = wire_id;
     return 0;
 }

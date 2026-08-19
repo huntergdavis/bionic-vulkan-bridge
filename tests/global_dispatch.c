@@ -21,6 +21,8 @@
 
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
 vkGetInstanceProcAddr(VkInstance instance, const char *name);
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
+vkGetDeviceProcAddr(VkDevice device, const char *name);
 
 #define RESOLVE_GLOBAL(name)                                                   \
     PFN_##name name = NULL;                                                    \
@@ -165,11 +167,17 @@ int main(void) {
     get_queue_properties(physical_device, &queue_count, queues);
     CHECK(queue_count == available_queue_count);
     bool usable_queue = false;
+    uint32_t queue_family_index = UINT32_MAX;
     for (uint32_t index = 0U; index < queue_count; ++index) {
         usable_queue |= queues[index].queueCount > 0U &&
                         queues[index].queueFlags != 0U;
+        if (queue_family_index == UINT32_MAX &&
+            queues[index].queueCount > 0U && queues[index].queueFlags != 0U) {
+            queue_family_index = index;
+        }
     }
     CHECK(usable_queue);
+    CHECK(queue_family_index != UINT32_MAX);
     free(queues);
 
     VkPhysicalDeviceMemoryProperties memory;
@@ -210,6 +218,68 @@ int main(void) {
               &device_extension_count, NULL) == VK_ERROR_LAYER_NOT_PRESENT);
     free(device_extensions);
 
+    PFN_vkGetPhysicalDeviceFeatures get_physical_device_features = NULL;
+    erased = vkGetInstanceProcAddr(
+        instance_one, "vkGetPhysicalDeviceFeatures");
+    CHECK(erased != NULL);
+    memcpy(&get_physical_device_features, &erased,
+           sizeof(get_physical_device_features));
+    PFN_vkCreateDevice create_device = NULL;
+    erased = vkGetInstanceProcAddr(instance_one, "vkCreateDevice");
+    CHECK(erased != NULL);
+    memcpy(&create_device, &erased, sizeof(create_device));
+    VkPhysicalDeviceFeatures features;
+    get_physical_device_features(physical_device, &features);
+    CHECK(features.samplerAnisotropy == VK_TRUE);
+
+    const float queue_priority = 1.0F;
+    const VkDeviceQueueCreateInfo queue_create_info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .queueFamilyIndex = queue_family_index,
+        .queueCount = 1U,
+        .pQueuePriorities = &queue_priority,
+    };
+    VkDeviceCreateInfo device_create_info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .queueCreateInfoCount = 1U,
+        .pQueueCreateInfos = &queue_create_info,
+    };
+    const char *unsupported_device_extension = "VK_KHR_swapchain";
+    device_create_info.enabledExtensionCount = 1U;
+    device_create_info.ppEnabledExtensionNames = &unsupported_device_extension;
+    VkDevice device = VK_NULL_HANDLE;
+    CHECK(create_device(physical_device, &device_create_info, NULL, &device) ==
+          VK_ERROR_EXTENSION_NOT_PRESENT);
+    CHECK(device == VK_NULL_HANDLE);
+    device_create_info.enabledExtensionCount = 0U;
+    device_create_info.ppEnabledExtensionNames = NULL;
+    CHECK(create_device(physical_device, &device_create_info, NULL, &device) ==
+          VK_SUCCESS);
+    CHECK(device != VK_NULL_HANDLE);
+    const uint64_t device_id = bvb_device_proxy_id(device);
+    CHECK(bvb_handle_type(device_id) == BVB_OBJECT_DEVICE);
+    CHECK(bvb_handle_serial(device_id) == 1U);
+
+    PFN_vkGetDeviceQueue get_device_queue = NULL;
+    PFN_vkDestroyDevice destroy_device = NULL;
+    erased = vkGetDeviceProcAddr(device, "vkGetDeviceQueue");
+    CHECK(erased != NULL);
+    memcpy(&get_device_queue, &erased, sizeof(get_device_queue));
+    erased = vkGetDeviceProcAddr(device, "vkDestroyDevice");
+    CHECK(erased != NULL);
+    memcpy(&destroy_device, &erased, sizeof(destroy_device));
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdDraw") != NULL);
+    VkQueue queue = VK_NULL_HANDLE;
+    get_device_queue(device, queue_family_index, 0U, &queue);
+    CHECK(queue != VK_NULL_HANDLE);
+    const uint64_t queue_id = bvb_queue_proxy_id(queue);
+    CHECK(bvb_handle_type(queue_id) == BVB_OBJECT_QUEUE);
+    CHECK(bvb_handle_serial(queue_id) == 1U);
+    VkQueue repeated_queue = VK_NULL_HANDLE;
+    get_device_queue(device, queue_family_index, 0U, &repeated_queue);
+    CHECK(repeated_queue == queue);
+    destroy_device(device, NULL);
+
     VkInstance instance_two = VK_NULL_HANDLE;
     create_info.pApplicationInfo = NULL;
     CHECK(vkCreateInstance(&create_info, NULL, &instance_two) == VK_SUCCESS);
@@ -230,13 +300,17 @@ int main(void) {
            "exposed_extensions=0 exposed_layers=0 "
            "instance_one=%llu instance_two=%llu physical_device=%llu "
            "device=%s device_api=%u driver=%u vendor=%u device_id=%u "
-           "queues=%u memory_types=%u memory_heaps=%u device_extensions=%u\n",
+           "queues=%u memory_types=%u memory_heaps=%u device_extensions=%u "
+           "sampler_anisotropy=%u logical_device=%llu queue=%llu\n",
            api_version, (unsigned long long)instance_one_id,
            (unsigned long long)instance_two_id,
            (unsigned long long)physical_id, properties.deviceName,
            properties.apiVersion, properties.driverVersion,
            properties.vendorID, properties.deviceID,
            available_queue_count, memory.memoryTypeCount,
-           memory.memoryHeapCount, available_device_extension_count);
+           memory.memoryHeapCount, available_device_extension_count,
+           features.samplerAnisotropy,
+           (unsigned long long)device_id,
+           (unsigned long long)queue_id);
     return 0;
 }

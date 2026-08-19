@@ -2,6 +2,7 @@
 
 #include <bvb/command_batch.h>
 #include <bvb/dxvk_dispatch_policy.h>
+#include <bvb/global_dispatch.h>
 #include <bvb/triangle_dispatch.h>
 
 #include <errno.h>
@@ -255,9 +256,23 @@ BVB_TRIANGLE_EXPORT void bvb_triangle_command_buffer_destroy(
 
 BVB_TRIANGLE_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
 vkGetDeviceProcAddr(VkDevice device, const char *name) {
-    (void)device;
     if (name == NULL) {
         return NULL;
+    }
+    if (device != VK_NULL_HANDLE) {
+        if (bvb_device_proxy_id(device) == 0U) {
+            return NULL;
+        }
+        PFN_vkVoidFunction global = bvb_global_device_proc_addr(device, name);
+        if (global != NULL) {
+            return global;
+        }
+    }
+    if (strcmp(name, "vkGetDeviceProcAddr") == 0) {
+        PFN_vkGetDeviceProcAddr typed = vkGetDeviceProcAddr;
+        PFN_vkVoidFunction erased = NULL;
+        memcpy(&erased, &typed, sizeof(erased));
+        return erased;
     }
 #define BVB_TRIANGLE_DISPATCH_ENTRY(entry_name, wrapper, type)                 \
     if (strcmp(name, #entry_name) == 0) {                                      \

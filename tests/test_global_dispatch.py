@@ -59,6 +59,9 @@ def main() -> int:
             assert f"device_api={0x00400000 | (3 << 12) | 275}" in completed.stdout
             assert "driver=16909060 vendor=20803 device_id=1840" in completed.stdout
             assert "queues=2 memory_types=1 memory_heaps=2 device_extensions=5" in completed.stdout
+            assert "sampler_anisotropy=1" in completed.stdout
+            assert f"logical_device={0x0300000000000001}" in completed.stdout
+            assert f"queue={0x0400000000000001}" in completed.stdout
             server_stdout, server_stderr = server.communicate(timeout=5.0)
             assert server.returncode == 0, server_stderr
             assert server_stdout == ""
@@ -68,7 +71,7 @@ def main() -> int:
             if server.poll() is None:
                 server.terminate()
                 server.wait(timeout=5.0)
-    print("PASS: E027 physical-device discovery integration")
+    print("PASS: E028 logical-device and queue integration")
     return 0
 
 

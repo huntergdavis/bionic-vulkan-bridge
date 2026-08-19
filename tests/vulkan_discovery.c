@@ -20,6 +20,24 @@ int main(void) {
     uint8_t wire[BVB_VULKAN_DISCOVERY_MAX_PAYLOAD];
     uint32_t length = 0U;
 
+    VkPhysicalDeviceFeatures features = {0};
+    features.robustBufferAccess = VK_TRUE;
+    features.geometryShader = VK_TRUE;
+    features.samplerAnisotropy = VK_TRUE;
+    features.shaderInt64 = VK_TRUE;
+    features.inheritedQueries = VK_TRUE;
+    CHECK(bvb_vulkan_encode_physical_device_features(
+              wire, &features, &length) == 0);
+    CHECK(length == 220U);
+    VkPhysicalDeviceFeatures features_decoded;
+    CHECK(bvb_vulkan_decode_physical_device_features(
+              wire, length, &features_decoded) == 0);
+    CHECK(features_decoded.robustBufferAccess == VK_TRUE);
+    CHECK(features_decoded.geometryShader == VK_TRUE);
+    CHECK(features_decoded.samplerAnisotropy == VK_TRUE);
+    CHECK(features_decoded.shaderInt64 == VK_TRUE);
+    CHECK(features_decoded.inheritedQueries == VK_TRUE);
+
     VkPhysicalDeviceProperties properties = {0};
     properties.apiVersion = VK_API_VERSION_1_3;
     properties.driverVersion = UINT32_C(0x12345678);
@@ -132,8 +150,8 @@ int main(void) {
     CHECK(strcmp(page_decoded.properties[1].extensionName,
                  "VK_KHR_dynamic_rendering") == 0);
 
-    printf("PASS: Vulkan discovery fixed-width wire properties=%u "
-           "queues=52 memory=456 extension_page=536\n",
+    printf("PASS: Vulkan discovery fixed-width wire features=220 "
+           "properties=%u queues=52 memory=456 extension_page=536\n",
            properties_length);
     return EXIT_SUCCESS;
 }

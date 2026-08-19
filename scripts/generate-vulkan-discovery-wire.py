@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 ROOT_TYPES = (
+    "VkPhysicalDeviceFeatures",
     "VkPhysicalDeviceProperties",
     "VkQueueFamilyProperties",
     "VkPhysicalDeviceMemoryProperties",

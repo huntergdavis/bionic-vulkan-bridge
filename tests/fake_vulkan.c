@@ -241,6 +241,16 @@ static void VKAPI_CALL fake_get_device_properties(
             sizeof(properties->deviceName) - 1U);
 }
 
+static void VKAPI_CALL fake_get_device_features(
+    VkPhysicalDevice device, VkPhysicalDeviceFeatures *features) {
+    (void)device;
+    memset(features, 0, sizeof(*features));
+    features->robustBufferAccess = VK_TRUE;
+    features->geometryShader = VK_TRUE;
+    features->samplerAnisotropy = VK_TRUE;
+    features->shaderInt64 = VK_TRUE;
+}
+
 static void VKAPI_CALL fake_get_queue_properties(
     VkPhysicalDevice device,
     uint32_t *count,
@@ -736,6 +746,7 @@ static PFN_vkVoidFunction function_pointer(const char *name) {
     BVB_MATCH("vkCreateInstance", fake_create_instance)
     BVB_MATCH("vkEnumeratePhysicalDevices", fake_enumerate_devices)
     BVB_MATCH("vkGetPhysicalDeviceProperties", fake_get_device_properties)
+    BVB_MATCH("vkGetPhysicalDeviceFeatures", fake_get_device_features)
     BVB_MATCH("vkGetPhysicalDeviceQueueFamilyProperties", fake_get_queue_properties)
     BVB_MATCH("vkGetPhysicalDeviceMemoryProperties", fake_get_memory_properties)
     BVB_MATCH("vkEnumerateDeviceExtensionProperties", fake_enumerate_device_extensions)
@@ -803,4 +814,9 @@ BVB_EXPORT PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(
     const char *name) {
     (void)instance;
     return function_pointer(name);
+}
+
+BVB_EXPORT PFN_vkVoidFunction VKAPI_CALL vkGetDeviceProcAddr(
+    VkDevice device, const char *name) {
+    return fake_get_device_proc_addr(device, name);
 }

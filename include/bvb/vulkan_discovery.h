@@ -27,6 +27,12 @@ int bvb_vulkan_encode_physical_device_properties(
 int bvb_vulkan_decode_physical_device_properties(
     const uint8_t *input, uint32_t input_length,
     VkPhysicalDeviceProperties *properties);
+int bvb_vulkan_encode_physical_device_features(
+    uint8_t output[BVB_VULKAN_DISCOVERY_MAX_PAYLOAD],
+    const VkPhysicalDeviceFeatures *features, uint32_t *output_length);
+int bvb_vulkan_decode_physical_device_features(
+    const uint8_t *input, uint32_t input_length,
+    VkPhysicalDeviceFeatures *features);
 int bvb_vulkan_encode_queue_family_properties(
     uint8_t output[BVB_VULKAN_DISCOVERY_MAX_PAYLOAD],
     const VkQueueFamilyProperties *properties, uint32_t count,

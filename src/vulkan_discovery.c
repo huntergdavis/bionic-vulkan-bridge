@@ -116,6 +116,33 @@ static int reader_finish(const struct bvb_wire_reader *reader) {
     return reader->offset == reader->length ? 0 : -EPROTO;
 }
 
+int bvb_vulkan_encode_physical_device_features(
+    uint8_t output[BVB_VULKAN_DISCOVERY_MAX_PAYLOAD],
+    const VkPhysicalDeviceFeatures *features, uint32_t *output_length) {
+    if (output == NULL || features == NULL || output_length == NULL) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_DISCOVERY_MAX_PAYLOAD);
+    struct bvb_wire_writer writer = {
+        .output = output,
+        .capacity = BVB_VULKAN_DISCOVERY_MAX_PAYLOAD,
+    };
+    bvb_wire_encode_VkPhysicalDeviceFeatures(&writer, features);
+    return writer_finish(&writer, output_length);
+}
+
+int bvb_vulkan_decode_physical_device_features(
+    const uint8_t *input, uint32_t input_length,
+    VkPhysicalDeviceFeatures *features) {
+    if (input == NULL || features == NULL) {
+        return -EINVAL;
+    }
+    memset(features, 0, sizeof(*features));
+    struct bvb_wire_reader reader = {.input = input, .length = input_length};
+    bvb_wire_decode_VkPhysicalDeviceFeatures(&reader, features);
+    return reader_finish(&reader);
+}
+
 int bvb_vulkan_encode_physical_device_properties(
     uint8_t output[BVB_VULKAN_DISCOVERY_MAX_PAYLOAD],
     const VkPhysicalDeviceProperties *properties, uint32_t *output_length) {
