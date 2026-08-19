@@ -2,6 +2,7 @@
 #include <bvb/protocol.h>
 
 #include <errno.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -53,7 +54,7 @@ static int header_is_valid(const struct bvb_protocol_header *header) {
         return -EPROTO;
     }
     if (header->opcode < BVB_OPCODE_HELLO ||
-        header->opcode > BVB_OPCODE_SHARED_BATCH_EXECUTE) {
+        header->opcode > BVB_OPCODE_VISIBLE_BATCH_EXECUTE) {
         return -EPROTO;
     }
     if (header->payload_length > BVB_PROTOCOL_MAX_PAYLOAD) {
@@ -249,6 +250,86 @@ int bvb_protocol_decode_shared_batch_execute(
         decoded.length > BVB_COMMAND_BATCH_MAX_BYTES ||
         decoded.sequence == 0U) {
         return -EPROTO;
+    }
+    *execute = decoded;
+    return 0;
+}
+
+static bool token_is_nonzero(
+    const uint8_t token[BVB_LIFECYCLE_TOKEN_SIZE]) {
+    uint8_t combined = 0U;
+    for (size_t index = 0U; index < BVB_LIFECYCLE_TOKEN_SIZE; ++index) {
+        combined |= token[index];
+    }
+    return combined != 0U;
+}
+
+int bvb_protocol_encode_visible_batch_setup(
+    uint8_t output[BVB_VISIBLE_BATCH_SETUP_SIZE],
+    const struct bvb_visible_batch_setup *setup) {
+    if (output == NULL || setup == NULL || !token_is_nonzero(setup->token)) {
+        return -EINVAL;
+    }
+    int result = bvb_protocol_encode_shared_batch_setup(
+        output + BVB_LIFECYCLE_TOKEN_SIZE, &setup->shared);
+    if (result == 0) {
+        memcpy(output, setup->token, BVB_LIFECYCLE_TOKEN_SIZE);
+    }
+    return result;
+}
+
+int bvb_protocol_decode_visible_batch_setup(
+    const uint8_t input[BVB_VISIBLE_BATCH_SETUP_SIZE],
+    struct bvb_visible_batch_setup *setup) {
+    if (input == NULL || setup == NULL) {
+        return -EINVAL;
+    }
+    if (!token_is_nonzero(input)) {
+        return -EPROTO;
+    }
+    struct bvb_visible_batch_setup decoded;
+    memset(&decoded, 0, sizeof(decoded));
+    memcpy(decoded.token, input, BVB_LIFECYCLE_TOKEN_SIZE);
+    int result = bvb_protocol_decode_shared_batch_setup(
+        input + BVB_LIFECYCLE_TOKEN_SIZE, &decoded.shared);
+    if (result != 0) {
+        return result;
+    }
+    *setup = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_visible_batch_execute(
+    uint8_t output[BVB_VISIBLE_BATCH_EXECUTE_SIZE],
+    const struct bvb_visible_batch_execute *execute) {
+    if (output == NULL || execute == NULL ||
+        !token_is_nonzero(execute->token)) {
+        return -EINVAL;
+    }
+    int result = bvb_protocol_encode_shared_batch_execute(
+        output + BVB_LIFECYCLE_TOKEN_SIZE, &execute->shared);
+    if (result == 0) {
+        memcpy(output, execute->token, BVB_LIFECYCLE_TOKEN_SIZE);
+    }
+    return result;
+}
+
+int bvb_protocol_decode_visible_batch_execute(
+    const uint8_t input[BVB_VISIBLE_BATCH_EXECUTE_SIZE],
+    struct bvb_visible_batch_execute *execute) {
+    if (input == NULL || execute == NULL) {
+        return -EINVAL;
+    }
+    if (!token_is_nonzero(input)) {
+        return -EPROTO;
+    }
+    struct bvb_visible_batch_execute decoded;
+    memset(&decoded, 0, sizeof(decoded));
+    memcpy(decoded.token, input, BVB_LIFECYCLE_TOKEN_SIZE);
+    int result = bvb_protocol_decode_shared_batch_execute(
+        input + BVB_LIFECYCLE_TOKEN_SIZE, &decoded.shared);
+    if (result != 0) {
+        return result;
     }
     *execute = decoded;
     return 0;

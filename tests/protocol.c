@@ -116,6 +116,45 @@ int main(void) {
     CHECK(shared_execute_decoded.length == 104U);
     CHECK(shared_execute_decoded.sequence == 7U);
 
+    struct bvb_visible_batch_setup visible_setup = {
+        .shared = shared_setup,
+    };
+    struct bvb_visible_batch_execute visible_execute = {
+        .shared = shared_execute,
+    };
+    for (size_t index = 0U; index < BVB_LIFECYCLE_TOKEN_SIZE; ++index) {
+        visible_setup.token[index] = (uint8_t)(index + 1U);
+        visible_execute.token[index] = (uint8_t)(index + 1U);
+    }
+    uint8_t visible_setup_wire[BVB_VISIBLE_BATCH_SETUP_SIZE];
+    CHECK(bvb_protocol_encode_visible_batch_setup(visible_setup_wire,
+                                                  &visible_setup) == 0);
+    CHECK(memcmp(visible_setup_wire, visible_setup.token,
+                 BVB_LIFECYCLE_TOKEN_SIZE) == 0);
+    struct bvb_visible_batch_setup visible_setup_decoded;
+    CHECK(bvb_protocol_decode_visible_batch_setup(visible_setup_wire,
+                                                  &visible_setup_decoded) == 0);
+    CHECK(visible_setup_decoded.shared.generation ==
+          shared_setup.generation);
+    CHECK(memcmp(visible_setup_decoded.token, visible_setup.token,
+                 BVB_LIFECYCLE_TOKEN_SIZE) == 0);
+
+    uint8_t visible_execute_wire[BVB_VISIBLE_BATCH_EXECUTE_SIZE];
+    CHECK(bvb_protocol_encode_visible_batch_execute(visible_execute_wire,
+                                                    &visible_execute) == 0);
+    struct bvb_visible_batch_execute visible_execute_decoded;
+    CHECK(bvb_protocol_decode_visible_batch_execute(
+              visible_execute_wire, &visible_execute_decoded) == 0);
+    CHECK(visible_execute_decoded.shared.offset == shared_execute.offset);
+    CHECK(visible_execute_decoded.shared.length == shared_execute.length);
+    CHECK(visible_execute_decoded.shared.sequence == shared_execute.sequence);
+    memset(visible_setup.token, 0, sizeof(visible_setup.token));
+    CHECK(bvb_protocol_encode_visible_batch_setup(visible_setup_wire,
+                                                  &visible_setup) == -EINVAL);
+    memset(visible_execute_wire, 0, BVB_LIFECYCLE_TOKEN_SIZE);
+    CHECK(bvb_protocol_decode_visible_batch_execute(
+              visible_execute_wire, &visible_execute_decoded) == -EPROTO);
+
     struct bvb_vulkan_caps caps;
     memset(&caps, 0, sizeof(caps));
     caps.loader_api_version = 0x00401000U;

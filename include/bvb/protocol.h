@@ -22,6 +22,8 @@ enum {
     BVB_OPCODE_VULKAN_BATCH_SELFTEST = 5,
     BVB_OPCODE_SHARED_BATCH_SETUP = 6,
     BVB_OPCODE_SHARED_BATCH_EXECUTE = 7,
+    BVB_OPCODE_VISIBLE_BATCH_SETUP = 8,
+    BVB_OPCODE_VISIBLE_BATCH_EXECUTE = 9,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -30,6 +32,10 @@ enum {
     BVB_ACTIVITY_STATUS_SIZE = 56,
     BVB_SHARED_BATCH_SETUP_SIZE = 16,
     BVB_SHARED_BATCH_EXECUTE_SIZE = 24,
+    BVB_VISIBLE_BATCH_SETUP_SIZE =
+        BVB_LIFECYCLE_TOKEN_SIZE + BVB_SHARED_BATCH_SETUP_SIZE,
+    BVB_VISIBLE_BATCH_EXECUTE_SIZE =
+        BVB_LIFECYCLE_TOKEN_SIZE + BVB_SHARED_BATCH_EXECUTE_SIZE,
     BVB_SHARED_BATCH_MIN_BYTES = 4096,
     BVB_SHARED_BATCH_MAX_BYTES = 16 * 1024 * 1024,
     BVB_SERVICE_BIONIC = 1U << 0,
@@ -74,6 +80,16 @@ struct bvb_shared_batch_execute {
     uint32_t offset;
     uint32_t length;
     uint64_t sequence;
+};
+
+struct bvb_visible_batch_setup {
+    uint8_t token[BVB_LIFECYCLE_TOKEN_SIZE];
+    struct bvb_shared_batch_setup shared;
+};
+
+struct bvb_visible_batch_execute {
+    uint8_t token[BVB_LIFECYCLE_TOKEN_SIZE];
+    struct bvb_shared_batch_execute shared;
 };
 
 /*
@@ -134,6 +150,18 @@ int bvb_protocol_encode_shared_batch_execute(
 int bvb_protocol_decode_shared_batch_execute(
     const uint8_t input[BVB_SHARED_BATCH_EXECUTE_SIZE],
     struct bvb_shared_batch_execute *execute);
+int bvb_protocol_encode_visible_batch_setup(
+    uint8_t output[BVB_VISIBLE_BATCH_SETUP_SIZE],
+    const struct bvb_visible_batch_setup *setup);
+int bvb_protocol_decode_visible_batch_setup(
+    const uint8_t input[BVB_VISIBLE_BATCH_SETUP_SIZE],
+    struct bvb_visible_batch_setup *setup);
+int bvb_protocol_encode_visible_batch_execute(
+    uint8_t output[BVB_VISIBLE_BATCH_EXECUTE_SIZE],
+    const struct bvb_visible_batch_execute *execute);
+int bvb_protocol_decode_visible_batch_execute(
+    const uint8_t input[BVB_VISIBLE_BATCH_EXECUTE_SIZE],
+    struct bvb_visible_batch_execute *execute);
 
 void bvb_wire_put_u16(uint8_t *output, uint16_t value);
 void bvb_wire_put_u32(uint8_t *output, uint32_t value);
