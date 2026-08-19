@@ -316,12 +316,19 @@ target_link_libraries(
 )
 bvb_enable_warnings(bvb-shared-region-relay)
 
+add_executable(bvb-external-memory-receiver src/external_memory_receiver.c)
+target_link_libraries(
+  bvb-external-memory-receiver PRIVATE bvb-wire bvb-vulkan-selftest-core
+)
+bvb_enable_warnings(bvb-external-memory-receiver)
+
 install(
   TARGETS bvb-vulkan-probe bvb-bridge-service bvb-bridge-client
           bvb-vulkan-selftest bvb-vulkan-surface-probe
           bvb-vulkan-external-memory-selftest
           bvb-vulkan-present-selftest bvb-vulkan-client-dispatch
           bvb-visible-triangle-client bvb-shared-region-relay
+          bvb-external-memory-receiver
   RUNTIME DESTINATION bin
 )
 
@@ -503,6 +510,15 @@ if(BUILD_TESTING)
       "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_external_memory.py"
       "$<TARGET_FILE:bvb-vulkan-external-memory-selftest>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+  )
+
+  add_test(
+    NAME external-memory-receiver-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_external_memory_receiver.py"
+      "$<TARGET_FILE:bvb-external-memory-receiver>"
       "$<TARGET_FILE:bvb-fake-vulkan>"
   )
 

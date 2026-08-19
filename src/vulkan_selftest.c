@@ -1301,6 +1301,231 @@ done:
     return status;
 }
 
+int bvb_vulkan_batch_context_import_external_memory_fd(
+    struct bvb_vulkan_batch_context *context, int external_fd,
+    uint64_t allocation_size, uint32_t memory_type_index,
+    uint32_t buffer_bytes, struct bvb_vulkan_external_memory_result *output,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size > 0U) error[0] = '\0';
+    if (context == NULL || external_fd < 0 || allocation_size == 0U ||
+        buffer_bytes == 0U || buffer_bytes > BVB_SELFTEST_BUFFER_BYTES ||
+        buffer_bytes > allocation_size || output == NULL) {
+        if (external_fd >= 0) (void)close(external_fd);
+        return -EINVAL;
+    }
+    memset(output, 0, sizeof(*output));
+    output->buffer_bytes = buffer_bytes;
+    output->memory_type_index = memory_type_index;
+    if ((context->base_result.instance_extension_flags &
+         BVB_INSTANCE_KHR_EXTERNAL_MEMORY_CAPS) == 0U ||
+        (context->base_result.device_extension_flags &
+         (BVB_DEVICE_KHR_EXTERNAL_MEMORY |
+          BVB_DEVICE_KHR_EXTERNAL_MEMORY_FD)) !=
+            (BVB_DEVICE_KHR_EXTERNAL_MEMORY |
+             BVB_DEVICE_KHR_EXTERNAL_MEMORY_FD)) {
+        set_error(error, error_size,
+                  "external-memory FD extensions are unavailable");
+        (void)close(external_fd);
+        return -ENOTSUP;
+    }
+
+    PFN_vkGetPhysicalDeviceExternalBufferPropertiesKHR query =
+        (PFN_vkGetPhysicalDeviceExternalBufferPropertiesKHR)
+            context->get_instance_proc_addr(
+                context->objects.instance,
+                "vkGetPhysicalDeviceExternalBufferPropertiesKHR");
+    if (query == NULL) {
+        query = (PFN_vkGetPhysicalDeviceExternalBufferPropertiesKHR)
+            context->get_instance_proc_addr(
+                context->objects.instance,
+                "vkGetPhysicalDeviceExternalBufferProperties");
+    }
+    if (query == NULL) {
+        set_error(error, error_size,
+                  "driver has no external-buffer-properties query");
+        (void)close(external_fd);
+        return -ENOSYS;
+    }
+    const VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                                     VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    const VkPhysicalDeviceExternalBufferInfo external_query = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_BUFFER_INFO,
+        .usage = usage,
+        .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
+    VkExternalBufferProperties properties = {
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_BUFFER_PROPERTIES,
+    };
+    query(context->physical_device, &external_query, &properties);
+    const VkExternalMemoryProperties *external =
+        &properties.externalMemoryProperties;
+    output->external_memory_features = external->externalMemoryFeatures;
+    output->compatible_handle_types = external->compatibleHandleTypes;
+    output->export_from_imported_handle_types =
+        external->exportFromImportedHandleTypes;
+    if ((external->externalMemoryFeatures &
+         VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) == 0U ||
+        (external->compatibleHandleTypes &
+         VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT) == 0U) {
+        set_error(error, error_size, "opaque FD buffers are not importable");
+        (void)close(external_fd);
+        return -ENOTSUP;
+    }
+
+    struct bvb_external_resources imported = {
+        .device = context->objects.device,
+    };
+#define LOAD_IMPORT(name)                                                       \
+    PFN_##name imported_##name = (PFN_##name)                                  \
+        context->get_device_proc_addr(imported.device, #name)
+    LOAD_IMPORT(vkCreateBuffer);
+    LOAD_IMPORT(vkDestroyBuffer);
+    LOAD_IMPORT(vkGetBufferMemoryRequirements);
+    LOAD_IMPORT(vkAllocateMemory);
+    LOAD_IMPORT(vkFreeMemory);
+    LOAD_IMPORT(vkBindBufferMemory);
+    LOAD_IMPORT(vkMapMemory);
+    LOAD_IMPORT(vkUnmapMemory);
+    LOAD_IMPORT(vkInvalidateMappedMemoryRanges);
+#undef LOAD_IMPORT
+    imported.destroy_buffer = imported_vkDestroyBuffer;
+    imported.free_memory = imported_vkFreeMemory;
+    imported.unmap_memory = imported_vkUnmapMemory;
+    if (imported_vkCreateBuffer == NULL ||
+        imported_vkDestroyBuffer == NULL ||
+        imported_vkGetBufferMemoryRequirements == NULL ||
+        imported_vkAllocateMemory == NULL || imported_vkFreeMemory == NULL ||
+        imported_vkBindBufferMemory == NULL || imported_vkMapMemory == NULL ||
+        imported_vkUnmapMemory == NULL ||
+        imported_vkInvalidateMappedMemoryRanges == NULL) {
+        set_error(error, error_size,
+                  "driver is missing external-memory import entry points");
+        (void)close(external_fd);
+        return -ENOSYS;
+    }
+
+    int status = 0;
+    VkResult vk_result = VK_SUCCESS;
+    const VkExternalMemoryBufferCreateInfo external_buffer_info = {
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
+        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
+    const VkBufferCreateInfo buffer_info = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = &external_buffer_info,
+        .size = buffer_bytes,
+        .usage = usage,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+    vk_result = imported_vkCreateBuffer(
+        imported.device, &buffer_info, NULL, &imported.buffer);
+    if (vk_result != VK_SUCCESS) {
+        set_error(error, error_size,
+                  "external import vkCreateBuffer failed: %d",
+                  (int)vk_result);
+        status = -EIO;
+        goto done;
+    }
+    VkMemoryRequirements requirements = {0};
+    imported_vkGetBufferMemoryRequirements(
+        imported.device, imported.buffer, &requirements);
+    if (requirements.size > allocation_size ||
+        memory_type_index >= context->memory_properties.memoryTypeCount ||
+        (requirements.memoryTypeBits &
+         (UINT32_C(1) << memory_type_index)) == 0U) {
+        set_error(error, error_size,
+                  "export metadata is incompatible with import buffer");
+        status = -EPROTO;
+        goto done;
+    }
+    output->memory_property_flags = context->memory_properties
+                                        .memoryTypes[memory_type_index]
+                                        .propertyFlags;
+    if ((output->memory_property_flags &
+         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0U) {
+        set_error(error, error_size,
+                  "export memory type is not host visible");
+        status = -ENOTSUP;
+        goto done;
+    }
+
+    const bool dedicated_only =
+        (external->externalMemoryFeatures &
+         VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT) != 0U;
+    const VkMemoryDedicatedAllocateInfo dedicated_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
+        .buffer = imported.buffer,
+    };
+    const VkImportMemoryFdInfoKHR import_info = {
+        .sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR,
+        .pNext = dedicated_only ? &dedicated_info : NULL,
+        .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+        .fd = external_fd,
+    };
+    const VkMemoryAllocateInfo allocation_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .pNext = &import_info,
+        .allocationSize = allocation_size,
+        .memoryTypeIndex = memory_type_index,
+    };
+    vk_result = imported_vkAllocateMemory(
+        imported.device, &allocation_info, NULL, &imported.memory);
+    if (vk_result == VK_SUCCESS) external_fd = -1;
+    if (vk_result == VK_SUCCESS) {
+        vk_result = imported_vkBindBufferMemory(
+            imported.device, imported.buffer, imported.memory, 0U);
+    }
+    if (vk_result == VK_SUCCESS) {
+        vk_result = imported_vkMapMemory(
+            imported.device, imported.memory, 0U, VK_WHOLE_SIZE, 0U,
+            &imported.mapped);
+    }
+    if (vk_result != VK_SUCCESS || imported.mapped == NULL) {
+        set_error(error, error_size,
+                  "external memory import setup failed: %d",
+                  (int)vk_result);
+        status = -EIO;
+        goto done;
+    }
+    if ((output->memory_property_flags &
+         VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U) {
+        const VkMappedMemoryRange range = {
+            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .memory = imported.memory,
+            .offset = 0U,
+            .size = VK_WHOLE_SIZE,
+        };
+        vk_result = imported_vkInvalidateMappedMemoryRanges(
+            imported.device, 1U, &range);
+        if (vk_result != VK_SUCCESS) {
+            set_error(error, error_size,
+                      "external-memory invalidate failed: %d",
+                      (int)vk_result);
+            status = -EIO;
+            goto done;
+        }
+    }
+    for (uint32_t index = 0U; index < buffer_bytes; ++index) {
+        const uint8_t expected =
+            (uint8_t)(index ^ (index >> 4U) ^ UINT32_C(0x5a));
+        if (((const uint8_t *)imported.mapped)[index] != expected) {
+            ++output->mismatched_bytes;
+        }
+    }
+    if (output->mismatched_bytes != 0U) {
+        set_error(error, error_size,
+                  "external-memory import found %u mismatched bytes",
+                  output->mismatched_bytes);
+        status = -EIO;
+    }
+
+done:
+    if (external_fd >= 0) (void)close(external_fd);
+    cleanup_external_resources(&imported);
+    return status;
+}
+
 void bvb_vulkan_batch_context_destroy(
     struct bvb_vulkan_batch_context *context) {
     if (context != NULL) {

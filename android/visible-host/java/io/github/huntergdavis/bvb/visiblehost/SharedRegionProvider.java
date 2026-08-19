@@ -15,6 +15,7 @@ public final class SharedRegionProvider extends ContentProvider {
     }
 
     static native int nativeOpenRegion(String token);
+    static native long[] nativeOpenExternalMemory(String token);
 
     @Override
     public boolean onCreate() {

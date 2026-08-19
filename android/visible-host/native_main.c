@@ -63,6 +63,12 @@ struct bvb_visible_state {
     VkCommandPool command_pool;
     VkSemaphore acquire_semaphore;
     VkSemaphore render_semaphore;
+    VkBuffer external_buffer;
+    VkDeviceMemory external_memory;
+    VkDeviceSize external_allocation_size;
+    uint32_t external_memory_type_index;
+    VkMemoryPropertyFlags external_memory_property_flags;
+    PFN_vkGetMemoryFdKHR get_memory_fd;
 };
 
 struct bvb_lifecycle_client {
@@ -91,6 +97,7 @@ static bool visible_inline_ingress;
 static atomic_bool visible_brokered_ingress;
 static atomic_uint visible_frame_count = 1U;
 static pthread_mutex_t lifecycle_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t external_memory_mutex = PTHREAD_MUTEX_INITIALIZER;
 static struct bvb_renderer_control renderer = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
     .condition = PTHREAD_COND_INITIALIZER,
@@ -187,6 +194,71 @@ Java_io_github_huntergdavis_bvb_visiblehost_SharedRegionProvider_nativeOpenRegio
     }
     BVB_LOGI("E020_REGION_OPEN bytes=%u", BVB_E020_REGION_BYTES);
     return memory_fd;
+}
+
+JNIEXPORT jlongArray JNICALL
+Java_io_github_huntergdavis_bvb_visiblehost_SharedRegionProvider_nativeOpenExternalMemory(
+    JNIEnv *env, jclass provider_class, jstring token_string) {
+    (void)provider_class;
+    jlong values[5] = {-EINVAL, -1, 0, 0, 0};
+    jlongArray output = (*env)->NewLongArray(env, 5);
+    if (output == NULL || token_string == NULL) {
+        return output;
+    }
+    const char *token = (*env)->GetStringUTFChars(env, token_string, NULL);
+    if (token == NULL || (*env)->ExceptionCheck(env)) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        (*env)->SetLongArrayRegion(env, output, 0, 5, values);
+        return output;
+    }
+    uint8_t parsed_token[BVB_LIFECYCLE_TOKEN_SIZE];
+    int result = bvb_lifecycle_token_from_hex(token, parsed_token);
+    (*env)->ReleaseStringUTFChars(env, token_string, token);
+    if (result == 0) {
+        (void)pthread_mutex_lock(&lifecycle_mutex);
+        const bool authorized = lifecycle.configured &&
+                                token_matches(parsed_token, lifecycle.token);
+        (void)pthread_mutex_unlock(&lifecycle_mutex);
+        if (!authorized) result = -EACCES;
+    }
+    (void)pthread_mutex_lock(&external_memory_mutex);
+    if (result == 0 &&
+        (state.device == VK_NULL_HANDLE ||
+         state.external_memory == VK_NULL_HANDLE ||
+         state.get_memory_fd == NULL)) {
+        result = -EAGAIN;
+    }
+    int descriptor = -1;
+    if (result == 0) {
+        const VkMemoryGetFdInfoKHR fd_info = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
+            .memory = state.external_memory,
+            .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+        };
+        const VkResult vk_result = state.get_memory_fd(
+            state.device, &fd_info, &descriptor);
+        if (vk_result != VK_SUCCESS || descriptor < 0) {
+            result = -EIO;
+            descriptor = -1;
+            BVB_LOGE("E036_EXPORT_FAIL vkGetMemoryFdKHR=%d", (int)vk_result);
+        }
+    }
+    if (result == 0) {
+        values[0] = 0;
+        values[1] = descriptor;
+        values[2] = (jlong)state.external_allocation_size;
+        values[3] = state.external_memory_type_index;
+        values[4] = BVB_E020_REGION_BYTES;
+        BVB_LOGI("E036_EXPORT_PASS bytes=%u allocation=%llu type=%u fd=%d",
+                 BVB_E020_REGION_BYTES,
+                 (unsigned long long)state.external_allocation_size,
+                 state.external_memory_type_index, descriptor);
+    } else {
+        values[0] = result;
+    }
+    (void)pthread_mutex_unlock(&external_memory_mutex);
+    (*env)->SetLongArrayRegion(env, output, 0, 5, values);
+    return output;
 }
 
 static void configure_lifecycle(ANativeActivity *activity) {
@@ -548,8 +620,15 @@ static void apply_immersive_mode(ANativeActivity *activity) {
 }
 
 static void destroy_renderer(void) {
+    (void)pthread_mutex_lock(&external_memory_mutex);
     if (state.device != VK_NULL_HANDLE) {
         (void)vkDeviceWaitIdle(state.device);
+        if (state.external_buffer != VK_NULL_HANDLE) {
+            vkDestroyBuffer(state.device, state.external_buffer, NULL);
+        }
+        if (state.external_memory != VK_NULL_HANDLE) {
+            vkFreeMemory(state.device, state.external_memory, NULL);
+        }
         if (state.render_semaphore != VK_NULL_HANDLE) {
             vkDestroySemaphore(state.device, state.render_semaphore, NULL);
         }
@@ -592,6 +671,7 @@ static void destroy_renderer(void) {
         vkDestroyInstance(state.instance, NULL);
     }
     memset(&state, 0, sizeof(state));
+    (void)pthread_mutex_unlock(&external_memory_mutex);
 }
 
 static VkCompositeAlphaFlagBitsKHR choose_composite_alpha(VkFlags supported) {
@@ -632,6 +712,153 @@ static bool has_device_extension(VkPhysicalDevice physical_device,
     }
     free(properties);
     return found;
+}
+
+static bool create_external_memory(VkPhysicalDevice physical_device) {
+    PFN_vkGetPhysicalDeviceExternalBufferPropertiesKHR query =
+        (PFN_vkGetPhysicalDeviceExternalBufferPropertiesKHR)
+            vkGetInstanceProcAddr(
+                state.instance,
+                "vkGetPhysicalDeviceExternalBufferPropertiesKHR");
+    if (query == NULL) {
+        query = (PFN_vkGetPhysicalDeviceExternalBufferPropertiesKHR)
+            vkGetInstanceProcAddr(
+                state.instance,
+                "vkGetPhysicalDeviceExternalBufferProperties");
+    }
+    state.get_memory_fd = (PFN_vkGetMemoryFdKHR)vkGetDeviceProcAddr(
+        state.device, "vkGetMemoryFdKHR");
+    if (query == NULL || state.get_memory_fd == NULL) {
+        BVB_LOGE("E036_FAIL missing_external_memory_entry_points");
+        return false;
+    }
+    const VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+                                     VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                                     VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    const VkPhysicalDeviceExternalBufferInfo query_info = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_BUFFER_INFO,
+        .usage = usage,
+        .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
+    VkExternalBufferProperties properties = {
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_BUFFER_PROPERTIES,
+    };
+    query(physical_device, &query_info, &properties);
+    const VkExternalMemoryFeatureFlags required =
+        VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT |
+        VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT;
+    if ((properties.externalMemoryProperties.externalMemoryFeatures &
+         required) != required ||
+        (properties.externalMemoryProperties.compatibleHandleTypes &
+         VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT) == 0U) {
+        BVB_LOGE("E036_FAIL opaque_fd_features=%u compatible=%u",
+                 properties.externalMemoryProperties.externalMemoryFeatures,
+                 properties.externalMemoryProperties.compatibleHandleTypes);
+        return false;
+    }
+    const VkExternalMemoryBufferCreateInfo external_buffer_info = {
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
+        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
+    const VkBufferCreateInfo buffer_info = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = &external_buffer_info,
+        .size = BVB_E020_REGION_BYTES,
+        .usage = usage,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+    VkResult result = vkCreateBuffer(
+        state.device, &buffer_info, NULL, &state.external_buffer);
+    if (result != VK_SUCCESS) {
+        BVB_LOGE("E036_FAIL vkCreateBuffer=%d", (int)result);
+        return false;
+    }
+    VkMemoryRequirements requirements;
+    vkGetBufferMemoryRequirements(
+        state.device, state.external_buffer, &requirements);
+    VkPhysicalDeviceMemoryProperties memory_properties;
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+    bool found = false;
+    bool coherent_found = false;
+    for (uint32_t index = 0U; index < memory_properties.memoryTypeCount;
+         ++index) {
+        const VkMemoryPropertyFlags flags =
+            memory_properties.memoryTypes[index].propertyFlags;
+        if ((requirements.memoryTypeBits & (UINT32_C(1) << index)) == 0U ||
+            (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0U) {
+            continue;
+        }
+        const bool coherent =
+            (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0U;
+        if (!found || (coherent && !coherent_found)) {
+            state.external_memory_type_index = index;
+            state.external_memory_property_flags = flags;
+            found = true;
+            coherent_found = coherent;
+        }
+    }
+    if (!found) {
+        BVB_LOGE("E036_FAIL no_host_visible_memory_type bits=%u",
+                 requirements.memoryTypeBits);
+        return false;
+    }
+    const bool dedicated_only =
+        (properties.externalMemoryProperties.externalMemoryFeatures &
+         VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT) != 0U;
+    const VkMemoryDedicatedAllocateInfo dedicated_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
+        .buffer = state.external_buffer,
+    };
+    const VkExportMemoryAllocateInfo export_info = {
+        .sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO,
+        .pNext = dedicated_only ? &dedicated_info : NULL,
+        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
+    const VkMemoryAllocateInfo allocation_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .pNext = &export_info,
+        .allocationSize = requirements.size,
+        .memoryTypeIndex = state.external_memory_type_index,
+    };
+    result = vkAllocateMemory(
+        state.device, &allocation_info, NULL, &state.external_memory);
+    if (result == VK_SUCCESS) {
+        result = vkBindBufferMemory(
+            state.device, state.external_buffer, state.external_memory, 0U);
+    }
+    void *mapped = NULL;
+    if (result == VK_SUCCESS) {
+        result = vkMapMemory(state.device, state.external_memory, 0U,
+                             VK_WHOLE_SIZE, 0U, &mapped);
+    }
+    if (result != VK_SUCCESS || mapped == NULL) {
+        BVB_LOGE("E036_FAIL export_memory_setup=%d", (int)result);
+        return false;
+    }
+    for (uint32_t index = 0U; index < BVB_E020_REGION_BYTES; ++index) {
+        ((uint8_t *)mapped)[index] =
+            (uint8_t)(index ^ (index >> 4U) ^ UINT32_C(0x5a));
+    }
+    if (!coherent_found) {
+        const VkMappedMemoryRange range = {
+            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .memory = state.external_memory,
+            .offset = 0U,
+            .size = VK_WHOLE_SIZE,
+        };
+        result = vkFlushMappedMemoryRanges(state.device, 1U, &range);
+    }
+    vkUnmapMemory(state.device, state.external_memory);
+    if (result != VK_SUCCESS) {
+        BVB_LOGE("E036_FAIL vkFlushMappedMemoryRanges=%d", (int)result);
+        return false;
+    }
+    state.external_allocation_size = requirements.size;
+    BVB_LOGI("E036_EXPORT_READY allocation=%llu type=%u flags=%u bytes=%u",
+             (unsigned long long)state.external_allocation_size,
+             state.external_memory_type_index,
+             state.external_memory_property_flags, BVB_E020_REGION_BYTES);
+    return true;
 }
 
 static VkExtent2D choose_extent(const VkSurfaceCapabilitiesKHR *capabilities,
@@ -1181,6 +1408,7 @@ static bool create_renderer(ANativeWindow *window) {
     static const char *const instance_extensions[] = {
         VK_KHR_SURFACE_EXTENSION_NAME,
         VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
     };
     const VkApplicationInfo application_info = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -1192,7 +1420,7 @@ static bool create_renderer(ANativeWindow *window) {
     const VkInstanceCreateInfo instance_info = {
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &application_info,
-        .enabledExtensionCount = 2,
+        .enabledExtensionCount = 3,
         .ppEnabledExtensionNames = instance_extensions,
     };
     VkResult result = vkCreateInstance(&instance_info, NULL, &state.instance);
@@ -1227,7 +1455,11 @@ static bool create_renderer(ANativeWindow *window) {
     }
     VkPhysicalDevice physical_device = devices[0];
     if (!has_device_extension(physical_device,
-                              VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
+                              VK_KHR_SWAPCHAIN_EXTENSION_NAME) ||
+        !has_device_extension(physical_device,
+                              VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME) ||
+        !has_device_extension(physical_device,
+                              VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)) {
         BVB_LOGE("E016_FAIL required_device_extension");
         return false;
     }
@@ -1327,12 +1559,14 @@ static bool create_renderer(ANativeWindow *window) {
     };
     static const char *const device_extensions[] = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
     };
     const VkDeviceCreateInfo device_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .queueCreateInfoCount = 1,
         .pQueueCreateInfos = &queue_info,
-        .enabledExtensionCount = 1,
+        .enabledExtensionCount = 3,
         .ppEnabledExtensionNames = device_extensions,
     };
     result = vkCreateDevice(physical_device, &device_info, NULL,
@@ -1342,6 +1576,10 @@ static bool create_renderer(ANativeWindow *window) {
         return false;
     }
     vkGetDeviceQueue(state.device, queue_family_index, 0, &state.queue);
+    (void)pthread_mutex_lock(&external_memory_mutex);
+    const bool external_memory_ready = create_external_memory(physical_device);
+    (void)pthread_mutex_unlock(&external_memory_mutex);
+    if (!external_memory_ready) return false;
 
     VkExtent2D extent = choose_extent(&capabilities, window);
     const VkSwapchainCreateInfoKHR swapchain_info = {

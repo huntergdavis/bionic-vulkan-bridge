@@ -81,7 +81,7 @@ int main(void) {
     };
     CHECK(bvb_protocol_encode_header(wire, &last_opcode_header) == 0);
     CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
-    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_MEMORY_READ);
+    CHECK(decoded.opcode == BVB_OPCODE_EXTERNAL_MEMORY_IMPORT_TEST);
 
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
@@ -112,6 +112,24 @@ int main(void) {
     CHECK(response_decoded.service_flags == 3U);
     CHECK(response_decoded.pointer_bits == 64U);
     CHECK(response_decoded.page_size == 4096U);
+
+    const struct bvb_external_memory_import_request external_import = {
+        .allocation_size = 8192U,
+        .memory_type_index = 4U,
+        .buffer_bytes = 4096U,
+    };
+    uint8_t external_import_wire[BVB_EXTERNAL_MEMORY_IMPORT_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_external_memory_import_request(
+              external_import_wire, &external_import) == 0);
+    struct bvb_external_memory_import_request external_import_decoded;
+    CHECK(bvb_protocol_decode_external_memory_import_request(
+              external_import_wire, &external_import_decoded) == 0);
+    CHECK(external_import_decoded.allocation_size == 8192U);
+    CHECK(external_import_decoded.memory_type_index == 4U);
+    CHECK(external_import_decoded.buffer_bytes == 4096U);
+    bvb_wire_put_u32(external_import_wire + 8, 32U);
+    CHECK(bvb_protocol_decode_external_memory_import_request(
+              external_import_wire, &external_import_decoded) == -EPROTO);
 
     const struct bvb_vulkan_global_info global_info = {
         .loader_api_version = UINT32_C(0x00403000),

@@ -30,7 +30,10 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        if (!SharedRegionClient.ACTION_REQUEST.equals(intent.getAction())) {
+        boolean external = SharedRegionClient.ACTION_EXTERNAL_MEMORY.equals(
+                intent.getAction());
+        if (!external &&
+                !SharedRegionClient.ACTION_REQUEST.equals(intent.getAction())) {
             return;
         }
         Bundle request = intent.getBundleExtra(SharedRegionClient.EXTRA_REQUEST);
@@ -43,7 +46,16 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
             return;
         }
 
-        int descriptor = SharedRegionProvider.nativeOpenRegion(token);
+        long[] externalResult = external
+                ? SharedRegionProvider.nativeOpenExternalMemory(token)
+                : null;
+        int descriptor = external
+                ? (externalResult == null || externalResult.length != 5 ||
+                   externalResult[0] != 0
+                        ? (externalResult == null || externalResult.length == 0
+                                ? -22 : (int)externalResult[0])
+                        : (int)externalResult[1])
+                : SharedRegionProvider.nativeOpenRegion(token);
         ParcelFileDescriptor region = descriptor < 0
                 ? null
                 : ParcelFileDescriptor.adoptFd(descriptor);
@@ -53,6 +65,11 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
             data.writeInterfaceToken(SharedRegionClient.CALLBACK_DESCRIPTOR);
             data.writeInt(descriptor < 0 ? descriptor : 0);
             if (region != null) {
+                if (external) {
+                    data.writeLong(externalResult[2]);
+                    data.writeInt((int)externalResult[3]);
+                    data.writeInt((int)externalResult[4]);
+                }
                 region.writeToParcel(data, 0);
             }
             if (!callback.transact(SharedRegionClient.TRANSACTION_DELIVER,

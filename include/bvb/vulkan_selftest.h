@@ -63,6 +63,12 @@ int bvb_vulkan_batch_context_external_memory_test(
     struct bvb_vulkan_batch_context *context,
     struct bvb_vulkan_external_memory_result *result,
     char *error, size_t error_size);
+/* Consumes external_fd on every return path. */
+int bvb_vulkan_batch_context_import_external_memory_fd(
+    struct bvb_vulkan_batch_context *context, int external_fd,
+    uint64_t allocation_size, uint32_t memory_type_index,
+    uint32_t buffer_bytes, struct bvb_vulkan_external_memory_result *result,
+    char *error, size_t error_size);
 void bvb_vulkan_batch_context_destroy(
     struct bvb_vulkan_batch_context *context);
 
