@@ -37,6 +37,7 @@ public final class SharedRegionClient extends Binder {
     private static final int INTENT_SENDER_BROADCAST = 1;
     private static final int USER_ID_RANGE = 100000;
     private static final long CALLBACK_TIMEOUT_NS = 10000000000L;
+    private static final int RELAY_COMPLETION_TIMEOUT_MS = 300000;
     private static final int PROTOCOL_MAGIC = 0x31425642;
     private static final int PROTOCOL_VERSION = 1;
     private static final int PROTOCOL_REQUEST = 1;
@@ -248,7 +249,7 @@ public final class SharedRegionClient extends Binder {
         try {
             socket.connect(new LocalSocketAddress(
                     socketName, LocalSocketAddress.Namespace.ABSTRACT));
-            socket.setSoTimeout(10000);
+            socket.setSoTimeout(RELAY_COMPLETION_TIMEOUT_MS);
             socket.setFileDescriptorsForSend(new FileDescriptor[] {
                     descriptor.getFileDescriptor()
             });
