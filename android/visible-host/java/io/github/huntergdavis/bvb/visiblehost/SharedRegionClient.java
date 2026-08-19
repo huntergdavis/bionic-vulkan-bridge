@@ -246,9 +246,9 @@ public final class SharedRegionClient extends Binder {
         LocalSocket socket = new LocalSocket();
         long started = System.nanoTime();
         try {
-            socket.setSoTimeout(10000);
             socket.connect(new LocalSocketAddress(
                     socketName, LocalSocketAddress.Namespace.ABSTRACT));
+            socket.setSoTimeout(10000);
             socket.setFileDescriptorsForSend(new FileDescriptor[] {
                     descriptor.getFileDescriptor()
             });
