@@ -24,6 +24,8 @@ grun -s gcc -std=c17 -O2 -Wall -Wextra -Werror \
     -I"$project_dir/include" \
     "$project_dir/src/protocol.c" \
     "$project_dir/src/transport.c" \
+    "$project_dir/src/handle.c" \
+    "$project_dir/src/command_batch.c" \
     "$project_dir/src/bridge_client.c" \
     -o "$glibc_client"
 
@@ -72,13 +74,43 @@ end_ns=$(date +%s%N)
 wait "$service_pid"
 service_pid=
 
+batch_socket_path="$runtime_dir/batch.sock"
+"$build_dir/bvb-bridge-service" --socket "$batch_socket_path" --once \
+    > "$out_dir/cross-libc-batch-service.stdout" \
+    2> "$out_dir/cross-libc-batch-service.stderr" &
+service_pid=$!
+
+attempt=0
+while [ ! -S "$batch_socket_path" ] && kill -0 "$service_pid" 2>/dev/null; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -ge 100 ]; then
+        printf 'Bionic batch service readiness timed out\n' >&2
+        exit 4
+    fi
+    sleep 0.05
+done
+if [ ! -S "$batch_socket_path" ]; then
+    printf 'Bionic batch service exited before creating its socket\n' >&2
+    exit 4
+fi
+
+batch_start_ns=$(date +%s%N)
+grun "$glibc_client" --socket "$batch_socket_path" \
+    --vulkan-batch-selftest \
+    > "$out_dir/cross-libc-batch.json" \
+    2> "$out_dir/cross-libc-batch-client.stderr"
+batch_end_ns=$(date +%s%N)
+wait "$service_pid"
+service_pid=
+
 "$build_dir/bvb-vulkan-probe" > "$out_dir/direct-vulkan-caps.json"
 "$build_dir/bvb-vulkan-selftest" > "$out_dir/direct-vulkan-selftest.json"
 
 python - \
     "$out_dir/cross-libc-handshake.json" \
     "$out_dir/direct-vulkan-caps.json" \
-    "$out_dir/direct-vulkan-selftest.json" <<'PY'
+    "$out_dir/direct-vulkan-selftest.json" \
+    "$out_dir/cross-libc-batch.json" <<'PY'
 import json
 import pathlib
 import sys
@@ -86,6 +118,7 @@ import sys
 bridged = json.loads(pathlib.Path(sys.argv[1]).read_text())
 direct = json.loads(pathlib.Path(sys.argv[2]).read_text())
 direct_selftest = json.loads(pathlib.Path(sys.argv[3]).read_text())
+batched = json.loads(pathlib.Path(sys.argv[4]).read_text())
 assert bridged["schema_version"] == 1
 assert bridged["protocol_version"] == 1
 assert bridged["bionic_service"] is True
@@ -143,7 +176,17 @@ print(
     "direct_submit_wait_elapsed_ns="
     f"{direct_selftest['submit_wait_elapsed_ns']}"
 )
+batch_selftest = batched["vulkan_batch_selftest"]
+for field in selftest_fields:
+    assert batch_selftest[field] == direct_selftest[field], field
+assert batch_selftest["mismatched_words"] == 0
+print("batched_command_selftest_parity=PASS")
+print(
+    "batched_submit_wait_elapsed_ns="
+    f"{batch_selftest['submit_wait_elapsed_ns']}"
+)
 PY
 
 printf 'bridge_caps_elapsed_ns=%s\n' "$((end_ns - start_ns))"
+printf 'bridge_batch_elapsed_ns=%s\n' "$((batch_end_ns - batch_start_ns))"
 printf 'glibc_client=%s\n' "$glibc_client"
