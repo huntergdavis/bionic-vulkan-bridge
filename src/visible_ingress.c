@@ -44,6 +44,15 @@ struct bvb_visible_ingress {
     uint8_t token[BVB_LIFECYCLE_TOKEN_SIZE];
 };
 
+static bool token_is_nonzero(
+    const uint8_t token[BVB_LIFECYCLE_TOKEN_SIZE]) {
+    uint8_t combined = 0U;
+    for (size_t index = 0U; index < BVB_LIFECYCLE_TOKEN_SIZE; ++index) {
+        combined |= token[index];
+    }
+    return combined != 0U;
+}
+
 static int request_status(const struct bvb_protocol_packet *request,
                           uint16_t opcode, uint32_t payload_length) {
     if (request->header.version != BVB_PROTOCOL_VERSION ||
@@ -240,7 +249,8 @@ int bvb_visible_ingress_create(
     size_t socket_name_length,
     const uint8_t token[BVB_LIFECYCLE_TOKEN_SIZE]) {
     if (output == NULL || socket_name == NULL || socket_name_length == 0U ||
-        socket_name_length > BVB_VISIBLE_ABSTRACT_NAME_MAX || token == NULL) {
+        socket_name_length > BVB_VISIBLE_ABSTRACT_NAME_MAX || token == NULL ||
+        !token_is_nonzero(token)) {
         return -EINVAL;
     }
     *output = NULL;

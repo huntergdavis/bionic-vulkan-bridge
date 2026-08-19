@@ -2,6 +2,7 @@
 
 #include <bvb/command_batch.h>
 #include <bvb/lifecycle.h>
+#include <bvb/visible_ingress.h>
 
 #include <android/log.h>
 #include <android/native_activity.h>
@@ -81,6 +82,7 @@ struct bvb_renderer_control {
 
 static struct bvb_visible_state state;
 static struct bvb_lifecycle_client lifecycle;
+static struct bvb_visible_ingress *visible_ingress;
 static pthread_mutex_t lifecycle_mutex = PTHREAD_MUTEX_INITIALIZER;
 static struct bvb_renderer_control renderer = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
@@ -116,6 +118,7 @@ static void configure_lifecycle(ANativeActivity *activity) {
                                            "(Ljava/lang/String;)Ljava/lang/String;");
     jstring port_key = (*env)->NewStringUTF(env, "bvb_activity_port");
     jstring token_key = (*env)->NewStringUTF(env, "bvb_activity_token");
+    jstring socket_key = (*env)->NewStringUTF(env, "bvb_visible_socket");
     jint port = get_int_extra == NULL || port_key == NULL
                     ? 0
                     : (*env)->CallIntMethod(env, intent, get_int_extra, port_key,
@@ -124,15 +127,31 @@ static void configure_lifecycle(ANativeActivity *activity) {
                                ? NULL
                                : (jstring)(*env)->CallObjectMethod(
                                      env, intent, get_string_extra, token_key);
-    const char *token = token_string == NULL
-                            ? NULL
-                            : (*env)->GetStringUTFChars(env, token_string, NULL);
-    if (!(*env)->ExceptionCheck(env) && port > 0 && port <= UINT16_MAX &&
-        token != NULL &&
-        bvb_lifecycle_token_from_hex(token, lifecycle.token) == 0) {
+    jstring socket_string = get_string_extra == NULL || socket_key == NULL
+                                ? NULL
+                                : (jstring)(*env)->CallObjectMethod(
+                                      env, intent, get_string_extra,
+                                      socket_key);
+    bool jni_ok = !(*env)->ExceptionCheck(env);
+    const char *token =
+        !jni_ok || token_string == NULL
+            ? NULL
+            : (*env)->GetStringUTFChars(env, token_string, NULL);
+    jni_ok = jni_ok && !(*env)->ExceptionCheck(env);
+    const char *socket_name =
+        !jni_ok || socket_string == NULL
+            ? NULL
+            : (*env)->GetStringUTFChars(env, socket_string, NULL);
+    jni_ok = jni_ok && !(*env)->ExceptionCheck(env);
+    uint8_t parsed_token[BVB_LIFECYCLE_TOKEN_SIZE];
+    const bool token_valid = jni_ok && token != NULL &&
+                             bvb_lifecycle_token_from_hex(token,
+                                                          parsed_token) == 0;
+    if (token_valid && port > 0 && port <= UINT16_MAX) {
         lifecycle.configured = true;
         lifecycle.port = (uint16_t)port;
         lifecycle.next_sequence = 1;
+        memcpy(lifecycle.token, parsed_token, sizeof(lifecycle.token));
         BVB_LOGI("E010_LIFECYCLE_CONFIGURED port=%u", (unsigned int)port);
     } else {
         if ((*env)->ExceptionCheck(env)) {
@@ -140,11 +159,33 @@ static void configure_lifecycle(ANativeActivity *activity) {
         }
         BVB_LOGI("E010_LIFECYCLE_DISABLED");
     }
+    if (token_valid && socket_name != NULL && socket_name[0] != '\0' &&
+        visible_ingress == NULL) {
+        int result = bvb_visible_ingress_create(
+            &visible_ingress, (const uint8_t *)socket_name,
+            strlen(socket_name), parsed_token);
+        if (result == 0) {
+            BVB_LOGI("E018_INGRESS_READY name=%s", socket_name);
+        } else {
+            BVB_LOGE("E018_INGRESS_FAIL status=%d", result);
+        }
+    } else if (socket_name == NULL || socket_name[0] == '\0') {
+        BVB_LOGI("E018_INGRESS_DISABLED");
+    }
+    if (socket_name != NULL) {
+        (*env)->ReleaseStringUTFChars(env, socket_string, socket_name);
+    }
     if (token != NULL) {
         (*env)->ReleaseStringUTFChars(env, token_string, token);
     }
     if (token_string != NULL) {
         (*env)->DeleteLocalRef(env, token_string);
+    }
+    if (socket_string != NULL) {
+        (*env)->DeleteLocalRef(env, socket_string);
+    }
+    if (socket_key != NULL) {
+        (*env)->DeleteLocalRef(env, socket_key);
     }
     if (token_key != NULL) {
         (*env)->DeleteLocalRef(env, token_key);
@@ -559,7 +600,7 @@ static int build_triangle_batch(uint8_t *batch, size_t capacity,
 static int replay_triangle_batch(
     const uint8_t *batch, size_t length, VkCommandBuffer command_buffer,
     VkImageView image_view, VkPipeline pipeline, VkRenderPass render_pass,
-    VkFramebuffer framebuffer) {
+    VkFramebuffer framebuffer, VkExtent2D extent) {
     struct bvb_command_batch_info info;
     int result = bvb_command_batch_validate(batch, length, &info);
     if (result != 0 || info.command_count != 6U ||
@@ -627,8 +668,8 @@ static int replay_triangle_batch(
                     (uint32_t)VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL ||
                 command.load_op != (uint32_t)VK_ATTACHMENT_LOAD_OP_CLEAR ||
                 command.store_op != (uint32_t)VK_ATTACHMENT_STORE_OP_STORE ||
-                command.layer_count != 1U || command.width == 0U ||
-                command.height == 0U) {
+                command.layer_count != 1U || command.width != extent.width ||
+                command.height != extent.height) {
                 return -ENOTSUP;
             }
             const VkClearValue clear_value = {
@@ -669,8 +710,12 @@ static int replay_triangle_batch(
         } else if (index == 2U && record.opcode == BVB_COMMAND_SET_VIEWPORT) {
             struct bvb_set_viewport_command command;
             result = bvb_command_decode_set_viewport(&record, &command);
-            if (result != 0) {
-                return result;
+            if (result != 0 || command.x != 0.0F || command.y != 0.0F ||
+                command.width != (float)extent.width ||
+                command.height != (float)extent.height ||
+                command.minimum_depth != 0.0F ||
+                command.maximum_depth != 1.0F) {
+                return result != 0 ? result : -ENOTSUP;
             }
             const VkViewport viewport = {
                 .x = command.x,
@@ -684,8 +729,10 @@ static int replay_triangle_batch(
         } else if (index == 3U && record.opcode == BVB_COMMAND_SET_SCISSOR) {
             struct bvb_set_scissor_command command;
             result = bvb_command_decode_set_scissor(&record, &command);
-            if (result != 0) {
-                return result;
+            if (result != 0 || command.x != 0 || command.y != 0 ||
+                command.width != extent.width ||
+                command.height != extent.height) {
+                return result != 0 ? result : -ENOTSUP;
             }
             const VkRect2D scissor = {
                 .offset = {command.x, command.y},
@@ -695,8 +742,10 @@ static int replay_triangle_batch(
         } else if (index == 4U && record.opcode == BVB_COMMAND_DRAW) {
             struct bvb_draw_command command;
             result = bvb_command_decode_draw(&record, &command);
-            if (result != 0) {
-                return result;
+            if (result != 0 || command.vertex_count != 3U ||
+                command.instance_count != 1U || command.first_vertex != 0U ||
+                command.first_instance != 0U) {
+                return result != 0 ? result : -ENOTSUP;
             }
             vkCmdDraw(command_buffer, command.vertex_count,
                       command.instance_count, command.first_vertex,
@@ -711,6 +760,16 @@ static int replay_triangle_batch(
     return bvb_command_batch_next(&iterator, &record) == 1 ? 0 : -EPROTO;
 }
 
+static void complete_external_batch(bool claimed, int status) {
+    if (!claimed || visible_ingress == NULL) {
+        return;
+    }
+    int result = bvb_visible_ingress_complete(visible_ingress, status);
+    if (result != 0) {
+        BVB_LOGE("E018_COMPLETE_FAIL status=%d result=%d", status, result);
+    }
+}
+
 static bool create_renderer(ANativeWindow *window) {
     static const char *const instance_extensions[] = {
         VK_KHR_SURFACE_EXTENSION_NAME,
@@ -719,7 +778,7 @@ static bool create_renderer(ANativeWindow *window) {
     const VkApplicationInfo application_info = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .pApplicationName = "bvb-visible-host",
-        .applicationVersion = VK_MAKE_API_VERSION(0, 0, 16, 0),
+        .applicationVersion = VK_MAKE_API_VERSION(0, 0, 18, 0),
         .pEngineName = "none",
         .apiVersion = VK_API_VERSION_1_1,
     };
@@ -1146,12 +1205,36 @@ static bool create_renderer(ANativeWindow *window) {
     }
     uint8_t triangle_batch[512];
     size_t triangle_batch_length = 0U;
-    int batch_status = build_triangle_batch(
-        triangle_batch, sizeof(triangle_batch), extent,
-        &triangle_batch_length);
+    int batch_status = build_triangle_batch(triangle_batch,
+                                            sizeof(triangle_batch), extent,
+                                            &triangle_batch_length);
     if (batch_status != 0) {
         BVB_LOGE("E016_FAIL batch_build=%d", batch_status);
         return false;
+    }
+    const uint8_t *render_batch = triangle_batch;
+    size_t render_batch_length = triangle_batch_length;
+    uint64_t external_sequence = 0U;
+    bool external_claimed = false;
+    if (visible_ingress != NULL) {
+        batch_status = bvb_visible_ingress_wait_batch(
+            visible_ingress, 10000U, &render_batch, &render_batch_length,
+            &external_sequence);
+        if (batch_status == 0) {
+            external_claimed = true;
+            BVB_LOGI("E018_BATCH_CLAIM sequence=%llu bytes=%zu",
+                     (unsigned long long)external_sequence,
+                     render_batch_length);
+        } else if (batch_status == -ETIMEDOUT) {
+            render_batch = triangle_batch;
+            render_batch_length = triangle_batch_length;
+            BVB_LOGE("E018_BATCH_TIMEOUT fallback=local");
+        } else {
+            render_batch = triangle_batch;
+            render_batch_length = triangle_batch_length;
+            BVB_LOGE("E018_BATCH_WAIT_FAIL status=%d fallback=local",
+                     batch_status);
+        }
     }
     const VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -1160,6 +1243,7 @@ static bool create_renderer(ANativeWindow *window) {
     result = vkBeginCommandBuffer(command_buffer, &begin_info);
     if (result != VK_SUCCESS) {
         BVB_LOGE("E008_FAIL command_begin=%d", (int)result);
+        complete_external_batch(external_claimed, -EIO);
         return false;
     }
     const VkImageSubresourceRange range = {
@@ -1183,11 +1267,11 @@ static bool create_renderer(ANativeWindow *window) {
                          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0,
                          NULL, 0, NULL, 1, &to_render);
     batch_status = replay_triangle_batch(
-        triangle_batch, triangle_batch_length, command_buffer,
-        state.image_view, state.pipeline, state.render_pass,
-        state.framebuffer);
+        render_batch, render_batch_length, command_buffer, state.image_view,
+        state.pipeline, state.render_pass, state.framebuffer, extent);
     if (batch_status != 0) {
         BVB_LOGE("E016_FAIL batch_replay=%d", batch_status);
+        complete_external_batch(external_claimed, batch_status);
         return false;
     }
     VkImageMemoryBarrier to_present = {
@@ -1207,6 +1291,7 @@ static bool create_renderer(ANativeWindow *window) {
     result = vkEndCommandBuffer(command_buffer);
     if (result != VK_SUCCESS) {
         BVB_LOGE("E008_FAIL command_end=%d", (int)result);
+        complete_external_batch(external_claimed, -EIO);
         return false;
     }
 
@@ -1225,6 +1310,7 @@ static bool create_renderer(ANativeWindow *window) {
     result = vkQueueSubmit(state.queue, 1, &submit_info, VK_NULL_HANDLE);
     if (result != VK_SUCCESS) {
         BVB_LOGE("E008_FAIL submit=%d", (int)result);
+        complete_external_batch(external_claimed, -EIO);
         return false;
     }
     const VkPresentInfoKHR present_info = {
@@ -1238,16 +1324,25 @@ static bool create_renderer(ANativeWindow *window) {
     result = vkQueuePresentKHR(state.queue, &present_info);
     if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
         BVB_LOGE("E008_FAIL present=%d", (int)result);
+        complete_external_batch(external_claimed, -EIO);
         return false;
     }
     result = vkQueueWaitIdle(state.queue);
     if (result != VK_SUCCESS) {
         BVB_LOGE("E008_FAIL queue_idle=%d", (int)result);
+        complete_external_batch(external_claimed, -EIO);
         return false;
     }
+    complete_external_batch(external_claimed, 0);
     state.window = window;
-    BVB_LOGI("E016_PASS batch_bytes=%zu commands=6 backend=render_pass",
-             triangle_batch_length);
+    BVB_LOGI("E016_PASS batch_bytes=%zu commands=6 backend=render_pass "
+             "source=%s",
+             render_batch_length, external_claimed ? "glibc" : "local");
+    if (external_claimed) {
+        BVB_LOGI("E018_PASS sequence=%llu bytes=%zu",
+                 (unsigned long long)external_sequence,
+                 render_batch_length);
+    }
     BVB_LOGI("E008_PASS width=%u height=%u images=%u index=%u format=%d",
              extent.width, extent.height, image_count, image_index,
              (int)surface_format.format);

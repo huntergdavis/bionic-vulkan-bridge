@@ -11,6 +11,9 @@ lifecycle_source="$project_dir/src/lifecycle.c"
 protocol_source="$project_dir/src/protocol.c"
 handle_source="$project_dir/src/handle.c"
 batch_source="$project_dir/src/command_batch.c"
+transport_source="$project_dir/src/transport.c"
+visible_batch_source="$project_dir/src/visible_batch.c"
+visible_ingress_source="$project_dir/src/visible_ingress.c"
 vulkan_headers="$project_dir/build/_deps/vulkanheaders-src/include"
 vertex_shader="$project_dir/android/visible-host/shaders/triangle.vert"
 fragment_shader="$project_dir/android/visible-host/shaders/triangle.frag"
@@ -33,6 +36,7 @@ for command_name in clang aapt zipalign apksigner keytool readelf \
 done
 for required_file in "$manifest" "$source_file" "$lifecycle_source" \
     "$protocol_source" "$handle_source" "$batch_source" \
+    "$transport_source" "$visible_batch_source" "$visible_ingress_source" \
     "$vertex_shader" "$fragment_shader" \
     "$project_dir/include/bvb/lifecycle.h" \
     "$project_dir/include/bvb/command_batch.h" "$framework_resources" \
@@ -59,7 +63,8 @@ clang -std=c17 -O3 -DNDEBUG -fPIC -fvisibility=hidden \
     -shared -Wl,-soname,libbvb-visible-host.so \
     -I"$project_dir/include" -I"$vulkan_headers" -I"$shader_dir" \
     "$source_file" "$lifecycle_source" "$protocol_source" \
-    "$handle_source" "$batch_source" \
+    "$handle_source" "$batch_source" "$transport_source" \
+    "$visible_batch_source" "$visible_ingress_source" \
     /system/lib64/libandroid.so /system/lib64/liblog.so \
     /system/lib64/libvulkan.so \
     -o "$native_dir/libbvb-visible-host.so"
