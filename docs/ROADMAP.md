@@ -15,7 +15,7 @@
 - [x] Build a Bionic service in Termux
 - [x] Build a glibc client with the existing native glibc toolchain
 - [ ] Validate version negotiation, error handling, and reconnect behavior
-- [ ] Benchmark round-trip and bulk shared-memory throughput
+- [ ] Benchmark warm round-trip and shared-memory notification/replay throughput
 
 ## 0.3 — Capability parity
 
@@ -47,8 +47,9 @@
 - [x] Generate registry-backed global/instance/device ownership metadata
 - [x] Implement typed proxy-handle ownership
 - [x] Replay a bounded client-built command batch on the Android driver
+- [x] Pass and map a sealed shared-memory command region across libc
 - [ ] Generate executable Vulkan entry-point dispatch
-- [ ] Implement external/shared memory and synchronization strategy
+- [ ] Implement GPU external-memory and synchronization strategy
 - [ ] Reach a rendered test triangle
 - [ ] Reach a DXVK sample
 - [ ] Run the fixed native-resolution Tomb Raider 2013 benchmark

@@ -564,3 +564,77 @@ and verifies GPU output. The packet-sized 104-byte proof is not the final data
 plane. The next gate is a shared-memory batch region with sequence/ownership
 validation and measured warm throughput, followed by generated triangle
 dispatch.
+
+## E013 — sealed shared-memory batch replay on Adreno (2026-08-18)
+
+Status: passed on hardware at code commit
+`d942b9a62b99232634b37d921012a3ad2d42ae2b`.
+
+Hypothesis: the glibc client can pass a command region to Bionic once, then
+request replay using only bounded metadata while the command bytes remain out
+of the socket payload. The Bionic service must validate ownership, generation,
+bounds, and sequence before replaying the same deterministic GPU operation as
+E012.
+
+Method: the client created a 4,096-byte memfd with
+`MFD_CLOEXEC | MFD_ALLOW_SEALING`, placed the 104-byte E012 transfer batch at
+offset 64, and sealed the file against growth and shrinkage. It sent that file
+descriptor once with `SCM_RIGHTS` in a 16-byte setup payload. The Bionic
+service verified the regular-file size and page alignment, mapped it read-only,
+and associated it with a nonzero random generation for the authenticated
+connection. Execution used a 24-byte payload containing only generation,
+offset, length, and monotonically increasing sequence; with the normal 24-byte
+header, the request was 48 bytes. No command bytes or pointers crossed in the
+execute packet.
+
+The service rejected duplicate setup, stale generation, invalid bounds,
+non-increasing sequence, and unexpected descriptors. It resolved the typed
+command-buffer and buffer IDs to real Bionic-owned Vulkan handles, replayed the
+fill and host-read barrier through `/system/lib64/libvulkan.so`, submitted on
+Adreno 730, and verified all 1,024 32-bit words in the 4 KiB buffer.
+
+Result: the shared path had zero mismatched words. Its GPU submit-plus-wait
+observation was 4,001,042 ns, compared with 3,324,843 ns for the packet batch,
+3,647,344 ns for the standalone direct control, and 4,366,980 ns for the
+established bridged control in the same harness invocation. Total client/service
+elapsed observations were 192,158,906 ns for shared memory, 197,819,947 ns for
+the packet batch, and 210,582,448 ns for the established bridge.
+
+Those are single cold correctness observations, not a speed conclusion. Every
+path still includes fresh processes plus Vulkan instance, device, queue,
+allocation, submission, and teardown. E013 proves the intended data-plane
+shape; it does not yet measure steady-state notification or replay overhead.
+
+All eight Android-supported CTest cases passed, including real memfd descriptor
+transport and fake-driver bridge integration. All ten host tests also passed.
+The glibc client requests
+`/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1`; the Bionic
+service requests `/system/bin/linker64`. Both shared client and service stderr
+artifacts were empty. Termux:X11 PID 27923 remained alive after the test; no
+Steam-named process was resident when post-run state was inspected.
+
+Evidence identities:
+
+- result: `docs/evidence/e013-cross-libc-shared-batch.json`, 965 bytes,
+  SHA-256
+  `659c660297a314e129a0f3dc922b8517a7a7ea072e50aad3719389f7ec86bf2c`
+- glibc client: 76,424 bytes, SHA-256
+  `330dd56a34308b08a106c2fe84efa282b2c2f0815b517c24d4b4f02eb1245c63`
+- Bionic service: 53,664 bytes, SHA-256
+  `2235f78ce51ae841c7ae3d861bb7e6737864c86c348e1ab7b9ef3a44e13da320`
+- shared client and service stderr: empty, SHA-256
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
+
+The required recall queries—`Termux Android Bionic glibc memfd SCM_RIGHTS
+shared memory Vulkan batch` and `Android Bionic memfd_create undeclared
+SYS_memfd_create transport test`—returned no indexed implementation. E013
+reused E012's exact typed-handle batch and deterministic verification, E002's
+authenticated fixed-width transport, and Android/Linux's working
+`SYS_memfd_create` plus Unix descriptor passing.
+
+Conclusion: the command data plane no longer copies batch bytes through each
+execute request. The next speed gate is to keep the Bionic Vulkan
+instance/device/queue and handle table alive, replay multiple sequenced batches
+from the same mapping, and measure warm control, validation, replay, RSS, and
+thermal behavior. Generated game-facing dispatch and the visible triangle
+follow that persistent-context measurement.
