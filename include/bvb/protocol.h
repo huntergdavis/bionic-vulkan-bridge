@@ -48,6 +48,14 @@ enum {
     BVB_OPCODE_VULKAN_COMMAND_BUFFER_BEGIN = 31,
     BVB_OPCODE_VULKAN_COMMAND_BUFFER_END = 32,
     BVB_OPCODE_VULKAN_QUEUE_SUBMIT_COMMAND = 33,
+    BVB_OPCODE_VULKAN_BUFFER_CREATE = 34,
+    BVB_OPCODE_VULKAN_BUFFER_DESTROY = 35,
+    BVB_OPCODE_VULKAN_BUFFER_REQUIREMENTS = 36,
+    BVB_OPCODE_VULKAN_MEMORY_ALLOCATE = 37,
+    BVB_OPCODE_VULKAN_MEMORY_FREE = 38,
+    BVB_OPCODE_VULKAN_BUFFER_BIND = 39,
+    BVB_OPCODE_VULKAN_COMMAND_BUFFER_FILL = 40,
+    BVB_OPCODE_VULKAN_MEMORY_VERIFY_FILL = 41,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -85,6 +93,15 @@ enum {
     BVB_VULKAN_COMMAND_BUFFER_BEGIN_REQUEST_SIZE = 16,
     BVB_VULKAN_COMMAND_BUFFER_ID_SIZE = 8,
     BVB_VULKAN_QUEUE_SUBMIT_COMMAND_REQUEST_SIZE = 16,
+    BVB_VULKAN_BUFFER_CREATE_REQUEST_SIZE = 24,
+    BVB_VULKAN_OBJECT_CREATE_RESPONSE_SIZE = 16,
+    BVB_VULKAN_OBJECT_ID_SIZE = 8,
+    BVB_VULKAN_BUFFER_REQUIREMENTS_SIZE = 24,
+    BVB_VULKAN_MEMORY_ALLOCATE_REQUEST_SIZE = 24,
+    BVB_VULKAN_BUFFER_BIND_REQUEST_SIZE = 24,
+    BVB_VULKAN_COMMAND_BUFFER_FILL_REQUEST_SIZE = 40,
+    BVB_VULKAN_MEMORY_VERIFY_FILL_REQUEST_SIZE = 32,
+    BVB_VULKAN_MEMORY_VERIFY_FILL_RESPONSE_SIZE = 8,
     BVB_VULKAN_PHYSICAL_DEVICES_PREFIX_SIZE = 8,
     BVB_VULKAN_MAX_PHYSICAL_DEVICES = 8,
     BVB_SHARED_BATCH_MIN_BYTES = 4096,
@@ -236,6 +253,56 @@ struct bvb_vulkan_command_buffer_begin_request {
 struct bvb_vulkan_queue_submit_command_request {
     uint64_t queue_id;
     uint64_t command_buffer_id;
+};
+
+struct bvb_vulkan_buffer_create_request {
+    uint64_t device_id;
+    uint64_t size;
+    uint32_t usage;
+    uint32_t flags;
+};
+
+struct bvb_vulkan_object_create_response {
+    int32_t vulkan_result;
+    uint64_t object_id;
+};
+
+struct bvb_vulkan_buffer_requirements {
+    uint64_t size;
+    uint64_t alignment;
+    uint32_t memory_type_bits;
+};
+
+struct bvb_vulkan_memory_allocate_request {
+    uint64_t device_id;
+    uint64_t allocation_size;
+    uint32_t memory_type_index;
+};
+
+struct bvb_vulkan_buffer_bind_request {
+    uint64_t buffer_id;
+    uint64_t memory_id;
+    uint64_t offset;
+};
+
+struct bvb_vulkan_command_buffer_fill_request {
+    uint64_t command_buffer_id;
+    uint64_t buffer_id;
+    uint64_t offset;
+    uint64_t size;
+    uint32_t data;
+};
+
+struct bvb_vulkan_memory_verify_fill_request {
+    uint64_t memory_id;
+    uint64_t offset;
+    uint64_t size;
+    uint32_t expected_word;
+};
+
+struct bvb_vulkan_memory_verify_fill_response {
+    int32_t vulkan_result;
+    uint32_t mismatched_words;
 };
 
 /*
@@ -438,6 +505,62 @@ int bvb_protocol_encode_vulkan_queue_submit_command_request(
 int bvb_protocol_decode_vulkan_queue_submit_command_request(
     const uint8_t input[BVB_VULKAN_QUEUE_SUBMIT_COMMAND_REQUEST_SIZE],
     struct bvb_vulkan_queue_submit_command_request *request);
+int bvb_protocol_encode_vulkan_buffer_create_request(
+    uint8_t output[BVB_VULKAN_BUFFER_CREATE_REQUEST_SIZE],
+    const struct bvb_vulkan_buffer_create_request *request);
+int bvb_protocol_decode_vulkan_buffer_create_request(
+    const uint8_t input[BVB_VULKAN_BUFFER_CREATE_REQUEST_SIZE],
+    struct bvb_vulkan_buffer_create_request *request);
+int bvb_protocol_encode_vulkan_object_create_response(
+    uint8_t output[BVB_VULKAN_OBJECT_CREATE_RESPONSE_SIZE],
+    const struct bvb_vulkan_object_create_response *response,
+    uint8_t expected_type);
+int bvb_protocol_decode_vulkan_object_create_response(
+    const uint8_t input[BVB_VULKAN_OBJECT_CREATE_RESPONSE_SIZE],
+    struct bvb_vulkan_object_create_response *response,
+    uint8_t expected_type);
+int bvb_protocol_encode_vulkan_object_id(
+    uint8_t output[BVB_VULKAN_OBJECT_ID_SIZE], uint64_t object_id,
+    uint8_t expected_type);
+int bvb_protocol_decode_vulkan_object_id(
+    const uint8_t input[BVB_VULKAN_OBJECT_ID_SIZE], uint64_t *object_id,
+    uint8_t expected_type);
+int bvb_protocol_encode_vulkan_buffer_requirements(
+    uint8_t output[BVB_VULKAN_BUFFER_REQUIREMENTS_SIZE],
+    const struct bvb_vulkan_buffer_requirements *requirements);
+int bvb_protocol_decode_vulkan_buffer_requirements(
+    const uint8_t input[BVB_VULKAN_BUFFER_REQUIREMENTS_SIZE],
+    struct bvb_vulkan_buffer_requirements *requirements);
+int bvb_protocol_encode_vulkan_memory_allocate_request(
+    uint8_t output[BVB_VULKAN_MEMORY_ALLOCATE_REQUEST_SIZE],
+    const struct bvb_vulkan_memory_allocate_request *request);
+int bvb_protocol_decode_vulkan_memory_allocate_request(
+    const uint8_t input[BVB_VULKAN_MEMORY_ALLOCATE_REQUEST_SIZE],
+    struct bvb_vulkan_memory_allocate_request *request);
+int bvb_protocol_encode_vulkan_buffer_bind_request(
+    uint8_t output[BVB_VULKAN_BUFFER_BIND_REQUEST_SIZE],
+    const struct bvb_vulkan_buffer_bind_request *request);
+int bvb_protocol_decode_vulkan_buffer_bind_request(
+    const uint8_t input[BVB_VULKAN_BUFFER_BIND_REQUEST_SIZE],
+    struct bvb_vulkan_buffer_bind_request *request);
+int bvb_protocol_encode_vulkan_command_buffer_fill_request(
+    uint8_t output[BVB_VULKAN_COMMAND_BUFFER_FILL_REQUEST_SIZE],
+    const struct bvb_vulkan_command_buffer_fill_request *request);
+int bvb_protocol_decode_vulkan_command_buffer_fill_request(
+    const uint8_t input[BVB_VULKAN_COMMAND_BUFFER_FILL_REQUEST_SIZE],
+    struct bvb_vulkan_command_buffer_fill_request *request);
+int bvb_protocol_encode_vulkan_memory_verify_fill_request(
+    uint8_t output[BVB_VULKAN_MEMORY_VERIFY_FILL_REQUEST_SIZE],
+    const struct bvb_vulkan_memory_verify_fill_request *request);
+int bvb_protocol_decode_vulkan_memory_verify_fill_request(
+    const uint8_t input[BVB_VULKAN_MEMORY_VERIFY_FILL_REQUEST_SIZE],
+    struct bvb_vulkan_memory_verify_fill_request *request);
+int bvb_protocol_encode_vulkan_memory_verify_fill_response(
+    uint8_t output[BVB_VULKAN_MEMORY_VERIFY_FILL_RESPONSE_SIZE],
+    const struct bvb_vulkan_memory_verify_fill_response *response);
+int bvb_protocol_decode_vulkan_memory_verify_fill_response(
+    const uint8_t input[BVB_VULKAN_MEMORY_VERIFY_FILL_RESPONSE_SIZE],
+    struct bvb_vulkan_memory_verify_fill_response *response);
 
 void bvb_wire_put_u16(uint8_t *output, uint16_t value);
 void bvb_wire_put_u32(uint8_t *output, uint32_t value);

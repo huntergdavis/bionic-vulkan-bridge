@@ -103,5 +103,38 @@ int bvb_vulkan_global_context_queue_submit_command(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_queue_submit_command_request *request,
     int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_create_buffer(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_buffer_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_destroy_buffer(
+    struct bvb_vulkan_global_context *context, uint64_t buffer_id,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_get_buffer_requirements(
+    const struct bvb_vulkan_global_context *context, uint64_t buffer_id,
+    struct bvb_vulkan_buffer_requirements *requirements,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_allocate_memory(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_allocate_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_free_memory(
+    struct bvb_vulkan_global_context *context, uint64_t memory_id,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_bind_buffer_memory(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_buffer_bind_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_command_buffer_fill(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_command_buffer_fill_request *request,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_verify_memory_fill(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_verify_fill_request *request,
+    struct bvb_vulkan_memory_verify_fill_response *response,
+    char *error, size_t error_size);
 
 #endif

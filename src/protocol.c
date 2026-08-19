@@ -59,7 +59,7 @@ static int header_is_valid(const struct bvb_protocol_header *header) {
         return -EPROTO;
     }
     if (header->opcode < BVB_OPCODE_HELLO ||
-        header->opcode > BVB_OPCODE_VULKAN_QUEUE_SUBMIT_COMMAND) {
+        header->opcode > BVB_OPCODE_VULKAN_MEMORY_VERIFY_FILL) {
         return -EPROTO;
     }
     if (header->payload_length > BVB_PROTOCOL_MAX_PAYLOAD) {
@@ -772,6 +772,242 @@ int bvb_protocol_decode_vulkan_queue_submit_command_request(
         return -EPROTO;
     }
     *request = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_buffer_create_request(
+    uint8_t output[BVB_VULKAN_BUFFER_CREATE_REQUEST_SIZE],
+    const struct bvb_vulkan_buffer_create_request *request) {
+    if (output == NULL || request == NULL || request->size == 0U ||
+        !wire_id_is_type(request->device_id, 3U)) return -EINVAL;
+    bvb_wire_put_u64(output, request->device_id);
+    bvb_wire_put_u64(output + 8, request->size);
+    bvb_wire_put_u32(output + 16, request->usage);
+    bvb_wire_put_u32(output + 20, request->flags);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_buffer_create_request(
+    const uint8_t input[BVB_VULKAN_BUFFER_CREATE_REQUEST_SIZE],
+    struct bvb_vulkan_buffer_create_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    *request = (struct bvb_vulkan_buffer_create_request){
+        .device_id = bvb_wire_get_u64(input),
+        .size = bvb_wire_get_u64(input + 8),
+        .usage = bvb_wire_get_u32(input + 16),
+        .flags = bvb_wire_get_u32(input + 20),
+    };
+    return wire_id_is_type(request->device_id, 3U) && request->size != 0U
+               ? 0 : -EPROTO;
+}
+
+int bvb_protocol_encode_vulkan_object_create_response(
+    uint8_t output[BVB_VULKAN_OBJECT_CREATE_RESPONSE_SIZE],
+    const struct bvb_vulkan_object_create_response *response,
+    uint8_t expected_type) {
+    if (output == NULL || response == NULL ||
+        (response->vulkan_result == 0 &&
+         !wire_id_is_type(response->object_id, expected_type)) ||
+        (response->vulkan_result != 0 && response->object_id != 0U))
+        return -EINVAL;
+    memset(output, 0, BVB_VULKAN_OBJECT_CREATE_RESPONSE_SIZE);
+    bvb_wire_put_i32(output, response->vulkan_result);
+    bvb_wire_put_u64(output + 8, response->object_id);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_object_create_response(
+    const uint8_t input[BVB_VULKAN_OBJECT_CREATE_RESPONSE_SIZE],
+    struct bvb_vulkan_object_create_response *response,
+    uint8_t expected_type) {
+    if (input == NULL || response == NULL) return -EINVAL;
+    *response = (struct bvb_vulkan_object_create_response){
+        .vulkan_result = bvb_wire_get_i32(input),
+        .object_id = bvb_wire_get_u64(input + 8),
+    };
+    if (bvb_wire_get_u32(input + 4) != 0U ||
+        (response->vulkan_result == 0 &&
+         !wire_id_is_type(response->object_id, expected_type)) ||
+        (response->vulkan_result != 0 && response->object_id != 0U))
+        return -EPROTO;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_object_id(
+    uint8_t output[BVB_VULKAN_OBJECT_ID_SIZE], uint64_t object_id,
+    uint8_t expected_type) {
+    if (output == NULL || !wire_id_is_type(object_id, expected_type))
+        return -EINVAL;
+    bvb_wire_put_u64(output, object_id);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_object_id(
+    const uint8_t input[BVB_VULKAN_OBJECT_ID_SIZE], uint64_t *object_id,
+    uint8_t expected_type) {
+    if (input == NULL || object_id == NULL) return -EINVAL;
+    *object_id = bvb_wire_get_u64(input);
+    return wire_id_is_type(*object_id, expected_type) ? 0 : -EPROTO;
+}
+
+int bvb_protocol_encode_vulkan_buffer_requirements(
+    uint8_t output[BVB_VULKAN_BUFFER_REQUIREMENTS_SIZE],
+    const struct bvb_vulkan_buffer_requirements *requirements) {
+    if (output == NULL || requirements == NULL || requirements->size == 0U ||
+        requirements->alignment == 0U ||
+        requirements->memory_type_bits == 0U) return -EINVAL;
+    memset(output, 0, BVB_VULKAN_BUFFER_REQUIREMENTS_SIZE);
+    bvb_wire_put_u64(output, requirements->size);
+    bvb_wire_put_u64(output + 8, requirements->alignment);
+    bvb_wire_put_u32(output + 16, requirements->memory_type_bits);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_buffer_requirements(
+    const uint8_t input[BVB_VULKAN_BUFFER_REQUIREMENTS_SIZE],
+    struct bvb_vulkan_buffer_requirements *requirements) {
+    if (input == NULL || requirements == NULL) return -EINVAL;
+    *requirements = (struct bvb_vulkan_buffer_requirements){
+        .size = bvb_wire_get_u64(input),
+        .alignment = bvb_wire_get_u64(input + 8),
+        .memory_type_bits = bvb_wire_get_u32(input + 16),
+    };
+    return requirements->size != 0U && requirements->alignment != 0U &&
+                   requirements->memory_type_bits != 0U &&
+                   bvb_wire_get_u32(input + 20) == 0U
+               ? 0 : -EPROTO;
+}
+
+int bvb_protocol_encode_vulkan_memory_allocate_request(
+    uint8_t output[BVB_VULKAN_MEMORY_ALLOCATE_REQUEST_SIZE],
+    const struct bvb_vulkan_memory_allocate_request *request) {
+    if (output == NULL || request == NULL || request->allocation_size == 0U ||
+        !wire_id_is_type(request->device_id, 3U)) return -EINVAL;
+    memset(output, 0, BVB_VULKAN_MEMORY_ALLOCATE_REQUEST_SIZE);
+    bvb_wire_put_u64(output, request->device_id);
+    bvb_wire_put_u64(output + 8, request->allocation_size);
+    bvb_wire_put_u32(output + 16, request->memory_type_index);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_memory_allocate_request(
+    const uint8_t input[BVB_VULKAN_MEMORY_ALLOCATE_REQUEST_SIZE],
+    struct bvb_vulkan_memory_allocate_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    *request = (struct bvb_vulkan_memory_allocate_request){
+        .device_id = bvb_wire_get_u64(input),
+        .allocation_size = bvb_wire_get_u64(input + 8),
+        .memory_type_index = bvb_wire_get_u32(input + 16),
+    };
+    return wire_id_is_type(request->device_id, 3U) &&
+                   request->allocation_size != 0U &&
+                   bvb_wire_get_u32(input + 20) == 0U
+               ? 0 : -EPROTO;
+}
+
+int bvb_protocol_encode_vulkan_buffer_bind_request(
+    uint8_t output[BVB_VULKAN_BUFFER_BIND_REQUEST_SIZE],
+    const struct bvb_vulkan_buffer_bind_request *request) {
+    if (output == NULL || request == NULL ||
+        !wire_id_is_type(request->buffer_id, 19U) ||
+        !wire_id_is_type(request->memory_id, 9U)) return -EINVAL;
+    bvb_wire_put_u64(output, request->buffer_id);
+    bvb_wire_put_u64(output + 8, request->memory_id);
+    bvb_wire_put_u64(output + 16, request->offset);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_buffer_bind_request(
+    const uint8_t input[BVB_VULKAN_BUFFER_BIND_REQUEST_SIZE],
+    struct bvb_vulkan_buffer_bind_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    *request = (struct bvb_vulkan_buffer_bind_request){
+        .buffer_id = bvb_wire_get_u64(input),
+        .memory_id = bvb_wire_get_u64(input + 8),
+        .offset = bvb_wire_get_u64(input + 16),
+    };
+    return wire_id_is_type(request->buffer_id, 19U) &&
+                   wire_id_is_type(request->memory_id, 9U)
+               ? 0 : -EPROTO;
+}
+
+int bvb_protocol_encode_vulkan_command_buffer_fill_request(
+    uint8_t output[BVB_VULKAN_COMMAND_BUFFER_FILL_REQUEST_SIZE],
+    const struct bvb_vulkan_command_buffer_fill_request *request) {
+    if (output == NULL || request == NULL || request->size == 0U ||
+        !wire_id_is_type(request->command_buffer_id, 11U) ||
+        !wire_id_is_type(request->buffer_id, 19U)) return -EINVAL;
+    memset(output, 0, BVB_VULKAN_COMMAND_BUFFER_FILL_REQUEST_SIZE);
+    bvb_wire_put_u64(output, request->command_buffer_id);
+    bvb_wire_put_u64(output + 8, request->buffer_id);
+    bvb_wire_put_u64(output + 16, request->offset);
+    bvb_wire_put_u64(output + 24, request->size);
+    bvb_wire_put_u32(output + 32, request->data);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_command_buffer_fill_request(
+    const uint8_t input[BVB_VULKAN_COMMAND_BUFFER_FILL_REQUEST_SIZE],
+    struct bvb_vulkan_command_buffer_fill_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    *request = (struct bvb_vulkan_command_buffer_fill_request){
+        .command_buffer_id = bvb_wire_get_u64(input),
+        .buffer_id = bvb_wire_get_u64(input + 8),
+        .offset = bvb_wire_get_u64(input + 16),
+        .size = bvb_wire_get_u64(input + 24),
+        .data = bvb_wire_get_u32(input + 32),
+    };
+    return wire_id_is_type(request->command_buffer_id, 11U) &&
+                   wire_id_is_type(request->buffer_id, 19U) &&
+                   request->size != 0U && bvb_wire_get_u32(input + 36) == 0U
+               ? 0 : -EPROTO;
+}
+
+int bvb_protocol_encode_vulkan_memory_verify_fill_request(
+    uint8_t output[BVB_VULKAN_MEMORY_VERIFY_FILL_REQUEST_SIZE],
+    const struct bvb_vulkan_memory_verify_fill_request *request) {
+    if (output == NULL || request == NULL || request->size == 0U ||
+        !wire_id_is_type(request->memory_id, 9U)) return -EINVAL;
+    memset(output, 0, BVB_VULKAN_MEMORY_VERIFY_FILL_REQUEST_SIZE);
+    bvb_wire_put_u64(output, request->memory_id);
+    bvb_wire_put_u64(output + 8, request->offset);
+    bvb_wire_put_u64(output + 16, request->size);
+    bvb_wire_put_u32(output + 24, request->expected_word);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_memory_verify_fill_request(
+    const uint8_t input[BVB_VULKAN_MEMORY_VERIFY_FILL_REQUEST_SIZE],
+    struct bvb_vulkan_memory_verify_fill_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    *request = (struct bvb_vulkan_memory_verify_fill_request){
+        .memory_id = bvb_wire_get_u64(input),
+        .offset = bvb_wire_get_u64(input + 8),
+        .size = bvb_wire_get_u64(input + 16),
+        .expected_word = bvb_wire_get_u32(input + 24),
+    };
+    return wire_id_is_type(request->memory_id, 9U) && request->size != 0U &&
+                   bvb_wire_get_u32(input + 28) == 0U
+               ? 0 : -EPROTO;
+}
+
+int bvb_protocol_encode_vulkan_memory_verify_fill_response(
+    uint8_t output[BVB_VULKAN_MEMORY_VERIFY_FILL_RESPONSE_SIZE],
+    const struct bvb_vulkan_memory_verify_fill_response *response) {
+    if (output == NULL || response == NULL) return -EINVAL;
+    bvb_wire_put_i32(output, response->vulkan_result);
+    bvb_wire_put_u32(output + 4, response->mismatched_words);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_memory_verify_fill_response(
+    const uint8_t input[BVB_VULKAN_MEMORY_VERIFY_FILL_RESPONSE_SIZE],
+    struct bvb_vulkan_memory_verify_fill_response *response) {
+    if (input == NULL || response == NULL) return -EINVAL;
+    *response = (struct bvb_vulkan_memory_verify_fill_response){
+        .vulkan_result = bvb_wire_get_i32(input),
+        .mismatched_words = bvb_wire_get_u32(input + 4),
+    };
     return 0;
 }
 

@@ -272,6 +272,13 @@ int main(void) {
     PFN_vkFreeCommandBuffers free_command_buffers = NULL;
     PFN_vkBeginCommandBuffer begin_command_buffer = NULL;
     PFN_vkEndCommandBuffer end_command_buffer = NULL;
+    PFN_vkCreateBuffer create_buffer = NULL;
+    PFN_vkDestroyBuffer destroy_buffer = NULL;
+    PFN_vkGetBufferMemoryRequirements get_buffer_memory_requirements = NULL;
+    PFN_vkAllocateMemory allocate_memory = NULL;
+    PFN_vkFreeMemory free_memory = NULL;
+    PFN_vkBindBufferMemory bind_buffer_memory = NULL;
+    PFN_vkCmdFillBuffer cmd_fill_buffer = NULL;
     erased = vkGetDeviceProcAddr(device, "vkGetDeviceQueue");
     CHECK(erased != NULL);
     memcpy(&get_device_queue, &erased, sizeof(get_device_queue));
@@ -309,6 +316,28 @@ int main(void) {
     erased = vkGetDeviceProcAddr(device, "vkEndCommandBuffer");
     CHECK(erased != NULL);
     memcpy(&end_command_buffer, &erased, sizeof(end_command_buffer));
+    erased = vkGetDeviceProcAddr(device, "vkCreateBuffer");
+    CHECK(erased != NULL);
+    memcpy(&create_buffer, &erased, sizeof(create_buffer));
+    erased = vkGetDeviceProcAddr(device, "vkDestroyBuffer");
+    CHECK(erased != NULL);
+    memcpy(&destroy_buffer, &erased, sizeof(destroy_buffer));
+    erased = vkGetDeviceProcAddr(device, "vkGetBufferMemoryRequirements");
+    CHECK(erased != NULL);
+    memcpy(&get_buffer_memory_requirements, &erased,
+           sizeof(get_buffer_memory_requirements));
+    erased = vkGetDeviceProcAddr(device, "vkAllocateMemory");
+    CHECK(erased != NULL);
+    memcpy(&allocate_memory, &erased, sizeof(allocate_memory));
+    erased = vkGetDeviceProcAddr(device, "vkFreeMemory");
+    CHECK(erased != NULL);
+    memcpy(&free_memory, &erased, sizeof(free_memory));
+    erased = vkGetDeviceProcAddr(device, "vkBindBufferMemory");
+    CHECK(erased != NULL);
+    memcpy(&bind_buffer_memory, &erased, sizeof(bind_buffer_memory));
+    erased = vkGetDeviceProcAddr(device, "vkCmdFillBuffer");
+    CHECK(erased != NULL);
+    memcpy(&cmd_fill_buffer, &erased, sizeof(cmd_fill_buffer));
     CHECK(vkGetDeviceProcAddr(device, "vkCmdDraw") != NULL);
     VkQueue queue = VK_NULL_HANDLE;
     get_device_queue(device, queue_family_index, 0U, &queue);
@@ -355,11 +384,55 @@ int main(void) {
         bvb_command_buffer_proxy_id(command_buffer);
     CHECK(bvb_handle_type(command_buffer_id) == BVB_OBJECT_COMMAND_BUFFER);
     CHECK(bvb_handle_serial(command_buffer_id) == 1U);
+    const VkBufferCreateInfo buffer_create_info = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = 4096U,
+        .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+    VkBuffer buffer = VK_NULL_HANDLE;
+    CHECK(create_buffer(device, &buffer_create_info, NULL, &buffer) ==
+          VK_SUCCESS);
+    const uint64_t buffer_id = bvb_buffer_proxy_id(buffer);
+    CHECK(bvb_handle_type(buffer_id) == BVB_OBJECT_BUFFER);
+    CHECK(bvb_handle_serial(buffer_id) == 1U);
+    VkMemoryRequirements requirements = {0};
+    get_buffer_memory_requirements(device, buffer, &requirements);
+    CHECK(requirements.size >= 4096U);
+    CHECK(requirements.alignment != 0U);
+    CHECK(requirements.memoryTypeBits != 0U);
+    uint32_t memory_type_index = UINT32_MAX;
+    for (uint32_t index = 0U; index < memory.memoryTypeCount; ++index) {
+        const VkMemoryPropertyFlags flags =
+            memory.memoryTypes[index].propertyFlags;
+        if ((requirements.memoryTypeBits & (1U << index)) != 0U &&
+            (flags & (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
+                (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+            memory_type_index = index;
+            break;
+        }
+    }
+    CHECK(memory_type_index != UINT32_MAX);
+    const VkMemoryAllocateInfo memory_allocate_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = requirements.size,
+        .memoryTypeIndex = memory_type_index,
+    };
+    VkDeviceMemory device_memory = VK_NULL_HANDLE;
+    CHECK(allocate_memory(device, &memory_allocate_info, NULL, &device_memory) ==
+          VK_SUCCESS);
+    const uint64_t memory_id = bvb_memory_proxy_id(device_memory);
+    CHECK(bvb_handle_type(memory_id) == BVB_OBJECT_DEVICE_MEMORY);
+    CHECK(bvb_handle_serial(memory_id) == 1U);
+    CHECK(bind_buffer_memory(device, buffer, device_memory, 0U) == VK_SUCCESS);
     const VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
     CHECK(begin_command_buffer(command_buffer, &begin_info) == VK_SUCCESS);
+    cmd_fill_buffer(command_buffer, buffer, 0U, 4096U, UINT32_C(0xa5c3f00d));
     CHECK(end_command_buffer(command_buffer) == VK_SUCCESS);
     const VkSubmitInfo command_submit = {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -369,9 +442,16 @@ int main(void) {
     CHECK(queue_submit(queue, 1U, &command_submit, VK_NULL_HANDLE) ==
           VK_SUCCESS);
     CHECK(queue_wait_idle(queue) == VK_SUCCESS);
+    uint32_t mismatched_words = UINT32_MAX;
+    CHECK(bvb_verify_memory_fill(
+              device_memory, 0U, 4096U, UINT32_C(0xa5c3f00d),
+              &mismatched_words) == 0);
+    CHECK(mismatched_words == 0U);
     CHECK(reset_command_pool(device, command_pool, 0U) == VK_SUCCESS);
     free_command_buffers(device, command_pool, 1U, &command_buffer);
     destroy_command_pool(device, command_pool, NULL);
+    destroy_buffer(device, buffer, NULL);
+    free_memory(device, device_memory, NULL);
     destroy_device(device, NULL);
 
     VkInstance instance_two = VK_NULL_HANDLE;
@@ -398,7 +478,8 @@ int main(void) {
            "sampler_anisotropy=%u logical_device=%llu queue=%llu "
            "empty_submit=0 queue_wait=0 device_wait=0 "
            "command_pool=%llu command_buffer=%llu command_submit=0 "
-           "pool_reset=0\n",
+           "pool_reset=0 buffer=%llu memory=%llu memory_type=%u "
+           "fill_words=1024 mismatches=%u\n",
            api_version, (unsigned long long)instance_one_id,
            (unsigned long long)instance_two_id,
            (unsigned long long)physical_id, properties.deviceName,
@@ -410,6 +491,9 @@ int main(void) {
            (unsigned long long)device_id,
            (unsigned long long)queue_id,
            (unsigned long long)command_pool_id,
-           (unsigned long long)command_buffer_id);
+           (unsigned long long)command_buffer_id,
+           (unsigned long long)buffer_id,
+           (unsigned long long)memory_id,
+           memory_type_index, mismatched_words);
     return 0;
 }

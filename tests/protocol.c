@@ -401,6 +401,91 @@ int main(void) {
     CHECK(command_submit_decoded.command_buffer_id ==
           command_submit.command_buffer_id);
 
+    const struct bvb_vulkan_buffer_create_request buffer_create = {
+        .device_id = UINT64_C(0x0300000000000001),
+        .size = 4096U,
+        .usage = 2U,
+    };
+    uint8_t buffer_create_wire[BVB_VULKAN_BUFFER_CREATE_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_buffer_create_request(
+              buffer_create_wire, &buffer_create) == 0);
+    struct bvb_vulkan_buffer_create_request buffer_create_decoded;
+    CHECK(bvb_protocol_decode_vulkan_buffer_create_request(
+              buffer_create_wire, &buffer_create_decoded) == 0);
+    CHECK(buffer_create_decoded.size == 4096U);
+    CHECK(buffer_create_decoded.usage == 2U);
+    const struct bvb_vulkan_object_create_response buffer_created = {
+        .vulkan_result = 0,
+        .object_id = UINT64_C(0x1300000000000001),
+    };
+    uint8_t object_created_wire[BVB_VULKAN_OBJECT_CREATE_RESPONSE_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_object_create_response(
+              object_created_wire, &buffer_created, 19U) == 0);
+    struct bvb_vulkan_object_create_response object_created_decoded;
+    CHECK(bvb_protocol_decode_vulkan_object_create_response(
+              object_created_wire, &object_created_decoded, 19U) == 0);
+    CHECK(object_created_decoded.object_id == buffer_created.object_id);
+    const struct bvb_vulkan_buffer_requirements buffer_requirements = {
+        .size = 4096U,
+        .alignment = 64U,
+        .memory_type_bits = 3U,
+    };
+    uint8_t buffer_requirements_wire[BVB_VULKAN_BUFFER_REQUIREMENTS_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_buffer_requirements(
+              buffer_requirements_wire, &buffer_requirements) == 0);
+    struct bvb_vulkan_buffer_requirements buffer_requirements_decoded;
+    CHECK(bvb_protocol_decode_vulkan_buffer_requirements(
+              buffer_requirements_wire, &buffer_requirements_decoded) == 0);
+    CHECK(buffer_requirements_decoded.alignment == 64U);
+    const struct bvb_vulkan_memory_allocate_request memory_allocate = {
+        .device_id = buffer_create.device_id,
+        .allocation_size = 4096U,
+        .memory_type_index = 1U,
+    };
+    uint8_t memory_allocate_wire[BVB_VULKAN_MEMORY_ALLOCATE_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_memory_allocate_request(
+              memory_allocate_wire, &memory_allocate) == 0);
+    struct bvb_vulkan_memory_allocate_request memory_allocate_decoded;
+    CHECK(bvb_protocol_decode_vulkan_memory_allocate_request(
+              memory_allocate_wire, &memory_allocate_decoded) == 0);
+    CHECK(memory_allocate_decoded.memory_type_index == 1U);
+    const struct bvb_vulkan_buffer_bind_request buffer_bind = {
+        .buffer_id = buffer_created.object_id,
+        .memory_id = UINT64_C(0x0900000000000001),
+    };
+    uint8_t buffer_bind_wire[BVB_VULKAN_BUFFER_BIND_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_buffer_bind_request(
+              buffer_bind_wire, &buffer_bind) == 0);
+    struct bvb_vulkan_buffer_bind_request buffer_bind_decoded;
+    CHECK(bvb_protocol_decode_vulkan_buffer_bind_request(
+              buffer_bind_wire, &buffer_bind_decoded) == 0);
+    CHECK(buffer_bind_decoded.memory_id == buffer_bind.memory_id);
+    const struct bvb_vulkan_command_buffer_fill_request buffer_fill = {
+        .command_buffer_id = buffer_allocated.command_buffer_id,
+        .buffer_id = buffer_created.object_id,
+        .size = 4096U,
+        .data = UINT32_C(0xa5c3f00d),
+    };
+    uint8_t buffer_fill_wire[BVB_VULKAN_COMMAND_BUFFER_FILL_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_command_buffer_fill_request(
+              buffer_fill_wire, &buffer_fill) == 0);
+    struct bvb_vulkan_command_buffer_fill_request buffer_fill_decoded;
+    CHECK(bvb_protocol_decode_vulkan_command_buffer_fill_request(
+              buffer_fill_wire, &buffer_fill_decoded) == 0);
+    CHECK(buffer_fill_decoded.data == UINT32_C(0xa5c3f00d));
+    const struct bvb_vulkan_memory_verify_fill_request verify_fill = {
+        .memory_id = buffer_bind.memory_id,
+        .size = 4096U,
+        .expected_word = UINT32_C(0xa5c3f00d),
+    };
+    uint8_t verify_fill_wire[BVB_VULKAN_MEMORY_VERIFY_FILL_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_memory_verify_fill_request(
+              verify_fill_wire, &verify_fill) == 0);
+    struct bvb_vulkan_memory_verify_fill_request verify_fill_decoded;
+    CHECK(bvb_protocol_decode_vulkan_memory_verify_fill_request(
+              verify_fill_wire, &verify_fill_decoded) == 0);
+    CHECK(verify_fill_decoded.expected_word == UINT32_C(0xa5c3f00d));
+
     const struct bvb_shared_batch_setup shared_setup = {
         .region_bytes = 4096U,
         .generation = UINT64_C(0x1122334455667788),

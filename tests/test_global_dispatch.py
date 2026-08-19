@@ -16,7 +16,7 @@ def main() -> int:
     service, client, loader = map(
         lambda value: str(pathlib.Path(value).resolve()), sys.argv[1:]
     )
-    with tempfile.TemporaryDirectory(prefix="bvb-e030-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="bvb-e031-") as temporary:
         socket_path = pathlib.Path(temporary) / "runtime" / "bridge.sock"
         server = subprocess.Popen(
             [
@@ -66,6 +66,9 @@ def main() -> int:
             assert f"command_pool={0x0A00000000000001}" in completed.stdout
             assert f"command_buffer={0x0B00000000000001}" in completed.stdout
             assert "command_submit=0 pool_reset=0" in completed.stdout
+            assert f"buffer={0x1300000000000001}" in completed.stdout
+            assert f"memory={0x0900000000000001}" in completed.stdout
+            assert "fill_words=1024 mismatches=0" in completed.stdout
             server_stdout, server_stderr = server.communicate(timeout=5.0)
             assert server.returncode == 0, server_stderr
             assert server_stdout == ""
@@ -75,7 +78,7 @@ def main() -> int:
             if server.poll() is None:
                 server.terminate()
                 server.wait(timeout=5.0)
-    print("PASS: E030 command-buffer submit integration")
+    print("PASS: E031 deterministic buffer-fill integration")
     return 0
 
 
