@@ -97,11 +97,13 @@ registry-backed inventory of the entry points resolved by the real Tomb Raider
 Wine/DXVK startup path. E012 proves typed proxy ownership and one client-built
 command batch replayed by the real Android driver. E013 moves that same batch
 into a sealed shared-memory region passed once to Bionic, leaving only bounded
-generation/offset/length/sequence metadata on the execute control path. The
-current self-test still creates a fresh Vulkan instance, device, queue, and
-allocation for each execution, so its roughly 192 ms cold process result is
-not a hot-path throughput measurement. The next controlled gates are a
-persistent Bionic Vulkan context with measured warm replay, then generated
-glibc Vulkan entry points and the triangle subset described in
+generation/offset/length/sequence metadata on the execute control path. E014
+keeps the loader, instance, device, queue, allocation, mapping, command pool,
+command buffer, and typed-handle table alive. On Adreno 730, 100 executions
+after one excluded warm-up averaged 0.854 ms for the complete control exchange,
+validation, GPU replay/wait, verification, and response; GPU submit/wait alone
+averaged 0.503 ms. This synchronous transfer proof is not an FPS prediction.
+The next controlled gates are generated glibc Vulkan entry points and the
+triangle subset described in
 [decision 0003](decisions/0003-batched-game-dispatch.md). Game input and a
 bridged game frame remain outside the completed result.

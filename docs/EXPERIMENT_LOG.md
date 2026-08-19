@@ -638,3 +638,72 @@ instance/device/queue and handle table alive, replay multiple sequenced batches
 from the same mapping, and measure warm control, validation, replay, RSS, and
 thermal behavior. Generated game-facing dispatch and the visible triangle
 follow that persistent-context measurement.
+
+## E014 — persistent Vulkan context and warm replay (2026-08-18)
+
+Status: passed on hardware at commit
+`64e22748b551a3375b84d398ffb906029e0f504b`.
+
+Hypothesis: most of E013's roughly 192 ms end-to-end observation is cold
+process and Vulkan initialization rather than shared-memory transport. Keeping
+the Bionic loader, instance, device, queue, allocation, command pool/buffer,
+mapped verification memory, function table, and typed-handle table alive should
+reduce each later batch to bounded notification, validation, command recording,
+GPU work/wait, verification, and response.
+
+Method: the one-shot self-tests were preserved as create/execute/destroy
+wrappers around a new opaque persistent context. A shared connection creates
+the context on sequence 1, which is excluded as warm-up. Before each later
+request, the glibc client rewrites the 104-byte batch in the existing memfd with
+a new sequence, publishes it with a release fence, then sends the same 48-byte
+header-plus-metadata execute request used in E013. The Bionic service acquires
+the shared bytes, rejects non-increasing sequences, resets and rerecords the
+existing command pool/buffer, submits, waits, verifies the persistently mapped
+4 KiB result, and replies. No Vulkan object or memfd is recreated during the
+100 measured executions.
+
+Result: all 100 measured batches had zero mismatched words. Complete control
+round-trip, validation, replay/wait, verification, and response latency was
+653,854 ns minimum, 853,561 ns mean, and 1,659,010 ns maximum. GPU
+submit-plus-wait was 326,510 ns minimum, 503,056 ns mean, and 1,344,271 ns
+maximum. The difference between the two means is about 350,505 ns of client,
+transport, validation/recording, verification, serialization, and scheduling
+overhead per batch.
+
+The same harness invocation's cold one-shot shared path took 200,972,865 ns
+end-to-end. Comparing that cold process/lifecycle observation with the warm
+control mean gives an approximately 235-fold latency reduction. This is the
+intended effect of persistence, not a claim that a game is 235 times faster.
+The proof deliberately calls `vkQueueWaitIdle` and validates host-visible
+memory every iteration; an actual render path must use asynchronous fences and
+multiple in-flight command buffers.
+
+The full tablet harness also preserved direct, bridged, packet-batch, and
+one-shot shared parity. All eight Android-supported CTest cases and all ten
+normal host tests passed. In an ASan/UBSan host build, every changed path,
+including the repeated bridge integration, passed; the unrelated preload
+`vulkan-resolve-trace` test failed only in that sanitized build and remains
+passing normally, so no sanitizer-wide all-green claim is made.
+
+Evidence identities:
+
+- result: `docs/evidence/e014-warm-shared-batch.json`, 1,280 bytes, SHA-256
+  `c4e46b25cd66094058f421418775698e847c62d68206463516421b4e840a314e`
+- glibc client: 76,576 bytes, SHA-256
+  `1dfbe8503ba12c9e5eff2fafa08b3b7712d46b80b1bbf5041e031b758a461428`
+- Bionic service: 55,304 bytes, SHA-256
+  `d89f662cbdf2f69dfcd57e901d80dacc2cde93694f4e9f420ac4fc655599ed5c`
+- warm client and service stderr: empty, SHA-256
+  `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`
+
+The required recall query—`persistent Bionic Vulkan context warm shared memory
+batch benchmark repeated execute`—returned no indexed implementation. E014
+reused E012's typed handles and deterministic transfer batch, E013's
+connection-owned shared region and descriptor transport, and the existing
+native Vulkan object's exact capability/memory selection.
+
+Conclusion: cold Vulkan setup is no longer in the batch hot path, and the
+remaining measured bridge overhead is sub-millisecond for this small
+synchronous proof. The next gate is generated executable client dispatch for
+the minimal triangle subset, backed by this persistent service and followed by
+asynchronous external-memory/synchronization work for real frames.

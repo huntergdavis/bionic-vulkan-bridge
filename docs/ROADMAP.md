@@ -15,7 +15,7 @@
 - [x] Build a Bionic service in Termux
 - [x] Build a glibc client with the existing native glibc toolchain
 - [ ] Validate version negotiation, error handling, and reconnect behavior
-- [ ] Benchmark warm round-trip and shared-memory notification/replay throughput
+- [x] Benchmark warm round-trip and shared-memory notification/replay throughput
 
 ## 0.3 — Capability parity
 
@@ -48,6 +48,7 @@
 - [x] Implement typed proxy-handle ownership
 - [x] Replay a bounded client-built command batch on the Android driver
 - [x] Pass and map a sealed shared-memory command region across libc
+- [x] Keep Vulkan objects alive and measure repeated warm batch replay
 - [ ] Generate executable Vulkan entry-point dispatch
 - [ ] Implement GPU external-memory and synchronization strategy
 - [ ] Reach a rendered test triangle
