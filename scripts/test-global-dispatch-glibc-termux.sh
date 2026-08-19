@@ -8,7 +8,7 @@ library="$out_dir/libvulkan-bvb-glibc.so"
 client="$out_dir/bvb-global-dispatch-test-glibc"
 service="$build_dir/bvb-bridge-service"
 policy_json="$out_dir/generated/bvb_dxvk_dispatch_policy.json"
-evidence="$project_dir/out/e031-buffer-fill.json"
+evidence="$project_dir/out/e032-fence-submit.json"
 vulkan_headers="$build_dir/_deps/vulkanheaders-src/include"
 runtime_parent=${TMPDIR:-$PREFIX/tmp}
 runtime_dir=
@@ -22,7 +22,7 @@ cleanup() {
     if [ -n "$runtime_dir" ] && [ -d "$runtime_dir" ] &&
         [ ! -L "$runtime_dir" ]; then
         case "$runtime_dir" in
-            "$runtime_parent"/bvb-e031.*) rmdir "$runtime_dir" 2>/dev/null || true ;;
+            "$runtime_parent"/bvb-e032.*) rmdir "$runtime_dir" 2>/dev/null || true ;;
         esac
     fi
 }
@@ -55,16 +55,16 @@ if ! readelf -l "$service" | grep -Fq "$bionic_interpreter"; then
     exit 3
 fi
 
-runtime_dir=$(mktemp -d "$runtime_parent/bvb-e031.XXXXXX")
+runtime_dir=$(mktemp -d "$runtime_parent/bvb-e032.XXXXXX")
 case "$runtime_dir" in
-    "$runtime_parent"/bvb-e031.*) ;;
+    "$runtime_parent"/bvb-e032.*) ;;
     *) printf 'unexpected runtime directory: %s\n' "$runtime_dir" >&2; exit 3 ;;
 esac
 control_socket="$runtime_dir/bridge.sock"
-client_stdout="$out_dir/e031-client.stdout"
-client_stderr="$out_dir/e031-client.stderr"
-service_stdout="$out_dir/e031-service.stdout"
-service_stderr="$out_dir/e031-service.stderr"
+client_stdout="$out_dir/e032-client.stdout"
+client_stderr="$out_dir/e032-client.stderr"
+service_stdout="$out_dir/e032-service.stdout"
+service_stderr="$out_dir/e032-service.stderr"
 
 "$service" --socket "$control_socket" --once \
     >"$service_stdout" 2>"$service_stderr" &
@@ -87,7 +87,7 @@ BVB_BRIDGE_SOCKET="$control_socket" grun "$client" \
 wait "$service_pid"
 service_pid=
 if [ -s "$client_stderr" ] || [ -s "$service_stderr" ]; then
-    printf 'E031 emitted unexpected stderr\n' >&2
+    printf 'E032 emitted unexpected stderr\n' >&2
     exit 5
 fi
 
@@ -126,13 +126,13 @@ def artifact(path):
 
 
 policy = json.loads(policy_path.read_text())
-assert policy["gate"] == "E031"
+assert policy["gate"] == "E032"
 assert policy["summary"]["command_count"] == 742
-assert policy["summary"]["executable_name_count"] == 40
+assert policy["summary"]["executable_name_count"] == 45
 assert policy["summary"]["support_counts"] == {
     "probed_null": 302,
-    "required_unimplemented": 400,
-    "executable": 40,
+    "required_unimplemented": 395,
+    "executable": 45,
 }
 client_stdout = client_stdout_path.read_text().strip()
 match = re.fullmatch(
@@ -146,7 +146,9 @@ match = re.fullmatch(
     r"empty_submit=(-?\d+) queue_wait=(-?\d+) device_wait=(-?\d+) "
     r"command_pool=(\d+) command_buffer=(\d+) command_submit=(-?\d+) "
     r"pool_reset=(-?\d+) buffer=(\d+) memory=(\d+) memory_type=(\d+) "
-    r"fill_words=(\d+) mismatches=(\d+)",
+    r"fill_words=(\d+) mismatches=(\d+) fence=(\d+) fence_before=(-?\d+) "
+    r"fenced_submit=(-?\d+) fence_after=(-?\d+) fence_wait=(-?\d+) "
+    r"fence_reset=(-?\d+) fence_after_reset=(-?\d+)",
     client_stdout,
 )
 assert match is not None, client_stdout
@@ -179,6 +181,13 @@ assert match is not None, client_stdout
     memory_type_text,
     fill_words_text,
     mismatches_text,
+    fence_text,
+    fence_before_text,
+    fenced_submit_text,
+    fence_after_text,
+    fence_wait_text,
+    fence_reset_text,
+    fence_after_reset_text,
 ) = match.groups()
 (
     api_version,
@@ -208,6 +217,13 @@ assert match is not None, client_stdout
     memory_type_index,
     fill_words,
     mismatches,
+    fence,
+    fence_before_result,
+    fenced_submit_result,
+    fence_after_result,
+    fence_wait_result,
+    fence_reset_result,
+    fence_after_reset_result,
 ) = map(int, (
     api_version_text,
     instance_one_text,
@@ -236,6 +252,13 @@ assert match is not None, client_stdout
     memory_type_text,
     fill_words_text,
     mismatches_text,
+    fence_text,
+    fence_before_text,
+    fenced_submit_text,
+    fence_after_text,
+    fence_wait_text,
+    fence_reset_text,
+    fence_after_reset_text,
 ))
 assert api_version == 0x00404000
 assert instance_one == 0x0100000000000001
@@ -263,6 +286,13 @@ assert device_memory == 0x0900000000000001
 assert 0 <= memory_type_index < memory_type_count
 assert fill_words == 1024
 assert mismatches == 0
+assert fence == 0x1200000000000001
+assert fence_before_result == 1
+assert fenced_submit_result == 0
+assert fence_after_result == 0
+assert fence_wait_result == 0
+assert fence_reset_result == 0
+assert fence_after_reset_result == 1
 
 symbols = subprocess.run(
     ["readelf", "--wide", "--dyn-syms", str(library_path)],
@@ -284,6 +314,7 @@ expected_exports = {
     "bvb_command_buffer_proxy_id",
     "bvb_buffer_proxy_id",
     "bvb_memory_proxy_id",
+    "bvb_fence_proxy_id",
     "vkGetDeviceProcAddr",
     "vkGetInstanceProcAddr",
 }
@@ -291,7 +322,7 @@ assert expected_exports <= symbol_names
 
 document = {
     "schema_version": 1,
-    "gate": "E031",
+    "gate": "E032",
     "result": "pass",
     "source_commit": source_commit,
     "target": "Galaxy Tab S8+ Termux ARM64 glibc to Android Bionic",
@@ -353,6 +384,17 @@ document = {
         "fill_word": "0xa5c3f00d",
         "fill_word_count": fill_words,
         "mismatched_words": mismatches,
+        "fence_id": fence,
+        "fence_type": 18,
+        "fence_serial": 1,
+        "fence_status_before_submit": fence_before_result,
+        "fenced_submit_result": fenced_submit_result,
+        "fence_status_after_submit": fence_after_result,
+        "fence_wait_result": fence_wait_result,
+        "fence_reset_result": fence_reset_result,
+        "fence_status_after_reset": fence_after_reset_result,
+        "queue_wait_used_for_gpu_fill": False,
+        "fence_destroyed_explicitly": True,
         "buffer_destroyed_explicitly": True,
         "memory_freed_explicitly": True,
         "logical_device_destroyed_explicitly": True,
@@ -373,7 +415,7 @@ document = {
 assert document["physical_device_discovery"]["service_ready"] is True
 evidence_path.write_text(json.dumps(document, indent=2) + "\n")
 print(json.dumps(document, indent=2))
-print("e031_buffer_fill=PASS")
+print("e032_fence_submit=PASS")
 PY
 
 printf 'evidence=%s\n' "$evidence"

@@ -136,5 +136,27 @@ int bvb_vulkan_global_context_verify_memory_fill(
     const struct bvb_vulkan_memory_verify_fill_request *request,
     struct bvb_vulkan_memory_verify_fill_response *response,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_create_fence(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_fence_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_destroy_fence(
+    struct bvb_vulkan_global_context *context, uint64_t fence_id,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_get_fence_status(
+    const struct bvb_vulkan_global_context *context, uint64_t fence_id,
+    int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_wait_fence(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_fence_wait_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_reset_fence(
+    const struct bvb_vulkan_global_context *context, uint64_t fence_id,
+    int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_queue_submit_command_fence(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_queue_submit_command_fence_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size);
 
 #endif

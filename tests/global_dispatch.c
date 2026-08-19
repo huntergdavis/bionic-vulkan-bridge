@@ -279,6 +279,11 @@ int main(void) {
     PFN_vkFreeMemory free_memory = NULL;
     PFN_vkBindBufferMemory bind_buffer_memory = NULL;
     PFN_vkCmdFillBuffer cmd_fill_buffer = NULL;
+    PFN_vkCreateFence create_fence = NULL;
+    PFN_vkDestroyFence destroy_fence = NULL;
+    PFN_vkGetFenceStatus get_fence_status = NULL;
+    PFN_vkWaitForFences wait_for_fences = NULL;
+    PFN_vkResetFences reset_fences = NULL;
     erased = vkGetDeviceProcAddr(device, "vkGetDeviceQueue");
     CHECK(erased != NULL);
     memcpy(&get_device_queue, &erased, sizeof(get_device_queue));
@@ -338,6 +343,21 @@ int main(void) {
     erased = vkGetDeviceProcAddr(device, "vkCmdFillBuffer");
     CHECK(erased != NULL);
     memcpy(&cmd_fill_buffer, &erased, sizeof(cmd_fill_buffer));
+    erased = vkGetDeviceProcAddr(device, "vkCreateFence");
+    CHECK(erased != NULL);
+    memcpy(&create_fence, &erased, sizeof(create_fence));
+    erased = vkGetDeviceProcAddr(device, "vkDestroyFence");
+    CHECK(erased != NULL);
+    memcpy(&destroy_fence, &erased, sizeof(destroy_fence));
+    erased = vkGetDeviceProcAddr(device, "vkGetFenceStatus");
+    CHECK(erased != NULL);
+    memcpy(&get_fence_status, &erased, sizeof(get_fence_status));
+    erased = vkGetDeviceProcAddr(device, "vkWaitForFences");
+    CHECK(erased != NULL);
+    memcpy(&wait_for_fences, &erased, sizeof(wait_for_fences));
+    erased = vkGetDeviceProcAddr(device, "vkResetFences");
+    CHECK(erased != NULL);
+    memcpy(&reset_fences, &erased, sizeof(reset_fences));
     CHECK(vkGetDeviceProcAddr(device, "vkCmdDraw") != NULL);
     VkQueue queue = VK_NULL_HANDLE;
     get_device_queue(device, queue_family_index, 0U, &queue);
@@ -427,6 +447,15 @@ int main(void) {
     CHECK(bvb_handle_type(memory_id) == BVB_OBJECT_DEVICE_MEMORY);
     CHECK(bvb_handle_serial(memory_id) == 1U);
     CHECK(bind_buffer_memory(device, buffer, device_memory, 0U) == VK_SUCCESS);
+    const VkFenceCreateInfo fence_create_info = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+    };
+    VkFence fence = VK_NULL_HANDLE;
+    CHECK(create_fence(device, &fence_create_info, NULL, &fence) == VK_SUCCESS);
+    const uint64_t fence_id = bvb_fence_proxy_id(fence);
+    CHECK(bvb_handle_type(fence_id) == BVB_OBJECT_FENCE);
+    CHECK(bvb_handle_serial(fence_id) == 1U);
+    CHECK(get_fence_status(device, fence) == VK_NOT_READY);
     const VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
@@ -439,19 +468,24 @@ int main(void) {
         .commandBufferCount = 1U,
         .pCommandBuffers = &command_buffer,
     };
-    CHECK(queue_submit(queue, 1U, &command_submit, VK_NULL_HANDLE) ==
+    CHECK(queue_submit(queue, 1U, &command_submit, fence) ==
           VK_SUCCESS);
-    CHECK(queue_wait_idle(queue) == VK_SUCCESS);
+    CHECK(get_fence_status(device, fence) == VK_SUCCESS);
+    CHECK(wait_for_fences(device, 1U, &fence, VK_TRUE, UINT64_MAX) ==
+          VK_SUCCESS);
     uint32_t mismatched_words = UINT32_MAX;
     CHECK(bvb_verify_memory_fill(
               device_memory, 0U, 4096U, UINT32_C(0xa5c3f00d),
               &mismatched_words) == 0);
     CHECK(mismatched_words == 0U);
+    CHECK(reset_fences(device, 1U, &fence) == VK_SUCCESS);
+    CHECK(get_fence_status(device, fence) == VK_NOT_READY);
     CHECK(reset_command_pool(device, command_pool, 0U) == VK_SUCCESS);
     free_command_buffers(device, command_pool, 1U, &command_buffer);
     destroy_command_pool(device, command_pool, NULL);
     destroy_buffer(device, buffer, NULL);
     free_memory(device, device_memory, NULL);
+    destroy_fence(device, fence, NULL);
     destroy_device(device, NULL);
 
     VkInstance instance_two = VK_NULL_HANDLE;
@@ -479,7 +513,9 @@ int main(void) {
            "empty_submit=0 queue_wait=0 device_wait=0 "
            "command_pool=%llu command_buffer=%llu command_submit=0 "
            "pool_reset=0 buffer=%llu memory=%llu memory_type=%u "
-           "fill_words=1024 mismatches=%u\n",
+           "fill_words=1024 mismatches=%u fence=%llu fence_before=1 "
+           "fenced_submit=0 fence_after=0 fence_wait=0 fence_reset=0 "
+           "fence_after_reset=1\n",
            api_version, (unsigned long long)instance_one_id,
            (unsigned long long)instance_two_id,
            (unsigned long long)physical_id, properties.deviceName,
@@ -494,6 +530,7 @@ int main(void) {
            (unsigned long long)command_buffer_id,
            (unsigned long long)buffer_id,
            (unsigned long long)memory_id,
-           memory_type_index, mismatched_words);
+           memory_type_index, mismatched_words,
+           (unsigned long long)fence_id);
     return 0;
 }

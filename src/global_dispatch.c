@@ -408,6 +408,17 @@ BVB_GLOBAL_EXPORT uint64_t bvb_memory_proxy_id(VkDeviceMemory memory) {
     return result;
 }
 
+BVB_GLOBAL_EXPORT uint64_t bvb_fence_proxy_id(VkFence fence) {
+    const uint64_t wire_id = non_dispatchable_wire_id(&fence, sizeof(fence));
+    uint64_t result = 0U;
+    if (pthread_mutex_lock(&bvb_global_client.mutex) == 0) {
+        result = resource_proxy_locked(wire_id, BVB_OBJECT_FENCE) == NULL
+                     ? 0U : wire_id;
+        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    }
+    return result;
+}
+
 static struct bvb_queue_proxy *queue_proxy_locked(
     uint64_t wire_id, uint64_t parent_id) {
     for (struct bvb_queue_proxy *proxy = bvb_global_client.queues;
@@ -1954,6 +1965,134 @@ BVB_GLOBAL_EXPORT int bvb_verify_memory_fill(
     return result;
 }
 
+static VkResult VKAPI_CALL bvb_bridge_vkCreateFence(
+    VkDevice device, const VkFenceCreateInfo *create_info,
+    const VkAllocationCallbacks *allocator, VkFence *fence) {
+    if (fence != NULL) *fence = VK_NULL_HANDLE;
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || create_info == NULL || fence == NULL ||
+        allocator != NULL ||
+        create_info->sType != VK_STRUCTURE_TYPE_FENCE_CREATE_INFO ||
+        create_info->pNext != NULL ||
+        (create_info->flags & ~VK_FENCE_CREATE_SIGNALED_BIT) != 0U)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    struct bvb_resource_proxy *state = calloc(1, sizeof(*state));
+    if (state == NULL) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    const struct bvb_vulkan_fence_create_request decoded = {
+        .device_id = device_state->wire_id,
+        .flags = create_info->flags,
+    };
+    uint8_t payload[BVB_VULKAN_FENCE_CREATE_REQUEST_SIZE];
+    int result = bvb_protocol_encode_vulkan_fence_create_request(
+        payload, &decoded);
+    if (result != 0 || pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        free(state);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    uint64_t wire_id = 0U;
+    VkResult vulkan_result = create_resource_locked(
+        BVB_OPCODE_VULKAN_FENCE_CREATE, payload, sizeof(payload),
+        BVB_OBJECT_FENCE, device_state->wire_id, state, &wire_id);
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (vulkan_result != VK_SUCCESS) {
+        free(state);
+        return vulkan_result;
+    }
+    memcpy(fence, &wire_id, sizeof(*fence));
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL bvb_bridge_vkDestroyFence(
+    VkDevice device, VkFence fence, const VkAllocationCallbacks *allocator) {
+    destroy_resource(
+        device, non_dispatchable_wire_id(&fence, sizeof(fence)),
+        BVB_OBJECT_FENCE, BVB_OPCODE_VULKAN_FENCE_DESTROY, allocator);
+}
+
+static VkResult fence_result_operation(
+    VkDevice device, VkFence fence, uint16_t opcode) {
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    const uint64_t wire_id = non_dispatchable_wire_id(&fence, sizeof(fence));
+    if (device_state == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    struct bvb_resource_proxy *state =
+        resource_proxy_locked(wire_id, BVB_OBJECT_FENCE);
+    int result = state != NULL && state->parent_id == device_state->wire_id
+                     ? connect_locked() : -EINVAL;
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = opcode,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_OBJECT_ID_SIZE,
+    };
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_object_id(
+            request.payload, wire_id, BVB_OBJECT_FENCE);
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) result = exchange_locked(&request, &response);
+    if (result == 0 &&
+        (response.header.status != 0 ||
+         response.header.payload_length != BVB_VULKAN_RESULT_SIZE))
+        result = -EPROTO;
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    if (result == 0)
+        result = bvb_protocol_decode_vulkan_result(
+            response.payload, &vulkan_result);
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return result == 0 ? (VkResult)vulkan_result
+                       : VK_ERROR_INITIALIZATION_FAILED;
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkGetFenceStatus(
+    VkDevice device, VkFence fence) {
+    return fence_result_operation(device, fence,
+                                  BVB_OPCODE_VULKAN_FENCE_STATUS);
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkResetFences(
+    VkDevice device, uint32_t fence_count, const VkFence *fences) {
+    if (fence_count != 1U || fences == NULL)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    return fence_result_operation(device, fences[0],
+                                  BVB_OPCODE_VULKAN_FENCE_RESET);
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkWaitForFences(
+    VkDevice device, uint32_t fence_count, const VkFence *fences,
+    VkBool32 wait_all, uint64_t timeout) {
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || fence_count != 1U || fences == NULL ||
+        (wait_all != VK_FALSE && wait_all != VK_TRUE))
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    const uint64_t wire_id = non_dispatchable_wire_id(
+        &fences[0], sizeof(fences[0]));
+    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    struct bvb_resource_proxy *state =
+        resource_proxy_locked(wire_id, BVB_OBJECT_FENCE);
+    int result = state != NULL && state->parent_id == device_state->wire_id
+                     ? connect_locked() : -EINVAL;
+    const struct bvb_vulkan_fence_wait_request decoded = {
+        .fence_id = wire_id,
+        .timeout = timeout,
+        .wait_all = wait_all != VK_FALSE ? 1U : 0U,
+    };
+    uint8_t payload[BVB_VULKAN_FENCE_WAIT_REQUEST_SIZE];
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_fence_wait_request(
+            payload, &decoded);
+    VkResult vulkan_result = result == 0
+                                 ? result_request_locked(
+                                       BVB_OPCODE_VULKAN_FENCE_WAIT,
+                                       payload, sizeof(payload))
+                                 : VK_ERROR_INITIALIZATION_FAILED;
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return vulkan_result;
+}
+
 static VkResult queue_result_operation(
     uint16_t opcode, VkQueue queue) {
     struct bvb_queue_proxy *proxy = queue_proxy(queue);
@@ -1997,10 +2136,11 @@ static VkResult VKAPI_CALL bvb_bridge_vkQueueSubmit(
     VkQueue queue, uint32_t submit_count, const VkSubmitInfo *submits,
     VkFence fence) {
     struct bvb_queue_proxy *queue_state = queue_proxy(queue);
-    if (queue_state == NULL || fence != VK_NULL_HANDLE) {
+    if (queue_state == NULL) {
         return VK_ERROR_FEATURE_NOT_PRESENT;
     }
     if (submit_count == 0U) {
+        if (fence != VK_NULL_HANDLE) return VK_ERROR_FEATURE_NOT_PRESENT;
         return queue_result_operation(
             BVB_OPCODE_VULKAN_QUEUE_SUBMIT_EMPTY, queue);
     }
@@ -2018,6 +2158,35 @@ static VkResult VKAPI_CALL bvb_bridge_vkQueueSubmit(
         command_state->device_id != queue_state->parent_id ||
         pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
         return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    const uint64_t fence_id = non_dispatchable_wire_id(&fence, sizeof(fence));
+    struct bvb_resource_proxy *fence_state = fence == VK_NULL_HANDLE
+        ? NULL : resource_proxy_locked(fence_id, BVB_OBJECT_FENCE);
+    if (fence != VK_NULL_HANDLE &&
+        (fence_state == NULL ||
+         fence_state->parent_id != queue_state->parent_id)) {
+        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (fence != VK_NULL_HANDLE) {
+        const struct bvb_vulkan_queue_submit_command_fence_request
+            submit_request = {
+                .queue_id = queue_state->wire_id,
+                .command_buffer_id = command_state->wire_id,
+                .fence_id = fence_id,
+            };
+        uint8_t payload[
+            BVB_VULKAN_QUEUE_SUBMIT_COMMAND_FENCE_REQUEST_SIZE];
+        int result =
+            bvb_protocol_encode_vulkan_queue_submit_command_fence_request(
+                payload, &submit_request);
+        VkResult vulkan_result = result == 0
+            ? result_request_locked(
+                  BVB_OPCODE_VULKAN_QUEUE_SUBMIT_COMMAND_FENCE,
+                  payload, sizeof(payload))
+            : VK_ERROR_INITIALIZATION_FAILED;
+        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+        return vulkan_result;
     }
     const struct bvb_vulkan_queue_submit_command_request submit_request = {
         .queue_id = queue_state->wire_id,
@@ -2108,6 +2277,11 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     BVB_DEVICE_MATCH("vkFreeMemory", bvb_bridge_vkFreeMemory)
     BVB_DEVICE_MATCH("vkBindBufferMemory", bvb_bridge_vkBindBufferMemory)
     BVB_DEVICE_MATCH("vkCmdFillBuffer", bvb_bridge_vkCmdFillBuffer)
+    BVB_DEVICE_MATCH("vkCreateFence", bvb_bridge_vkCreateFence)
+    BVB_DEVICE_MATCH("vkDestroyFence", bvb_bridge_vkDestroyFence)
+    BVB_DEVICE_MATCH("vkGetFenceStatus", bvb_bridge_vkGetFenceStatus)
+    BVB_DEVICE_MATCH("vkWaitForFences", bvb_bridge_vkWaitForFences)
+    BVB_DEVICE_MATCH("vkResetFences", bvb_bridge_vkResetFences)
 #undef BVB_DEVICE_MATCH
     return NULL;
 }

@@ -59,7 +59,7 @@ static int header_is_valid(const struct bvb_protocol_header *header) {
         return -EPROTO;
     }
     if (header->opcode < BVB_OPCODE_HELLO ||
-        header->opcode > BVB_OPCODE_VULKAN_MEMORY_VERIFY_FILL) {
+        header->opcode > BVB_OPCODE_VULKAN_QUEUE_SUBMIT_COMMAND_FENCE) {
         return -EPROTO;
     }
     if (header->payload_length > BVB_PROTOCOL_MAX_PAYLOAD) {
@@ -1009,6 +1009,85 @@ int bvb_protocol_decode_vulkan_memory_verify_fill_response(
         .mismatched_words = bvb_wire_get_u32(input + 4),
     };
     return 0;
+}
+
+int bvb_protocol_encode_vulkan_fence_create_request(
+    uint8_t output[BVB_VULKAN_FENCE_CREATE_REQUEST_SIZE],
+    const struct bvb_vulkan_fence_create_request *request) {
+    if (output == NULL || request == NULL ||
+        !wire_id_is_type(request->device_id, 3U)) return -EINVAL;
+    memset(output, 0, BVB_VULKAN_FENCE_CREATE_REQUEST_SIZE);
+    bvb_wire_put_u64(output, request->device_id);
+    bvb_wire_put_u32(output + 8, request->flags);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_fence_create_request(
+    const uint8_t input[BVB_VULKAN_FENCE_CREATE_REQUEST_SIZE],
+    struct bvb_vulkan_fence_create_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    *request = (struct bvb_vulkan_fence_create_request){
+        .device_id = bvb_wire_get_u64(input),
+        .flags = bvb_wire_get_u32(input + 8),
+    };
+    return wire_id_is_type(request->device_id, 3U) &&
+                   bvb_wire_get_u32(input + 12) == 0U
+               ? 0 : -EPROTO;
+}
+
+int bvb_protocol_encode_vulkan_fence_wait_request(
+    uint8_t output[BVB_VULKAN_FENCE_WAIT_REQUEST_SIZE],
+    const struct bvb_vulkan_fence_wait_request *request) {
+    if (output == NULL || request == NULL || request->wait_all > 1U ||
+        !wire_id_is_type(request->fence_id, 18U)) return -EINVAL;
+    memset(output, 0, BVB_VULKAN_FENCE_WAIT_REQUEST_SIZE);
+    bvb_wire_put_u64(output, request->fence_id);
+    bvb_wire_put_u64(output + 8, request->timeout);
+    bvb_wire_put_u32(output + 16, request->wait_all);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_fence_wait_request(
+    const uint8_t input[BVB_VULKAN_FENCE_WAIT_REQUEST_SIZE],
+    struct bvb_vulkan_fence_wait_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    *request = (struct bvb_vulkan_fence_wait_request){
+        .fence_id = bvb_wire_get_u64(input),
+        .timeout = bvb_wire_get_u64(input + 8),
+        .wait_all = bvb_wire_get_u32(input + 16),
+    };
+    return wire_id_is_type(request->fence_id, 18U) &&
+                   request->wait_all <= 1U &&
+                   bvb_wire_get_u32(input + 20) == 0U
+               ? 0 : -EPROTO;
+}
+
+int bvb_protocol_encode_vulkan_queue_submit_command_fence_request(
+    uint8_t output[BVB_VULKAN_QUEUE_SUBMIT_COMMAND_FENCE_REQUEST_SIZE],
+    const struct bvb_vulkan_queue_submit_command_fence_request *request) {
+    if (output == NULL || request == NULL ||
+        !wire_id_is_type(request->queue_id, 4U) ||
+        !wire_id_is_type(request->command_buffer_id, 11U) ||
+        !wire_id_is_type(request->fence_id, 18U)) return -EINVAL;
+    bvb_wire_put_u64(output, request->queue_id);
+    bvb_wire_put_u64(output + 8, request->command_buffer_id);
+    bvb_wire_put_u64(output + 16, request->fence_id);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_queue_submit_command_fence_request(
+    const uint8_t input[BVB_VULKAN_QUEUE_SUBMIT_COMMAND_FENCE_REQUEST_SIZE],
+    struct bvb_vulkan_queue_submit_command_fence_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    *request = (struct bvb_vulkan_queue_submit_command_fence_request){
+        .queue_id = bvb_wire_get_u64(input),
+        .command_buffer_id = bvb_wire_get_u64(input + 8),
+        .fence_id = bvb_wire_get_u64(input + 16),
+    };
+    return wire_id_is_type(request->queue_id, 4U) &&
+                   wire_id_is_type(request->command_buffer_id, 11U) &&
+                   wire_id_is_type(request->fence_id, 18U)
+               ? 0 : -EPROTO;
 }
 
 int bvb_protocol_encode_header(

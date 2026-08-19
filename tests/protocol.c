@@ -486,6 +486,44 @@ int main(void) {
               verify_fill_wire, &verify_fill_decoded) == 0);
     CHECK(verify_fill_decoded.expected_word == UINT32_C(0xa5c3f00d));
 
+    const struct bvb_vulkan_fence_create_request fence_create = {
+        .device_id = UINT64_C(0x0300000000000001),
+        .flags = 1U,
+    };
+    uint8_t fence_create_wire[BVB_VULKAN_FENCE_CREATE_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_fence_create_request(
+              fence_create_wire, &fence_create) == 0);
+    struct bvb_vulkan_fence_create_request fence_create_decoded;
+    CHECK(bvb_protocol_decode_vulkan_fence_create_request(
+              fence_create_wire, &fence_create_decoded) == 0);
+    CHECK(fence_create_decoded.flags == 1U);
+    const struct bvb_vulkan_fence_wait_request fence_wait = {
+        .fence_id = UINT64_C(0x1200000000000001),
+        .timeout = UINT64_C(123456789),
+        .wait_all = 1U,
+    };
+    uint8_t fence_wait_wire[BVB_VULKAN_FENCE_WAIT_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_fence_wait_request(
+              fence_wait_wire, &fence_wait) == 0);
+    struct bvb_vulkan_fence_wait_request fence_wait_decoded;
+    CHECK(bvb_protocol_decode_vulkan_fence_wait_request(
+              fence_wait_wire, &fence_wait_decoded) == 0);
+    CHECK(fence_wait_decoded.timeout == UINT64_C(123456789));
+    CHECK(fence_wait_decoded.wait_all == 1U);
+    const struct bvb_vulkan_queue_submit_command_fence_request fenced_submit = {
+        .queue_id = UINT64_C(0x0400000000000001),
+        .command_buffer_id = UINT64_C(0x0b00000000000001),
+        .fence_id = UINT64_C(0x1200000000000001),
+    };
+    uint8_t fenced_submit_wire[
+        BVB_VULKAN_QUEUE_SUBMIT_COMMAND_FENCE_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_queue_submit_command_fence_request(
+              fenced_submit_wire, &fenced_submit) == 0);
+    struct bvb_vulkan_queue_submit_command_fence_request fenced_submit_decoded;
+    CHECK(bvb_protocol_decode_vulkan_queue_submit_command_fence_request(
+              fenced_submit_wire, &fenced_submit_decoded) == 0);
+    CHECK(fenced_submit_decoded.fence_id == fenced_submit.fence_id);
+
     const struct bvb_shared_batch_setup shared_setup = {
         .region_bytes = 4096U,
         .generation = UINT64_C(0x1122334455667788),

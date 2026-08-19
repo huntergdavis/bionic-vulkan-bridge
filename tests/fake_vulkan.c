@@ -23,6 +23,10 @@ static int fake_to_clear_barrier;
 static int fake_clear_recorded;
 static int fake_to_present_barrier;
 static int fake_submitted;
+static int fake_fence_created;
+static int fake_fence_signaled;
+static const VkFence fake_fence_handle =
+    (VkFence)(uintptr_t)UINT64_C(0x9000);
 
 struct ANativeWindow;
 typedef VkFlags VkAndroidSurfaceCreateFlagsKHR;
@@ -425,6 +429,63 @@ static void VKAPI_CALL fake_destroy_semaphore(
     (void)allocator;
 }
 
+static VkResult VKAPI_CALL fake_create_fence(
+    VkDevice device, const VkFenceCreateInfo *create_info,
+    const VkAllocationCallbacks *allocator, VkFence *fence) {
+    (void)device;
+    (void)allocator;
+    if (create_info == NULL || fence == NULL || fake_fence_created != 0 ||
+        create_info->sType != VK_STRUCTURE_TYPE_FENCE_CREATE_INFO ||
+        create_info->pNext != NULL ||
+        (create_info->flags & ~VK_FENCE_CREATE_SIGNALED_BIT) != 0U)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    fake_fence_created = 1;
+    fake_fence_signaled =
+        (create_info->flags & VK_FENCE_CREATE_SIGNALED_BIT) != 0U;
+    *fence = fake_fence_handle;
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL fake_destroy_fence(
+    VkDevice device, VkFence fence, const VkAllocationCallbacks *allocator) {
+    (void)device;
+    (void)allocator;
+    if (fence == fake_fence_handle) {
+        fake_fence_created = 0;
+        fake_fence_signaled = 0;
+    }
+}
+
+static VkResult VKAPI_CALL fake_get_fence_status(
+    VkDevice device, VkFence fence) {
+    (void)device;
+    if (fake_fence_created == 0 || fence != fake_fence_handle)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    return fake_fence_signaled != 0 ? VK_SUCCESS : VK_NOT_READY;
+}
+
+static VkResult VKAPI_CALL fake_wait_for_fences(
+    VkDevice device, uint32_t fence_count, const VkFence *fences,
+    VkBool32 wait_all, uint64_t timeout) {
+    (void)device;
+    (void)wait_all;
+    (void)timeout;
+    if (fake_fence_created == 0 || fence_count != 1U || fences == NULL ||
+        fences[0] != fake_fence_handle)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    return fake_fence_signaled != 0 ? VK_SUCCESS : VK_TIMEOUT;
+}
+
+static VkResult VKAPI_CALL fake_reset_fences(
+    VkDevice device, uint32_t fence_count, const VkFence *fences) {
+    (void)device;
+    if (fake_fence_created == 0 || fence_count != 1U || fences == NULL ||
+        fences[0] != fake_fence_handle)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    fake_fence_signaled = 0;
+    return VK_SUCCESS;
+}
+
 static VkResult VKAPI_CALL fake_acquire_next_image(
     VkDevice device, VkSwapchainKHR swapchain, uint64_t timeout,
     VkSemaphore semaphore, VkFence fence, uint32_t *image_index) {
@@ -655,7 +716,11 @@ static VkResult VKAPI_CALL fake_queue_submit(
     const VkSubmitInfo *submits,
     VkFence fence) {
     (void)queue;
-    (void)fence;
+    if (fence != VK_NULL_HANDLE) {
+        if (fake_fence_created == 0 || fence != fake_fence_handle)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        fake_fence_signaled = 1;
+    }
     if (fake_swapchain_created != 0) {
         if (submit_count != 1U || submits == NULL ||
             submits[0].waitSemaphoreCount != 1U ||
@@ -789,6 +854,11 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkGetSwapchainImagesKHR", fake_get_swapchain_images)
     BVB_DEVICE_MATCH("vkCreateSemaphore", fake_create_semaphore)
     BVB_DEVICE_MATCH("vkDestroySemaphore", fake_destroy_semaphore)
+    BVB_DEVICE_MATCH("vkCreateFence", fake_create_fence)
+    BVB_DEVICE_MATCH("vkDestroyFence", fake_destroy_fence)
+    BVB_DEVICE_MATCH("vkGetFenceStatus", fake_get_fence_status)
+    BVB_DEVICE_MATCH("vkWaitForFences", fake_wait_for_fences)
+    BVB_DEVICE_MATCH("vkResetFences", fake_reset_fences)
     BVB_DEVICE_MATCH("vkAcquireNextImageKHR", fake_acquire_next_image)
     BVB_DEVICE_MATCH("vkCreateBuffer", fake_create_buffer)
     BVB_DEVICE_MATCH("vkDestroyBuffer", fake_destroy_buffer)

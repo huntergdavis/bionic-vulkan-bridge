@@ -46,6 +46,7 @@ struct bvb_vulkan_global_context {
     uint64_t next_command_buffer_serial;
     uint64_t next_buffer_serial;
     uint64_t next_memory_serial;
+    uint64_t next_fence_serial;
     struct bvb_device_metadata device_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_memory_metadata memory_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
 };
@@ -131,6 +132,14 @@ static VkDeviceMemory memory_from_bits(uint64_t bits) {
                    "VkDeviceMemory exceeds bridge handle width");
     memcpy(&memory, &bits, sizeof(memory));
     return memory;
+}
+
+static VkFence fence_from_bits(uint64_t bits) {
+    VkFence fence = VK_NULL_HANDLE;
+    _Static_assert(sizeof(fence) <= sizeof(bits),
+                   "VkFence exceeds bridge handle width");
+    memcpy(&fence, &bits, sizeof(fence));
+    return fence;
 }
 
 static int resolve_physical_device(
@@ -253,6 +262,7 @@ int bvb_vulkan_global_context_create(
     context->next_command_buffer_serial = 1U;
     context->next_buffer_serial = 1U;
     context->next_memory_serial = 1U;
+    context->next_fence_serial = 1U;
     *output = context;
     return 0;
 }
@@ -914,6 +924,15 @@ int bvb_vulkan_global_context_destroy_device(
         if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_DEVICE_MEMORY &&
             entry->parent_id == device_id) {
             result = bvb_vulkan_global_context_free_memory(
+                context, entry->wire_id, NULL, 0U);
+            if (result != 0) return result;
+        }
+    }
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_FENCE &&
+            entry->parent_id == device_id) {
+            result = bvb_vulkan_global_context_destroy_fence(
                 context, entry->wire_id, NULL, 0U);
             if (result != 0) return result;
         }
@@ -1887,5 +1906,182 @@ int bvb_vulkan_global_context_verify_memory_fill(
                 ++response->mismatched_words;
     }
     unmap(device, memory_from_bits(memory_bits));
+    return 0;
+}
+
+int bvb_vulkan_global_context_create_fence(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_fence_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL) return -EINVAL;
+    *response = (struct bvb_vulkan_object_create_response){0};
+    if ((request->flags & ~VK_FENCE_CREATE_SIGNALED_BIT) != 0U) {
+        response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    uint64_t device_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE, NULL,
+        &device_bits);
+    if (result != 0) return result;
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkCreateFence create_fence =
+        (PFN_vkCreateFence)context->get_device_proc_addr(device,
+                                                         "vkCreateFence");
+    PFN_vkDestroyFence destroy_fence =
+        (PFN_vkDestroyFence)context->get_device_proc_addr(device,
+                                                          "vkDestroyFence");
+    if (create_fence == NULL || destroy_fence == NULL) return -ENOSYS;
+    const VkFenceCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .flags = request->flags,
+    };
+    VkFence fence = VK_NULL_HANDLE;
+    response->vulkan_result = create_fence(device, &create_info, NULL, &fence);
+    if (response->vulkan_result != VK_SUCCESS) return 0;
+    const uint64_t wire_id = bvb_handle_id(
+        BVB_OBJECT_FENCE, context->next_fence_serial++);
+    result = bvb_handle_table_insert(
+        &context->objects, wire_id, request->device_id,
+        handle_bits(&fence, sizeof(fence)));
+    if (result != 0) {
+        destroy_fence(device, fence, NULL);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    response->object_id = wire_id;
+    return 0;
+}
+
+int bvb_vulkan_global_context_destroy_fence(
+    struct bvb_vulkan_global_context *context, uint64_t fence_id,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    uint64_t device_id = 0U, fence_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, fence_id, BVB_OBJECT_FENCE, &device_id, &device, &fence_bits);
+    if (result != 0) return result;
+    PFN_vkDestroyFence destroy_fence =
+        (PFN_vkDestroyFence)context->get_device_proc_addr(device,
+                                                          "vkDestroyFence");
+    if (destroy_fence == NULL) return -ENOSYS;
+    result = bvb_handle_table_remove(
+        &context->objects, fence_id, BVB_OBJECT_FENCE, NULL);
+    if (result == 0) destroy_fence(device, fence_from_bits(fence_bits), NULL);
+    return result;
+}
+
+int bvb_vulkan_global_context_get_fence_status(
+    const struct bvb_vulkan_global_context *context, uint64_t fence_id,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (vulkan_result == NULL) return -EINVAL;
+    uint64_t device_id = 0U, fence_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, fence_id, BVB_OBJECT_FENCE, &device_id, &device, &fence_bits);
+    if (result != 0) return result;
+    PFN_vkGetFenceStatus get_status =
+        (PFN_vkGetFenceStatus)context->get_device_proc_addr(
+            device, "vkGetFenceStatus");
+    if (get_status == NULL) return -ENOSYS;
+    *vulkan_result = get_status(device, fence_from_bits(fence_bits));
+    return 0;
+}
+
+int bvb_vulkan_global_context_wait_fence(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_fence_wait_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (request == NULL || vulkan_result == NULL || request->wait_all > 1U)
+        return -EINVAL;
+    uint64_t device_id = 0U, fence_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, request->fence_id, BVB_OBJECT_FENCE, &device_id, &device,
+        &fence_bits);
+    if (result != 0) return result;
+    PFN_vkWaitForFences wait =
+        (PFN_vkWaitForFences)context->get_device_proc_addr(
+            device, "vkWaitForFences");
+    if (wait == NULL) return -ENOSYS;
+    const VkFence fence = fence_from_bits(fence_bits);
+    *vulkan_result = wait(device, 1U, &fence,
+                          request->wait_all != 0U ? VK_TRUE : VK_FALSE,
+                          request->timeout);
+    return 0;
+}
+
+int bvb_vulkan_global_context_reset_fence(
+    const struct bvb_vulkan_global_context *context, uint64_t fence_id,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (vulkan_result == NULL) return -EINVAL;
+    uint64_t device_id = 0U, fence_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, fence_id, BVB_OBJECT_FENCE, &device_id, &device, &fence_bits);
+    if (result != 0) return result;
+    PFN_vkResetFences reset =
+        (PFN_vkResetFences)context->get_device_proc_addr(device,
+                                                         "vkResetFences");
+    if (reset == NULL) return -ENOSYS;
+    const VkFence fence = fence_from_bits(fence_bits);
+    *vulkan_result = reset(device, 1U, &fence);
+    return 0;
+}
+
+int bvb_vulkan_global_context_queue_submit_command_fence(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_queue_submit_command_fence_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || vulkan_result == NULL)
+        return -EINVAL;
+    VkDevice queue_device = VK_NULL_HANDLE;
+    VkQueue queue = VK_NULL_HANDLE;
+    int result = resolve_queue(context, request->queue_id, &queue_device,
+                               &queue);
+    uint64_t queue_device_id = 0U, queue_bits = 0U;
+    if (result == 0)
+        result = bvb_handle_table_lookup(
+            &context->objects, request->queue_id, BVB_OBJECT_QUEUE,
+            &queue_device_id, &queue_bits);
+    uint64_t command_device_id = 0U;
+    VkDevice command_device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    if (result == 0)
+        result = resolve_command_buffer(
+            context, request->command_buffer_id, &command_device_id,
+            &command_device, &command_pool, &command_buffer);
+    uint64_t fence_device_id = 0U, fence_bits = 0U;
+    VkDevice fence_device = VK_NULL_HANDLE;
+    if (result == 0)
+        result = resolve_device_child(
+            context, request->fence_id, BVB_OBJECT_FENCE, &fence_device_id,
+            &fence_device, &fence_bits);
+    if (result != 0 || command_device_id != queue_device_id ||
+        fence_device_id != queue_device_id || command_device != queue_device ||
+        fence_device != queue_device) {
+        set_error(error, error_size,
+                  "queue, command buffer, and fence have different devices");
+        return result != 0 ? result : -EPROTO;
+    }
+    PFN_vkQueueSubmit submit =
+        (PFN_vkQueueSubmit)context->get_device_proc_addr(queue_device,
+                                                         "vkQueueSubmit");
+    if (submit == NULL) return -ENOSYS;
+    const VkSubmitInfo submit_info = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1U,
+        .pCommandBuffers = &command_buffer,
+    };
+    *vulkan_result = submit(queue, 1U, &submit_info,
+                            fence_from_bits(fence_bits));
     return 0;
 }

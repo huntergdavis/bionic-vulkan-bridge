@@ -1235,6 +1235,16 @@ static int answer_vulkan_resource_create(
             result = bvb_vulkan_global_context_allocate_memory(
                 context, &decoded, &created, diagnostic, sizeof(diagnostic));
         expected_type = BVB_OBJECT_DEVICE_MEMORY;
+    } else if (request->header.opcode == BVB_OPCODE_VULKAN_FENCE_CREATE &&
+               request->header.payload_length ==
+                   BVB_VULKAN_FENCE_CREATE_REQUEST_SIZE) {
+        struct bvb_vulkan_fence_create_request decoded;
+        result = bvb_protocol_decode_vulkan_fence_create_request(
+            request->payload, &decoded);
+        if (result == 0)
+            result = bvb_vulkan_global_context_create_fence(
+                context, &decoded, &created, diagnostic, sizeof(diagnostic));
+        expected_type = BVB_OBJECT_FENCE;
     }
     if (result != 0) {
         fprintf(stderr, "bvb: resource create failed: %s\n", diagnostic);
@@ -1262,19 +1272,24 @@ static int answer_vulkan_resource_destroy(
     const bool buffer =
         request->header.opcode == BVB_OPCODE_VULKAN_BUFFER_DESTROY;
     const bool memory = request->header.opcode == BVB_OPCODE_VULKAN_MEMORY_FREE;
+    const bool fence = request->header.opcode == BVB_OPCODE_VULKAN_FENCE_DESTROY;
     uint64_t object_id = 0U;
-    int result = buffer || memory
+    int result = buffer || memory || fence
                      ? bvb_protocol_decode_vulkan_object_id(
                            request->payload, &object_id,
-                           buffer ? BVB_OBJECT_BUFFER
-                                  : BVB_OBJECT_DEVICE_MEMORY)
+                           buffer ? BVB_OBJECT_BUFFER :
+                           memory ? BVB_OBJECT_DEVICE_MEMORY :
+                                    BVB_OBJECT_FENCE)
                      : -EPROTO;
     char diagnostic[512] = {0};
     if (result == 0)
         result = buffer ? bvb_vulkan_global_context_destroy_buffer(
                               context, object_id, diagnostic,
+                              sizeof(diagnostic)) :
+                 memory ? bvb_vulkan_global_context_free_memory(
+                              context, object_id, diagnostic,
                               sizeof(diagnostic))
-                        : bvb_vulkan_global_context_free_memory(
+                        : bvb_vulkan_global_context_destroy_fence(
                               context, object_id, diagnostic,
                               sizeof(diagnostic));
     if (result != 0) {
@@ -1396,6 +1411,103 @@ static int answer_vulkan_memory_verify_fill(
             BVB_VULKAN_MEMORY_VERIFY_FILL_RESPONSE_SIZE;
     else {
         fprintf(stderr, "bvb: memory verification failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_fence_operation(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length != BVB_VULKAN_OBJECT_ID_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    uint64_t fence_id = 0U;
+    int result = bvb_protocol_decode_vulkan_object_id(
+        request->payload, &fence_id, BVB_OBJECT_FENCE);
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    char diagnostic[512] = {0};
+    if (result == 0 && request->header.opcode == BVB_OPCODE_VULKAN_FENCE_STATUS)
+        result = bvb_vulkan_global_context_get_fence_status(
+            context, fence_id, &vulkan_result, diagnostic, sizeof(diagnostic));
+    else if (result == 0 &&
+             request->header.opcode == BVB_OPCODE_VULKAN_FENCE_RESET)
+        result = bvb_vulkan_global_context_reset_fence(
+            context, fence_id, &vulkan_result, diagnostic, sizeof(diagnostic));
+    else if (result == 0)
+        result = -EPROTO;
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_result(
+            response.payload, vulkan_result);
+    if (result == 0)
+        response.header.payload_length = BVB_VULKAN_RESULT_SIZE;
+    else {
+        fprintf(stderr, "bvb: fence operation failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_fence_wait(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length != BVB_VULKAN_FENCE_WAIT_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_fence_wait_request decoded;
+    int result = bvb_protocol_decode_vulkan_fence_wait_request(
+        request->payload, &decoded);
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_wait_fence(
+            context, &decoded, &vulkan_result, diagnostic, sizeof(diagnostic));
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_result(
+            response.payload, vulkan_result);
+    if (result == 0)
+        response.header.payload_length = BVB_VULKAN_RESULT_SIZE;
+    else {
+        fprintf(stderr, "bvb: fence wait failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_queue_submit_command_fence(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_QUEUE_SUBMIT_COMMAND_FENCE_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_queue_submit_command_fence_request decoded;
+    int result = bvb_protocol_decode_vulkan_queue_submit_command_fence_request(
+        request->payload, &decoded);
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_queue_submit_command_fence(
+            context, &decoded, &vulkan_result, diagnostic, sizeof(diagnostic));
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_result(
+            response.payload, vulkan_result);
+    if (result == 0)
+        response.header.payload_length = BVB_VULKAN_RESULT_SIZE;
+    else {
+        fprintf(stderr, "bvb: fenced queue submit failed: %s\n", diagnostic);
         response.header.status = result;
     }
     return bvb_transport_send(client_fd, &response);
@@ -1721,11 +1833,13 @@ static int serve_connection(int client_fd, const char *loader_path,
             result = answer_vulkan_queue_submit_command(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode == BVB_OPCODE_VULKAN_BUFFER_CREATE ||
-                   request.header.opcode == BVB_OPCODE_VULKAN_MEMORY_ALLOCATE) {
+                   request.header.opcode == BVB_OPCODE_VULKAN_MEMORY_ALLOCATE ||
+                   request.header.opcode == BVB_OPCODE_VULKAN_FENCE_CREATE) {
             result = answer_vulkan_resource_create(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode == BVB_OPCODE_VULKAN_BUFFER_DESTROY ||
-                   request.header.opcode == BVB_OPCODE_VULKAN_MEMORY_FREE) {
+                   request.header.opcode == BVB_OPCODE_VULKAN_MEMORY_FREE ||
+                   request.header.opcode == BVB_OPCODE_VULKAN_FENCE_DESTROY) {
             result = answer_vulkan_resource_destroy(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
@@ -1742,6 +1856,17 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_MEMORY_VERIFY_FILL) {
             result = answer_vulkan_memory_verify_fill(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode == BVB_OPCODE_VULKAN_FENCE_STATUS ||
+                   request.header.opcode == BVB_OPCODE_VULKAN_FENCE_RESET) {
+            result = answer_vulkan_fence_operation(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode == BVB_OPCODE_VULKAN_FENCE_WAIT) {
+            result = answer_vulkan_fence_wait(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_QUEUE_SUBMIT_COMMAND_FENCE) {
+            result = answer_vulkan_queue_submit_command_fence(
                 client_fd, &request, negotiated, global_context);
         } else {
             result = -EPROTO;

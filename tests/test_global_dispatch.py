@@ -16,7 +16,7 @@ def main() -> int:
     service, client, loader = map(
         lambda value: str(pathlib.Path(value).resolve()), sys.argv[1:]
     )
-    with tempfile.TemporaryDirectory(prefix="bvb-e031-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="bvb-e032-") as temporary:
         socket_path = pathlib.Path(temporary) / "runtime" / "bridge.sock"
         server = subprocess.Popen(
             [
@@ -69,6 +69,9 @@ def main() -> int:
             assert f"buffer={0x1300000000000001}" in completed.stdout
             assert f"memory={0x0900000000000001}" in completed.stdout
             assert "fill_words=1024 mismatches=0" in completed.stdout
+            assert f"fence={0x1200000000000001}" in completed.stdout
+            assert "fence_before=1 fenced_submit=0 fence_after=0" in completed.stdout
+            assert "fence_wait=0 fence_reset=0 fence_after_reset=1" in completed.stdout
             server_stdout, server_stderr = server.communicate(timeout=5.0)
             assert server.returncode == 0, server_stderr
             assert server_stdout == ""
@@ -78,7 +81,7 @@ def main() -> int:
             if server.poll() is None:
                 server.terminate()
                 server.wait(timeout=5.0)
-    print("PASS: E031 deterministic buffer-fill integration")
+    print("PASS: E032 fence-backed buffer-fill integration")
     return 0
 
 

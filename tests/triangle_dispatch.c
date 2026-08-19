@@ -102,7 +102,12 @@ int main(void) {
                         strcmp(entry->name, "vkAllocateMemory") == 0 ||
                         strcmp(entry->name, "vkFreeMemory") == 0 ||
                         strcmp(entry->name, "vkBindBufferMemory") == 0 ||
-                        strcmp(entry->name, "vkCmdFillBuffer") == 0)) {
+                        strcmp(entry->name, "vkCmdFillBuffer") == 0 ||
+                        strcmp(entry->name, "vkCreateFence") == 0 ||
+                        strcmp(entry->name, "vkDestroyFence") == 0 ||
+                        strcmp(entry->name, "vkGetFenceStatus") == 0 ||
+                        strcmp(entry->name, "vkWaitForFences") == 0 ||
+                        strcmp(entry->name, "vkResetFences") == 0)) {
                 CHECK(resolved == NULL);
             } else {
                 CHECK(resolved != NULL);
@@ -122,8 +127,8 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 40U);
-    CHECK(required_count == 400U);
+    CHECK(executable_count == 45U);
+    CHECK(required_count == 395U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");
