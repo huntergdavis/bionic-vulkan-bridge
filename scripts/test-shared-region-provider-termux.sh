@@ -182,28 +182,45 @@ wait "$service_pid"
 service_pid=
 
 python - "$wrong_json" "$valid_json" "$status_json" \
-    "$evidence_json" <<'PY'
+    "$service_stdout" "$evidence_json" <<'PY'
 import json
 import pathlib
+import re
 import sys
 
-wrong_path, valid_path, status_path, evidence_path = map(
+wrong_path, valid_path, status_path, service_path, evidence_path = map(
     pathlib.Path, sys.argv[1:]
 )
 wrong = json.loads(wrong_path.read_text())
 valid = json.loads(valid_path.read_text())
 status = json.loads(status_path.read_text())
 activity = status["activity_status"]
+event_pattern = re.compile(
+    r"activity_event=(\d+) sequence=(\d+) pid=(\d+) "
+    r"width=(\d+) height=(\d+)"
+)
+events = [
+    {
+        "event": int(match.group(1)),
+        "sequence": int(match.group(2)),
+        "pid": int(match.group(3)),
+        "width": int(match.group(4)),
+        "height": int(match.group(5)),
+    }
+    for match in event_pattern.finditer(service_path.read_text())
+]
+event_codes = {record["event"] for record in events}
 assert wrong["result"] == "fail"
+assert wrong["native_status"] == -13
 assert valid == {
     "result": "pass",
     "region_bytes": 4096,
     "marker": "BVB_E020_SHARED_REGION",
 }
 assert activity["ingress_configured"] is True
-assert activity["renderer_ready"] is True
-assert activity["window_present"] is True
-assert activity["focused"] is True
+assert activity["rejected_event_count"] == 0
+assert activity["authenticated_event_count"] == len(events)
+assert {1, 2, 3, 7, 9, 10, 11}.issubset(event_codes)
 document = {
     "schema_version": 1,
     "gate": "E020",
@@ -212,6 +229,7 @@ document = {
     "caller_uid": "termux",
     "wrong_capability": wrong,
     "valid_capability": valid,
+    "authenticated_lifecycle_events": events,
     "activity_status": activity,
 }
 evidence_path.write_text(json.dumps(document, indent=2) + "\n")
