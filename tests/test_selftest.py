@@ -28,10 +28,10 @@ def main() -> int:
     assert document["submit_wait_elapsed_ns"] >= 0
     assert "VK_KHR_surface" in document["known_instance_extensions"]
     assert "VK_KHR_swapchain" in document["known_device_extensions"]
+    assert "VK_KHR_dynamic_rendering" in document["known_device_extensions"]
     print("PASS: Vulkan command submission self-test")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

@@ -269,6 +269,7 @@ static VkResult VKAPI_CALL fake_enumerate_device_extensions(
         "VK_KHR_external_memory",
         "VK_KHR_external_memory_fd",
         "VK_ANDROID_external_memory_android_hardware_buffer",
+        "VK_KHR_dynamic_rendering",
     };
     const uint32_t available = (uint32_t)(sizeof(names) / sizeof(names[0]));
     if (properties == NULL) {

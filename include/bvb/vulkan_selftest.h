@@ -22,6 +22,7 @@ enum bvb_device_extension_flag {
     BVB_DEVICE_KHR_EXTERNAL_SEMAPHORE_FD = UINT64_C(1) << 5,
     BVB_DEVICE_KHR_TIMELINE_SEMAPHORE = UINT64_C(1) << 6,
     BVB_DEVICE_KHR_EXTERNAL_FENCE_FD = UINT64_C(1) << 7,
+    BVB_DEVICE_KHR_DYNAMIC_RENDERING = UINT64_C(1) << 8,
 };
 
 struct bvb_vulkan_selftest_result {

@@ -35,6 +35,7 @@ static void print_extension_array(uint64_t flags, int device) {
          "VK_KHR_external_semaphore_fd"},
         {BVB_DEVICE_KHR_TIMELINE_SEMAPHORE, "VK_KHR_timeline_semaphore"},
         {BVB_DEVICE_KHR_EXTERNAL_FENCE_FD, "VK_KHR_external_fence_fd"},
+        {BVB_DEVICE_KHR_DYNAMIC_RENDERING, "VK_KHR_dynamic_rendering"},
     };
     const struct extension_name *extensions =
         device != 0 ? device_extensions : instance_extensions;
@@ -104,4 +105,3 @@ int main(int argc, char **argv) {
            result.submit_wait_elapsed_ns);
     return 0;
 }
-

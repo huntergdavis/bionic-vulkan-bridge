@@ -122,6 +122,9 @@ static uint64_t device_extension_flag(const char *name) {
     if (strcmp(name, "VK_KHR_external_fence_fd") == 0) {
         return BVB_DEVICE_KHR_EXTERNAL_FENCE_FD;
     }
+    if (strcmp(name, "VK_KHR_dynamic_rendering") == 0) {
+        return BVB_DEVICE_KHR_DYNAMIC_RENDERING;
+    }
     return 0;
 }
 
