@@ -4,9 +4,12 @@
 #include <fcntl.h>
 #include <stdatomic.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include <vulkan/vulkan.h>
@@ -19,6 +22,20 @@ typedef void *(*bvb_dlsym_function)(void *, const char *);
 static _Atomic(bvb_dlsym_function) bvb_real_dlsym;
 static _Atomic(PFN_vkGetInstanceProcAddr) bvb_real_gipa;
 static _Atomic(PFN_vkGetDeviceProcAddr) bvb_real_gdpa;
+static _Atomic uint64_t bvb_trace_sequence;
+
+static size_t bvb_append_u64(char *output, uint64_t value) {
+    char reversed[20];
+    size_t length = 0;
+    do {
+        reversed[length++] = (char)('0' + value % 10U);
+        value /= 10U;
+    } while (value != 0U);
+    for (size_t index = 0; index < length; ++index) {
+        output[index] = reversed[length - index - 1U];
+    }
+    return length;
+}
 
 static void *bvb_gipa_as_object(PFN_vkGetInstanceProcAddr function) {
     union {
@@ -103,14 +120,33 @@ static void bvb_trace_record(char stage, bool resolved, const char *name) {
     }
     (void)fchmod(descriptor, S_IRUSR | S_IWUSR);
 
-    char record[4U + BVB_TRACE_NAME_LIMIT + 1U];
-    record[0] = stage;
-    record[1] = '\t';
-    record[2] = resolved ? '1' : '0';
-    record[3] = '\t';
-    memcpy(record + 4U, name, name_length);
-    record[4U + name_length] = '\n';
-    ssize_t written = write(descriptor, record, 5U + name_length);
+    /*
+     * One append-only write keeps records from separate Wine-side processes
+     * intact. Format v1 is:
+     * version, pid, tid, process-local sequence, stage, resolved, name.
+     */
+    char record[1U + 1U + 20U + 1U + 20U + 1U + 20U + 1U + 1U + 1U +
+                1U + 1U + BVB_TRACE_NAME_LIMIT + 1U];
+    size_t offset = 0;
+    record[offset++] = '1';
+    record[offset++] = '\t';
+    offset += bvb_append_u64(record + offset, (uint64_t)getpid());
+    record[offset++] = '\t';
+    offset += bvb_append_u64(record + offset, (uint64_t)syscall(SYS_gettid));
+    record[offset++] = '\t';
+    uint64_t sequence = atomic_fetch_add_explicit(
+                            &bvb_trace_sequence, 1U, memory_order_relaxed) +
+                        1U;
+    offset += bvb_append_u64(record + offset, sequence);
+    record[offset++] = '\t';
+    record[offset++] = stage;
+    record[offset++] = '\t';
+    record[offset++] = resolved ? '1' : '0';
+    record[offset++] = '\t';
+    memcpy(record + offset, name, name_length);
+    offset += name_length;
+    record[offset++] = '\n';
+    ssize_t written = write(descriptor, record, offset);
     (void)written;
     (void)close(descriptor);
 }

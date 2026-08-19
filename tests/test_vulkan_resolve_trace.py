@@ -30,7 +30,19 @@ def main() -> None:
         assert result.stderr == ""
         assert stat.S_IMODE(trace.stat().st_mode) == 0o600
 
-        records = [tuple(line.split("\t", 2)) for line in trace.read_text().splitlines()]
+        records = []
+        identities = set()
+        sequences = {}
+        for line in trace.read_text().splitlines():
+            version, pid, tid, sequence, stage, resolved, name = line.split("\t", 6)
+            assert version == "1"
+            identity = (int(pid), int(tid))
+            identities.add(identity)
+            previous = sequences.get(int(pid), 0)
+            assert int(sequence) > previous
+            sequences[int(pid)] = int(sequence)
+            records.append((stage, resolved, name))
+        assert len(identities) == 1
         required = {
             ("L", "1", "vkGetInstanceProcAddr"),
             ("I", "1", "vkCreateInstance"),

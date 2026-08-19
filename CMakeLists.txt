@@ -177,6 +177,15 @@ if(BUILD_TESTING)
         "$<TARGET_FILE:bvb-fake-vulkan-resolve>"
         "$<TARGET_FILE:bvb-vulkan-resolve-consumer>"
     )
+
+    add_test(
+      NAME vulkan-dispatch-manifest
+      COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_dispatch_manifest.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/analyze-vulkan-resolve-trace.py"
+        "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
+    )
   endif()
 
   add_test(
