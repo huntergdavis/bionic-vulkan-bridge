@@ -118,6 +118,13 @@ extensions through the Bionic service. Extension results are internally paged
 in 15-record responses, and generated wire codecs carry every field without
 sharing C structure layout across libc. The measured policy now marks 18 names
 executable while leaving 422 resolved names unavailable.
+E028 adds the base feature query and a deliberately constrained logical-device
+path: one validated queue, no extensions, no feature-enabling structure, and no
+`pNext` chain. The real glibc client created typed device and queue proxies over
+the Adreno driver, observed stable queue identity, then explicitly destroyed
+the native device. The policy now marks 23 names executable and leaves 417
+resolved names unavailable; normal Vulkan resource and submission APIs remain
+unimplemented.
 
 ## Build and test on a normal Linux host
 

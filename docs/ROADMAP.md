@@ -67,6 +67,8 @@
   proxy enumeration
 - [x] Bridge full base properties, queue families, memory topology, and paged
   device-extension enumeration without sharing C structure layout across libc
+- [x] Bridge base features and constrained logical-device/queue creation with
+  typed device/queue proxies and explicit descendant teardown
 - [ ] Expand generated dispatch to the measured DXVK startup subset
 - [ ] Implement GPU external-memory and synchronization strategy
 - [x] Reach a rendered test triangle

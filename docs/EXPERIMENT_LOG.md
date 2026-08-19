@@ -1488,3 +1488,64 @@ authenticated glibc-to-Bionic connection and E026's stable, parented physical-
 device handles. The next bounded gate should add the feature-query surface and
 constrained logical-device/queue creation required before game-facing command
 submission; WSI remains unavailable until its semantics are bridged.
+
+## E028 — Typed logical device and queue (2026-08-19)
+
+Status: passed on real hardware from a Termux ARM64 glibc client through the
+Android Bionic service at source commit `ade25a8`.
+
+Hypothesis: E027's full base discovery and stable type-2 physical proxy can
+support a minimal game-facing native device lifecycle without yet exposing
+extensions, feature chains, WSI, or resource commands. A one-queue device is a
+small enough gate to validate ownership and device-scoped dispatch separately
+from command submission.
+
+Method: E028 adds a 220-byte generated fixed-width codec for every member of
+`VkPhysicalDeviceFeatures` and makes `vkGetPhysicalDeviceFeatures` executable.
+`vkCreateDevice` accepts exactly one queue-create record, validates the family
+and count against a fresh native queue inventory, and rejects layers,
+extensions, enabled base features, `pNext` chains, allocators, and nonzero
+flags. The 32-byte create request transports the physical ID, queue family,
+count, and exact IEEE-754 priority bits. The Bionic owner creates a native
+device and returns a type-3 proxy; `vkGetDeviceQueue` returns a cached type-4
+proxy for the native queue. `vkGetDeviceProcAddr` validates a device proxy
+before exposing `vkDestroyDevice`, `vkGetDeviceQueue`, or the already-
+executable triangle command subset.
+
+Device metadata records retain the created queue family/count. Explicit device
+destruction removes queue children before the device and calls the native
+destroy function. Instance teardown also destroys any remaining descendant
+devices before removing physical-device children, while context teardown keeps
+the same device-before-instance ordering.
+
+Result: the real Adreno base features reported sampler anisotropy support. The
+glibc client created logical-device proxy `0x0300000000000001` (type 3,
+serial 1) using one queue from the validated family. Two queue lookups returned
+the same client pointer and queue proxy `0x0400000000000001` (type 4,
+serial 1). The client explicitly destroyed the logical device and both test
+instances. Client and service stderr were empty. The E028 policy classifies 23
+of 742 measured names executable, 417 resolved names required-but-unimplemented,
+and 302 observed-null names unavailable.
+
+All 18 host contracts and all 16 contracts available under Termux ARM64
+passed. Canonical evidence is `docs/evidence/e028-logical-device.json`, 5,021
+bytes, SHA-256
+`2ccf3e0de86afecd206566e3172bfd7e190f6acb7012d641c4d2adcfef93c171`.
+The canonical artifacts are:
+
+- generated E028 policy: 1,630 bytes, SHA-256
+  `e749c31663d5b51afcab5f6dcadec588329379b6fc0fd4740e712a1bf09fe2b5`;
+- glibc `libvulkan-bvb` bridge: 211,544 bytes, SHA-256
+  `e2430cfca18eb7d1c61c5ee4cca7ae88254403565f5ed587333404865918c833`;
+- glibc logical-device client: 71,720 bytes, SHA-256
+  `d96bce6505e180bb2ee772021e57860158e103dad503961ab005362ceea9ecb1`;
+- Bionic bridge service: 90,040 bytes, SHA-256
+  `9f1a8a36dd09d45ecd80592bf8f931513765db260a35cf336e68cc08ed63db9f`.
+
+The required recall queries found no indexed E028 bridge implementation. The
+only `vkCreateDevice` recall was the existing direct-stack control, so E028
+reused the repository's proven native self-test sequence together with E025's
+persistent connection and E026/E027's parented physical-device ownership. The
+next bounded gate should bridge ordinary command-pool/buffer submission and
+synchronization through these device/queue proxies; this gate does not claim
+DXVK resource creation, WSI, animation, or an FPS change.
