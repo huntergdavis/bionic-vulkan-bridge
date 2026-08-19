@@ -14,14 +14,19 @@ helper_apk="$out_dir/e022-shared-region-client.apk"
 relay_builder="$project_dir/scripts/build-shared-region-relay-glibc-termux.sh"
 relay_client="$out_dir/bvb-shared-region-relay-glibc"
 control_client="$build_dir/bvb-bridge-client"
+screencap_command=/system/bin/screencap
 
 for command_name in am aapt chmod cmake cp env grun logcat od pm python \
-    readelf screencap sed sha256sum sleep tr; do
+    readelf sed sha256sum sleep tr; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         printf 'missing required command: %s\n' "$command_name" >&2
         exit 2
     fi
 done
+if [ ! -x "$screencap_command" ]; then
+    printf 'missing required command: %s\n' "$screencap_command" >&2
+    exit 2
+fi
 for required_file in "$manifest" "$signed_apk" "$relay_builder"; do
     if [ ! -f "$required_file" ]; then
         printf 'missing required file: %s\n' "$required_file" >&2
@@ -249,7 +254,7 @@ done
 wait "$service_pid"
 service_pid=
 logcat -d --pid "$activity_pid" -v threadtime > "$app_log" 2>/dev/null || true
-screencap -p "$screenshot" 2>/dev/null || true
+"$screencap_command" -p "$screenshot" 2>/dev/null || true
 
 python - "$wrong_json" "$valid_json" "$relay_stdout" "$status_json" \
     "$service_stdout" "$evidence_json" "$screenshot" <<'PY'
