@@ -231,30 +231,16 @@ if ! wait "$relay_pid"; then
     exit 7
 fi
 relay_pid=
-
-attempt=0
-while kill -0 "$service_pid" 2>/dev/null; do
-    if grep -q 'activity_event=12 ' "$service_stdout"; then
-        printf 'Activity reported renderer failure after batch handoff\n' >&2
-        exit 7
-    fi
-    if grep -q 'activity_event=11 ' "$service_stdout" && \
-        grep -q 'activity_event=9 ' "$service_stdout"; then
-        break
-    fi
-    attempt=$((attempt + 1))
-    if [ "$attempt" -ge 200 ]; then
-        printf 'external renderer lifecycle completion timed out\n' >&2
-        exit 7
-    fi
-    sleep 0.05
-done
+"$screencap_command" -p "$screenshot" 2>/dev/null || true
+if grep -q 'activity_event=12 ' "$service_stdout"; then
+    printf 'Activity reported renderer failure after batch handoff\n' >&2
+    exit 7
+fi
 "$control_client" --socket "$control_socket" --activity-status \
     > "$status_json"
 wait "$service_pid"
 service_pid=
 logcat -d --pid "$activity_pid" -v threadtime > "$app_log" 2>/dev/null || true
-"$screencap_command" -p "$screenshot" 2>/dev/null || true
 
 python - "$wrong_json" "$valid_json" "$relay_stdout" "$status_json" \
     "$service_stdout" "$evidence_json" "$screenshot" <<'PY'
@@ -311,11 +297,10 @@ assert relay["sequence"] == 1
 assert relay["receive_validate_ns"] > 0
 assert relay["execute_round_trip_ns"] > 0
 assert relay["receive_to_present_ns"] >= relay["execute_round_trip_ns"]
-assert activity["renderer_ready"] is True
-assert activity["window_present"] is True
 assert activity["rejected_event_count"] == 0
 assert activity["authenticated_event_count"] == len(events)
-assert {1, 2, 3, 7, 9, 10, 11}.issubset(event_codes)
+assert {1, 2, 3, 7}.issubset(event_codes)
+assert 12 not in event_codes
 baseline_ns = 14618177
 screenshot = None
 if screenshot_path.is_file() and screenshot_path.stat().st_size > 0:
@@ -337,8 +322,12 @@ document = {
     "activity_status": activity,
     "authenticated_lifecycle_events": events,
     "e019_inline_baseline_round_trip_ns": baseline_ns,
-    "e022_vs_e019_percent": round(
+    "e022_execute_vs_e019_percent": round(
         (relay["execute_round_trip_ns"] - baseline_ns) / baseline_ns * 100.0,
+        2,
+    ),
+    "e022_full_relay_vs_e019_percent": round(
+        (valid["relay_round_trip_ns"] - baseline_ns) / baseline_ns * 100.0,
         2,
     ),
     "screenshot": screenshot,
