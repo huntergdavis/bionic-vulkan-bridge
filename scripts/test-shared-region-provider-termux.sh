@@ -63,6 +63,16 @@ if ! readelf -l "$glibc_client" | \
     exit 3
 fi
 
+case "$helper_apk" in
+    "$out_dir/e020-shared-region-client.apk") ;;
+    *)
+        printf 'unexpected helper APK path: %s\n' "$helper_apk" >&2
+        exit 2
+        ;;
+esac
+if [ -e "$helper_apk" ]; then
+    chmod 0600 "$helper_apk"
+fi
 cp "$signed_apk" "$helper_apk"
 chmod 0400 "$helper_apk"
 runtime_dir=$(mktemp -d "$runtime_parent/bvb-e020.XXXXXX")
