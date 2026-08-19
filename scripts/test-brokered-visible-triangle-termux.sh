@@ -276,6 +276,7 @@ events = [
     for match in event_pattern.finditer(service_path.read_text())
 ]
 event_codes = {record["event"] for record in events}
+window_events = [record for record in events if record["event"] == 7]
 assert wrong == {
     "result": "fail",
     "stage": "request_region",
@@ -289,8 +290,9 @@ assert relay["result"] == "pass"
 assert relay["transport"] == "binder_scm_rights_then_loopback_metadata"
 assert relay["region_bytes"] == 4096
 assert relay["writable_mapping"] is True
-assert relay["width"] == activity["width"]
-assert relay["height"] == activity["height"]
+assert window_events
+assert relay["width"] == window_events[-1]["width"]
+assert relay["height"] == window_events[-1]["height"]
 assert relay["batch_offset"] == 64
 assert relay["batch_bytes"] == 200
 assert relay["commands"] == 6
