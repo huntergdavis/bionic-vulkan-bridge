@@ -141,6 +141,39 @@ int bvb_visible_batch_region_execute(
     return 0;
 }
 
+int bvb_visible_batch_inline_decode(
+    const uint8_t token[BVB_LIFECYCLE_TOKEN_SIZE], const uint8_t *payload,
+    size_t payload_length, const uint8_t **batch, size_t *batch_length,
+    uint64_t *sequence) {
+    if (token == NULL || payload == NULL || batch == NULL ||
+        batch_length == NULL || sequence == NULL ||
+        payload_length < BVB_VISIBLE_BATCH_INLINE_PREFIX_SIZE +
+                             BVB_COMMAND_BATCH_HEADER_SIZE ||
+        payload_length > BVB_PROTOCOL_MAX_PAYLOAD) {
+        return -EINVAL;
+    }
+    *batch = NULL;
+    *batch_length = 0U;
+    *sequence = 0U;
+    if (!token_matches(token, payload)) {
+        return -EACCES;
+    }
+    const uint8_t *candidate =
+        payload + BVB_VISIBLE_BATCH_INLINE_PREFIX_SIZE;
+    size_t candidate_length =
+        payload_length - BVB_VISIBLE_BATCH_INLINE_PREFIX_SIZE;
+    struct bvb_command_batch_info info;
+    int result =
+        bvb_command_batch_validate(candidate, candidate_length, &info);
+    if (result != 0) {
+        return result;
+    }
+    *batch = candidate;
+    *batch_length = candidate_length;
+    *sequence = info.sequence;
+    return 0;
+}
+
 void bvb_visible_batch_region_destroy(struct bvb_visible_batch_region *region) {
     if (region == NULL) {
         return;

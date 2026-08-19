@@ -121,6 +121,33 @@ int main(void) {
               &region, execute_wire, sizeof(execute_wire), &batch,
               &batch_length, &sequence) == -ERANGE);
 
+    uint8_t inline_payload[BVB_PROTOCOL_MAX_PAYLOAD] = {0};
+    memcpy(inline_payload, token, sizeof(token));
+    memcpy(inline_payload + BVB_VISIBLE_BATCH_INLINE_PREFIX_SIZE,
+           mapping + BATCH_OFFSET, encoded_length);
+    const size_t inline_length =
+        BVB_VISIBLE_BATCH_INLINE_PREFIX_SIZE + encoded_length;
+    CHECK(bvb_visible_batch_inline_decode(
+              token, inline_payload, inline_length, &batch, &batch_length,
+              &sequence) == 0);
+    CHECK(batch == inline_payload + BVB_VISIBLE_BATCH_INLINE_PREFIX_SIZE);
+    CHECK(batch_length == encoded_length);
+    CHECK(sequence == 7U);
+    inline_payload[0] ^= 1U;
+    CHECK(bvb_visible_batch_inline_decode(
+              token, inline_payload, inline_length, &batch, &batch_length,
+              &sequence) == -EACCES);
+    inline_payload[0] ^= 1U;
+    CHECK(bvb_visible_batch_inline_decode(
+              token, inline_payload,
+              BVB_VISIBLE_BATCH_INLINE_PREFIX_SIZE +
+                  BVB_COMMAND_BATCH_HEADER_SIZE - 1U,
+              &batch, &batch_length, &sequence) == -EINVAL);
+    inline_payload[BVB_VISIBLE_BATCH_INLINE_PREFIX_SIZE] ^= 1U;
+    CHECK(bvb_visible_batch_inline_decode(
+              token, inline_payload, inline_length, &batch, &batch_length,
+              &sequence) == -EPROTO);
+
     bvb_visible_batch_region_destroy(&region);
     CHECK(munmap(mapping, REGION_BYTES) == 0);
     CHECK(close(memory_fd) == 0);

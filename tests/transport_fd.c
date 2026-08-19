@@ -88,6 +88,32 @@ static int test_abstract_descriptor_transport(int memory) {
     return 0;
 }
 
+static int test_loopback_transport(void) {
+    uint16_t port = 99U;
+    CHECK(bvb_transport_listen_loopback(0U, NULL) == -EINVAL);
+    int listener = bvb_transport_listen_loopback(0U, &port);
+    CHECK(listener >= 0);
+    CHECK(port != 0U);
+    CHECK(bvb_transport_connect_loopback(0U) == -EINVAL);
+    int client = bvb_transport_connect_loopback(port);
+    CHECK(client >= 0);
+    int server = accept4(listener, NULL, NULL, SOCK_CLOEXEC);
+    CHECK(server >= 0);
+
+    struct bvb_protocol_packet sent;
+    CHECK(hello_packet(&sent, 11U) == 0);
+    CHECK(bvb_transport_send(client, &sent) == 0);
+    struct bvb_protocol_packet received;
+    CHECK(bvb_transport_receive(server, &received) == 0);
+    CHECK(received.header.opcode == BVB_OPCODE_HELLO);
+    CHECK(received.header.request_id == 11U);
+
+    CHECK(close(server) == 0);
+    CHECK(close(client) == 0);
+    CHECK(close(listener) == 0);
+    return 0;
+}
+
 int main(void) {
     int sockets[2];
     CHECK(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets) == 0);
@@ -125,10 +151,11 @@ int main(void) {
     CHECK(bvb_transport_receive(sockets[1], &received) == -EPROTO);
 
     CHECK(test_abstract_descriptor_transport(memory) == 0);
+    CHECK(test_loopback_transport() == 0);
 
     CHECK(close(memory) == 0);
     CHECK(close(sockets[0]) == 0);
     CHECK(close(sockets[1]) == 0);
-    puts("PASS: filesystem, abstract, and descriptor Unix transport");
+    puts("PASS: filesystem, abstract, descriptor, and loopback transport");
     return EXIT_SUCCESS;
 }

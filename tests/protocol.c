@@ -48,6 +48,19 @@ int main(void) {
     bvb_wire_put_u32(wire + 16, BVB_PROTOCOL_MAX_PAYLOAD + 1U);
     CHECK(bvb_protocol_decode_header(wire, &decoded) == -EMSGSIZE);
 
+    const struct bvb_protocol_header inline_header = {
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VISIBLE_BATCH_INLINE,
+        .request_id = 0x10203040U,
+        .payload_length = BVB_VISIBLE_BATCH_INLINE_PREFIX_SIZE + 200U,
+    };
+    CHECK(bvb_protocol_encode_header(wire, &inline_header) == 0);
+    CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
+    CHECK(decoded.opcode == BVB_OPCODE_VISIBLE_BATCH_INLINE);
+    CHECK(decoded.payload_length ==
+          BVB_VISIBLE_BATCH_INLINE_PREFIX_SIZE + 200U);
+
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
         .maximum_version = 3,

@@ -24,6 +24,10 @@ int bvb_visible_batch_region_execute(
     struct bvb_visible_batch_region *region, const uint8_t *payload,
     size_t payload_length, const uint8_t **batch, size_t *batch_length,
     uint64_t *sequence);
+int bvb_visible_batch_inline_decode(
+    const uint8_t token[BVB_LIFECYCLE_TOKEN_SIZE], const uint8_t *payload,
+    size_t payload_length, const uint8_t **batch, size_t *batch_length,
+    uint64_t *sequence);
 void bvb_visible_batch_region_destroy(struct bvb_visible_batch_region *region);
 
 #endif

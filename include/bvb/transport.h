@@ -18,6 +18,9 @@ int bvb_transport_listen(const char *socket_path, uid_t expected_uid);
 int bvb_transport_connect(const char *socket_path, uid_t expected_uid);
 int bvb_transport_listen_abstract(const uint8_t *name, size_t name_length);
 int bvb_transport_connect_abstract(const uint8_t *name, size_t name_length);
+int bvb_transport_listen_loopback(uint16_t requested_port,
+                                  uint16_t *bound_port);
+int bvb_transport_connect_loopback(uint16_t port);
 int bvb_transport_peer_credentials(int socket_fd, uid_t *peer_uid,
                                    pid_t *peer_pid);
 int bvb_transport_authenticate(int socket_fd, uid_t expected_uid,

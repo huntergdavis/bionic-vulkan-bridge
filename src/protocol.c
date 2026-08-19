@@ -54,7 +54,7 @@ static int header_is_valid(const struct bvb_protocol_header *header) {
         return -EPROTO;
     }
     if (header->opcode < BVB_OPCODE_HELLO ||
-        header->opcode > BVB_OPCODE_VISIBLE_BATCH_EXECUTE) {
+        header->opcode > BVB_OPCODE_VISIBLE_BATCH_INLINE) {
         return -EPROTO;
     }
     if (header->payload_length > BVB_PROTOCOL_MAX_PAYLOAD) {

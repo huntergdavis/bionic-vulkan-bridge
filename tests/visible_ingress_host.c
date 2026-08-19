@@ -57,7 +57,7 @@ static int validate_triangle(const uint8_t *batch, size_t batch_length,
 int main(int argc, char **argv) {
     if (argc != 5) {
         fprintf(stderr,
-                "usage: %s SOCKET_NAME TOKEN_HEX WIDTH HEIGHT\n",
+                "usage: %s (SOCKET_NAME | --tcp) TOKEN_HEX WIDTH HEIGHT\n",
                 argv[0]);
         return EXIT_FAILURE;
     }
@@ -75,13 +75,22 @@ int main(int argc, char **argv) {
     }
 
     struct bvb_visible_ingress *ingress = NULL;
-    int result = bvb_visible_ingress_create(
-        &ingress, (const uint8_t *)argv[1], strlen(argv[1]), token);
+    uint16_t bound_port = 0U;
+    int result = strcmp(argv[1], "--tcp") == 0
+                     ? bvb_visible_ingress_create_loopback(
+                           &ingress, 0U, &bound_port, token)
+                     : bvb_visible_ingress_create(
+                           &ingress, (const uint8_t *)argv[1],
+                           strlen(argv[1]), token);
     if (result != 0) {
         fprintf(stderr, "ingress create failed: %d\n", result);
         return EXIT_FAILURE;
     }
-    puts("READY");
+    if (bound_port != 0U) {
+        printf("READY %u\n", (unsigned int)bound_port);
+    } else {
+        puts("READY");
+    }
     (void)fflush(stdout);
 
     const uint8_t *batch = NULL;

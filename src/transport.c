@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <netinet/in.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -196,6 +197,69 @@ int bvb_transport_connect_abstract(const uint8_t *name, size_t name_length) {
     }
     if (connect(socket_fd, (const struct sockaddr *)&address, address_length) !=
         0) {
+        int saved_error = errno;
+        (void)close(socket_fd);
+        return -saved_error;
+    }
+    return socket_fd;
+}
+
+int bvb_transport_listen_loopback(uint16_t requested_port,
+                                  uint16_t *bound_port) {
+    if (bound_port == NULL) {
+        return -EINVAL;
+    }
+    *bound_port = 0U;
+    int socket_fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (socket_fd < 0) {
+        return -errno;
+    }
+    const struct sockaddr_in address = {
+        .sin_family = AF_INET,
+        .sin_port = htons(requested_port),
+        .sin_addr = {.s_addr = htonl(INADDR_LOOPBACK)},
+    };
+    if (bind(socket_fd, (const struct sockaddr *)&address, sizeof(address)) !=
+            0 ||
+        listen(socket_fd, 4) != 0) {
+        int saved_error = errno;
+        (void)close(socket_fd);
+        return -saved_error;
+    }
+    struct sockaddr_in bound_address;
+    socklen_t bound_length = sizeof(bound_address);
+    if (getsockname(socket_fd, (struct sockaddr *)&bound_address,
+                    &bound_length) != 0) {
+        int saved_error = errno;
+        (void)close(socket_fd);
+        return -saved_error;
+    }
+    if (bound_length != sizeof(bound_address) ||
+        bound_address.sin_family != AF_INET ||
+        bound_address.sin_addr.s_addr != htonl(INADDR_LOOPBACK) ||
+        bound_address.sin_port == 0U) {
+        (void)close(socket_fd);
+        return -EIO;
+    }
+    *bound_port = ntohs(bound_address.sin_port);
+    return socket_fd;
+}
+
+int bvb_transport_connect_loopback(uint16_t port) {
+    if (port == 0U) {
+        return -EINVAL;
+    }
+    int socket_fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (socket_fd < 0) {
+        return -errno;
+    }
+    const struct sockaddr_in address = {
+        .sin_family = AF_INET,
+        .sin_port = htons(port),
+        .sin_addr = {.s_addr = htonl(INADDR_LOOPBACK)},
+    };
+    if (connect(socket_fd, (const struct sockaddr *)&address,
+                sizeof(address)) != 0) {
         int saved_error = errno;
         (void)close(socket_fd);
         return -saved_error;

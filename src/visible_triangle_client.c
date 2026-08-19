@@ -37,6 +37,7 @@ enum {
 
 struct client_options {
     const char *socket_name;
+    uint16_t tcp_port;
     uint8_t token[BVB_LIFECYCLE_TOKEN_SIZE];
     uint32_t width;
     uint32_t height;
@@ -47,7 +48,8 @@ vkGetDeviceProcAddr(VkDevice device, const char *name);
 
 static void usage(const char *program) {
     fprintf(stderr,
-            "usage: %s --socket-name NAME --token 64_HEX_DIGITS "
+            "usage: %s (--socket-name NAME | --tcp-port PORT) "
+            "--token 64_HEX_DIGITS "
             "--width PIXELS --height PIXELS\n",
             program);
 }
@@ -72,6 +74,16 @@ static int parse_arguments(int argc, char **argv,
         if (strcmp(argv[index], "--socket-name") == 0 && index + 1 < argc &&
             argv[index + 1][0] != '\0') {
             options->socket_name = argv[++index];
+        } else if (strcmp(argv[index], "--tcp-port") == 0 &&
+                   index + 1 < argc) {
+            uint32_t port = 0U;
+            if (parse_u32(argv[index + 1], &port) != 0 ||
+                port > UINT16_MAX) {
+                usage(argv[0]);
+                return -EINVAL;
+            }
+            options->tcp_port = (uint16_t)port;
+            ++index;
         } else if (strcmp(argv[index], "--token") == 0 &&
                    index + 1 < argc &&
                    bvb_lifecycle_token_from_hex(argv[index + 1],
@@ -91,7 +103,8 @@ static int parse_arguments(int argc, char **argv,
             return -EINVAL;
         }
     }
-    if (options->socket_name == NULL || !token_present ||
+    if ((options->socket_name == NULL) == (options->tcp_port == 0U) ||
+        !token_present ||
         options->width == 0U || options->height == 0U) {
         usage(argv[0]);
         return -EINVAL;
@@ -126,7 +139,7 @@ static int random_nonzero_u64(uint64_t *output) {
     return 0;
 }
 
-static int connect_with_retry(const char *name) {
+static int connect_abstract_with_retry(const char *name) {
     const struct timespec delay = {.tv_nsec = CONNECT_RETRY_NS};
     for (unsigned int attempt = 0U; attempt < CONNECT_ATTEMPTS; ++attempt) {
         int socket_fd = bvb_transport_connect_abstract(
@@ -135,6 +148,28 @@ static int connect_with_retry(const char *name) {
             return socket_fd;
         }
         if (socket_fd != -ENOENT && socket_fd != -ECONNREFUSED) {
+            return socket_fd;
+        }
+        if (attempt + 1U < CONNECT_ATTEMPTS) {
+            struct timespec remaining = delay;
+            while (nanosleep(&remaining, &remaining) != 0) {
+                if (errno != EINTR) {
+                    return -errno;
+                }
+            }
+        }
+    }
+    return -ETIMEDOUT;
+}
+
+static int connect_loopback_with_retry(uint16_t port) {
+    const struct timespec delay = {.tv_nsec = CONNECT_RETRY_NS};
+    for (unsigned int attempt = 0U; attempt < CONNECT_ATTEMPTS; ++attempt) {
+        int socket_fd = bvb_transport_connect_loopback(port);
+        if (socket_fd >= 0) {
+            return socket_fd;
+        }
+        if (socket_fd != -ECONNREFUSED) {
             return socket_fd;
         }
         if (attempt + 1U < CONNECT_ATTEMPTS) {
@@ -291,46 +326,60 @@ static int run(const struct client_options *options,
     int memory_fd = -1;
     int socket_fd = -1;
     uint8_t *mapping = MAP_FAILED;
+    uint8_t inline_storage[REGION_BYTES];
     uint64_t generation = 0U;
     size_t batch_length = 0U;
+    const bool inline_mode = options->tcp_port != 0U;
+    uint8_t *batch_bytes = NULL;
 
-    *failure_stage = "shared_region";
-    result = random_nonzero_u64(&generation);
-    if (result != 0) {
-        goto done;
+    *failure_stage = inline_mode ? "inline_batch" : "shared_region";
+    if (inline_mode) {
+        batch_bytes = inline_storage;
+    } else {
+        result = random_nonzero_u64(&generation);
+        if (result != 0) {
+            goto done;
+        }
+        memory_fd = (int)syscall(SYS_memfd_create, "bvb-visible-triangle",
+                                 MFD_CLOEXEC | MFD_ALLOW_SEALING);
+        if (memory_fd < 0) {
+            result = -errno;
+            goto done;
+        }
+        if (ftruncate(memory_fd, REGION_BYTES) != 0) {
+            result = -errno;
+            goto done;
+        }
+        mapping = mmap(NULL, REGION_BYTES, PROT_READ | PROT_WRITE, MAP_SHARED,
+                       memory_fd, 0);
+        if (mapping == MAP_FAILED) {
+            result = -errno;
+            goto done;
+        }
+        batch_bytes = mapping + BATCH_OFFSET;
     }
-    memory_fd = (int)syscall(SYS_memfd_create, "bvb-visible-triangle",
-                             MFD_CLOEXEC | MFD_ALLOW_SEALING);
-    if (memory_fd < 0) {
-        result = -errno;
-        goto done;
-    }
-    if (ftruncate(memory_fd, REGION_BYTES) != 0) {
-        result = -errno;
-        goto done;
-    }
-    mapping = mmap(NULL, REGION_BYTES, PROT_READ | PROT_WRITE, MAP_SHARED,
-                   memory_fd, 0);
-    if (mapping == MAP_FAILED) {
-        result = -errno;
-        goto done;
-    }
-    result = build_triangle_batch(mapping + BATCH_OFFSET,
-                                  REGION_BYTES - BATCH_OFFSET, options->width,
-                                  options->height, &batch_length);
+    result = build_triangle_batch(batch_bytes,
+                                  inline_mode ? sizeof(inline_storage)
+                                              : REGION_BYTES - BATCH_OFFSET,
+                                  options->width, options->height,
+                                  &batch_length);
     if (result != 0 || batch_length > UINT32_MAX) {
         result = result != 0 ? result : -EOVERFLOW;
         goto done;
     }
-    if (fcntl(memory_fd, F_ADD_SEALS,
-              F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) != 0) {
-        result = -errno;
-        goto done;
+    if (!inline_mode) {
+        if (fcntl(memory_fd, F_ADD_SEALS,
+                  F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) != 0) {
+            result = -errno;
+            goto done;
+        }
+        atomic_thread_fence(memory_order_release);
     }
-    atomic_thread_fence(memory_order_release);
 
-    *failure_stage = "connect_abstract";
-    socket_fd = connect_with_retry(options->socket_name);
+    *failure_stage = inline_mode ? "connect_loopback" : "connect_abstract";
+    socket_fd = inline_mode
+                    ? connect_loopback_with_retry(options->tcp_port)
+                    : connect_abstract_with_retry(options->socket_name);
     if (socket_fd < 0) {
         result = socket_fd;
         socket_fd = -1;
@@ -341,9 +390,54 @@ static int run(const struct client_options *options,
         goto done;
     }
 
-    *failure_stage = "visible_setup";
     struct bvb_protocol_packet request;
     struct bvb_protocol_packet response;
+    uint64_t start_ns = 0U;
+    uint64_t end_ns = 0U;
+    if (inline_mode) {
+        *failure_stage = "visible_inline";
+        if (batch_length > BVB_VISIBLE_BATCH_INLINE_MAX_BYTES) {
+            result = -EMSGSIZE;
+            goto done;
+        }
+        memset(&request, 0, sizeof(request));
+        request.header = (struct bvb_protocol_header){
+            .version = BVB_PROTOCOL_VERSION,
+            .kind = BVB_PROTOCOL_REQUEST,
+            .opcode = BVB_OPCODE_VISIBLE_BATCH_INLINE,
+            .request_id = UINT32_C(0x4256420a),
+            .payload_length =
+                (uint32_t)(BVB_VISIBLE_BATCH_INLINE_PREFIX_SIZE +
+                           batch_length),
+        };
+        memcpy(request.payload, options->token,
+               BVB_VISIBLE_BATCH_INLINE_PREFIX_SIZE);
+        memcpy(request.payload + BVB_VISIBLE_BATCH_INLINE_PREFIX_SIZE,
+               batch_bytes, batch_length);
+        result = monotonic_ns(&start_ns);
+        if (result == 0) {
+            result = exchange(socket_fd, &request, &response, -1);
+        }
+        if (result == 0) {
+            result = monotonic_ns(&end_ns);
+        }
+        if (result != 0) {
+            goto done;
+        }
+        *failure_stage = "complete";
+        printf("{\"transport\":\"loopback_tcp_inline\",\"tcp_port\":%u,"
+               "\"width\":%" PRIu32 ",\"height\":%" PRIu32
+               ",\"batch_bytes\":%zu,\"commands\":6,\"sequence\":1,"
+               "\"packet_bytes\":%zu,\"round_trip_ns\":%" PRIu64 "}\n",
+               (unsigned int)options->tcp_port, options->width,
+               options->height, batch_length,
+               (size_t)BVB_PROTOCOL_HEADER_SIZE +
+                   BVB_VISIBLE_BATCH_INLINE_PREFIX_SIZE + batch_length,
+               end_ns - start_ns);
+        goto done;
+    }
+
+    *failure_stage = "visible_setup";
     memset(&request, 0, sizeof(request));
     request.header = (struct bvb_protocol_header){
         .version = BVB_PROTOCOL_VERSION,
@@ -387,8 +481,6 @@ static int run(const struct client_options *options,
     memcpy(execute.token, options->token, sizeof(execute.token));
     result =
         bvb_protocol_encode_visible_batch_execute(request.payload, &execute);
-    uint64_t start_ns = 0U;
-    uint64_t end_ns = 0U;
     if (result == 0) {
         result = monotonic_ns(&start_ns);
     }

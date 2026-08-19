@@ -23,6 +23,11 @@ enum {
     BVB_VISIBLE_ABSTRACT_NAME_MAX = 107,
 };
 
+enum bvb_visible_ingress_transport {
+    BVB_VISIBLE_INGRESS_ABSTRACT = 1,
+    BVB_VISIBLE_INGRESS_LOOPBACK = 2,
+};
+
 struct bvb_visible_ingress {
     pthread_mutex_t mutex;
     pthread_cond_t condition;
@@ -39,6 +44,8 @@ struct bvb_visible_ingress {
     const uint8_t *batch;
     size_t batch_length;
     uint64_t sequence;
+    enum bvb_visible_ingress_transport transport;
+    uint16_t loopback_port;
     size_t socket_name_length;
     uint8_t socket_name[BVB_VISIBLE_ABSTRACT_NAME_MAX];
     uint8_t token[BVB_LIFECYCLE_TOKEN_SIZE];
@@ -135,8 +142,8 @@ static int submit_batch(struct bvb_visible_ingress *ingress,
     return result;
 }
 
-static void process_connection(struct bvb_visible_ingress *ingress,
-                               int socket_fd) {
+static void process_shared_connection(struct bvb_visible_ingress *ingress,
+                                      int socket_fd) {
     struct bvb_visible_batch_region region;
     int result = bvb_visible_batch_region_init(&region, ingress->token);
     if (result != 0) {
@@ -199,6 +206,36 @@ static void process_connection(struct bvb_visible_ingress *ingress,
     bvb_visible_batch_region_destroy(&region);
 }
 
+static void process_inline_connection(struct bvb_visible_ingress *ingress,
+                                      int socket_fd) {
+    struct bvb_protocol_packet request;
+    memset(&request, 0, sizeof(request));
+    int result = bvb_transport_receive(socket_fd, &request);
+    bool request_received = result == 0;
+    if (result == 0 &&
+        (request.header.version != BVB_PROTOCOL_VERSION ||
+         request.header.kind != BVB_PROTOCOL_REQUEST ||
+         request.header.opcode != BVB_OPCODE_VISIBLE_BATCH_INLINE ||
+         request.header.status != 0)) {
+        result = -EPROTO;
+    }
+    const uint8_t *batch = NULL;
+    size_t batch_length = 0U;
+    uint64_t sequence = 0U;
+    if (result == 0) {
+        result = bvb_visible_batch_inline_decode(
+            ingress->token, request.payload, request.header.payload_length,
+            &batch, &batch_length, &sequence);
+    }
+    if (result == 0) {
+        result = submit_batch(ingress, batch, batch_length, sequence);
+    }
+    if (request_received &&
+        request.header.opcode == BVB_OPCODE_VISIBLE_BATCH_INLINE) {
+        (void)send_response(socket_fd, &request, result);
+    }
+}
+
 static void *worker_main(void *opaque) {
     struct bvb_visible_ingress *ingress = opaque;
     for (;;) {
@@ -227,7 +264,11 @@ static void *worker_main(void *opaque) {
         (void)pthread_mutex_unlock(&ingress->mutex);
 
         if (configure_client_socket(socket_fd) == 0) {
-            process_connection(ingress, socket_fd);
+            if (ingress->transport == BVB_VISIBLE_INGRESS_LOOPBACK) {
+                process_inline_connection(ingress, socket_fd);
+            } else {
+                process_shared_connection(ingress, socket_fd);
+            }
         }
 
         (void)pthread_mutex_lock(&ingress->mutex);
@@ -261,6 +302,7 @@ int bvb_visible_ingress_create(
     ingress->listener_fd = -1;
     ingress->client_fd = -1;
     ingress->accepting = true;
+    ingress->transport = BVB_VISIBLE_INGRESS_ABSTRACT;
     ingress->socket_name_length = socket_name_length;
     memcpy(ingress->socket_name, socket_name, socket_name_length);
     memcpy(ingress->token, token, sizeof(ingress->token));
@@ -292,6 +334,58 @@ int bvb_visible_ingress_create(
         free(ingress);
         return -result;
     }
+    *output = ingress;
+    return 0;
+}
+
+int bvb_visible_ingress_create_loopback(
+    struct bvb_visible_ingress **output, uint16_t requested_port,
+    uint16_t *bound_port,
+    const uint8_t token[BVB_LIFECYCLE_TOKEN_SIZE]) {
+    if (output == NULL || bound_port == NULL || token == NULL ||
+        !token_is_nonzero(token)) {
+        return -EINVAL;
+    }
+    *output = NULL;
+    *bound_port = 0U;
+    struct bvb_visible_ingress *ingress = calloc(1U, sizeof(*ingress));
+    if (ingress == NULL) {
+        return -ENOMEM;
+    }
+    ingress->listener_fd = -1;
+    ingress->client_fd = -1;
+    ingress->accepting = true;
+    ingress->transport = BVB_VISIBLE_INGRESS_LOOPBACK;
+    memcpy(ingress->token, token, sizeof(ingress->token));
+    int result = pthread_mutex_init(&ingress->mutex, NULL);
+    if (result != 0) {
+        free(ingress);
+        return -result;
+    }
+    result = pthread_cond_init(&ingress->condition, NULL);
+    if (result != 0) {
+        (void)pthread_mutex_destroy(&ingress->mutex);
+        free(ingress);
+        return -result;
+    }
+    ingress->listener_fd =
+        bvb_transport_listen_loopback(requested_port, &ingress->loopback_port);
+    if (ingress->listener_fd < 0) {
+        result = ingress->listener_fd;
+        (void)pthread_cond_destroy(&ingress->condition);
+        (void)pthread_mutex_destroy(&ingress->mutex);
+        free(ingress);
+        return result;
+    }
+    result = pthread_create(&ingress->worker, NULL, worker_main, ingress);
+    if (result != 0) {
+        (void)close(ingress->listener_fd);
+        (void)pthread_cond_destroy(&ingress->condition);
+        (void)pthread_mutex_destroy(&ingress->mutex);
+        free(ingress);
+        return -result;
+    }
+    *bound_port = ingress->loopback_port;
     *output = ingress;
     return 0;
 }
@@ -393,8 +487,11 @@ void bvb_visible_ingress_destroy(struct bvb_visible_ingress *ingress) {
     }
     (void)pthread_cond_broadcast(&ingress->condition);
     (void)pthread_mutex_unlock(&ingress->mutex);
-    int wake_fd = bvb_transport_connect_abstract(
-        ingress->socket_name, ingress->socket_name_length);
+    int wake_fd = ingress->transport == BVB_VISIBLE_INGRESS_LOOPBACK
+                      ? bvb_transport_connect_loopback(ingress->loopback_port)
+                      : bvb_transport_connect_abstract(
+                            ingress->socket_name,
+                            ingress->socket_name_length);
     if (wake_fd >= 0) {
         (void)close(wake_fd);
     }
