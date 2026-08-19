@@ -144,9 +144,68 @@ int bvb_transport_connect(const char *socket_path, uid_t expected_uid) {
     return socket_fd;
 }
 
-int bvb_transport_authenticate(int socket_fd, uid_t expected_uid,
-                               pid_t *peer_pid) {
-    if (socket_fd < 0 || peer_pid == NULL) {
+static int abstract_address(const uint8_t *name, size_t name_length,
+                            struct sockaddr_un *address,
+                            socklen_t *address_length) {
+    if (name == NULL || name_length == 0U || address == NULL ||
+        address_length == NULL ||
+        name_length > sizeof(address->sun_path) - 1U) {
+        return -EINVAL;
+    }
+    memset(address, 0, sizeof(*address));
+    address->sun_family = AF_UNIX;
+    memcpy(address->sun_path + 1, name, name_length);
+    *address_length =
+        (socklen_t)(offsetof(struct sockaddr_un, sun_path) + 1U + name_length);
+    return 0;
+}
+
+int bvb_transport_listen_abstract(const uint8_t *name, size_t name_length) {
+    struct sockaddr_un address;
+    socklen_t address_length = 0;
+    int result =
+        abstract_address(name, name_length, &address, &address_length);
+    if (result != 0) {
+        return result;
+    }
+    int socket_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (socket_fd < 0) {
+        return -errno;
+    }
+    if (bind(socket_fd, (const struct sockaddr *)&address, address_length) !=
+            0 ||
+        listen(socket_fd, 4) != 0) {
+        int saved_error = errno;
+        (void)close(socket_fd);
+        return -saved_error;
+    }
+    return socket_fd;
+}
+
+int bvb_transport_connect_abstract(const uint8_t *name, size_t name_length) {
+    struct sockaddr_un address;
+    socklen_t address_length = 0;
+    int result =
+        abstract_address(name, name_length, &address, &address_length);
+    if (result != 0) {
+        return result;
+    }
+    int socket_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (socket_fd < 0) {
+        return -errno;
+    }
+    if (connect(socket_fd, (const struct sockaddr *)&address, address_length) !=
+        0) {
+        int saved_error = errno;
+        (void)close(socket_fd);
+        return -saved_error;
+    }
+    return socket_fd;
+}
+
+int bvb_transport_peer_credentials(int socket_fd, uid_t *peer_uid,
+                                   pid_t *peer_pid) {
+    if (socket_fd < 0 || peer_uid == NULL || peer_pid == NULL) {
         return -EINVAL;
     }
     struct ucred credentials;
@@ -155,11 +214,28 @@ int bvb_transport_authenticate(int socket_fd, uid_t expected_uid,
         0) {
         return -errno;
     }
-    if (length != sizeof(credentials) || credentials.pid <= 0 ||
-        credentials.uid != expected_uid) {
+    if (length != sizeof(credentials) || credentials.pid <= 0) {
         return -EACCES;
     }
+    *peer_uid = credentials.uid;
     *peer_pid = credentials.pid;
+    return 0;
+}
+
+int bvb_transport_authenticate(int socket_fd, uid_t expected_uid,
+                               pid_t *peer_pid) {
+    if (socket_fd < 0 || peer_pid == NULL) {
+        return -EINVAL;
+    }
+    uid_t peer_uid = 0;
+    int result =
+        bvb_transport_peer_credentials(socket_fd, &peer_uid, peer_pid);
+    if (result != 0) {
+        return result;
+    }
+    if (peer_uid != expected_uid) {
+        return -EACCES;
+    }
     return 0;
 }
 

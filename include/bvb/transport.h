@@ -16,6 +16,10 @@ enum {
  */
 int bvb_transport_listen(const char *socket_path, uid_t expected_uid);
 int bvb_transport_connect(const char *socket_path, uid_t expected_uid);
+int bvb_transport_listen_abstract(const uint8_t *name, size_t name_length);
+int bvb_transport_connect_abstract(const uint8_t *name, size_t name_length);
+int bvb_transport_peer_credentials(int socket_fd, uid_t *peer_uid,
+                                   pid_t *peer_pid);
 int bvb_transport_authenticate(int socket_fd, uid_t expected_uid,
                                pid_t *peer_pid);
 int bvb_transport_receive(int socket_fd, struct bvb_protocol_packet *packet);
