@@ -169,7 +169,9 @@ public final class SharedRegionClient extends Binder {
     private static void requestRegion(String token, IBinder callback)
             throws Exception {
         Bundle request = new Bundle();
-        request.putBinder(EXTRA_CALLBACK, callback);
+        Method putBinder = Bundle.class.getMethod(
+                "putBinder", String.class, IBinder.class);
+        putBinder.invoke(request, EXTRA_CALLBACK, callback);
         request.putString(EXTRA_TOKEN, token);
         Intent intent = new Intent(ACTION_REQUEST);
         intent.setPackage(HOST_PACKAGE);

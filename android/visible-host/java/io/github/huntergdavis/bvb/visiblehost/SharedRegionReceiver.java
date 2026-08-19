@@ -9,8 +9,24 @@ import android.os.Parcel;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
 
+import java.lang.reflect.Method;
+
 public final class SharedRegionReceiver extends BroadcastReceiver {
     private static final String LOG_TAG = "BVBSharedRegion";
+
+    private static IBinder callbackFrom(Bundle request) {
+        if (request == null) {
+            return null;
+        }
+        try {
+            Method getBinder = Bundle.class.getMethod("getBinder", String.class);
+            return (IBinder)getBinder.invoke(
+                    request, SharedRegionClient.EXTRA_CALLBACK);
+        } catch (Exception failure) {
+            Log.e(LOG_TAG, "failed to read callback Binder", failure);
+            return null;
+        }
+    }
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -18,9 +34,7 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
             return;
         }
         Bundle request = intent.getBundleExtra(SharedRegionClient.EXTRA_REQUEST);
-        IBinder callback = request == null
-                ? null
-                : request.getBinder(SharedRegionClient.EXTRA_CALLBACK);
+        IBinder callback = callbackFrom(request);
         String token = request == null
                 ? null
                 : request.getString(SharedRegionClient.EXTRA_TOKEN);
