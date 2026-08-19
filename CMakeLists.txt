@@ -121,6 +121,17 @@ target_link_libraries(bvb-command-batch PRIVATE bvb-wire)
 bvb_enable_warnings(bvb-command-batch)
 target_link_libraries(bvb-vulkan-selftest-core PRIVATE bvb-command-batch)
 
+add_library(bvb-visible-batch STATIC src/visible_batch.c)
+set_target_properties(bvb-visible-batch PROPERTIES C_VISIBILITY_PRESET hidden)
+target_include_directories(
+  bvb-visible-batch
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
+)
+target_link_libraries(bvb-visible-batch PRIVATE bvb-wire bvb-command-batch)
+bvb_enable_warnings(bvb-visible-batch)
+
 set(
   bvb_triangle_dispatch_include
   "${CMAKE_CURRENT_BINARY_DIR}/generated/bvb_triangle_dispatch.inc"
@@ -217,6 +228,13 @@ if(BUILD_TESTING)
   target_link_libraries(bvb-command-batch-test PRIVATE bvb-command-batch)
   bvb_enable_warnings(bvb-command-batch-test)
   add_test(NAME command-batch-contract COMMAND bvb-command-batch-test)
+
+  add_executable(bvb-visible-batch-test tests/visible_batch.c)
+  target_link_libraries(
+    bvb-visible-batch-test PRIVATE bvb-visible-batch bvb-command-batch
+  )
+  bvb_enable_warnings(bvb-visible-batch-test)
+  add_test(NAME visible-batch-contract COMMAND bvb-visible-batch-test)
 
   add_executable(bvb-triangle-dispatch-test tests/triangle_dispatch.c)
   target_link_libraries(
