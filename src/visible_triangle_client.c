@@ -285,7 +285,8 @@ static int build_triangle_batch(uint8_t *bytes, size_t capacity,
     return 0;
 }
 
-static int run(const struct client_options *options) {
+static int run(const struct client_options *options,
+               const char **failure_stage) {
     int result = 0;
     int memory_fd = -1;
     int socket_fd = -1;
@@ -293,6 +294,7 @@ static int run(const struct client_options *options) {
     uint64_t generation = 0U;
     size_t batch_length = 0U;
 
+    *failure_stage = "shared_region";
     result = random_nonzero_u64(&generation);
     if (result != 0) {
         goto done;
@@ -327,6 +329,7 @@ static int run(const struct client_options *options) {
     }
     atomic_thread_fence(memory_order_release);
 
+    *failure_stage = "connect_abstract";
     socket_fd = connect_with_retry(options->socket_name);
     if (socket_fd < 0) {
         result = socket_fd;
@@ -338,6 +341,7 @@ static int run(const struct client_options *options) {
         goto done;
     }
 
+    *failure_stage = "visible_setup";
     struct bvb_protocol_packet request;
     struct bvb_protocol_packet response;
     memset(&request, 0, sizeof(request));
@@ -363,6 +367,7 @@ static int run(const struct client_options *options) {
         goto done;
     }
 
+    *failure_stage = "visible_execute";
     memset(&request, 0, sizeof(request));
     request.header = (struct bvb_protocol_header){
         .version = BVB_PROTOCOL_VERSION,
@@ -397,6 +402,7 @@ static int run(const struct client_options *options) {
         goto done;
     }
 
+    *failure_stage = "complete";
     printf("{\"socket_name\":\"%s\",\"width\":%" PRIu32
            ",\"height\":%" PRIu32 ",\"region_bytes\":%u"
            ",\"batch_offset\":%u,\"batch_bytes\":%zu,\"commands\":6"
@@ -425,13 +431,14 @@ done:
 
 int main(int argc, char **argv) {
     struct client_options options;
+    const char *failure_stage = "arguments";
     int result = parse_arguments(argc, argv, &options);
     if (result == 0) {
-        result = run(&options);
+        result = run(&options, &failure_stage);
     }
     if (result != 0) {
-        fprintf(stderr, "visible triangle client failed: %s (%d)\n",
-                strerror(-result), result);
+        fprintf(stderr, "visible triangle client failed: stage=%s: %s (%d)\n",
+                failure_stage, strerror(-result), result);
         return EXIT_FAILURE;
     }
     return EXIT_SUCCESS;
