@@ -786,6 +786,14 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateInstance(
             return VK_ERROR_EXTENSION_NOT_PRESENT;
         }
     }
+    if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        for (uint32_t index = 0U;
+             index < create_info->enabledExtensionCount; ++index) {
+            fprintf(stderr,
+                    "BVB_ICD_CREATE_INSTANCE_EXTENSION index=%u name=%s\n",
+                    index, create_info->ppEnabledExtensionNames[index]);
+        }
+    }
     struct bvb_instance_proxy *proxy = calloc(1, sizeof(*proxy));
     if (proxy == NULL) {
         return VK_ERROR_OUT_OF_HOST_MEMORY;
@@ -1528,6 +1536,14 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
             memchr(name, '\0', BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE) ==
                 NULL) {
             return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
+    }
+    if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        for (uint32_t index = 0U;
+             index < create_info->enabledExtensionCount; ++index) {
+            fprintf(stderr,
+                    "BVB_ICD_CREATE_DEVICE_EXTENSION index=%u name=%s\n",
+                    index, create_info->ppEnabledExtensionNames[index]);
         }
     }
     if (create_info->pEnabledFeatures != NULL) {
