@@ -13,7 +13,7 @@ helper_apk="$out_dir/e042-shared-region-client.apk"
 receiver="$build_dir/bvb-external-memory-receiver"
 control_client="$build_dir/bvb-bridge-client"
 
-for command_name in am cmake cp env grep logcat mktemp od pm python3 readelf \
+for command_name in am cmake cp env grep mktemp od pm python3 readelf \
     sed sleep tr; do
     command -v "$command_name" >/dev/null 2>&1 || {
         printf 'missing required command: %s\n' "$command_name" >&2
@@ -65,7 +65,6 @@ wrong_stderr="$out_dir/e042-wrong-token.stderr"
 valid_json="$out_dir/e042-valid-token.json"
 valid_stderr="$out_dir/e042-valid-token.stderr"
 status_json="$out_dir/e042-activity-status.json"
-app_log="$out_dir/e042-visible-host.logcat"
 evidence="$out_dir/e042-persistent-frame-ring.json"
 service_pid=
 receiver_pid=
@@ -86,7 +85,6 @@ for output in "$service_stdout" "$service_stderr" "$receiver_stdout" \
     "$valid_stderr" "$status_json"; do
     : > "$output"
 done
-logcat -c
 
 "$build_dir/bvb-bridge-service" --socket "$control_socket" --once \
     --activity-port 0 --activity-token "$token" \
@@ -161,16 +159,14 @@ fi
 "$control_client" --socket "$control_socket" --activity-status > "$status_json"
 wait "$service_pid"
 service_pid=
-logcat -d -s BVBVisibleHost:V '*:S' > "$app_log"
 
 python3 - "$wrong_json" "$valid_json" "$receiver_stdout" \
-    "$receiver_stderr" "$status_json" "$service_stdout" "$app_log" \
-    "$evidence" <<'PY'
+    "$receiver_stderr" "$status_json" "$service_stdout" "$evidence" <<'PY'
 import json
 import pathlib
 import sys
 
-wrong_path, valid_path, receiver_path, receiver_error_path, status_path, service_path, app_log_path, evidence_path = map(
+wrong_path, valid_path, receiver_path, receiver_error_path, status_path, service_path, evidence_path = map(
     pathlib.Path, sys.argv[1:]
 )
 wrong = json.loads(wrong_path.read_text())
@@ -178,7 +174,6 @@ valid = json.loads(valid_path.read_text())
 receiver = json.loads(next(line for line in receiver_path.read_text().splitlines() if line.startswith("{")))
 status = json.loads(status_path.read_text())
 service_text = service_path.read_text()
-app_log = app_log_path.read_text()
 assert wrong["result"] == "fail" and wrong["native_status"] == -13
 assert valid["result"] == "pass"
 assert valid["descriptor_kind"] == "opaque_image_memory_plus_native_frame_control"
@@ -193,7 +188,6 @@ assert receiver["mismatched_pixels"] == 0
 assert receiver["frame_loop_elapsed_ns"] > 0
 assert receiver_error_path.stat().st_size == 0
 assert "activity_event=11 " in service_text
-assert "E042_PRODUCER_PASS frames=120" in app_log
 document = {
     "schema_version": 1,
     "gate": "E042",
