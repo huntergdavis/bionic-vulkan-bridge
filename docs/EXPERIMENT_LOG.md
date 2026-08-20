@@ -2002,3 +2002,40 @@ one-time Binder setup may establish that channel, but steady-state frames must
 not cross Binder or Java. E037 proves ordering for one shared buffer; it does
 not yet prove shared image layout, sampling/presentation, DXVK startup, Tomb
 Raider output, or an FPS improvement.
+
+## E038 — Cross-process external Vulkan image (2026-08-20)
+
+Status: passed on real Adreno 730 hardware with visible-host v28. The producer,
+consumer, Java/Binder metadata path, protocol, and fake-driver regression are
+source commit `15fb544`; the real-hardware harness is commit `0eb926b`.
+
+The visible Activity created a dedicated exportable 64×64
+`VK_FORMAT_R8G8B8A8_UNORM` optimal-tiling image with transfer and sampled usage,
+transitioned it to `GENERAL`, and cleared it to exact magenta on the GPU. It
+queued a temporary binary-semaphore signal, exported the 25,780-byte image
+allocation as opaque FD and the pending signal as `SYNC_FD`, and delivered both
+through the E036 capability broker. The separate Bionic consumer recreated the
+identical image, imported the allocation, temporarily imported the sync FD,
+queued a GPU wait and image-to-buffer copy, and compared the readback.
+
+All 4,096 pixels matched `0xffff00ff` with zero errors. Adreno selected image
+memory type 0 and host-visible/coherent readback flags 15. The consumer fence
+wait took 2,696,041 ns and receive/import/readback took 242,367,604 ns. The
+wrong capability was rejected with `-EACCES`, receiver stderr was empty, and
+the lifecycle again showed renderer readiness before Android removed the
+window. The signed v28 APK is 65,961 bytes with SHA-256
+`30219769e4b9247c1538bfa26854895e8b1da65e31a0ad3263d6243da9e36134`.
+
+Canonical evidence is `docs/evidence/e038-external-image-broker.json`, 2,264
+bytes, SHA-256
+`b4aa96c79d657717ae7272e092fbcc4af730f5a28a81fdbeca24ee85a75f190e`.
+This reuses E035's external allocation ownership, E036's cross-UID capability
+broker, and E037's Adreno-specific temporary `SYNC_FD` ordering. The required
+recall queries returned no indexed prior session.
+
+The next bounded gate is E039: establish the cross-UID channel once and keep a
+native socket endpoint for steady-state frame metadata and per-frame
+`SYNC_FD` descriptors. E038 proves image compatibility and pixel parity, but
+its one-shot validation still invokes Binder/Java for that image. It does not
+yet prove a 60/120-FPS native frame stream, visible consumption, DXVK startup,
+Tomb Raider output, or an FPS improvement.

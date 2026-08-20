@@ -172,6 +172,11 @@ signals it, the separate Bionic consumer imports and waits on it, and the same
 4,096 bytes match with zero errors. The measured consumer fence wait was
 54,948 ns. Opaque-FD semaphores are unsupported on this Adreno 730, so the
 bridge uses opaque FD for memory and temporary `SYNC_FD` for synchronization.
+E038 proves that the same mechanism works for a real GPU image: the Activity
+cleared a 64×64 optimal-tiling sampled RGBA8 image to magenta, the consumer
+imported it, waited on-GPU, copied it to readback memory, and matched all 4,096
+pixels with zero errors. The next performance boundary is replacing E038's
+one-shot Binder setup with a persistent native per-frame descriptor channel.
 
 ## Build and test on a normal Linux host
 

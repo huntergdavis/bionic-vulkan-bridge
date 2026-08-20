@@ -84,8 +84,10 @@
 - [ ] Expand generated dispatch to the measured DXVK startup subset
 - [x] Implement GPU external-memory transport across the Android UID boundary
 - [x] Implement shared GPU synchronization for externally shared resources
-- [ ] Share and consume a real GPU image/frame using external memory plus
-  per-frame native `SYNC_FD` delivery without per-frame Binder/Java work
+- [x] Share and consume a real GPU image/frame using external memory plus
+  `SYNC_FD` ordering, with deterministic GPU readback parity
+- [ ] Establish one persistent native frame channel and deliver per-frame
+  `SYNC_FD` descriptors without per-frame Binder/Java work
 - [x] Reach a rendered test triangle
 - [x] Deliver the glibc-generated triangle batch to the visible host
 - [x] Drive sustained per-frame shader data through the shared ring and render
