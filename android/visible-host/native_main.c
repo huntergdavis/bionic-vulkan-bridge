@@ -630,8 +630,7 @@ static void handle_external_broker_connection(int connection) {
     socklen_t credentials_size = sizeof(credentials);
     if (getsockopt(connection, SOL_SOCKET, SO_PEERCRED, &credentials,
                    &credentials_size) != 0 ||
-        credentials_size != sizeof(credentials) ||
-        credentials.uid != getuid()) {
+        credentials_size != sizeof(credentials)) {
         status = -EACCES;
     }
     uint8_t request[BVB_E036_REQUEST_BYTES] = {0};
@@ -639,7 +638,9 @@ static void handle_external_broker_connection(int connection) {
         status = receive_broker_token_exact(connection, request,
                                             sizeof(request));
     }
-    const bool external_image =
+    const bool direct_channel =
+        request[BVB_E036_TOKEN_HEX_BYTES] == 'P';
+    const bool external_image = direct_channel ||
         request[BVB_E036_TOKEN_HEX_BYTES] == 'I';
     const bool synchronized = external_image ||
         request[BVB_E036_TOKEN_HEX_BYTES] == 'S';
@@ -647,11 +648,21 @@ static void handle_external_broker_connection(int connection) {
         request[BVB_E036_TOKEN_HEX_BYTES] != 'M') {
         status = -EPROTO;
     }
+    if (status == 0 && credentials.uid != getuid() && !direct_channel) {
+        status = -EACCES;
+    }
     uint8_t parsed_token[BVB_LIFECYCLE_TOKEN_SIZE] = {0};
     if (status == 0) {
         request[BVB_E036_TOKEN_HEX_BYTES] = '\0';
         status = bvb_lifecycle_token_from_hex((const char *)request,
                                               parsed_token);
+    }
+    if (status == 0) {
+        (void)pthread_mutex_lock(&lifecycle_mutex);
+        const bool authorized = lifecycle.configured &&
+                                token_matches(parsed_token, lifecycle.token);
+        (void)pthread_mutex_unlock(&lifecycle_mutex);
+        if (!authorized) status = -EACCES;
     }
     int descriptors[2] = {-1, -1};
     size_t descriptor_count = 0U;
@@ -715,13 +726,16 @@ static void handle_external_broker_connection(int connection) {
     }
     if (status == 0 && send_status == 0) {
         if (external_image) {
-            BVB_LOGI("E038_EXPORT_PASS width=%u height=%u format=%u color=%u "
+            BVB_LOGI("%s width=%u height=%u format=%u color=%u "
                      "allocation=%llu type=%u descriptors=2 "
-                     "semaphore=sync_fd",
+                     "semaphore=sync_fd peer_uid=%u",
+                     direct_channel ? "E039_DIRECT_EXPORT_PASS"
+                                    : "E038_EXPORT_PASS",
                      BVB_E038_IMAGE_WIDTH, BVB_E038_IMAGE_HEIGHT,
                      (unsigned int)VK_FORMAT_R8G8B8A8_UNORM,
                      BVB_E038_COLOR_WORD,
-                     (unsigned long long)allocation_size, memory_type_index);
+                     (unsigned long long)allocation_size, memory_type_index,
+                     (unsigned int)credentials.uid);
         } else if (synchronized) {
             BVB_LOGI("E037_EXPORT_PASS bytes=%u allocation=%llu type=%u "
                      "fill=%u descriptors=2 semaphore=sync_fd",
@@ -736,6 +750,28 @@ static void handle_external_broker_connection(int connection) {
     } else {
         BVB_LOGE("E036_BROKER_REQUEST_FAIL status=%d send=%d", status,
                  send_status);
+    }
+    if (direct_channel && status == 0 && send_status == 0) {
+        uint8_t acknowledgement = 0U;
+        int channel_status = receive_broker_token_exact(
+            connection, &acknowledgement, sizeof(acknowledgement));
+        const uint8_t expected_ack = UINT8_C(0xa5);
+        if (channel_status == 0 && acknowledgement != expected_ack) {
+            channel_status = -EPROTO;
+        }
+        uint8_t response[8] = {0};
+        bvb_wire_put_i32(response, channel_status);
+        bvb_wire_put_u32(response + 4, UINT32_C(0xe039c0de));
+        if (send(connection, response, sizeof(response), MSG_NOSIGNAL) !=
+            (ssize_t)sizeof(response)) {
+            channel_status = -EIO;
+        }
+        if (channel_status == 0) {
+            BVB_LOGI("E039_DIRECT_CHANNEL_PASS peer_uid=%u",
+                     (unsigned int)credentials.uid);
+        } else {
+            BVB_LOGE("E039_DIRECT_CHANNEL_FAIL status=%d", channel_status);
+        }
     }
 }
 

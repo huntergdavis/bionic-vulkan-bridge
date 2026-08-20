@@ -322,6 +322,12 @@ target_link_libraries(
 )
 bvb_enable_warnings(bvb-external-memory-receiver)
 
+add_executable(bvb-external-image-direct src/external_image_direct.c)
+target_link_libraries(
+  bvb-external-image-direct PRIVATE bvb-wire bvb-vulkan-selftest-core
+)
+bvb_enable_warnings(bvb-external-image-direct)
+
 add_executable(
   bvb-vulkan-external-semaphore-probe
   src/vulkan_external_semaphore_probe.c
@@ -338,6 +344,7 @@ install(
           bvb-vulkan-present-selftest bvb-vulkan-client-dispatch
           bvb-visible-triangle-client bvb-shared-region-relay
           bvb-external-memory-receiver bvb-vulkan-external-semaphore-probe
+          bvb-external-image-direct
   RUNTIME DESTINATION bin
 )
 
@@ -528,6 +535,15 @@ if(BUILD_TESTING)
       "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_external_memory_receiver.py"
       "$<TARGET_FILE:bvb-external-memory-receiver>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+  )
+
+  add_test(
+    NAME external-image-direct-channel-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_external_image_direct.py"
+      "$<TARGET_FILE:bvb-external-image-direct>"
       "$<TARGET_FILE:bvb-fake-vulkan>"
   )
 
