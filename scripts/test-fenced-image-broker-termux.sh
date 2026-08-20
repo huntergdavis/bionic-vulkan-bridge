@@ -104,23 +104,6 @@ while [ -z "$port" ] && kill -0 "$service_pid" 2>/dev/null; do
     sleep 0.05
 done
 
-am start -S -n "$package_name/$activity_name" \
-    --ei bvb_activity_port "$port" --es bvb_activity_token "$token" \
-    >/dev/null
-attempt=0
-while ! grep -q 'activity_event=11 ' "$service_stdout"; do
-    if grep -q 'activity_event=12 ' "$service_stdout"; then
-        printf 'Activity reported renderer failure\n' >&2
-        exit 5
-    fi
-    attempt=$((attempt + 1))
-    [ "$attempt" -lt 200 ] || {
-        printf 'renderer readiness timed out\n' >&2
-        exit 5
-    }
-    sleep 0.05
-done
-
 "$receiver" --socket "$socket_name" \
     > "$receiver_stdout" 2> "$receiver_stderr" &
 receiver_pid=$!
@@ -138,6 +121,40 @@ while ! grep -q '^bvb-external-memory-receiver: ready ' "$receiver_stdout"; do
     }
     sleep 0.05
 done
+
+am start -S -n "$package_name/$activity_name" \
+    --ei bvb_activity_port "$port" --es bvb_activity_token "$token" \
+    >/dev/null
+attempt=0
+while ! grep -q 'activity_event=11 ' "$service_stdout"; do
+    if grep -q 'activity_event=12 ' "$service_stdout"; then
+        printf 'Activity reported renderer failure\n' >&2
+        exit 5
+    fi
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 200 ] || {
+        printf 'renderer readiness timed out\n' >&2
+        exit 5
+    }
+    sleep 0.05
+done
+attempt=0
+while ! grep -q 'activity_event=9 ' "$service_stdout"; do
+    if grep -Eq 'activity_event=(5|8) ' "$service_stdout"; then
+        printf 'Activity stopped before gaining focus\n' >&2
+        exit 5
+    fi
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 100 ] || {
+        printf 'Activity focus readiness timed out\n' >&2
+        exit 5
+    }
+    sleep 0.05
+done
+if grep -Eq 'activity_event=(5|8) ' "$service_stdout"; then
+    printf 'Activity stopped before fenced-image handoff\n' >&2
+    exit 5
+fi
 if ! env -u LD_LIBRARY_PATH -u LD_PRELOAD CLASSPATH="$helper_apk" \
     /system/bin/app_process -Xnoimage-dex2oat / "$client_class" \
     "$token" "$valid_json" "$socket_name" fenced-image \

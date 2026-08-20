@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.huntergdavis.bvb.visiblehost"
-    android:versionCode="36"
-    android:versionName="0.1.35">
+    android:versionCode="37"
+    android:versionName="0.1.36">
 
     <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="36" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -38,7 +38,9 @@
             android:name="io.github.huntergdavis.bvb.visiblehost.VisibleHostActivity"
             android:configChanges="orientation|keyboardHidden|screenSize"
             android:exported="true"
-            android:screenOrientation="landscape">
+            android:screenOrientation="landscape"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true">
             <meta-data
                 android:name="android.app.lib_name"
                 android:value="bvb-visible-host" />

@@ -3,6 +3,7 @@ package io.github.huntergdavis.bvb.visiblehost;
 import android.app.NativeActivity;
 import android.content.Intent;
 import android.os.Bundle;
+import android.view.WindowManager;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -41,6 +42,9 @@ public final class VisibleHostActivity extends NativeActivity {
     protected void onCreate(Bundle savedInstanceState) {
         installCapability(getIntent());
         super.onCreate(savedInstanceState);
+        setShowWhenLocked(true);
+        setTurnScreenOn(true);
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
 
     @Override
