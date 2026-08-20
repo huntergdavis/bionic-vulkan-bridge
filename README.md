@@ -161,8 +161,11 @@ not yet the external-memory/zero-copy path needed for game performance.
 E035 proves the driver-level escape from those copies: one Adreno logical
 device exported a dedicated opaque-FD allocation and a second logical device
 imported it, mapped it, and recovered all 4,096 patterned bytes with zero
-mismatches. Cross-UID delivery into the visible Android host remains the next
-gate.
+mismatches. E036's cross-UID path is implemented: the visible renderer exports
+from its own device, Binder carries the descriptor into Termux, and a Bionic
+receiver imports and verifies it. Hardware validation is pending installation
+of visible-host v23; no E036 pass is claimed yet. Binder is allocation-time
+control only and is absent from the frame path.
 
 ## Build and test on a normal Linux host
 

@@ -79,6 +79,8 @@
   semantics through the game-facing Vulkan device
 - [x] Export and import one opaque-FD allocation across two Adreno logical
   devices with deterministic byte parity
+- [ ] Pass E036 on hardware: export from the visible renderer, relay the FD
+  across Binder/SCM_RIGHTS, and import it in the game-facing Bionic device
 - [ ] Expand generated dispatch to the measured DXVK startup subset
 - [ ] Implement GPU external-memory and synchronization strategy
 - [x] Reach a rendered test triangle

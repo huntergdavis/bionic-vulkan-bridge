@@ -1894,3 +1894,48 @@ same-UID `SCM_RIGHTS` relay, import it into the game-facing Bionic device, and
 add explicit cross-device synchronization. E035 does not yet claim cross-UID
 sharing, visible consumption, glibc Vulkan import dispatch, a vertex-buffer
 triangle, DXVK startup, a game FPS result, or removal of Termux.
+
+## E036 — Visible-renderer external-memory handoff (2026-08-19)
+
+Status: implemented at source commit `8cc3cad`; real-hardware validation is
+pending installation of visible-host v23. No E036 pass is claimed.
+
+The bounded gate creates the exportable allocation on the visible Activity's
+actual Adreno `VkDevice`, exports one opaque FD, returns it through the existing
+Binder callback, relays it into Termux with same-UID `SCM_RIGHTS`, and imports
+it in a separate Android-Bionic Vulkan process. The receiver checks all 4,096
+deterministic bytes and rejects a wrong 256-bit capability. The host contract
+suite now contains 20 tests and passes 20/20. The v23 APK also compiles under
+NDK r29 with `-O3 -Werror`, has a valid v2/v3 signature, and declares version
+code 23.
+
+Hardware attempts through installed v21 reached a live, focused 2800x1752
+renderer but failed before Vulkan import. The fixed internal endpoint in v19
+was reachable but rejected authorization; v20 and v21's token-derived endpoint
+returned `Connection refused`. Keeping the lifecycle service alive through the
+request did not change that result. Android's cross-UID process and socket
+tables were not visible from Termux, so the failure was not relabeled as a
+driver or Vulkan error.
+
+v23 removes Activity-recreation state from the socket address. A custom
+`NativeActivity` owns the current capability and the exported receiver compares
+it in constant time. The native broker returns to one fixed internal endpoint
+and retains same-UID peer authentication. This reuses the reachable endpoint
+shape from repository commit `52165b7` while avoiding a stale
+`pthread_once`-derived address. Java, Binder, and socket setup execute only when
+an allocation is shared; none are present in the frame hot path.
+
+v23 also restores an explicit visual liveness signal. When no external frame
+producer is attached, the already-created native Vulkan device and swapchain
+present a rotating triangle at 30 FPS. External ingress disables this local
+heartbeat, so it cannot consume game-frame budget. This reuses E033's typed
+push-constant rotation from commit `3be1388` rather than adding a Java animation
+path.
+
+The required recall queries for the broker refusal, lifecycle ordering,
+Activity reuse, and Package Manager install path returned no indexed prior
+sessions. Unattended installation was attempted without weakening security:
+SELinux denied system-server reads from Termux private storage, and streamed
+installation was rejected for the Termux caller. The signed v23 APK therefore
+requires the normal one-tap Android update confirmation before the hardware
+gate can run.
