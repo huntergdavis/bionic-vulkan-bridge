@@ -516,9 +516,9 @@ static VkResult VKAPI_CALL fake_import_semaphore_fd(
     VkDevice device, const VkImportSemaphoreFdInfoKHR *import_info) {
     (void)device;
     if (import_info == NULL || import_info->semaphore == VK_NULL_HANDLE ||
-        import_info->flags != 0U ||
+        import_info->flags != VK_SEMAPHORE_IMPORT_TEMPORARY_BIT ||
         import_info->handleType !=
-            VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT ||
+            VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT ||
         import_info->fd < 0) {
         return VK_ERROR_INVALID_EXTERNAL_HANDLE;
     }

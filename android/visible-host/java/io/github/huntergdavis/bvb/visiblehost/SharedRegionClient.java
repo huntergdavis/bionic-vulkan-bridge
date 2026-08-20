@@ -444,7 +444,8 @@ public final class SharedRegionClient extends Binder {
                 writeResult(arguments[1],
                         "{\"result\":\"pass\",\"binder_region_received\":true,"
                                 + "\"descriptor_kind\":"
-                                + (externalSync ? "\"opaque_fd_pair\""
+                                + (externalSync
+                                    ? "\"opaque_memory_plus_sync_fd\""
                                     : external ? "\"opaque_fd\""
                                     : "\"memfd\"")
                                 + ",\"relay\":\"same_uid_scm_rights\","

@@ -1570,8 +1570,9 @@ static int import_external_memory_fds(
             const VkImportSemaphoreFdInfoKHR semaphore_import = {
                 .sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR,
                 .semaphore = imported_semaphore,
+                .flags = VK_SEMAPHORE_IMPORT_TEMPORARY_BIT,
                 .handleType =
-                    VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
+                    VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
                 .fd = external_semaphore_fd,
             };
             vk_result = imported_vkImportSemaphoreFdKHR(

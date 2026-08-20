@@ -182,7 +182,7 @@ receiver = json.loads(next(line for line in receiver_path.read_text().splitlines
 status = json.loads(status_path.read_text())
 assert wrong["result"] == "fail" and wrong["native_status"] == -13
 assert valid["result"] == "pass"
-assert valid["descriptor_kind"] == "opaque_fd_pair"
+assert valid["descriptor_kind"] == "opaque_memory_plus_sync_fd"
 assert valid["allocation_size"] >= 4096
 assert valid["buffer_bytes"] == 4096
 assert valid["expected_fill_word"] == 0xE037C0DE
@@ -205,7 +205,7 @@ document = {
     "producer": "visible Android Activity renderer GPU queue",
     "consumer": "Termux Bionic Vulkan GPU queue",
     "cross_uid_transport": "Binder two ParcelFileDescriptors then LocalSocket two-FD SCM_RIGHTS",
-    "synchronization": "exported opaque binary semaphore; producer GPU signal then consumer GPU wait",
+    "synchronization": "exported SYNC_FD temporary binary semaphore payload; producer GPU signal then consumer GPU wait",
     "per_frame_binder_calls": 0,
     "wrong_capability": wrong,
     "binder_helper": valid,

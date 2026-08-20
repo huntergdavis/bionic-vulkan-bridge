@@ -310,7 +310,7 @@ static int prepare_external_sync(int *semaphore_fd) {
     }
     const VkExportSemaphoreCreateInfo export_info = {
         .sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
-        .handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
+        .handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
     };
     const VkSemaphoreCreateInfo semaphore_info = {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -320,20 +320,8 @@ static int prepare_external_sync(int *semaphore_fd) {
     VkResult result = vkCreateSemaphore(
         state.device, &semaphore_info, NULL, &semaphore);
     if (result != VK_SUCCESS) return -EIO;
-    const VkSemaphoreGetFdInfoKHR get_fd_info = {
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR,
-        .semaphore = semaphore,
-        .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
-    };
-    result = state.get_semaphore_fd(
-        state.device, &get_fd_info, semaphore_fd);
-    if (result != VK_SUCCESS || *semaphore_fd < 0) {
-        vkDestroySemaphore(state.device, semaphore, NULL);
-        *semaphore_fd = -1;
-        return -EIO;
-    }
-
     VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    bool submitted = false;
     (void)pthread_mutex_lock(&queue_mutex);
     const VkCommandBufferAllocateInfo command_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -377,15 +365,29 @@ static int prepare_external_sync(int *semaphore_fd) {
     };
     if (result == VK_SUCCESS) {
         result = vkQueueSubmit(state.queue, 1U, &submit_info, VK_NULL_HANDLE);
+        submitted = result == VK_SUCCESS;
     }
-    if (result != VK_SUCCESS && command_buffer != VK_NULL_HANDLE) {
+    if (result == VK_SUCCESS) {
+        const VkSemaphoreGetFdInfoKHR get_fd_info = {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR,
+            .semaphore = semaphore,
+            .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
+        };
+        result = state.get_semaphore_fd(
+            state.device, &get_fd_info, semaphore_fd);
+    }
+    if ((result != VK_SUCCESS || *semaphore_fd < 0) && submitted) {
+        (void)vkQueueWaitIdle(state.queue);
+    }
+    if ((result != VK_SUCCESS || *semaphore_fd < 0) &&
+        command_buffer != VK_NULL_HANDLE) {
         vkFreeCommandBuffers(state.device, state.command_pool, 1U,
                              &command_buffer);
         command_buffer = VK_NULL_HANDLE;
     }
     (void)pthread_mutex_unlock(&queue_mutex);
-    if (result != VK_SUCCESS) {
-        (void)close(*semaphore_fd);
+    if (result != VK_SUCCESS || *semaphore_fd < 0) {
+        if (*semaphore_fd >= 0) (void)close(*semaphore_fd);
         *semaphore_fd = -1;
         vkDestroySemaphore(state.device, semaphore, NULL);
         return -EIO;
@@ -514,7 +516,7 @@ static void handle_external_broker_connection(int connection) {
     if (status == 0 && send_status == 0) {
         if (synchronized) {
             BVB_LOGI("E037_EXPORT_PASS bytes=%u allocation=%llu type=%u "
-                     "fill=%u descriptors=2",
+                     "fill=%u descriptors=2 semaphore=sync_fd",
                      BVB_E020_REGION_BYTES,
                      (unsigned long long)allocation_size, memory_type_index,
                      BVB_E037_FILL_WORD);
