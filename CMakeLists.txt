@@ -164,6 +164,16 @@ target_include_directories(
 )
 bvb_enable_warnings(bvb-wire)
 
+add_library(bvb-frame-sync STATIC src/frame_sync.c)
+set_target_properties(bvb-frame-sync PROPERTIES C_VISIBILITY_PRESET hidden)
+target_include_directories(
+  bvb-frame-sync
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
+)
+bvb_enable_warnings(bvb-frame-sync)
+
 add_library(bvb-command-batch STATIC src/handle.c src/command_batch.c)
 set_target_properties(bvb-command-batch PROPERTIES C_VISIBILITY_PRESET hidden)
 target_include_directories(
@@ -369,6 +379,11 @@ if(TARGET bvb-vulkan-resolve-trace)
 endif()
 
 if(BUILD_TESTING)
+  add_executable(bvb-frame-sync-test tests/frame_sync.c)
+  target_link_libraries(bvb-frame-sync-test PRIVATE bvb-frame-sync)
+  bvb_enable_warnings(bvb-frame-sync-test)
+  add_test(NAME frame-sync-contract COMMAND bvb-frame-sync-test)
+
   add_library(bvb-fake-vulkan SHARED tests/fake_vulkan.c)
   target_link_libraries(bvb-fake-vulkan PRIVATE Vulkan::Headers)
   set_target_properties(
