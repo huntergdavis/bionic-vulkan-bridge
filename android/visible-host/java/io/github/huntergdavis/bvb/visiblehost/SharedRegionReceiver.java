@@ -52,6 +52,10 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
         ParcelFileDescriptor region = null;
         try {
             if (external) {
+                if (!VisibleHostActivity.authorizes(token)) {
+                    throw new SecurityException(
+                            "external-memory capability rejected");
+                }
                 externalResult = SharedRegionProvider.openExternalMemory(token);
                 status = externalResult.status;
                 region = externalResult.descriptor;

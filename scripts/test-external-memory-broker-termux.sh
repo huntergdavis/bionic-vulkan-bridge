@@ -5,7 +5,7 @@ project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 build_dir="$project_dir/build"
 out_dir="$project_dir/out"
 package_name=io.github.huntergdavis.bvb.visiblehost
-activity_name=android.app.NativeActivity
+activity_name=io.github.huntergdavis.bvb.visiblehost.VisibleHostActivity
 client_class=io.github.huntergdavis.bvb.visiblehost.SharedRegionClient
 manifest="$project_dir/android/visible-host/AndroidManifest.xml"
 signed_apk="$out_dir/visible-host/bvb-visible-host-debug.apk"

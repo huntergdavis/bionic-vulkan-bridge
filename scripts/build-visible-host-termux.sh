@@ -8,6 +8,7 @@ native_dir="$staging_dir/lib/arm64-v8a"
 manifest="$project_dir/android/visible-host/AndroidManifest.xml"
 source_file="$project_dir/android/visible-host/native_main.c"
 java_dir="$project_dir/android/visible-host/java/io/github/huntergdavis/bvb/visiblehost"
+activity_java="$java_dir/VisibleHostActivity.java"
 provider_java="$java_dir/SharedRegionProvider.java"
 client_java="$java_dir/SharedRegionClient.java"
 receiver_java="$java_dir/SharedRegionReceiver.java"
@@ -49,7 +50,8 @@ for command_name in clang aapt zipalign apksigner keytool readelf \
         exit 2
     fi
 done
-for required_file in "$manifest" "$source_file" "$provider_java" \
+for required_file in "$manifest" "$source_file" "$activity_java" \
+    "$provider_java" \
     "$client_java" "$receiver_java" \
     "$lifecycle_source" \
     "$protocol_source" "$handle_source" "$batch_source" \
@@ -100,11 +102,12 @@ fetch_pinned "$r8_url" "$r8_sha256" "$r8_jar"
 fetch_pinned "$android_jar_url" "$android_jar_sha256" "$android_jar"
 
 javac --release 8 -classpath "$android_jar" -d "$java_classes" \
-    "$provider_java" "$client_java" "$receiver_java"
+    "$activity_java" "$provider_java" "$client_java" "$receiver_java"
 rm -f "$dex_dir/classes.dex"
 java -cp "$r8_jar" com.android.tools.r8.D8 \
     --release --no-desugaring --min-api 24 --lib "$android_jar" \
     --output "$dex_dir" \
+    "$java_classes/io/github/huntergdavis/bvb/visiblehost/VisibleHostActivity.class" \
     "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionProvider.class" \
     "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionProvider\$ExternalMemoryResult.class" \
     "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionClient.class" \

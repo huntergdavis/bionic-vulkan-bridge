@@ -6,7 +6,7 @@ build_dir="$project_dir/build"
 out_dir="$project_dir/out"
 runtime_parent=${TMPDIR:-/tmp}
 package_name=io.github.huntergdavis.bvb.visiblehost
-activity_name=android.app.NativeActivity
+activity_name=io.github.huntergdavis.bvb.visiblehost.VisibleHostActivity
 manifest="$project_dir/android/visible-host/AndroidManifest.xml"
 
 for command_name in am grun gcc od python readelf sed tr; do
