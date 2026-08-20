@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #define VK_NO_PROTOTYPES
 
 #include <bvb/global_dispatch.h>
@@ -70,6 +71,26 @@ int main(void) {
     CHECK(strcmp(extension.extensionName,
                  VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) ==
           0);
+    CHECK(setenv("BVB_ICD_PROBE_WSI", "1", 1) == 0);
+    extension_count = 0U;
+    CHECK(vkEnumerateInstanceExtensionProperties(
+              NULL, &extension_count, NULL) == VK_SUCCESS);
+    CHECK(extension_count == 5U);
+    VkExtensionProperties probe_extensions[5] = {0};
+    CHECK(vkEnumerateInstanceExtensionProperties(
+              NULL, &extension_count, probe_extensions) == VK_SUCCESS);
+    CHECK(extension_count == 5U);
+    CHECK(strcmp(probe_extensions[0].extensionName,
+                 VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) ==
+          0);
+    CHECK(strcmp(probe_extensions[1].extensionName, "VK_KHR_surface") == 0);
+    CHECK(strcmp(probe_extensions[2].extensionName,
+                 "VK_KHR_xlib_surface") == 0);
+    CHECK(strcmp(probe_extensions[3].extensionName,
+                 "VK_KHR_xcb_surface") == 0);
+    CHECK(strcmp(probe_extensions[4].extensionName,
+                 "VK_KHR_wayland_surface") == 0);
+    CHECK(unsetenv("BVB_ICD_PROBE_WSI") == 0);
     CHECK(vkEnumerateInstanceExtensionProperties(
               "VK_LAYER_BVB_fake_native_only", &extension_count,
               NULL) == VK_ERROR_LAYER_NOT_PRESENT);

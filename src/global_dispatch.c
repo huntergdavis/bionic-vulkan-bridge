@@ -658,6 +658,12 @@ static VkResult VKAPI_CALL bvb_bridge_vkEnumerateInstanceVersion(
 static VkResult VKAPI_CALL bvb_bridge_vkEnumerateInstanceExtensionProperties(
     const char *layer_name, uint32_t *property_count,
     VkExtensionProperties *properties) {
+    static const VkExtensionProperties probe_wsi_extensions[] = {
+        {{"VK_KHR_surface"}, 25U},
+        {{"VK_KHR_xlib_surface"}, 6U},
+        {{"VK_KHR_xcb_surface"}, 6U},
+        {{"VK_KHR_wayland_surface"}, 6U},
+    };
     if (property_count == NULL) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
@@ -698,18 +704,32 @@ static VkResult VKAPI_CALL bvb_bridge_vkEnumerateInstanceExtensionProperties(
     if (page.first != 0U || page.count != page.total_count) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
+    const bool probe_wsi = getenv("BVB_ICD_PROBE_WSI") != NULL &&
+                           strcmp(getenv("BVB_ICD_PROBE_WSI"), "1") == 0;
+    const uint32_t probe_count =
+        probe_wsi ? (uint32_t)(sizeof(probe_wsi_extensions) /
+                               sizeof(probe_wsi_extensions[0]))
+                  : 0U;
+    const uint32_t total_count = page.total_count + probe_count;
+    if (probe_wsi && getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        fprintf(stderr, "BVB_ICD_WSI_PROBE advertised=%u\n", probe_count);
+    }
     const uint32_t capacity = properties == NULL ? 0U : *property_count;
     if (properties == NULL) {
-        *property_count = page.total_count;
+        *property_count = total_count;
         return VK_SUCCESS;
     }
-    const uint32_t written = capacity < page.count ? capacity : page.count;
-    if (written != 0U) {
+    uint32_t written = capacity < page.count ? capacity : page.count;
+    if (written > 0U) {
         memcpy(properties, page.properties,
                written * sizeof(*properties));
     }
+    for (uint32_t index = 0U;
+         index < probe_count && written < capacity; ++index) {
+        properties[written++] = probe_wsi_extensions[index];
+    }
     *property_count = written;
-    return capacity < page.total_count ? VK_INCOMPLETE : VK_SUCCESS;
+    return capacity < total_count ? VK_INCOMPLETE : VK_SUCCESS;
 }
 
 static VkResult VKAPI_CALL bvb_bridge_vkEnumerateInstanceLayerProperties(
