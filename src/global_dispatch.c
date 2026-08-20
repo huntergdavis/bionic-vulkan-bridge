@@ -1307,6 +1307,22 @@ bvb_bridge_vkGetPhysicalDeviceSparseImageFormatProperties(
 static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
     VkPhysicalDevice physical_device, const VkDeviceCreateInfo *create_info,
     const VkAllocationCallbacks *allocator, VkDevice *device) {
+    if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        fprintf(stderr,
+                "BVB_ICD_CREATE_DEVICE physical=%p info=%p stype=%u "
+                "pnext=%p flags=%u allocator=%p queues=%u layers=%u "
+                "extensions=%u features=%p\n",
+                (void *)physical_device, (const void *)create_info,
+                create_info == NULL ? 0U : (unsigned int)create_info->sType,
+                create_info == NULL ? NULL : create_info->pNext,
+                create_info == NULL ? 0U : (unsigned int)create_info->flags,
+                (const void *)allocator,
+                create_info == NULL ? 0U : create_info->queueCreateInfoCount,
+                create_info == NULL ? 0U : create_info->enabledLayerCount,
+                create_info == NULL ? 0U : create_info->enabledExtensionCount,
+                create_info == NULL
+                    ? NULL : (const void *)create_info->pEnabledFeatures);
+    }
     if (device != NULL) {
         *device = VK_NULL_HANDLE;
     }
