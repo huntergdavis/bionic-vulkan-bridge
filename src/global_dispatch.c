@@ -213,6 +213,14 @@ static int connect_locked(void) {
     if (result == 0) {
         result = bvb_protocol_decode_hello_response(response.payload, &decoded);
     }
+    if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        fprintf(stderr,
+                "BVB_ICD_HELLO status=%d wire_status=%d payload=%u "
+                "negotiated=%u\n",
+                result, response.header.status,
+                response.header.payload_length,
+                result == 0 ? decoded.negotiated_version : 0U);
+    }
     if (result != 0 || decoded.negotiated_version != BVB_PROTOCOL_VERSION) {
         (void)close(bvb_global_client.socket_fd);
         bvb_global_client.socket_fd = -1;
@@ -773,7 +781,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateInstance(
              BVB_VULKAN_INSTANCE_CREATE_RESPONSE_SIZE)) {
         result = -EPROTO;
     }
-    struct bvb_vulkan_instance_create_response create_response;
+    struct bvb_vulkan_instance_create_response create_response = {0};
     if (result == 0) {
         result = bvb_protocol_decode_vulkan_instance_create_response(
             response.payload, &create_response);
@@ -782,6 +790,15 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateInstance(
         bvb_handle_expect(create_response.instance_id,
                           BVB_OBJECT_INSTANCE) != 0) {
         result = -EPROTO;
+    }
+    if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        fprintf(stderr,
+                "BVB_ICD_CREATE_RESPONSE status=%d wire_status=%d "
+                "payload=%u vulkan=%d instance=%llu\n",
+                result, response.header.status,
+                response.header.payload_length,
+                create_response.vulkan_result,
+                (unsigned long long)create_response.instance_id);
     }
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
     if (result != 0) {
