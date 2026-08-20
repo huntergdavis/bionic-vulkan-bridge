@@ -14,7 +14,7 @@ int main(void) {
     }
     const VkApplicationInfo application = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-        .pApplicationName = "bvb-e045-icd-loader",
+        .pApplicationName = "bvb-e046-icd-loader",
         .applicationVersion = 1U,
         .pEngineName = "bvb",
         .engineVersion = 1U,
