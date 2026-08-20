@@ -183,8 +183,10 @@ the handoff, and the consumer imports and matches all 4,096 pixels without an
 external semaphore FD. E042 makes that import persistent and adds a shared
 control page: 120 alternating GPU frames completed with zero pixel mismatches
 in 233.7 ms, while Java, Binder, sockets, and FD transfer remained absent from
-every frame. The next boundary is connecting this persistent presentation path
-to the measured DXVK command stream and launching Tomb Raider 2013.
+every frame. E043 then proves Steam's real AArch64 glibc Vulkan loader can select
+the bridge as a standard ICD and enumerate the Bionic Adreno 730. The next
+boundary is returning real device capabilities to the measured DXVK command
+stream and launching Tomb Raider 2013.
 
 ## Build and test on a normal Linux host
 

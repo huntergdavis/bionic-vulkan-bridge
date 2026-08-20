@@ -90,6 +90,8 @@
   with no external semaphore or per-frame framework IPC
 - [x] Establish one persistent native frame path using one-time Binder handle
   setup plus shared-memory/fence coordination without per-frame Binder/Java
+- [x] Load the bridge as a standard ICD through Steam's real glibc Vulkan
+  loader and enumerate the Bionic Adreno 730 physical device
 - [x] Reach a rendered test triangle
 - [x] Deliver the glibc-generated triangle batch to the visible host
 - [x] Drive sustained per-frame shader data through the shared ring and render

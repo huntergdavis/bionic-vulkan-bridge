@@ -2156,3 +2156,33 @@ sequence/ownership discipline recalled from prior sessions. The required
 gate connects the persistent native consumer to the generated DXVK path and
 must show a real DXVK frame before attempting the fixed native-resolution Tomb
 Raider 2013 benchmark.
+
+## E043 — Steam glibc Vulkan loader selects the Bionic bridge ICD (2026-08-20)
+
+Status: passed on the Galaxy Tab S8+ and real Adreno 730. Steam's AArch64 glibc
+Vulkan loader 1.3.296 loaded the standard `bvb_icd.aarch64.json` manifest,
+negotiated the ICD ABI with `libvulkan-bvb-glibc.so`, created an instance across
+the authenticated Unix-socket boundary, and enumerated the Bionic driver's
+physical device as `Adreno (TM) 730` (`vendorID=20803`,
+`deviceID=117637121`, `apiVersion=4206888`). Client and service stderr were
+both empty.
+
+The implementation adds the loader negotiation exports, loader-compatible
+dispatchable-handle prefix, standard ICD manifest, and a real-loader smoke
+client. Internal bridge calls use symbolic binding so glibc loader symbol
+interposition cannot recurse back into the ICD. Loader-private instance
+`pNext` data is accepted but never forwarded across libc boundaries, and
+allocation callbacks remain local. The three mandatory Vulkan 1.0 format
+queries initially return conservative unsupported results rather than
+inventing device capabilities.
+
+Canonical evidence is
+`docs/evidence/e043-steam-glibc-icd-loader.json`, 1,454 bytes, SHA-256
+`d0cdd186312e9430baa0003f91242f8784816574a13b7c62963362309f5719da`.
+This gate reuses E023's
+fixed-width transport discipline and the instance/physical-device ownership
+introduced in the generated dispatch work. The required `deja` searches found
+the prior architecture and ownership decisions but no prior standard-ICD
+implementation. E043 proves loader discovery and hardware enumeration, not
+DXVK execution or a game frame. The next gate replaces conservative capability
+answers with real Bionic queries and advances the measured DXVK startup path.
