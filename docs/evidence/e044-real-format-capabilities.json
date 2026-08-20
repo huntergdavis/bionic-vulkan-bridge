@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "gate": "E044",
+  "result": "pass",
+  "target": "Galaxy Tab S8+ Android Bionic Adreno 730",
+  "client_abi": "AArch64 glibc through Steam Vulkan loader 1.3.296",
+  "service_abi": "AArch64 Android Bionic through /system/lib64/libvulkan.so",
+  "transport": "authenticated Unix socket with fixed-width Vulkan format-query RPCs",
+  "format_query": {
+    "format": "VK_FORMAT_R8G8B8A8_UNORM",
+    "format_value": 37,
+    "optimal_tiling_features": 1047939,
+    "sampled_image_supported": true
+  },
+  "image_format_query": {
+    "type": "VK_IMAGE_TYPE_2D",
+    "tiling": "VK_IMAGE_TILING_OPTIMAL",
+    "usage": "VK_IMAGE_USAGE_SAMPLED_BIT",
+    "flags": 0,
+    "vulkan_result": 0,
+    "max_extent": [16384, 16384, 1],
+    "max_resource_size": 562949953421312,
+    "native_target_2800x1752_supported": true
+  },
+  "physical_device": {
+    "api_version": 4206888,
+    "device_name": "Adreno (TM) 730",
+    "vendor_id": 20803,
+    "device_id": 117637121
+  },
+  "client_stdout": {
+    "bytes": 181,
+    "sha256": "e4af834a9c478c3a75ce864de38932a7762154d039587af054005cc383ae2322"
+  },
+  "client_stderr_bytes": 0,
+  "service_stdout": {
+    "bytes": 147,
+    "sha256": "a6efeeaca389dcc1d9cc6266ccd9fc43311e51df1bb8215a6d1ef042b67004e4"
+  },
+  "service_stderr_bytes": 0,
+  "icd_library": {
+    "bytes": 219568,
+    "sha256": "4ef9560fab15469fd797677a7d5e5ff48e96ee8cd849905d7cead2edfba2a549"
+  },
+  "scope": "real Vulkan 1.0 format and image-format capabilities; not yet extended capability chains, DXVK execution, or game rendering"
+}

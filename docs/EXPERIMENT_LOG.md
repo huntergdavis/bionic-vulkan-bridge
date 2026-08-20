@@ -2186,3 +2186,29 @@ the prior architecture and ownership decisions but no prior standard-ICD
 implementation. E043 proves loader discovery and hardware enumeration, not
 DXVK execution or a game frame. The next gate replaces conservative capability
 answers with real Bionic queries and advances the measured DXVK startup path.
+
+## E044 — Real format capabilities cross glibc-to-Bionic (2026-08-20)
+
+Status: passed through Steam's real AArch64 glibc Vulkan loader and the Adreno
+730 system driver. New fixed-width requests carry only the physical-device ID
+and Vulkan scalar inputs for `vkGetPhysicalDeviceFormatProperties` and
+`vkGetPhysicalDeviceImageFormatProperties`; the Bionic service resolves the
+owned native handle, calls the system driver, and encodes scalar results back.
+No libc-dependent Vulkan structure or pointer crosses the transport boundary.
+
+For `VK_FORMAT_R8G8B8A8_UNORM`, the device returned optimal-tiling feature bits
+`1047939`, including sampled-image support. A 2D optimal-tiling sampled-image
+query returned `VK_SUCCESS`, maximum extent `16384×16384×1`, and maximum
+resource size `562949953421312` bytes. The measured 2800×1752 Tomb Raider target
+therefore fits the queried hardware limit. Client and service stderr were
+empty, and all 23 host tests passed.
+
+Canonical evidence is `docs/evidence/e044-real-format-capabilities.json`,
+1,549 bytes, SHA-256
+`8bcb5918b4e546b194bc3d824e66f32f808a74eb64a18aaeedd2dca247740e47`.
+Implementation is commit `700f0a0`; the distinct hardware harness artifact
+names are commit `3a0dfb4`. The required `deja` search found no prior E044
+implementation to reuse. E044 proves the two core Vulkan 1.0 queries, not
+extended `pNext` capability chains, DXVK execution, or a game frame. The next
+gate observes the real next DXVK/loader failure and implements that measured
+capability family.
