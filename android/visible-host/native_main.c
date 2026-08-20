@@ -57,6 +57,10 @@ struct bvb_visible_state {
     VkDevice device;
     VkQueue queue;
     VkSwapchainKHR swapchain;
+    VkImage swapchain_images[BVB_MAX_IMAGES];
+    uint32_t swapchain_image_count;
+    VkFormat swapchain_format;
+    VkExtent2D swapchain_extent;
     VkImageView image_view;
     VkRenderPass render_pass;
     VkFramebuffer framebuffer;
@@ -112,6 +116,7 @@ enum {
     BVB_E020_REGION_BYTES = 4096,
     BVB_E022_REGION_GENERATION = 1,
     BVB_E023_MAX_FRAMES = 4096,
+    BVB_LOCAL_HEARTBEAT_INTERVAL_NS = 33333333,
     BVB_E036_TOKEN_HEX_BYTES = BVB_LIFECYCLE_TOKEN_SIZE * 2,
     BVB_E036_RESPONSE_BYTES = 20,
 };
@@ -1030,7 +1035,8 @@ static VkPipelineLayout pipeline_layout_from_bits(uint64_t bits) {
 }
 
 static int build_triangle_batch(uint8_t *batch, size_t capacity,
-                                VkExtent2D extent, size_t *length) {
+                                VkExtent2D extent, uint64_t sequence,
+                                size_t *length) {
     const uint64_t command_buffer_id =
         bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 1U);
     const uint64_t image_view_id =
@@ -1040,7 +1046,7 @@ static int build_triangle_batch(uint8_t *batch, size_t capacity,
         bvb_handle_id(BVB_OBJECT_PIPELINE_LAYOUT, 1U);
     struct bvb_command_batch_builder builder;
     int result = bvb_command_batch_begin(&builder, batch, capacity,
-                                         command_buffer_id, 1U);
+                                         command_buffer_id, sequence);
     if (result == 0) {
         result = bvb_command_batch_append_begin_rendering(
             &builder,
@@ -1067,7 +1073,10 @@ static int build_triangle_batch(uint8_t *batch, size_t capacity,
             &builder,
             &(const struct bvb_push_rotation_command){
                 .pipeline_layout_id = pipeline_layout_id,
-                .angle_radians = 0.0F,
+                .angle_radians =
+                    (float)((sequence - 1U) %
+                            BVB_TRIANGLE_ROTATION_FRAMES_PER_TURN) *
+                    0.0104719755F,
                 .aspect_ratio = (float)extent.width / (float)extent.height,
             });
     }
@@ -1731,6 +1740,11 @@ static bool create_renderer(ANativeWindow *window) {
         BVB_LOGE("E008_FAIL swapchain_image_list=%d", (int)result);
         return false;
     }
+    memcpy(state.swapchain_images, images,
+           image_count * sizeof(state.swapchain_images[0]));
+    state.swapchain_image_count = image_count;
+    state.swapchain_format = surface_format.format;
+    state.swapchain_extent = extent;
 
     const VkAttachmentDescription render_attachment = {
         .format = surface_format.format,
@@ -2012,9 +2026,9 @@ static bool create_renderer(ANativeWindow *window) {
     }
     uint8_t triangle_batch[512];
     size_t triangle_batch_length = 0U;
-    int batch_status = build_triangle_batch(triangle_batch,
-                                            sizeof(triangle_batch), extent,
-                                            &triangle_batch_length);
+    int batch_status = build_triangle_batch(
+        triangle_batch, sizeof(triangle_batch), extent, 1U,
+        &triangle_batch_length);
     if (batch_status != 0) {
         BVB_LOGE("E016_FAIL batch_build=%d", batch_status);
         return false;
@@ -2177,6 +2191,55 @@ static bool create_renderer(ANativeWindow *window) {
     return true;
 }
 
+static bool renderer_generation_current(uint64_t generation,
+                                        ANativeWindow *window) {
+    (void)pthread_mutex_lock(&renderer.mutex);
+    const bool current = generation == renderer.requested_generation &&
+                         window == renderer.window;
+    (void)pthread_mutex_unlock(&renderer.mutex);
+    return current;
+}
+
+static int animate_local_heartbeat(uint64_t generation,
+                                   ANativeWindow *window) {
+    const struct timespec interval = {
+        .tv_nsec = BVB_LOCAL_HEARTBEAT_INTERVAL_NS,
+    };
+    uint64_t sequence = 2U;
+    BVB_LOGI("E033_HEARTBEAT_BEGIN fps=30");
+    while (renderer_generation_current(generation, window)) {
+        struct timespec remaining = interval;
+        while (nanosleep(&remaining, &remaining) != 0 && errno == EINTR) {}
+        if (!renderer_generation_current(generation, window)) break;
+
+        uint8_t triangle_batch[512];
+        size_t triangle_batch_length = 0U;
+        int status = build_triangle_batch(
+            triangle_batch, sizeof(triangle_batch), state.swapchain_extent,
+            sequence, &triangle_batch_length);
+        uint32_t image_index = 0U;
+        if (status == 0) {
+            status = render_triangle_frame(
+                triangle_batch, triangle_batch_length,
+                state.swapchain_images, state.swapchain_image_count,
+                state.swapchain_format, state.swapchain_extent, &image_index);
+        }
+        if (status != 0) {
+            BVB_LOGE("E033_HEARTBEAT_FAIL sequence=%llu status=%d",
+                     (unsigned long long)sequence, status);
+            return status;
+        }
+        if (sequence % 300U == 0U) {
+            BVB_LOGI("E033_HEARTBEAT_ALIVE sequence=%llu index=%u",
+                     (unsigned long long)sequence, image_index);
+        }
+        sequence = sequence == UINT64_MAX ? 1U : sequence + 1U;
+    }
+    BVB_LOGI("E033_HEARTBEAT_END sequence=%llu",
+             (unsigned long long)sequence);
+    return 0;
+}
+
 static void *renderer_worker_main(void *unused) {
     (void)unused;
     uint64_t handled_generation = 0U;
@@ -2219,6 +2282,25 @@ static void *renderer_worker_main(void *unused) {
             }
         }
         (void)pthread_mutex_unlock(&renderer.mutex);
+
+        if (success && current && visible_ingress == NULL) {
+            const int heartbeat_status =
+                animate_local_heartbeat(generation, window);
+            if (heartbeat_status != 0) {
+                (void)pthread_mutex_lock(&renderer.mutex);
+                const bool heartbeat_current =
+                    generation == renderer.requested_generation &&
+                    window == renderer.window;
+                if (heartbeat_current) renderer.ready = false;
+                (void)pthread_mutex_unlock(&renderer.mutex);
+                if (heartbeat_current) {
+                    emit_lifecycle(BVB_LIFECYCLE_EVENT_RENDERER_FAILED,
+                                   width, height);
+                }
+                destroy_renderer();
+                success = false;
+            }
+        }
 
         if (success && !current) {
             destroy_renderer();
