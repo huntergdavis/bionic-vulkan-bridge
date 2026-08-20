@@ -2212,3 +2212,30 @@ implementation to reuse. E044 proves the two core Vulkan 1.0 queries, not
 extended `pNext` capability chains, DXVK execution, or a game frame. The next
 gate observes the real next DXVK/loader failure and implements that measured
 capability family.
+
+## E045 — Standard-loader logical device and queue (2026-08-20)
+
+Status: passed through Steam's real AArch64 glibc Vulkan loader and the Bionic
+Adreno 730 driver. The loader created the bridge instance and physical-device
+proxy, the bridge created a native logical device on graphics queue family 0,
+and the client recovered the queue and completed both `vkQueueWaitIdle` and
+`vkDeviceWaitIdle`. Teardown returned through the standard loader path. Client
+and service stderr were empty, and all 23 host tests passed.
+
+The first hardware attempt returned `VK_ERROR_INITIALIZATION_FAILED` before any
+device RPC. Opt-in diagnostics showed the loader prepended private
+device-creation metadata even though the application supplied no feature
+chain. The fix reuses E043's instance-side rule: loader-private `pNext` data
+stays in the glibc ICD and only the fixed-width application fields cross to
+Bionic. No loader pointer crosses the socket boundary.
+
+Canonical evidence is `docs/evidence/e045-standard-loader-device.json`,
+1,365 bytes, SHA-256
+`0450fa2d0be7cf796f320c7fde950ecf8902774177ee0910f90a9179631f7889`.
+The hardware harness is commit `f4f41a2`, opt-in diagnosis is `f8e8bf0`, and
+the device-side loader metadata fix is `17395b7`. The required `deja` search
+found no prior standard-loader logical-device implementation; the fix reuses
+the E043 loader-private instance handling recovered in the current experiment
+log. E045 does not yet pass application feature/extension chains, execute DXVK,
+or render a game frame. The next gate bridges the measured instance/device
+extension requirements that Wine/DXVK needs before resource creation.
