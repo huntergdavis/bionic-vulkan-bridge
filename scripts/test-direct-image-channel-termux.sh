@@ -85,9 +85,9 @@ while ! grep -q 'activity_event=11 ' "$service_stdout"; do
     sleep 0.05
 done
 
-"$build_dir/bvb-external-image-direct" --token "$token" \
+"$build_dir/bvb-external-image-direct" --token "$token" --datagram \
     > "$valid_json" 2> "$valid_stderr"
-if "$build_dir/bvb-external-image-direct" --token "$wrong_token" \
+if "$build_dir/bvb-external-image-direct" --token "$wrong_token" --datagram \
     > "$wrong_json" 2> "$wrong_stderr"; then
     printf 'wrong direct capability unexpectedly succeeded\n' >&2
     exit 6
@@ -111,7 +111,7 @@ wrong = json.loads(wrong_path.read_text())
 status = json.loads(status_path.read_text())
 service = service_path.read_text()
 assert valid["gate"] == "E039" and valid["result"] == "pass"
-assert valid["transport"] == "direct_native_capability_socket_scm_rights"
+assert valid["transport"] == "direct_native_capability_datagram_scm_rights"
 assert valid["binder_calls"] == 0 and valid["java_calls"] == 0
 assert valid["channel_acknowledged"] is True
 assert valid["descriptor_count"] == 2
@@ -126,10 +126,10 @@ document = {
     "gate": "E039",
     "result": "pass",
     "target": "Galaxy Tab S8+ Android Bionic Adreno 730",
-    "transport": "direct cross-UID native AF_UNIX capability channel plus SCM_RIGHTS",
+    "transport": "direct cross-UID native AF_UNIX datagram capability channel plus SCM_RIGHTS",
     "binder_calls": 0,
     "java_calls": 0,
-    "channel_lifetime": "open across descriptor delivery, GPU import/readback, and native acknowledgement",
+    "channel_lifetime": "native address pair retained across descriptor delivery, GPU import/readback, and native acknowledgement",
     "external_image_import": valid,
     "wrong_capability": wrong,
     "activity_status": status["activity_status"],

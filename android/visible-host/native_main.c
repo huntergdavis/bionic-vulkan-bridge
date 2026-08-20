@@ -155,6 +155,8 @@ static const uint32_t BVB_E038_COLOR_WORD = UINT32_C(0xffff00ff);
 
 static const char BVB_E036_BROKER_SOCKET[] =
     "bvb-visible-external-memory";
+static const char BVB_E039_DATAGRAM_BROKER_SOCKET[] =
+    "bvb-visible-external-memory-dgram";
 
 static bool token_matches(const uint8_t *left, const uint8_t *right) {
     uint8_t difference = 0U;
@@ -284,10 +286,11 @@ static int receive_broker_token_exact(int socket_fd, uint8_t *output,
     return 0;
 }
 
-static int send_external_broker_response(
+static int send_external_broker_response_to(
     int socket_fd, int status, const int *descriptors,
     size_t descriptor_count, uint64_t allocation_size,
-    uint32_t memory_type_index, uint32_t metadata0, uint32_t metadata1) {
+    uint32_t memory_type_index, uint32_t metadata0, uint32_t metadata1,
+    const struct sockaddr *destination, socklen_t destination_size) {
     uint8_t response[BVB_E036_RESPONSE_BYTES] = {0};
     bvb_wire_put_i32(response, status);
     bvb_wire_put_u64(response + 4, allocation_size);
@@ -300,6 +303,8 @@ static int send_external_broker_response(
     };
     uint8_t control[CMSG_SPACE(sizeof(int) * 2U)] = {0};
     struct msghdr message = {
+        .msg_name = (void *)destination,
+        .msg_namelen = destination_size,
         .msg_iov = &vector,
         .msg_iovlen = 1U,
     };
@@ -320,6 +325,15 @@ static int send_external_broker_response(
     } while (sent < 0 && errno == EINTR);
     if (sent < 0) return -errno;
     return sent == (ssize_t)sizeof(response) ? 0 : -EIO;
+}
+
+static int send_external_broker_response(
+    int socket_fd, int status, const int *descriptors,
+    size_t descriptor_count, uint64_t allocation_size,
+    uint32_t memory_type_index, uint32_t metadata0, uint32_t metadata1) {
+    return send_external_broker_response_to(
+        socket_fd, status, descriptors, descriptor_count, allocation_size,
+        memory_type_index, metadata0, metadata1, NULL, 0);
 }
 
 /* external_memory_mutex must be held. */
@@ -775,6 +789,171 @@ static void handle_external_broker_connection(int connection) {
     }
 }
 
+static ssize_t receive_external_datagram(
+    int socket_fd, uint8_t *bytes, size_t capacity,
+    struct sockaddr_un *source, socklen_t *source_size,
+    struct ucred *credentials) {
+    struct iovec vector = {
+        .iov_base = bytes,
+        .iov_len = capacity,
+    };
+    uint8_t control[CMSG_SPACE(sizeof(struct ucred))] = {0};
+    struct msghdr message = {
+        .msg_name = source,
+        .msg_namelen = sizeof(*source),
+        .msg_iov = &vector,
+        .msg_iovlen = 1U,
+        .msg_control = control,
+        .msg_controllen = sizeof(control),
+    };
+    ssize_t count;
+    do {
+        count = recvmsg(socket_fd, &message, 0);
+    } while (count < 0 && errno == EINTR);
+    if (count < 0) return -errno;
+    if ((message.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) != 0) return -EPROTO;
+    *source_size = message.msg_namelen;
+    credentials->pid = -1;
+    credentials->uid = (uid_t)-1;
+    credentials->gid = (gid_t)-1;
+    for (struct cmsghdr *item = CMSG_FIRSTHDR(&message); item != NULL;
+         item = CMSG_NXTHDR(&message, item)) {
+        if (item->cmsg_level == SOL_SOCKET &&
+            item->cmsg_type == SCM_CREDENTIALS &&
+            item->cmsg_len == CMSG_LEN(sizeof(*credentials))) {
+            memcpy(credentials, CMSG_DATA(item), sizeof(*credentials));
+        }
+    }
+    return credentials->pid < 0 ? -EACCES : count;
+}
+
+static bool same_datagram_peer(const struct sockaddr_un *left,
+                               socklen_t left_size,
+                               const struct sockaddr_un *right,
+                               socklen_t right_size) {
+    return left_size == right_size &&
+           left_size >= offsetof(struct sockaddr_un, sun_path) + 1U &&
+           memcmp(left, right, left_size) == 0;
+}
+
+static void handle_external_datagram_request(int socket_fd) {
+    uint8_t request[BVB_E036_REQUEST_BYTES] = {0};
+    struct sockaddr_un peer_address;
+    socklen_t peer_address_size = 0;
+    struct ucred credentials;
+    ssize_t count = receive_external_datagram(
+        socket_fd, request, sizeof(request), &peer_address,
+        &peer_address_size, &credentials);
+    int status = count < 0 ? (int)count : 0;
+    if (status == 0 && count != (ssize_t)sizeof(request)) status = -EPROTO;
+    if (status == 0 && request[BVB_E036_TOKEN_HEX_BYTES] != 'D') {
+        status = -EPROTO;
+    }
+    uint8_t parsed_token[BVB_LIFECYCLE_TOKEN_SIZE] = {0};
+    if (status == 0) {
+        request[BVB_E036_TOKEN_HEX_BYTES] = '\0';
+        status = bvb_lifecycle_token_from_hex((const char *)request,
+                                              parsed_token);
+    }
+    if (status == 0) {
+        (void)pthread_mutex_lock(&lifecycle_mutex);
+        const bool authorized = lifecycle.configured &&
+                                token_matches(parsed_token, lifecycle.token);
+        (void)pthread_mutex_unlock(&lifecycle_mutex);
+        if (!authorized) status = -EACCES;
+    }
+
+    int descriptors[2] = {-1, -1};
+    uint64_t allocation_size = 0U;
+    uint32_t memory_type_index = 0U;
+    (void)pthread_mutex_lock(&external_memory_mutex);
+    if (status == 0 &&
+        (!external_image_cache.ready || external_image_cache.memory_fd < 0 ||
+         external_image_cache.semaphore_fd < 0)) {
+        status = -EAGAIN;
+    }
+    if (status == 0) {
+        descriptors[0] = fcntl(external_image_cache.memory_fd,
+                               F_DUPFD_CLOEXEC, 0);
+        descriptors[1] = fcntl(external_image_cache.semaphore_fd,
+                               F_DUPFD_CLOEXEC, 0);
+        if (descriptors[0] < 0 || descriptors[1] < 0) {
+            status = -errno;
+        } else {
+            allocation_size = external_image_cache.allocation_size;
+            memory_type_index = external_image_cache.memory_type_index;
+        }
+    }
+    (void)pthread_mutex_unlock(&external_memory_mutex);
+
+    int send_status = 0;
+    if (peer_address_size > 0U) {
+        send_status = send_external_broker_response_to(
+            socket_fd, status, descriptors, status == 0 ? 2U : 0U,
+            allocation_size, memory_type_index, BVB_E038_IMAGE_WIDTH,
+            BVB_E038_IMAGE_HEIGHT,
+            (const struct sockaddr *)&peer_address, peer_address_size);
+    } else {
+        send_status = -EDESTADDRREQ;
+    }
+    for (size_t index = 0U; index < 2U; ++index) {
+        if (descriptors[index] >= 0) (void)close(descriptors[index]);
+    }
+    if (status != 0 || send_status != 0) {
+        BVB_LOGE("E039_DATAGRAM_REQUEST_FAIL status=%d send=%d peer_uid=%u",
+                 status, send_status, (unsigned int)credentials.uid);
+        return;
+    }
+    BVB_LOGI("E039_DATAGRAM_EXPORT_PASS width=%u height=%u allocation=%llu "
+             "type=%u descriptors=2 peer_uid=%u",
+             BVB_E038_IMAGE_WIDTH, BVB_E038_IMAGE_HEIGHT,
+             (unsigned long long)allocation_size, memory_type_index,
+             (unsigned int)credentials.uid);
+
+    uint8_t acknowledgement = 0U;
+    struct sockaddr_un acknowledgement_address;
+    socklen_t acknowledgement_address_size = 0;
+    struct ucred acknowledgement_credentials;
+    count = receive_external_datagram(
+        socket_fd, &acknowledgement, sizeof(acknowledgement),
+        &acknowledgement_address, &acknowledgement_address_size,
+        &acknowledgement_credentials);
+    int channel_status = count < 0 ? (int)count : 0;
+    if (channel_status == 0 &&
+        (count != 1 || acknowledgement != UINT8_C(0xa5) ||
+         acknowledgement_credentials.uid != credentials.uid ||
+         acknowledgement_credentials.pid != credentials.pid ||
+         !same_datagram_peer(&peer_address, peer_address_size,
+                             &acknowledgement_address,
+                             acknowledgement_address_size))) {
+        channel_status = -EPROTO;
+    }
+    uint8_t response[8] = {0};
+    bvb_wire_put_i32(response, channel_status);
+    bvb_wire_put_u32(response + 4, UINT32_C(0xe039c0de));
+    ssize_t sent;
+    do {
+        sent = sendto(socket_fd, response, sizeof(response), MSG_NOSIGNAL,
+                      (const struct sockaddr *)&peer_address,
+                      peer_address_size);
+    } while (sent < 0 && errno == EINTR);
+    if (sent != (ssize_t)sizeof(response)) channel_status = -EIO;
+    if (channel_status == 0) {
+        BVB_LOGI("E039_DATAGRAM_CHANNEL_PASS peer_uid=%u",
+                 (unsigned int)credentials.uid);
+    } else {
+        BVB_LOGE("E039_DATAGRAM_CHANNEL_FAIL status=%d", channel_status);
+    }
+}
+
+static void *external_datagram_broker_main(void *unused) {
+    const int socket_fd = (int)(intptr_t)unused;
+    BVB_LOGI("E039_DATAGRAM_BROKER_READY socket=%s",
+             BVB_E039_DATAGRAM_BROKER_SOCKET);
+    for (;;) handle_external_datagram_request(socket_fd);
+    return NULL;
+}
+
 static void *external_broker_main(void *unused) {
     const int listener = (int)(intptr_t)unused;
     BVB_LOGI("E036_BROKER_READY socket=%s", BVB_E036_BROKER_SOCKET);
@@ -811,6 +990,34 @@ static int create_external_broker_listener(void) {
     return listener;
 }
 
+static int create_external_datagram_listener(void) {
+    int socket_fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (socket_fd < 0) return -errno;
+    int enabled = 1;
+    if (setsockopt(socket_fd, SOL_SOCKET, SO_PASSCRED, &enabled,
+                   sizeof(enabled)) != 0) {
+        const int result = -errno;
+        (void)close(socket_fd);
+        return result;
+    }
+    struct sockaddr_un address;
+    memset(&address, 0, sizeof(address));
+    address.sun_family = AF_UNIX;
+    const size_t name_length = strlen(BVB_E039_DATAGRAM_BROKER_SOCKET);
+    memcpy(address.sun_path + 1, BVB_E039_DATAGRAM_BROKER_SOCKET,
+           name_length);
+    const socklen_t address_size =
+        (socklen_t)(offsetof(struct sockaddr_un, sun_path) + 1U +
+                    name_length);
+    if (bind(socket_fd, (const struct sockaddr *)&address,
+             address_size) != 0) {
+        const int result = -errno;
+        (void)close(socket_fd);
+        return result;
+    }
+    return socket_fd;
+}
+
 static void start_external_broker(void) {
     const int listener = create_external_broker_listener();
     if (listener < 0) {
@@ -828,6 +1035,23 @@ static void start_external_broker(void) {
     result = pthread_detach(thread);
     if (result != 0) {
         BVB_LOGE("E036_BROKER_FAIL detach=%d", result);
+    }
+
+    const int datagram = create_external_datagram_listener();
+    if (datagram < 0) {
+        BVB_LOGE("E039_DATAGRAM_BROKER_FAIL bind=%d", -datagram);
+        return;
+    }
+    result = pthread_create(&thread, NULL, external_datagram_broker_main,
+                            (void *)(intptr_t)datagram);
+    if (result != 0) {
+        (void)close(datagram);
+        BVB_LOGE("E039_DATAGRAM_BROKER_FAIL thread=%d", result);
+        return;
+    }
+    result = pthread_detach(thread);
+    if (result != 0) {
+        BVB_LOGE("E039_DATAGRAM_BROKER_FAIL detach=%d", result);
     }
 }
 
