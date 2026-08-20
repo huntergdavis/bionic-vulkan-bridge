@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "gate": "E039",
+  "result": "blocked_by_android_policy",
+  "target": "Galaxy Tab S8+ Android Bionic Adreno 730",
+  "stream_socket": {
+    "transport": "cross-UID AF_UNIX SOCK_STREAM",
+    "result": "fail",
+    "operation": "connect",
+    "native_status": -13
+  },
+  "datagram_socket": {
+    "transport": "cross-UID AF_UNIX SOCK_DGRAM",
+    "payload_delivery": "pass",
+    "scm_rights_delivery": "fail",
+    "operation": "Termux recvmsg of Activity Vulkan FDs",
+    "transport_status": -13,
+    "response_received": false,
+    "descriptor_count": 0
+  },
+  "conclusion": "Android permits authenticated datagram payloads across these app domains but denies cross-domain FD use, so changing Unix socket type cannot carry Vulkan memory or SYNC_FD handles without Binder."
+}

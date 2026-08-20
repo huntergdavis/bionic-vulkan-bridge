@@ -86,8 +86,8 @@
 - [x] Implement shared GPU synchronization for externally shared resources
 - [x] Share and consume a real GPU image/frame using external memory plus
   `SYNC_FD` ordering, with deterministic GPU readback parity
-- [ ] Establish one persistent native frame channel and deliver per-frame
-  `SYNC_FD` descriptors without per-frame Binder/Java work
+- [ ] Establish one persistent native frame path using one-time Binder handle
+  setup plus shared-memory/fence coordination without per-frame Binder/Java
 - [x] Reach a rendered test triangle
 - [x] Deliver the glibc-generated triangle batch to the visible host
 - [x] Drive sustained per-frame shader data through the shared ring and render

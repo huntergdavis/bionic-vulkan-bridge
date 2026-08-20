@@ -2039,3 +2039,34 @@ native socket endpoint for steady-state frame metadata and per-frame
 its one-shot validation still invokes Binder/Java for that image. It does not
 yet prove a 60/120-FPS native frame stream, visible consumption, DXVK startup,
 Tomb Raider output, or an FPS improvement.
+
+## E039 — Direct native cross-UID descriptor channel (2026-08-20)
+
+Status: blocked by Android application-domain policy. Native stream and
+datagram variants were implemented and validated on the host before hardware
+testing. The stream client failed its cross-UID `connect` with `-EACCES`.
+Datagrams crossed the UID boundary in both directions, but Termux `recvmsg`
+returned `-EACCES` as soon as the Activity attached Vulkan FDs with
+`SCM_RIGHTS`; no response or descriptor reached userspace. This isolates the
+policy boundary from authentication, Vulkan, and transport framing.
+
+Canonical evidence is `docs/evidence/e039-native-socket-policy.json`. The
+required `deja` recall searches returned no indexed prior implementation.
+
+## E040 — Global native NDK Binder bootstrap (2026-08-20)
+
+Status: blocked by Android service-manager policy. The Activity and Termux
+client compiled against stable API-29 `libbinder_ndk`; the service retained its
+required strong reference and reported registration through authenticated
+lifecycle event 13. `AServiceManager_addService` returned `EX_SECURITY` (`-1`),
+encoded as unsigned width `4294967295`, and the native Termux lookup returned
+`STATUS_NAME_NOT_FOUND` (`-2`). No Java ran in this experiment and no Binder
+transaction or Vulkan import occurred.
+
+Canonical evidence is `docs/evidence/e040-native-binder-policy.json`. Together,
+E039 and E040 prove that separate ordinary Android UIDs require a
+framework-managed Binder handoff for GPU FDs: raw sockets cannot transfer the
+FDs, and an untrusted app cannot globally publish its own native Binder
+service. The next gate transfers long-lived memory/control handles once via
+the proven Binder callback, exits Java, and tests shared-memory/fence frame
+coordination with no per-frame Binder, Java, socket, or FD transfer.

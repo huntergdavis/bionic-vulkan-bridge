@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "gate": "E040",
+  "result": "blocked_by_android_policy",
+  "target": "Galaxy Tab S8+ Android Bionic Adreno 730",
+  "producer": "visible-host v35 native NDK Binder service",
+  "consumer": "Termux Bionic native NDK Binder client",
+  "service_registration": {
+    "api": "AServiceManager_addService",
+    "status": -1,
+    "status_name": "EX_SECURITY",
+    "lifecycle_evidence": {
+      "event": 13,
+      "sequence": 2,
+      "width_unsigned": 4294967295,
+      "width_signed": -1,
+      "height_marker": 57408
+    }
+  },
+  "client_lookup": {
+    "api": "AServiceManager_checkService",
+    "status": -2,
+    "status_name": "STATUS_NAME_NOT_FOUND"
+  },
+  "java_calls": 0,
+  "conclusion": "An ordinary app UID cannot publish this global native Binder service. A framework-managed Binder bootstrap or same-UID packaging is required."
+}

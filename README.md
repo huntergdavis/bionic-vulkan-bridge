@@ -175,8 +175,10 @@ bridge uses opaque FD for memory and temporary `SYNC_FD` for synchronization.
 E038 proves that the same mechanism works for a real GPU image: the Activity
 cleared a 64×64 optimal-tiling sampled RGBA8 image to magenta, the consumer
 imported it, waited on-GPU, copied it to readback memory, and matched all 4,096
-pixels with zero errors. The next performance boundary is replacing E038's
-one-shot Binder setup with a persistent native per-frame descriptor channel.
+pixels with zero errors. E039 then proved raw cross-UID sockets cannot transfer
+the Vulkan FDs, and E040 proved an ordinary app cannot publish a global native
+Binder service. The next performance boundary is one-time framework Binder
+setup followed by shared-memory/fence coordination with no per-frame IPC.
 
 ## Build and test on a normal Linux host
 
