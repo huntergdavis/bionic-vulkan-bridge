@@ -130,6 +130,7 @@ static pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_once_t external_broker_once = PTHREAD_ONCE_INIT;
 static pthread_once_t native_binder_once = PTHREAD_ONCE_INIT;
 static AIBinder *native_binder_service;
+static int native_binder_registration_status = -EINPROGRESS;
 static struct bvb_renderer_control renderer = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
     .condition = PTHREAD_COND_INITIALIZER,
@@ -520,18 +521,21 @@ static void start_native_binder_service(void) {
         BVB_NATIVE_BINDER_DESCRIPTOR, native_binder_on_create,
         native_binder_on_destroy, native_binder_on_transact);
     if (binder_class == NULL) {
+        native_binder_registration_status = -EIO;
         write_native_binder_diagnostic("class", -EIO, false);
         BVB_LOGE("E040_NATIVE_BINDER_SERVICE_FAIL class=null");
         return;
     }
     AIBinder *binder = AIBinder_new(binder_class, NULL);
     if (binder == NULL) {
+        native_binder_registration_status = -EIO;
         write_native_binder_diagnostic("binder", -EIO, false);
         BVB_LOGE("E040_NATIVE_BINDER_SERVICE_FAIL binder=null");
         return;
     }
     const binder_status_t status = AServiceManager_addService(
         binder, BVB_NATIVE_BINDER_INSTANCE);
+    native_binder_registration_status = status;
     write_native_binder_diagnostic("add_service", status, false);
     if (status != STATUS_OK) {
         BVB_LOGE("E040_NATIVE_BINDER_SERVICE_FAIL add=%d", status);
@@ -3581,4 +3585,7 @@ ANativeActivity_onCreate(ANativeActivity *activity, void *saved_state,
     apply_immersive_mode(activity);
     BVB_LOGI("E008_ACTIVITY_CREATED");
     emit_lifecycle(BVB_LIFECYCLE_EVENT_CREATED, 0, 0);
+    emit_lifecycle(BVB_LIFECYCLE_EVENT_NATIVE_BINDER_STATUS,
+                   (uint32_t)native_binder_registration_status,
+                   UINT32_C(0xe040));
 }

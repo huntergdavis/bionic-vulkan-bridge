@@ -297,6 +297,8 @@ static int apply_lifecycle_event(struct bvb_activity_status *status,
         status->width = record->width;
         status->height = record->height;
         break;
+    case BVB_LIFECYCLE_EVENT_NATIVE_BINDER_STATUS:
+        break;
     default:
         return -EPROTO;
     }

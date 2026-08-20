@@ -50,7 +50,7 @@ static int hex_nibble(char value) {
 
 static int record_is_valid(const struct bvb_lifecycle_record *record) {
     if (record == NULL || record->event < BVB_LIFECYCLE_EVENT_CREATED ||
-        record->event > BVB_LIFECYCLE_EVENT_RENDERER_FAILED ||
+        record->event > BVB_LIFECYCLE_EVENT_NATIVE_BINDER_STATUS ||
         record->sequence == 0U || record->activity_pid == 0U ||
         record->monotonic_ns == 0U) {
         return -EINVAL;
