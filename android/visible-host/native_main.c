@@ -24,6 +24,7 @@
 #include <stdatomic.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -160,6 +161,24 @@ static const char BVB_E036_BROKER_SOCKET[] =
     "bvb-visible-external-memory";
 static const char BVB_E039_DATAGRAM_BROKER_SOCKET[] =
     "bvb-visible-external-memory-dgram";
+static const char BVB_E040_DIAGNOSTIC_PATH[] =
+    "/data/user/0/io.github.huntergdavis.bvb.visiblehost/files/"
+    "e040-native-binder.txt";
+
+static void write_native_binder_diagnostic(const char *stage, int status,
+                                           bool reset) {
+    const int flags = O_WRONLY | O_CREAT | (reset ? O_TRUNC : O_APPEND);
+    const int descriptor = open(BVB_E040_DIAGNOSTIC_PATH, flags, 0600);
+    if (descriptor < 0) return;
+    char line[160];
+    const int length = snprintf(line, sizeof(line),
+                                "pid=%ld stage=%s status=%d\n",
+                                (long)getpid(), stage, status);
+    if (length > 0 && (size_t)length < sizeof(line)) {
+        (void)write(descriptor, line, (size_t)length);
+    }
+    (void)close(descriptor);
+}
 
 static bool token_matches(const uint8_t *left, const uint8_t *right) {
     uint8_t difference = 0U;
@@ -383,6 +402,7 @@ static binder_status_t native_binder_on_transact(
     if (code != BVB_NATIVE_BINDER_TRANSACTION_OPEN) {
         return STATUS_UNKNOWN_TRANSACTION;
     }
+    write_native_binder_diagnostic("transaction", 0, false);
     uint8_t parsed_token[BVB_LIFECYCLE_TOKEN_SIZE] = {0};
     binder_status_t parcel_status = STATUS_OK;
     for (size_t index = 0U;
@@ -495,20 +515,24 @@ static binder_status_t native_binder_on_transact(
 }
 
 static void start_native_binder_service(void) {
+    write_native_binder_diagnostic("start", 0, true);
     AIBinder_Class *binder_class = AIBinder_Class_define(
         BVB_NATIVE_BINDER_DESCRIPTOR, native_binder_on_create,
         native_binder_on_destroy, native_binder_on_transact);
     if (binder_class == NULL) {
+        write_native_binder_diagnostic("class", -EIO, false);
         BVB_LOGE("E040_NATIVE_BINDER_SERVICE_FAIL class=null");
         return;
     }
     AIBinder *binder = AIBinder_new(binder_class, NULL);
     if (binder == NULL) {
+        write_native_binder_diagnostic("binder", -EIO, false);
         BVB_LOGE("E040_NATIVE_BINDER_SERVICE_FAIL binder=null");
         return;
     }
     const binder_status_t status = AServiceManager_addService(
         binder, BVB_NATIVE_BINDER_INSTANCE);
+    write_native_binder_diagnostic("add_service", status, false);
     if (status != STATUS_OK) {
         BVB_LOGE("E040_NATIVE_BINDER_SERVICE_FAIL add=%d", status);
         AIBinder_decStrong(binder);
@@ -516,6 +540,7 @@ static void start_native_binder_service(void) {
     }
     ABinderProcess_startThreadPool();
     native_binder_service = binder;
+    write_native_binder_diagnostic("ready", 0, false);
     BVB_LOGI("E040_NATIVE_BINDER_SERVICE_READY instance=%s",
              BVB_NATIVE_BINDER_INSTANCE);
 }
@@ -3528,6 +3553,7 @@ static void on_destroy(ANativeActivity *activity) {
         BVB_LOGE("E017_ACTIVITY_DESTROY_SCHEDULE_FAIL status=%d", result);
     }
     emit_lifecycle(BVB_LIFECYCLE_EVENT_DESTROYED, 0, 0);
+    write_native_binder_diagnostic("activity_destroyed", 0, false);
     disable_lifecycle();
 }
 
