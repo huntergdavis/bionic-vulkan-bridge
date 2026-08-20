@@ -864,6 +864,7 @@ static struct bvb_device_metadata *device_metadata_slot(
 int bvb_vulkan_global_context_create_device(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_device_create_request *request,
+    const char *const *enabled_extensions,
     struct bvb_vulkan_device_create_response *response,
     char *error, size_t error_size) {
     if (error != NULL && error_size != 0U) {
@@ -878,7 +879,10 @@ int bvb_vulkan_global_context_create_device(
            sizeof(queue_priority));
     if (request->flags != 0U || request->queue_count != 1U ||
         request->enabled_layer_count != 0U ||
-        request->enabled_extension_count != 0U ||
+        (request->enabled_extension_count != 0U &&
+         enabled_extensions == NULL) ||
+        request->enabled_extension_count >
+            BVB_VULKAN_MAX_ENABLED_EXTENSIONS ||
         !(queue_priority >= 0.0F && queue_priority <= 1.0F)) {
         response->vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
         return 0;
@@ -925,6 +929,8 @@ int bvb_vulkan_global_context_create_device(
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .queueCreateInfoCount = 1U,
         .pQueueCreateInfos = &queue_info,
+        .enabledExtensionCount = request->enabled_extension_count,
+        .ppEnabledExtensionNames = enabled_extensions,
     };
     VkDevice device = VK_NULL_HANDLE;
     VkResult result = create_device(

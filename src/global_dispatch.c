@@ -1339,8 +1339,20 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
     if (create_info->enabledLayerCount != 0U) {
         return VK_ERROR_LAYER_NOT_PRESENT;
     }
-    if (create_info->enabledExtensionCount != 0U) {
-        return VK_ERROR_EXTENSION_NOT_PRESENT;
+    if (create_info->enabledExtensionCount >
+            BVB_VULKAN_MAX_ENABLED_EXTENSIONS ||
+        (create_info->enabledExtensionCount != 0U &&
+         create_info->ppEnabledExtensionNames == NULL)) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    for (uint32_t index = 0U;
+         index < create_info->enabledExtensionCount; ++index) {
+        const char *name = create_info->ppEnabledExtensionNames[index];
+        if (name == NULL || name[0] == '\0' ||
+            memchr(name, '\0', BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE) ==
+                NULL) {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
     }
     if (create_info->pEnabledFeatures != NULL) {
         return VK_ERROR_FEATURE_NOT_PRESENT;
@@ -1378,13 +1390,34 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
     request.header = (struct bvb_protocol_header){
         .version = BVB_PROTOCOL_VERSION,
         .kind = BVB_PROTOCOL_REQUEST,
-        .opcode = BVB_OPCODE_VULKAN_DEVICE_CREATE,
+        .opcode = create_info->enabledExtensionCount == 0U
+                      ? BVB_OPCODE_VULKAN_DEVICE_CREATE
+                      : BVB_OPCODE_VULKAN_DEVICE_CREATE_EXTENDED,
         .request_id = next_request_id_locked(),
-        .payload_length = BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE,
     };
     if (result == 0) {
-        result = bvb_protocol_encode_vulkan_device_create_request(
-            request.payload, &create_request);
+        if (create_info->enabledExtensionCount == 0U) {
+            request.header.payload_length =
+                BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE;
+            result = bvb_protocol_encode_vulkan_device_create_request(
+                request.payload, &create_request);
+        } else {
+            struct bvb_vulkan_device_create_extended_request extended = {
+                .base = create_request,
+            };
+            for (uint32_t index = 0U;
+                 index < create_info->enabledExtensionCount; ++index) {
+                const char *name =
+                    create_info->ppEnabledExtensionNames[index];
+                const char *terminator = memchr(
+                    name, '\0', BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE);
+                const size_t length = (size_t)(terminator - name) + 1U;
+                memcpy(extended.enabled_extensions[index], name, length);
+            }
+            result = bvb_protocol_encode_vulkan_device_create_extended_request(
+                request.payload, &extended,
+                &request.header.payload_length);
+        }
     }
     struct bvb_protocol_packet response = {0};
     if (result == 0) {
@@ -1396,7 +1429,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
              BVB_VULKAN_DEVICE_CREATE_RESPONSE_SIZE)) {
         result = -EPROTO;
     }
-    struct bvb_vulkan_device_create_response decoded;
+    struct bvb_vulkan_device_create_response decoded = {0};
     if (result == 0) {
         result = bvb_protocol_decode_vulkan_device_create_response(
             response.payload, &decoded);
@@ -1413,6 +1446,14 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
         proxy->instance_id = physical->parent_id;
         proxy->next = bvb_global_client.devices;
         bvb_global_client.devices = proxy;
+    }
+    if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        fprintf(stderr,
+                "BVB_ICD_CREATE_DEVICE_RESPONSE status=%d wire_status=%d "
+                "payload=%u vulkan=%d device=%llu\n",
+                result, response.header.status,
+                response.header.payload_length, decoded.vulkan_result,
+                (unsigned long long)decoded.device_id);
     }
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
     if (result != 0) {

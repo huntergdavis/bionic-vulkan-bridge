@@ -81,7 +81,7 @@ int main(void) {
     };
     CHECK(bvb_protocol_encode_header(wire, &last_opcode_header) == 0);
     CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
-    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_IMAGE_FORMAT_PROPERTIES);
+    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_DEVICE_CREATE_EXTENDED);
 
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
@@ -370,6 +370,36 @@ int main(void) {
     CHECK(device_create_request_decoded.queue_count == 1U);
     CHECK(device_create_request_decoded.queue_priority_bits ==
           UINT32_C(0x3f800000));
+
+    struct bvb_vulkan_device_create_extended_request extended_create = {
+        .base = device_create_request,
+    };
+    extended_create.base.enabled_extension_count = 2U;
+    memcpy(extended_create.enabled_extensions[0], "VK_KHR_swapchain",
+           sizeof("VK_KHR_swapchain"));
+    memcpy(extended_create.enabled_extensions[1], "VK_KHR_maintenance1",
+           sizeof("VK_KHR_maintenance1"));
+    uint8_t extended_create_wire[BVB_PROTOCOL_MAX_PAYLOAD];
+    uint32_t extended_create_length = 0U;
+    CHECK(bvb_protocol_encode_vulkan_device_create_extended_request(
+              extended_create_wire, &extended_create,
+              &extended_create_length) == 0);
+    CHECK(extended_create_length ==
+          BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE +
+              2U * BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE);
+    struct bvb_vulkan_device_create_extended_request extended_decoded;
+    CHECK(bvb_protocol_decode_vulkan_device_create_extended_request(
+              extended_create_wire, extended_create_length,
+              &extended_decoded) == 0);
+    CHECK(extended_decoded.base.enabled_extension_count == 2U);
+    CHECK(strcmp(extended_decoded.enabled_extensions[0],
+                 "VK_KHR_swapchain") == 0);
+    CHECK(strcmp(extended_decoded.enabled_extensions[1],
+                 "VK_KHR_maintenance1") == 0);
+    extended_create_wire[extended_create_length - 1U] = 1U;
+    CHECK(bvb_protocol_decode_vulkan_device_create_extended_request(
+              extended_create_wire, extended_create_length,
+              &extended_decoded) == -EPROTO);
 
     const struct bvb_vulkan_device_create_response device_create_response = {
         .vulkan_result = 0,

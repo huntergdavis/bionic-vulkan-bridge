@@ -71,7 +71,8 @@ enum {
     BVB_OPCODE_EXTERNAL_IMAGE_FRAME_RING_TEST = 54,
     BVB_OPCODE_VULKAN_FORMAT_PROPERTIES = 55,
     BVB_OPCODE_VULKAN_IMAGE_FORMAT_PROPERTIES = 56,
-    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_IMAGE_FORMAT_PROPERTIES,
+    BVB_OPCODE_VULKAN_DEVICE_CREATE_EXTENDED = 57,
+    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_DEVICE_CREATE_EXTENDED,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -98,6 +99,8 @@ enum {
     BVB_VULKAN_IMAGE_FORMAT_PROPERTIES_SIZE = 40,
     BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE = 16,
     BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE = 32,
+    BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE = 128,
+    BVB_VULKAN_MAX_ENABLED_EXTENSIONS = 24,
     BVB_VULKAN_DEVICE_CREATE_RESPONSE_SIZE = 16,
     BVB_VULKAN_DEVICE_ID_SIZE = 8,
     BVB_VULKAN_DEVICE_QUEUE_REQUEST_SIZE = 16,
@@ -283,6 +286,12 @@ struct bvb_vulkan_device_create_request {
     uint32_t queue_priority_bits;
     uint32_t enabled_layer_count;
     uint32_t enabled_extension_count;
+};
+
+struct bvb_vulkan_device_create_extended_request {
+    struct bvb_vulkan_device_create_request base;
+    char enabled_extensions[BVB_VULKAN_MAX_ENABLED_EXTENSIONS]
+                           [BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE];
 };
 
 struct bvb_vulkan_device_create_response {
@@ -575,6 +584,13 @@ int bvb_protocol_encode_vulkan_device_create_request(
 int bvb_protocol_decode_vulkan_device_create_request(
     const uint8_t input[BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE],
     struct bvb_vulkan_device_create_request *request);
+int bvb_protocol_encode_vulkan_device_create_extended_request(
+    uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
+    const struct bvb_vulkan_device_create_extended_request *request,
+    uint32_t *output_length);
+int bvb_protocol_decode_vulkan_device_create_extended_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_device_create_extended_request *request);
 int bvb_protocol_encode_vulkan_device_create_response(
     uint8_t output[BVB_VULKAN_DEVICE_CREATE_RESPONSE_SIZE],
     const struct bvb_vulkan_device_create_response *response);

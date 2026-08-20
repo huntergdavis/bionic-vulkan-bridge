@@ -63,6 +63,7 @@ int bvb_vulkan_global_context_get_image_format_properties(
 int bvb_vulkan_global_context_create_device(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_device_create_request *request,
+    const char *const *enabled_extensions,
     struct bvb_vulkan_device_create_response *response,
     char *error, size_t error_size);
 int bvb_vulkan_global_context_destroy_device(

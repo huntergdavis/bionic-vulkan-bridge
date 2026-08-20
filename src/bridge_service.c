@@ -853,19 +853,41 @@ static int answer_vulkan_device_create(
     struct bvb_protocol_packet response;
     prepare_response(&response, request);
     if (!negotiated || context == NULL ||
-        request->header.payload_length !=
-            BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE) {
+        (request->header.opcode == BVB_OPCODE_VULKAN_DEVICE_CREATE &&
+         request->header.payload_length !=
+             BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE) ||
+        (request->header.opcode != BVB_OPCODE_VULKAN_DEVICE_CREATE &&
+         request->header.opcode !=
+             BVB_OPCODE_VULKAN_DEVICE_CREATE_EXTENDED)) {
         response.header.status = -EPROTO;
         return bvb_transport_send(client_fd, &response);
     }
-    struct bvb_vulkan_device_create_request create_request;
-    int result = bvb_protocol_decode_vulkan_device_create_request(
-        request->payload, &create_request);
+    struct bvb_vulkan_device_create_request create_request = {0};
+    struct bvb_vulkan_device_create_extended_request extended = {0};
+    const char *enabled_extensions[BVB_VULKAN_MAX_ENABLED_EXTENSIONS] = {0};
+    int result = 0;
+    if (request->header.opcode == BVB_OPCODE_VULKAN_DEVICE_CREATE) {
+        result = bvb_protocol_decode_vulkan_device_create_request(
+            request->payload, &create_request);
+    } else {
+        result = bvb_protocol_decode_vulkan_device_create_extended_request(
+            request->payload, request->header.payload_length, &extended);
+        if (result == 0) {
+            create_request = extended.base;
+            for (uint32_t index = 0U;
+                 index < create_request.enabled_extension_count; ++index) {
+                enabled_extensions[index] = extended.enabled_extensions[index];
+            }
+        }
+    }
     struct bvb_vulkan_device_create_response create_response;
     char diagnostic[512];
     if (result == 0) {
         result = bvb_vulkan_global_context_create_device(
-            context, &create_request, &create_response,
+            context, &create_request,
+            create_request.enabled_extension_count == 0U
+                ? NULL : enabled_extensions,
+            &create_response,
             diagnostic, sizeof(diagnostic));
         if (result != 0) {
             fprintf(stderr, "bvb: Vulkan device create failed: %s\n",
@@ -1933,7 +1955,9 @@ static int serve_connection(int client_fd, const char *loader_path,
             result = answer_vulkan_image_format_properties(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
-                   BVB_OPCODE_VULKAN_DEVICE_CREATE) {
+                       BVB_OPCODE_VULKAN_DEVICE_CREATE ||
+                   request.header.opcode ==
+                       BVB_OPCODE_VULKAN_DEVICE_CREATE_EXTENDED) {
             result = answer_vulkan_device_create(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==

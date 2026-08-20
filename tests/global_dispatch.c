@@ -303,16 +303,11 @@ int main(void) {
         .queueCreateInfoCount = 1U,
         .pQueueCreateInfos = &queue_create_info,
     };
-    const char *unsupported_device_extension = "VK_KHR_swapchain";
+    const char *enabled_device_extension = "VK_KHR_swapchain";
     device_create_info.enabledExtensionCount = 1U;
-    device_create_info.ppEnabledExtensionNames = &unsupported_device_extension;
-    VkDevice device = VK_NULL_HANDLE;
-    CHECK(create_device(physical_device, &device_create_info, NULL, &device) ==
-          VK_ERROR_EXTENSION_NOT_PRESENT);
-    CHECK(device == VK_NULL_HANDLE);
-    device_create_info.enabledExtensionCount = 0U;
-    device_create_info.ppEnabledExtensionNames = NULL;
+    device_create_info.ppEnabledExtensionNames = &enabled_device_extension;
     device_create_info.pNext = &loader_private_chain_marker;
+    VkDevice device = VK_NULL_HANDLE;
     CHECK(create_device(physical_device, &device_create_info, NULL, &device) ==
           VK_SUCCESS);
     CHECK(device != VK_NULL_HANDLE);

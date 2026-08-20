@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 int main(void) {
@@ -110,6 +111,40 @@ int main(void) {
         vkDestroyInstance(instance, NULL);
         return 1;
     }
+    uint32_t device_extension_count = 0U;
+    result = vkEnumerateDeviceExtensionProperties(
+        physical_device, NULL, &device_extension_count, NULL);
+    if (result != VK_SUCCESS || device_extension_count == 0U ||
+        device_extension_count > 1024U) {
+        fprintf(stderr, "device-extension count failed: %d count=%u\n",
+                (int)result, device_extension_count);
+        vkDestroyInstance(instance, NULL);
+        return 1;
+    }
+    VkExtensionProperties *device_extensions = calloc(
+        device_extension_count, sizeof(*device_extensions));
+    if (device_extensions == NULL) {
+        fputs("device-extension allocation failed\n", stderr);
+        vkDestroyInstance(instance, NULL);
+        return 1;
+    }
+    result = vkEnumerateDeviceExtensionProperties(
+        physical_device, NULL, &device_extension_count, device_extensions);
+    int swapchain_advertised = 0;
+    if (result == VK_SUCCESS) {
+        for (uint32_t index = 0U; index < device_extension_count; ++index) {
+            swapchain_advertised |= strcmp(
+                device_extensions[index].extensionName,
+                VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0;
+        }
+    }
+    free(device_extensions);
+    if (result != VK_SUCCESS || swapchain_advertised == 0) {
+        fprintf(stderr, "required device extension unavailable: result=%d\n",
+                (int)result);
+        vkDestroyInstance(instance, NULL);
+        return 1;
+    }
     const float queue_priority = 1.0F;
     const VkDeviceQueueCreateInfo queue_create_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
@@ -121,6 +156,9 @@ int main(void) {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .queueCreateInfoCount = 1U,
         .pQueueCreateInfos = &queue_create_info,
+        .enabledExtensionCount = 1U,
+        .ppEnabledExtensionNames =
+            (const char *const[]){VK_KHR_SWAPCHAIN_EXTENSION_NAME},
     };
     VkDevice device = VK_NULL_HANDLE;
     result = vkCreateDevice(
@@ -141,13 +179,13 @@ int main(void) {
     }
     vkDestroyDevice(device, NULL);
     vkDestroyInstance(instance, NULL);
-    printf("PASS: Vulkan loader selected BVB ICD api=%u device=%s vendor=%u device_id=%u rgba8_optimal=%u max_extent=%ux%ux%u max_resource=%llu queue_family=%u device_idle=pass\n",
+    printf("PASS: Vulkan loader selected BVB ICD api=%u device=%s vendor=%u device_id=%u rgba8_optimal=%u max_extent=%ux%ux%u max_resource=%llu queue_family=%u enabled_extension=%s device_idle=pass\n",
            api_version, properties.deviceName, properties.vendorID,
            properties.deviceID, format_properties.optimalTilingFeatures,
            image_properties.maxExtent.width,
            image_properties.maxExtent.height,
            image_properties.maxExtent.depth,
            (unsigned long long)image_properties.maxResourceSize,
-           queue_family_index);
+           queue_family_index, VK_KHR_SWAPCHAIN_EXTENSION_NAME);
     return 0;
 }
