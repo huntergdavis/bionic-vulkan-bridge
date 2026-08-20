@@ -106,6 +106,7 @@ java -cp "$r8_jar" com.android.tools.r8.D8 \
     --release --no-desugaring --min-api 24 --lib "$android_jar" \
     --output "$dex_dir" \
     "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionProvider.class" \
+    "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionProvider\$ExternalMemoryResult.class" \
     "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionClient.class" \
     "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionReceiver.class"
 if [ ! -f "$dex_dir/classes.dex" ]; then
