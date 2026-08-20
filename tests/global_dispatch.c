@@ -312,6 +312,7 @@ int main(void) {
     CHECK(device == VK_NULL_HANDLE);
     device_create_info.enabledExtensionCount = 0U;
     device_create_info.ppEnabledExtensionNames = NULL;
+    device_create_info.pNext = &loader_private_chain_marker;
     CHECK(create_device(physical_device, &device_create_info, NULL, &device) ==
           VK_SUCCESS);
     CHECK(device != VK_NULL_HANDLE);

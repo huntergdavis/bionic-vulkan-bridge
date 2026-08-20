@@ -1331,7 +1331,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
     if (physical == NULL || create_info == NULL || device == NULL ||
         allocator != NULL ||
         create_info->sType != VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO ||
-        create_info->pNext != NULL || create_info->flags != 0U ||
+        create_info->flags != 0U ||
         create_info->queueCreateInfoCount != 1U ||
         create_info->pQueueCreateInfos == NULL) {
         return VK_ERROR_INITIALIZATION_FAILED;
