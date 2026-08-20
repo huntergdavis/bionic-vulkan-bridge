@@ -13,6 +13,7 @@ provider_java="$java_dir/SharedRegionProvider.java"
 client_java="$java_dir/SharedRegionClient.java"
 receiver_java="$java_dir/SharedRegionReceiver.java"
 lifecycle_source="$project_dir/src/lifecycle.c"
+frame_sync_source="$project_dir/src/frame_sync.c"
 protocol_source="$project_dir/src/protocol.c"
 handle_source="$project_dir/src/handle.c"
 batch_source="$project_dir/src/command_batch.c"
@@ -133,7 +134,8 @@ clang --target=aarch64-linux-android29 \
     -Wall -Wextra -Werror -pthread \
     -shared -Wl,-soname,libbvb-visible-host.so \
     -I"$project_dir/include" -I"$vulkan_headers" -I"$shader_dir" \
-    "$source_file" "$lifecycle_source" "$protocol_source" \
+    "$source_file" "$lifecycle_source" "$frame_sync_source" \
+    "$protocol_source" \
     "$handle_source" "$batch_source" "$transport_source" \
     "$visible_batch_source" "$visible_ingress_source" \
     /system/lib64/libandroid.so /system/lib64/liblog.so \

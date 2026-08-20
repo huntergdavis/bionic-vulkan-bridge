@@ -68,6 +68,18 @@ struct bvb_vulkan_external_image_result {
     uint64_t gpu_wait_elapsed_ns;
 };
 
+struct bvb_vulkan_external_image_ring_result {
+    uint32_t width;
+    uint32_t height;
+    uint32_t format;
+    uint32_t frame_count;
+    uint32_t frames_consumed;
+    uint32_t mismatched_pixels;
+    uint32_t readback_memory_property_flags;
+    uint64_t gpu_wait_elapsed_ns;
+    uint64_t frame_loop_elapsed_ns;
+};
+
 struct bvb_vulkan_batch_context;
 
 int bvb_vulkan_batch_context_create(
@@ -110,6 +122,14 @@ int bvb_vulkan_batch_context_import_external_image_fenced_fd(
     uint64_t allocation_size, uint32_t memory_type_index, uint32_t width,
     uint32_t height, uint32_t format, uint32_t expected_color,
     struct bvb_vulkan_external_image_result *result,
+    char *error, size_t error_size);
+/* Consumes both descriptors. The image is imported once and reused for every
+ * native atomic/futex frame handoff in the shared control region. */
+int bvb_vulkan_batch_context_import_external_image_frame_ring_fds(
+    struct bvb_vulkan_batch_context *context, int external_memory_fd,
+    int frame_control_fd, uint64_t allocation_size,
+    uint32_t memory_type_index, uint32_t width, uint32_t height,
+    uint32_t format, struct bvb_vulkan_external_image_ring_result *result,
     char *error, size_t error_size);
 void bvb_vulkan_batch_context_destroy(
     struct bvb_vulkan_batch_context *context);

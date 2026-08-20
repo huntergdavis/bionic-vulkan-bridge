@@ -100,9 +100,11 @@ int main(int argc, char **argv) {
     const bool fenced_image =
         request.header.opcode ==
         BVB_OPCODE_EXTERNAL_IMAGE_FENCED_IMPORT_TEST;
-    const bool external_image = fenced_image ||
+    const bool frame_ring =
+        request.header.opcode == BVB_OPCODE_EXTERNAL_IMAGE_FRAME_RING_TEST;
+    const bool external_image = frame_ring || fenced_image ||
         request.header.opcode == BVB_OPCODE_EXTERNAL_IMAGE_IMPORT_TEST;
-    const bool synchronized = !fenced_image &&
+    const bool synchronized = !frame_ring && !fenced_image &&
         (external_image ||
          request.header.opcode == BVB_OPCODE_EXTERNAL_SYNC_IMPORT_TEST);
     if (result == 0 &&
@@ -112,12 +114,14 @@ int main(int argc, char **argv) {
           request.header.opcode != BVB_OPCODE_EXTERNAL_SYNC_IMPORT_TEST &&
           request.header.opcode != BVB_OPCODE_EXTERNAL_IMAGE_IMPORT_TEST &&
           request.header.opcode !=
-              BVB_OPCODE_EXTERNAL_IMAGE_FENCED_IMPORT_TEST) ||
+              BVB_OPCODE_EXTERNAL_IMAGE_FENCED_IMPORT_TEST &&
+          request.header.opcode !=
+              BVB_OPCODE_EXTERNAL_IMAGE_FRAME_RING_TEST) ||
          request.header.payload_length !=
              (external_image ? BVB_EXTERNAL_IMAGE_IMPORT_REQUEST_SIZE
               : synchronized ? BVB_EXTERNAL_SYNC_IMPORT_REQUEST_SIZE
                            : BVB_EXTERNAL_MEMORY_IMPORT_REQUEST_SIZE) ||
-         external_fd_count != (synchronized ? 2U : 1U) ||
+         external_fd_count != (synchronized || frame_ring ? 2U : 1U) ||
          request.header.status != 0)) {
         result = -EPROTO;
     }
@@ -137,13 +141,22 @@ int main(int argc, char **argv) {
     struct bvb_vulkan_external_memory_result import_result = {0};
     struct bvb_vulkan_external_sync_result sync_result = {0};
     struct bvb_vulkan_external_image_result image_result = {0};
+    struct bvb_vulkan_external_image_ring_result ring_result = {0};
     if (result == 0) {
         result = bvb_vulkan_batch_context_create(
             loader_path, &context, error, sizeof(error));
     }
     if (result == 0) {
         if (external_image) {
-            if (fenced_image) {
+            if (frame_ring) {
+                result =
+                    bvb_vulkan_batch_context_import_external_image_frame_ring_fds(
+                        context, external_fds[0], external_fds[1],
+                        image_request.allocation_size,
+                        image_request.memory_type_index, image_request.width,
+                        image_request.height, image_request.format,
+                        &ring_result, error, sizeof(error));
+            } else if (fenced_image) {
                 result =
                     bvb_vulkan_batch_context_import_external_image_fenced_fd(
                         context, external_fds[0],
@@ -162,7 +175,7 @@ int main(int argc, char **argv) {
                     sizeof(error));
             }
             external_fds[0] = -1;
-            if (!fenced_image) external_fds[1] = -1;
+            if (!fenced_image || frame_ring) external_fds[1] = -1;
         } else if (synchronized) {
             result = bvb_vulkan_batch_context_import_external_sync_fds(
                 context, external_fds[0], external_fds[1],
@@ -196,7 +209,33 @@ int main(int argc, char **argv) {
         return 4;
     }
     const int64_t finished_ns = monotonic_ns();
-    if (external_image) {
+    if (frame_ring) {
+        printf("{\"schema_version\":1,\"gate\":\"E042\","
+               "\"result\":\"pass\","
+               "\"transport\":\"one_time_binder_scm_rights_image_plus_native_frame_control\","
+               "\"loader_path\":\"%s\",\"peer_uid\":%lu,"
+               "\"peer_pid\":%ld,\"descriptor_count\":2,"
+               "\"allocation_size\":%" PRIu64 ","
+               "\"memory_type_index\":%" PRIu32 ","
+               "\"width\":%" PRIu32 ",\"height\":%" PRIu32 ","
+               "\"format\":%" PRIu32 ",\"frame_count\":%" PRIu32 ","
+               "\"frames_consumed\":%" PRIu32 ","
+               "\"mismatched_pixels\":%" PRIu32 ","
+               "\"readback_memory_property_flags\":%" PRIu32 ","
+               "\"gpu_wait_elapsed_ns\":%" PRIu64 ","
+               "\"frame_loop_elapsed_ns\":%" PRIu64 ","
+               "\"receive_import_ns\":%" PRId64 "}\n",
+               loader_path, (unsigned long)peer_uid, (long)peer_pid,
+               image_request.allocation_size,
+               image_request.memory_type_index, ring_result.width,
+               ring_result.height, ring_result.format,
+               ring_result.frame_count, ring_result.frames_consumed,
+               ring_result.mismatched_pixels,
+               ring_result.readback_memory_property_flags,
+               ring_result.gpu_wait_elapsed_ns,
+               ring_result.frame_loop_elapsed_ns,
+               finished_ns >= started_ns ? finished_ns - started_ns : -1);
+    } else if (external_image) {
         printf("{\"schema_version\":1,\"gate\":\"%s\","
                "\"result\":\"pass\","
                "\"transport\":\"%s\","

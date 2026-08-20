@@ -62,7 +62,7 @@ public final class SharedRegionProvider extends ContentProvider {
 
     static ExternalMemoryResult openExternalMemory(
             String token, boolean synchronizedAccess, boolean imageAccess,
-            boolean fencedImageAccess)
+            boolean fencedImageAccess, boolean frameRingAccess)
             throws Exception {
         if (token == null || token.length() != 64) {
             throw new IllegalArgumentException("invalid lifecycle token");
@@ -97,7 +97,8 @@ public final class SharedRegionProvider extends ContentProvider {
             byte[] request = new byte[65];
             byte[] tokenBytes = token.getBytes("US-ASCII");
             System.arraycopy(tokenBytes, 0, request, 0, tokenBytes.length);
-            request[64] = (byte)(fencedImageAccess ? 'F' : imageAccess ? 'I'
+            request[64] = (byte)(frameRingAccess ? 'R'
+                    : fencedImageAccess ? 'F' : imageAccess ? 'I'
                     : synchronizedAccess ? 'S' : 'M');
             output.write(request);
             output.flush();
@@ -112,14 +113,15 @@ public final class SharedRegionProvider extends ContentProvider {
             if (result.status == 0) {
                 FileDescriptor[] descriptors =
                         socket.getAncillaryFileDescriptors();
-                int expectedDescriptors = synchronizedAccess ? 2 : 1;
+                int expectedDescriptors = synchronizedAccess || frameRingAccess
+                        ? 2 : 1;
                 if (descriptors == null ||
                         descriptors.length != expectedDescriptors) {
                     throw new IllegalStateException(
                             "external broker returned wrong descriptor count");
                 }
                 result.descriptor = ParcelFileDescriptor.dup(descriptors[0]);
-                if (synchronizedAccess) {
+                if (synchronizedAccess || frameRingAccess) {
                     result.syncDescriptor =
                             ParcelFileDescriptor.dup(descriptors[1]);
                 }

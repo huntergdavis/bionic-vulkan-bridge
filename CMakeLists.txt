@@ -184,7 +184,9 @@ target_include_directories(
 )
 target_link_libraries(bvb-command-batch PRIVATE bvb-wire)
 bvb_enable_warnings(bvb-command-batch)
-target_link_libraries(bvb-vulkan-selftest-core PRIVATE bvb-command-batch)
+target_link_libraries(
+  bvb-vulkan-selftest-core PUBLIC bvb-frame-sync PRIVATE bvb-command-batch
+)
 
 add_library(bvb-visible-batch STATIC src/visible_batch.c)
 set_target_properties(bvb-visible-batch PROPERTIES C_VISIBILITY_PRESET hidden)

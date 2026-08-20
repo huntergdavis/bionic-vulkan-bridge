@@ -2,6 +2,7 @@
 #define VK_USE_PLATFORM_ANDROID_KHR
 
 #include <bvb/command_batch.h>
+#include <bvb/frame_sync.h>
 #include <bvb/lifecycle.h>
 #include <bvb/native_binder.h>
 #include <bvb/protocol.h>
@@ -30,6 +31,7 @@
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
+#include <sys/mman.h>
 #include <sys/un.h>
 #include <time.h>
 #include <unistd.h>
@@ -154,10 +156,13 @@ enum {
     BVB_E036_RESPONSE_BYTES = 24,
     BVB_E038_IMAGE_WIDTH = 64,
     BVB_E038_IMAGE_HEIGHT = 64,
+    BVB_E042_FRAME_COUNT = 120,
+    BVB_E042_FRAME_TIMEOUT_MS = 30000,
 };
 
 static const uint32_t BVB_E037_FILL_WORD = UINT32_C(0xe037c0de);
 static const uint32_t BVB_E038_COLOR_WORD = UINT32_C(0xffff00ff);
+static const uint32_t BVB_E042_GREEN_WORD = UINT32_C(0xff00ff00);
 
 static const char BVB_E036_BROKER_SOCKET[] =
     "bvb-visible-external-memory";
@@ -852,8 +857,218 @@ static int cache_external_image_sync(void) {
     return 0;
 }
 
+struct bvb_e042_control_region {
+    int descriptor;
+    struct bvb_frame_sync_control *control;
+};
+
+static void close_e042_control_region(
+    struct bvb_e042_control_region *region) {
+    if (region->control != MAP_FAILED && region->control != NULL) {
+        (void)munmap(region->control, BVB_FRAME_SYNC_REGION_BYTES);
+    }
+    if (region->descriptor >= 0) (void)close(region->descriptor);
+    *region = (struct bvb_e042_control_region){
+        .descriptor = -1,
+        .control = MAP_FAILED,
+    };
+}
+
+static int create_e042_control_region(
+    struct bvb_e042_control_region *region) {
+    *region = (struct bvb_e042_control_region){
+        .descriptor = -1,
+        .control = MAP_FAILED,
+    };
+    const int descriptor = (int)syscall(
+        SYS_memfd_create, "bvb-e042-frame-sync",
+        MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (descriptor < 0) return -errno;
+    region->descriptor = descriptor;
+    if (ftruncate(descriptor, BVB_FRAME_SYNC_REGION_BYTES) != 0) {
+        const int status = -errno;
+        close_e042_control_region(region);
+        return status;
+    }
+    region->control = mmap(NULL, BVB_FRAME_SYNC_REGION_BYTES,
+                           PROT_READ | PROT_WRITE, MAP_SHARED, descriptor, 0U);
+    if (region->control == MAP_FAILED) {
+        const int status = -errno;
+        close_e042_control_region(region);
+        return status;
+    }
+    const int status = bvb_frame_sync_initialize(
+        region->control, BVB_FRAME_SYNC_REGION_BYTES, BVB_E042_FRAME_COUNT);
+    if (status != 0) close_e042_control_region(region);
+    return status;
+}
+
+static uint32_t e042_frame_color(uint32_t sequence) {
+    return (sequence & 1U) != 0U ? BVB_E038_COLOR_WORD
+                                 : BVB_E042_GREEN_WORD;
+}
+
+static uint64_t e042_monotonic_nanoseconds(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0U;
+    return (uint64_t)now.tv_sec * UINT64_C(1000000000) +
+           (uint64_t)now.tv_nsec;
+}
+
+static int produce_e042_external_image_frame(uint32_t sequence) {
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    VkFence fence = VK_NULL_HANDLE;
+    int status = 0;
+    (void)pthread_mutex_lock(&queue_mutex);
+    if (state.device == VK_NULL_HANDLE || state.queue == VK_NULL_HANDLE ||
+        state.command_pool == VK_NULL_HANDLE ||
+        state.external_image == VK_NULL_HANDLE) {
+        status = -EPIPE;
+        goto done;
+    }
+    const VkCommandBufferAllocateInfo command_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = state.command_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1U,
+    };
+    VkResult result = vkAllocateCommandBuffers(
+        state.device, &command_info, &command_buffer);
+    const VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    if (result == VK_SUCCESS) {
+        result = vkBeginCommandBuffer(command_buffer, &begin_info);
+    }
+    const VkImageSubresourceRange color_range = {
+        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .levelCount = 1U,
+        .layerCount = 1U,
+    };
+    if (result == VK_SUCCESS) {
+        const VkImageMemoryBarrier acquire = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_MEMORY_READ_BIT,
+            .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = state.external_image,
+            .subresourceRange = color_range,
+        };
+        vkCmdPipelineBarrier(
+            command_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 0U, 0U, NULL, 0U, NULL, 1U,
+            &acquire);
+        const VkClearColorValue color = (sequence & 1U) != 0U
+            ? (VkClearColorValue){.float32 = {1.0F, 0.0F, 1.0F, 1.0F}}
+            : (VkClearColorValue){.float32 = {0.0F, 1.0F, 0.0F, 1.0F}};
+        vkCmdClearColorImage(command_buffer, state.external_image,
+                             VK_IMAGE_LAYOUT_GENERAL, &color, 1U,
+                             &color_range);
+        const VkImageMemoryBarrier release = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = state.external_image,
+            .subresourceRange = color_range,
+        };
+        vkCmdPipelineBarrier(
+            command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0U, 0U, NULL, 0U, NULL, 1U,
+            &release);
+        result = vkEndCommandBuffer(command_buffer);
+    }
+    const VkFenceCreateInfo fence_info = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+    };
+    if (result == VK_SUCCESS) {
+        result = vkCreateFence(state.device, &fence_info, NULL, &fence);
+    }
+    const VkSubmitInfo submit_info = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1U,
+        .pCommandBuffers = &command_buffer,
+    };
+    if (result == VK_SUCCESS) {
+        result = vkQueueSubmit(state.queue, 1U, &submit_info, fence);
+    }
+    if (result == VK_SUCCESS) {
+        result = vkWaitForFences(state.device, 1U, &fence, VK_TRUE,
+                                 UINT64_MAX);
+    }
+    if (result != VK_SUCCESS) status = -EIO;
+
+done:
+    if (fence != VK_NULL_HANDLE) {
+        vkDestroyFence(state.device, fence, NULL);
+    }
+    if (command_buffer != VK_NULL_HANDLE) {
+        vkFreeCommandBuffers(state.device, state.command_pool, 1U,
+                             &command_buffer);
+    }
+    (void)pthread_mutex_unlock(&queue_mutex);
+    if (status != 0) {
+        BVB_LOGE("E042_PRODUCER_GPU_FAIL sequence=%u status=%d color=%u",
+                 sequence, status, e042_frame_color(sequence));
+    }
+    return status;
+}
+
+static int run_e042_producer(struct bvb_frame_sync_control *control) {
+    int status = bvb_frame_sync_validate(control);
+    const uint64_t started_ns = e042_monotonic_nanoseconds();
+    for (uint32_t sequence = 1U; status == 0 &&
+         sequence <= BVB_E042_FRAME_COUNT; ++sequence) {
+        if (sequence > 1U) {
+            uint32_t consumed = 0U;
+            status = bvb_frame_sync_wait_consumer(
+                control, sequence - 2U, BVB_E042_FRAME_TIMEOUT_MS,
+                &consumed);
+            if (status == 0 && consumed != sequence - 1U) status = -EPROTO;
+        }
+        if (status == 0) {
+            status = produce_e042_external_image_frame(sequence);
+        }
+        if (status == 0) {
+            status = bvb_frame_sync_publish_producer(control, sequence);
+        }
+    }
+    if (status == 0) {
+        uint32_t consumed = 0U;
+        status = bvb_frame_sync_wait_consumer(
+            control, BVB_E042_FRAME_COUNT - 1U,
+            BVB_E042_FRAME_TIMEOUT_MS, &consumed);
+        if (status == 0 && consumed != BVB_E042_FRAME_COUNT) {
+            status = -EPROTO;
+        }
+    }
+    if (status != 0) (void)bvb_frame_sync_fail_producer(control, status);
+    const uint64_t finished_ns = e042_monotonic_nanoseconds();
+    if (status == 0) {
+        BVB_LOGI("E042_PRODUCER_PASS frames=%u elapsed_ns=%llu",
+                 BVB_E042_FRAME_COUNT,
+                 (unsigned long long)(finished_ns >= started_ns
+                                          ? finished_ns - started_ns
+                                          : 0U));
+    } else {
+        BVB_LOGE("E042_PRODUCER_FAIL status=%d", status);
+    }
+    return status;
+}
+
 static void handle_external_broker_connection(int connection) {
     int status = 0;
+    struct bvb_e042_control_region frame_control = {
+        .descriptor = -1,
+        .control = MAP_FAILED,
+    };
     struct ucred credentials;
     socklen_t credentials_size = sizeof(credentials);
     if (getsockopt(connection, SOL_SOCKET, SO_PEERCRED, &credentials,
@@ -870,11 +1085,13 @@ static void handle_external_broker_connection(int connection) {
         request[BVB_E036_TOKEN_HEX_BYTES] == 'P';
     const bool fenced_image =
         request[BVB_E036_TOKEN_HEX_BYTES] == 'F';
-    const bool external_image = direct_channel || fenced_image ||
+    const bool frame_ring =
+        request[BVB_E036_TOKEN_HEX_BYTES] == 'R';
+    const bool external_image = direct_channel || fenced_image || frame_ring ||
         request[BVB_E036_TOKEN_HEX_BYTES] == 'I';
-    const bool synchronized = !fenced_image &&
+    const bool synchronized = !fenced_image && !frame_ring &&
         (external_image || request[BVB_E036_TOKEN_HEX_BYTES] == 'S');
-    if (status == 0 && !synchronized && !fenced_image &&
+    if (status == 0 && !synchronized && !fenced_image && !frame_ring &&
         request[BVB_E036_TOKEN_HEX_BYTES] != 'M') {
         status = -EPROTO;
     }
@@ -899,7 +1116,7 @@ static void handle_external_broker_connection(int connection) {
     uint64_t allocation_size = 0U;
     uint32_t memory_type_index = 0U;
     (void)pthread_mutex_lock(&external_memory_mutex);
-    if (status == 0 && fenced_image) {
+    if (status == 0 && (fenced_image || frame_ring)) {
         if (!external_image_cache.ready || state.queue == VK_NULL_HANDLE) {
             status = -EAGAIN;
         } else {
@@ -909,7 +1126,7 @@ static void handle_external_broker_connection(int connection) {
             if (wait_result != VK_SUCCESS) status = -EIO;
         }
     }
-    if (status == 0 && (synchronized || fenced_image)) {
+    if (status == 0 && (synchronized || fenced_image || frame_ring)) {
         const struct bvb_external_sync_cache *cache = external_image
                                                           ? &external_image_cache
                                                           : &external_sync_cache;
@@ -917,28 +1134,35 @@ static void handle_external_broker_connection(int connection) {
             (synchronized && cache->semaphore_fd < 0)) {
             status = -EAGAIN;
         } else {
-            descriptors[0] = fcntl(
-                cache->memory_fd, F_DUPFD_CLOEXEC, 0);
-            if (synchronized) {
+            if (frame_ring) status = create_e042_control_region(&frame_control);
+            if (status == 0) {
+                descriptors[0] = fcntl(
+                    cache->memory_fd, F_DUPFD_CLOEXEC, 0);
+            }
+            if (status == 0 && synchronized) {
                 descriptors[1] = fcntl(
                     cache->semaphore_fd, F_DUPFD_CLOEXEC, 0);
+            } else if (frame_ring && status == 0) {
+                descriptors[1] = fcntl(
+                    frame_control.descriptor, F_DUPFD_CLOEXEC, 0);
             }
-            if (descriptors[0] < 0 ||
-                (synchronized && descriptors[1] < 0)) {
+            if (status == 0 &&
+                (descriptors[0] < 0 ||
+                 ((synchronized || frame_ring) && descriptors[1] < 0))) {
                 status = -errno;
-            } else {
+            } else if (status == 0) {
                 allocation_size = cache->allocation_size;
                 memory_type_index = cache->memory_type_index;
-                descriptor_count = synchronized ? 2U : 1U;
+                descriptor_count = synchronized || frame_ring ? 2U : 1U;
             }
         }
-    } else if (status == 0 && !fenced_image &&
+    } else if (status == 0 && !fenced_image && !frame_ring &&
         (state.device == VK_NULL_HANDLE ||
          state.external_memory == VK_NULL_HANDLE ||
          state.get_memory_fd == NULL)) {
         status = -EAGAIN;
     }
-    if (status == 0 && !synchronized && !fenced_image) {
+    if (status == 0 && !synchronized && !fenced_image && !frame_ring) {
         const VkMemoryGetFdInfoKHR fd_info = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
             .memory = state.external_memory,
@@ -974,6 +1198,7 @@ static void handle_external_broker_connection(int connection) {
                      "synchronization=%s peer_uid=%u",
                      direct_channel
                          ? "E039_DIRECT_EXPORT_PASS"
+                         : frame_ring ? "E042_FRAME_RING_EXPORT_PASS"
                          : fenced_image ? "E041_FENCED_IMAGE_EXPORT_PASS"
                                         : "E038_EXPORT_PASS",
                      BVB_E038_IMAGE_WIDTH, BVB_E038_IMAGE_HEIGHT,
@@ -981,7 +1206,8 @@ static void handle_external_broker_connection(int connection) {
                      BVB_E038_COLOR_WORD,
                      (unsigned long long)allocation_size, memory_type_index,
                      fenced_image ? 1U : 2U,
-                     fenced_image ? "producer_queue_idle" : "sync_fd",
+                     frame_ring ? "native_atomic_futex_control"
+                         : fenced_image ? "producer_queue_idle" : "sync_fd",
                      (unsigned int)credentials.uid);
         } else if (synchronized) {
             BVB_LOGI("E037_EXPORT_PASS bytes=%u allocation=%llu type=%u "
@@ -998,6 +1224,12 @@ static void handle_external_broker_connection(int connection) {
         BVB_LOGE("E036_BROKER_REQUEST_FAIL status=%d send=%d", status,
                  send_status);
     }
+    if (frame_ring && status == 0 && send_status == 0) {
+        (void)pthread_mutex_lock(&external_memory_mutex);
+        (void)run_e042_producer(frame_control.control);
+        (void)pthread_mutex_unlock(&external_memory_mutex);
+    }
+    close_e042_control_region(&frame_control);
     if (direct_channel && status == 0 && send_status == 0) {
         uint8_t acknowledgement = 0U;
         int channel_status = receive_broker_token_exact(

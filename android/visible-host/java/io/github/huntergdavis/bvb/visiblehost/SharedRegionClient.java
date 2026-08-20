@@ -32,6 +32,8 @@ public final class SharedRegionClient extends Binder {
             "io.github.huntergdavis.bvb.visiblehost.REQUEST_EXTERNAL_IMAGE";
     public static final String ACTION_EXTERNAL_IMAGE_FENCED =
             "io.github.huntergdavis.bvb.visiblehost.REQUEST_EXTERNAL_IMAGE_FENCED";
+    public static final String ACTION_EXTERNAL_IMAGE_FRAME_RING =
+            "io.github.huntergdavis.bvb.visiblehost.REQUEST_EXTERNAL_IMAGE_FRAME_RING";
     public static final String EXTRA_REQUEST = "bvb_request";
     public static final String EXTRA_CALLBACK = "bvb_callback";
     public static final String EXTRA_TOKEN = "bvb_token";
@@ -55,6 +57,7 @@ public final class SharedRegionClient extends Binder {
     private static final int OPCODE_EXTERNAL_SYNC_IMPORT_TEST = 51;
     private static final int OPCODE_EXTERNAL_IMAGE_IMPORT_TEST = 52;
     private static final int OPCODE_EXTERNAL_IMAGE_FENCED_IMPORT_TEST = 53;
+    private static final int OPCODE_EXTERNAL_IMAGE_FRAME_RING_TEST = 54;
     private static final int PROTOCOL_HEADER_SIZE = 24;
     private static final int HELLO_REQUEST_SIZE = 8;
     private static final int EXTERNAL_MEMORY_IMPORT_REQUEST_SIZE = 16;
@@ -71,6 +74,7 @@ public final class SharedRegionClient extends Binder {
     private boolean requestExternalSync;
     private boolean requestExternalImage;
     private boolean requestExternalImageFenced;
+    private boolean requestExternalImageFrameRing;
     private long allocationSize;
     private int memoryTypeIndex;
     private int bufferBytes;
@@ -105,7 +109,8 @@ public final class SharedRegionClient extends Binder {
                 ? ParcelFileDescriptor.CREATOR.createFromParcel(data)
                 : null;
         ParcelFileDescriptor deliveredSyncDescriptor =
-                status == 0 && requestExternalSync
+                status == 0 &&
+                        (requestExternalSync || requestExternalImageFrameRing)
                 ? ParcelFileDescriptor.CREATOR.createFromParcel(data)
                 : null;
         synchronized (this) {
@@ -237,14 +242,17 @@ public final class SharedRegionClient extends Binder {
                                       boolean external,
                                       boolean externalSync,
                                       boolean externalImage,
-                                      boolean externalImageFenced)
+                                      boolean externalImageFenced,
+                                      boolean externalImageFrameRing)
             throws Exception {
         Bundle request = new Bundle();
         Method putBinder = Bundle.class.getMethod(
                 "putBinder", String.class, IBinder.class);
         putBinder.invoke(request, EXTRA_CALLBACK, callback);
         request.putString(EXTRA_TOKEN, token);
-        Intent intent = new Intent(externalImageFenced
+        Intent intent = new Intent(externalImageFrameRing
+                ? ACTION_EXTERNAL_IMAGE_FRAME_RING
+                : externalImageFenced
                 ? ACTION_EXTERNAL_IMAGE_FENCED
                 : externalImage ? ACTION_EXTERNAL_IMAGE
                 : externalSync ? ACTION_EXTERNAL_SYNC
@@ -289,7 +297,9 @@ public final class SharedRegionClient extends Binder {
                 ? EXTERNAL_SYNC_IMPORT_REQUEST_SIZE
                 : requestExternal
                     ? EXTERNAL_MEMORY_IMPORT_REQUEST_SIZE : HELLO_REQUEST_SIZE;
-        int opcode = requestExternalImageFenced
+        int opcode = requestExternalImageFrameRing
+                ? OPCODE_EXTERNAL_IMAGE_FRAME_RING_TEST
+                : requestExternalImageFenced
                 ? OPCODE_EXTERNAL_IMAGE_FENCED_IMPORT_TEST
                 : requestExternalImage ? OPCODE_EXTERNAL_IMAGE_IMPORT_TEST
                 : requestExternalSync
@@ -345,7 +355,8 @@ public final class SharedRegionClient extends Binder {
             socket.connect(new LocalSocketAddress(
                     socketName, LocalSocketAddress.Namespace.ABSTRACT));
             socket.setSoTimeout(RELAY_COMPLETION_TIMEOUT_MS);
-            socket.setFileDescriptorsForSend(requestExternalSync
+            socket.setFileDescriptorsForSend(
+                    requestExternalSync || requestExternalImageFrameRing
                     ? new FileDescriptor[] {
                         descriptor.getFileDescriptor(),
                         syncDescriptor.getFileDescriptor()
@@ -360,7 +371,9 @@ public final class SharedRegionClient extends Binder {
             if (getU32(response, 0) != PROTOCOL_MAGIC
                     || getU16(response, 4) != PROTOCOL_VERSION
                     || getU16(response, 6) != PROTOCOL_RESPONSE
-                    || getU16(response, 8) != (requestExternalImageFenced
+                    || getU16(response, 8) != (requestExternalImageFrameRing
+                            ? OPCODE_EXTERNAL_IMAGE_FRAME_RING_TEST
+                            : requestExternalImageFenced
                             ? OPCODE_EXTERNAL_IMAGE_FENCED_IMPORT_TEST
                             : requestExternalImage
                             ? OPCODE_EXTERNAL_IMAGE_IMPORT_TEST
@@ -428,11 +441,15 @@ public final class SharedRegionClient extends Binder {
     }
 
     public static void main(String[] arguments) {
+        boolean externalImageFrameRing = arguments.length == 4 &&
+                "frame-ring".equals(arguments[3]);
         boolean externalImageFenced = arguments.length == 4 &&
                 "fenced-image".equals(arguments[3]);
-        boolean externalImage = externalImageFenced || arguments.length == 4 &&
+        boolean externalImage = externalImageFrameRing || externalImageFenced ||
+                arguments.length == 4 &&
                 "image".equals(arguments[3]);
-        boolean externalSync = !externalImageFenced &&
+        boolean externalSync = !externalImageFrameRing &&
+                !externalImageFenced &&
                 (externalImage || arguments.length == 4 &&
                  "sync".equals(arguments[3]));
         boolean external = externalImage || externalSync || arguments.length == 4 &&
@@ -441,7 +458,7 @@ public final class SharedRegionClient extends Binder {
                 (arguments.length == 4 && !external)) {
             System.err.println(
                     "usage: SharedRegionClient TOKEN RESULT_JSON "
-                            + "[RELAY_SOCKET [external|sync|image|fenced-image]]");
+                            + "[RELAY_SOCKET [external|sync|image|fenced-image|frame-ring]]");
             System.exit(2);
         }
         String stage = "send_broadcast";
@@ -451,8 +468,10 @@ public final class SharedRegionClient extends Binder {
             client.requestExternalSync = externalSync;
             client.requestExternalImage = externalImage;
             client.requestExternalImageFenced = externalImageFenced;
+            client.requestExternalImageFrameRing = externalImageFrameRing;
             requestRegion(arguments[0], client, external, externalSync,
-                          externalImage, externalImageFenced);
+                          externalImage, externalImageFenced,
+                          externalImageFrameRing);
             stage = "wait_callback";
             if (!client.waitForDelivery()) {
                 throw new IllegalStateException("Binder callback timed out");
@@ -481,7 +500,9 @@ public final class SharedRegionClient extends Binder {
                 writeResult(arguments[1],
                         "{\"result\":\"pass\",\"binder_region_received\":true,"
                                 + "\"descriptor_kind\":"
-                                + (externalImageFenced
+                                + (externalImageFrameRing
+                                    ? "\"opaque_image_memory_plus_native_frame_control\""
+                                    : externalImageFenced
                                     ? "\"opaque_image_memory_after_producer_fence\""
                                     : externalImage
                                     ? "\"opaque_image_memory_plus_sync_fd\""

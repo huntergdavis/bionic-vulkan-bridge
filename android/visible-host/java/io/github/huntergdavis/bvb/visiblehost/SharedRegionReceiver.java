@@ -30,13 +30,16 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
+        boolean frameRing =
+                SharedRegionClient.ACTION_EXTERNAL_IMAGE_FRAME_RING.equals(
+                        intent.getAction());
         boolean fencedImage =
                 SharedRegionClient.ACTION_EXTERNAL_IMAGE_FENCED.equals(
                         intent.getAction());
-        boolean externalImage = fencedImage ||
+        boolean externalImage = frameRing || fencedImage ||
                 SharedRegionClient.ACTION_EXTERNAL_IMAGE.equals(
                         intent.getAction());
-        boolean externalSync = !fencedImage && (externalImage ||
+        boolean externalSync = !frameRing && !fencedImage && (externalImage ||
                 SharedRegionClient.ACTION_EXTERNAL_SYNC.equals(
                         intent.getAction()));
         boolean external = externalImage || externalSync ||
@@ -68,7 +71,8 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
                             "external-memory capability rejected");
                 }
                 externalResult = SharedRegionProvider.openExternalMemory(
-                        token, externalSync, externalImage, fencedImage);
+                        token, externalSync, externalImage, fencedImage,
+                        frameRing);
                 status = externalResult.status;
                 region = externalResult.descriptor;
                 syncDescriptor = externalResult.syncDescriptor;
@@ -110,7 +114,7 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
                     }
                 }
                 region.writeToParcel(data, 0);
-                if (externalSync) {
+                if (externalSync || frameRing) {
                     syncDescriptor.writeToParcel(data, 0);
                 }
             }

@@ -2,6 +2,7 @@
 #define VK_NO_PROTOTYPES
 
 #include <bvb/command_batch.h>
+#include <bvb/frame_sync.h>
 #include <bvb/vulkan_selftest.h>
 
 #include <vulkan/vulkan.h>
@@ -14,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -1721,25 +1723,31 @@ int bvb_vulkan_batch_context_import_external_sync_fds(
     return result;
 }
 
-int bvb_vulkan_batch_context_import_external_image_fds(
+static int import_external_image_fds_impl(
     struct bvb_vulkan_batch_context *context, int external_memory_fd,
     int external_semaphore_fd, uint64_t allocation_size,
     uint32_t memory_type_index, uint32_t width, uint32_t height,
     uint32_t format, uint32_t expected_color,
     struct bvb_vulkan_external_image_result *output,
+    int frame_control_fd,
+    struct bvb_vulkan_external_image_ring_result *ring_output,
     char *error, size_t error_size) {
     if (output != NULL) memset(output, 0, sizeof(*output));
     const uint64_t pixel_bytes =
         (uint64_t)width * (uint64_t)height * sizeof(uint32_t);
+    const bool frame_ring = frame_control_fd >= 0;
     const bool semaphore_synchronized = external_semaphore_fd >= 0;
     if (context == NULL || output == NULL || external_memory_fd < 0 ||
         external_semaphore_fd < -1 || allocation_size == 0U ||
         memory_type_index >= context->memory_properties.memoryTypeCount ||
         width == 0U || height == 0U || width > 4096U || height > 4096U ||
         pixel_bytes == 0U || pixel_bytes > UINT64_C(16) * 1024U * 1024U ||
-        format != (uint32_t)VK_FORMAT_R8G8B8A8_UNORM) {
+        format != (uint32_t)VK_FORMAT_R8G8B8A8_UNORM ||
+        (frame_ring && ring_output == NULL) ||
+        (frame_ring && semaphore_synchronized)) {
         if (external_memory_fd >= 0) (void)close(external_memory_fd);
         if (external_semaphore_fd >= 0) (void)close(external_semaphore_fd);
+        if (frame_control_fd >= 0) (void)close(frame_control_fd);
         set_error(error, error_size, "invalid external-image import request");
         return -EINVAL;
     }
@@ -1812,6 +1820,7 @@ int bvb_vulkan_batch_context_import_external_image_fds(
         imported_vkQueueSubmit == NULL || imported_vkWaitForFences == NULL) {
         (void)close(external_memory_fd);
         (void)close(external_semaphore_fd);
+        if (frame_control_fd >= 0) (void)close(frame_control_fd);
         set_error(error, error_size,
                   "driver is missing external-image import entry points");
         return -ENOSYS;
@@ -1851,6 +1860,7 @@ int bvb_vulkan_batch_context_import_external_image_fds(
          VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT) == 0U) {
         (void)close(external_memory_fd);
         (void)close(external_semaphore_fd);
+        if (frame_control_fd >= 0) (void)close(frame_control_fd);
         set_error(error, error_size,
                   "opaque FD image is not importable: %d", (int)vk_result);
         return -ENOTSUP;
@@ -1864,6 +1874,23 @@ int bvb_vulkan_batch_context_import_external_image_fds(
     void *mapped = NULL;
     VkSemaphore semaphore = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
+    struct bvb_frame_sync_control *frame_control = MAP_FAILED;
+    if (frame_ring) {
+        memset(ring_output, 0, sizeof(*ring_output));
+        frame_control = mmap(NULL, BVB_FRAME_SYNC_REGION_BYTES,
+                             PROT_READ | PROT_WRITE, MAP_SHARED,
+                             frame_control_fd, 0U);
+        if (frame_control == MAP_FAILED ||
+            bvb_frame_sync_validate(frame_control) != 0) {
+            set_error(error, error_size, "invalid frame-control region");
+            status = -EPROTO;
+            goto done;
+        }
+        ring_output->width = width;
+        ring_output->height = height;
+        ring_output->format = format;
+        ring_output->frame_count = frame_control->frame_count;
+    }
     const VkExternalMemoryImageCreateInfo external_image_info = {
         .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
         .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
@@ -2019,24 +2046,48 @@ int bvb_vulkan_batch_context_import_external_image_fds(
             context->objects.device, &semaphore_import);
         if (vk_result == VK_SUCCESS) external_semaphore_fd = -1;
     }
-    if (vk_result == VK_SUCCESS) {
-        vk_result = imported_vkResetCommandPool(
-            context->objects.device, context->objects.command_pool, 0U);
-    }
     const VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
-    if (vk_result == VK_SUCCESS) {
-        vk_result = imported_vkBeginCommandBuffer(
-            context->command_buffer, &begin_info);
-    }
     const VkImageSubresourceRange color_range = {
         .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
         .levelCount = 1U,
         .layerCount = 1U,
     };
-    if (vk_result == VK_SUCCESS) {
+    const VkFenceCreateInfo fence_info = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+    };
+    const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    uint64_t loop_started_ns = 0U;
+    if (monotonic_ns(&loop_started_ns) != 0) {
+        set_error(error, error_size, "could not read frame-loop start clock");
+        status = -EIO;
+        goto done;
+    }
+    const uint32_t iteration_count = frame_ring ? frame_control->frame_count : 1U;
+    for (uint32_t sequence = 1U;
+         status == 0 && sequence <= iteration_count; ++sequence) {
+        if (frame_ring) {
+            uint32_t produced = 0U;
+            status = bvb_frame_sync_wait_producer(
+                frame_control, sequence - 1U, 30000U, &produced);
+            if (status == 0 && produced != sequence) status = -EPROTO;
+            if (status != 0) break;
+        }
+        const uint32_t current_expected_color = frame_ring
+            ? ((sequence & 1U) != 0U ? UINT32_C(0xffff00ff)
+                                     : UINT32_C(0xff00ff00))
+            : expected_color;
+        output->expected_color = current_expected_color;
+        output->mismatched_pixels = 0U;
+        vk_result = imported_vkResetCommandPool(
+            context->objects.device, context->objects.command_pool, 0U);
+        if (vk_result == VK_SUCCESS) {
+            vk_result = imported_vkBeginCommandBuffer(
+                context->command_buffer, &begin_info);
+        }
+        if (vk_result == VK_SUCCESS) {
         const VkImageMemoryBarrier to_transfer = {
             .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
             .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
@@ -2064,6 +2115,21 @@ int bvb_vulkan_batch_context_import_external_image_fds(
         imported_vkCmdCopyImageToBuffer(
             context->command_buffer, image,
             VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback, 1U, &copy);
+        const VkImageMemoryBarrier to_general = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+            .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = image,
+            .subresourceRange = color_range,
+        };
+        imported_vkCmdPipelineBarrier(
+            context->command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0U, 0U, NULL, 0U, NULL, 1U,
+            &to_general);
         const VkBufferMemoryBarrier host_barrier = {
             .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
             .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
@@ -2079,83 +2145,111 @@ int bvb_vulkan_batch_context_import_external_image_fds(
             VK_PIPELINE_STAGE_HOST_BIT, 0U, 0U, NULL, 1U, &host_barrier, 0U,
             NULL);
         vk_result = imported_vkEndCommandBuffer(context->command_buffer);
-    }
-    const VkFenceCreateInfo fence_info = {
-        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-    };
-    if (vk_result == VK_SUCCESS) {
-        vk_result = imported_vkCreateFence(
-            context->objects.device, &fence_info, NULL, &fence);
-    }
-    const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-    const VkSubmitInfo submit_info = {
-        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .waitSemaphoreCount = semaphore_synchronized ? 1U : 0U,
-        .pWaitSemaphores = semaphore_synchronized ? &semaphore : NULL,
-        .pWaitDstStageMask = semaphore_synchronized ? &wait_stage : NULL,
-        .commandBufferCount = 1U,
-        .pCommandBuffers = &context->command_buffer,
-    };
-    uint64_t wait_started_ns = 0U;
-    uint64_t wait_finished_ns = 0U;
-    if (vk_result == VK_SUCCESS && monotonic_ns(&wait_started_ns) != 0) {
-        set_error(error, error_size, "could not read image-wait start clock");
-        status = -EIO;
-        goto done;
-    }
-    if (vk_result == VK_SUCCESS) {
-        vk_result = imported_vkQueueSubmit(
-            context->queue, 1U, &submit_info, fence);
-    }
-    if (vk_result == VK_SUCCESS) {
-        vk_result = imported_vkWaitForFences(
-            context->objects.device, 1U, &fence, VK_TRUE, UINT64_MAX);
-    }
-    if (vk_result == VK_SUCCESS && monotonic_ns(&wait_finished_ns) != 0) {
-        set_error(error, error_size, "could not read image-wait finish clock");
-        status = -EIO;
-        goto done;
-    }
-    if (vk_result != VK_SUCCESS) {
-        set_error(error, error_size, "external image GPU copy failed: %d",
-                  (int)vk_result);
-        status = -EIO;
-        goto done;
-    }
-    output->gpu_wait_elapsed_ns = wait_finished_ns - wait_started_ns;
-    if (!coherent) {
+        }
+        if (vk_result == VK_SUCCESS) {
+            vk_result = imported_vkCreateFence(
+                context->objects.device, &fence_info, NULL, &fence);
+        }
+        const VkSubmitInfo submit_info = {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .waitSemaphoreCount = semaphore_synchronized ? 1U : 0U,
+            .pWaitSemaphores = semaphore_synchronized ? &semaphore : NULL,
+            .pWaitDstStageMask = semaphore_synchronized ? &wait_stage : NULL,
+            .commandBufferCount = 1U,
+            .pCommandBuffers = &context->command_buffer,
+        };
+        uint64_t wait_started_ns = 0U;
+        uint64_t wait_finished_ns = 0U;
+        if (vk_result == VK_SUCCESS && monotonic_ns(&wait_started_ns) != 0) {
+            set_error(error, error_size,
+                      "could not read image-wait start clock");
+            status = -EIO;
+            break;
+        }
+        if (vk_result == VK_SUCCESS) {
+            vk_result = imported_vkQueueSubmit(
+                context->queue, 1U, &submit_info, fence);
+        }
+        if (vk_result == VK_SUCCESS) {
+            vk_result = imported_vkWaitForFences(
+                context->objects.device, 1U, &fence, VK_TRUE, UINT64_MAX);
+        }
+        if (vk_result == VK_SUCCESS && monotonic_ns(&wait_finished_ns) != 0) {
+            set_error(error, error_size,
+                      "could not read image-wait finish clock");
+            status = -EIO;
+            break;
+        }
+        if (vk_result != VK_SUCCESS) {
+            set_error(error, error_size, "external image GPU copy failed: %d",
+                      (int)vk_result);
+            status = -EIO;
+            break;
+        }
+        output->gpu_wait_elapsed_ns = wait_finished_ns - wait_started_ns;
+        if (frame_ring) {
+            ring_output->gpu_wait_elapsed_ns += output->gpu_wait_elapsed_ns;
+        }
+        if (!coherent) {
         const VkMappedMemoryRange range = {
             .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
             .memory = readback_memory,
             .offset = 0U,
             .size = VK_WHOLE_SIZE,
         };
-        vk_result = imported_vkInvalidateMappedMemoryRanges(
-            context->objects.device, 1U, &range);
-        if (vk_result != VK_SUCCESS) {
+            vk_result = imported_vkInvalidateMappedMemoryRanges(
+                context->objects.device, 1U, &range);
+            if (vk_result != VK_SUCCESS) {
+                set_error(error, error_size,
+                          "external image readback invalidate failed: %d",
+                          (int)vk_result);
+                status = -EIO;
+                break;
+            }
+        }
+        for (uint64_t index = 0U; index < pixel_bytes / sizeof(uint32_t);
+             ++index) {
+            if (((const uint32_t *)mapped)[index] != current_expected_color) {
+                ++output->mismatched_pixels;
+            }
+        }
+        if (frame_ring) {
+            ring_output->mismatched_pixels += output->mismatched_pixels;
+            ring_output->readback_memory_property_flags =
+                output->readback_memory_property_flags;
+        }
+        if (output->mismatched_pixels != 0U) {
             set_error(error, error_size,
-                      "external image readback invalidate failed: %d",
-                      (int)vk_result);
+                      "external image frame %u found %u mismatched pixels",
+                      sequence, output->mismatched_pixels);
             status = -EIO;
-            goto done;
+        }
+        if (fence != VK_NULL_HANDLE) {
+            imported_vkDestroyFence(context->objects.device, fence, NULL);
+            fence = VK_NULL_HANDLE;
+        }
+        if (status == 0 && frame_ring) {
+            status = bvb_frame_sync_publish_consumer(frame_control, sequence);
+            if (status == 0) ring_output->frames_consumed = sequence;
         }
     }
-    for (uint64_t index = 0U; index < pixel_bytes / sizeof(uint32_t);
-         ++index) {
-        if (((const uint32_t *)mapped)[index] != expected_color) {
-            ++output->mismatched_pixels;
-        }
+    uint64_t loop_finished_ns = 0U;
+    if (monotonic_ns(&loop_finished_ns) == 0 && frame_ring) {
+        ring_output->frame_loop_elapsed_ns =
+            loop_finished_ns >= loop_started_ns
+                ? loop_finished_ns - loop_started_ns : 0U;
     }
-    if (output->mismatched_pixels != 0U) {
-        set_error(error, error_size,
-                  "external image found %u mismatched pixels",
-                  output->mismatched_pixels);
-        status = -EIO;
+    if (status != 0 && frame_ring) {
+        (void)bvb_frame_sync_fail_consumer(frame_control, status);
     }
 
 done:
     if (external_memory_fd >= 0) (void)close(external_memory_fd);
     if (external_semaphore_fd >= 0) (void)close(external_semaphore_fd);
+    if (frame_control != MAP_FAILED) {
+        (void)munmap(frame_control, BVB_FRAME_SYNC_REGION_BYTES);
+    }
+    if (frame_control_fd >= 0) (void)close(frame_control_fd);
     if (fence != VK_NULL_HANDLE) {
         imported_vkDestroyFence(context->objects.device, fence, NULL);
     }
@@ -2178,6 +2272,32 @@ done:
         imported_vkFreeMemory(context->objects.device, image_memory, NULL);
     }
     return status;
+}
+
+int bvb_vulkan_batch_context_import_external_image_fds(
+    struct bvb_vulkan_batch_context *context, int external_memory_fd,
+    int external_semaphore_fd, uint64_t allocation_size,
+    uint32_t memory_type_index, uint32_t width, uint32_t height,
+    uint32_t format, uint32_t expected_color,
+    struct bvb_vulkan_external_image_result *output,
+    char *error, size_t error_size) {
+    return import_external_image_fds_impl(
+        context, external_memory_fd, external_semaphore_fd, allocation_size,
+        memory_type_index, width, height, format, expected_color, output, -1,
+        NULL, error, error_size);
+}
+
+int bvb_vulkan_batch_context_import_external_image_frame_ring_fds(
+    struct bvb_vulkan_batch_context *context, int external_memory_fd,
+    int frame_control_fd, uint64_t allocation_size,
+    uint32_t memory_type_index, uint32_t width, uint32_t height,
+    uint32_t format, struct bvb_vulkan_external_image_ring_result *output,
+    char *error, size_t error_size) {
+    struct bvb_vulkan_external_image_result image_result;
+    return import_external_image_fds_impl(
+        context, external_memory_fd, -1, allocation_size, memory_type_index,
+        width, height, format, 0U, &image_result, frame_control_fd, output,
+        error, error_size);
 }
 
 int bvb_vulkan_batch_context_import_external_image_fenced_fd(
