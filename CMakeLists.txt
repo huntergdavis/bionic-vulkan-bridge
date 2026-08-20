@@ -281,6 +281,9 @@ target_link_libraries(
   PRIVATE bvb-command-batch bvb-vulkan-discovery bvb-wire Threads::Threads
           Vulkan::Headers
 )
+target_link_options(
+  bvb-vulkan-client-dispatch PRIVATE "-Wl,-Bsymbolic-functions"
+)
 set_target_properties(
   bvb-vulkan-client-dispatch
   PROPERTIES C_VISIBILITY_PRESET hidden OUTPUT_NAME vulkan-bvb

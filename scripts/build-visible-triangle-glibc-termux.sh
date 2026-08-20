@@ -56,6 +56,7 @@ grun -s gcc -std=c17 -O3 -DNDEBUG -fPIC -fvisibility=hidden \
     "$project_dir/src/global_dispatch.c" \
     "$project_dir/src/triangle_dispatch.c" \
     -pthread \
+    -Wl,-Bsymbolic-functions \
     -Wl,-soname,libvulkan-bvb-glibc.so \
     -o "$library"
 cp "$project_dir/config/bvb_icd.aarch64.json" "$icd_manifest"
