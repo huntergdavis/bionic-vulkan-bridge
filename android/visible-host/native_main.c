@@ -128,6 +128,7 @@ static pthread_mutex_t external_memory_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_once_t external_broker_once = PTHREAD_ONCE_INIT;
 static pthread_once_t native_binder_once = PTHREAD_ONCE_INIT;
+static AIBinder *native_binder_service;
 static struct bvb_renderer_control renderer = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
     .condition = PTHREAD_COND_INITIALIZER,
@@ -514,10 +515,9 @@ static void start_native_binder_service(void) {
         return;
     }
     ABinderProcess_startThreadPool();
+    native_binder_service = binder;
     BVB_LOGI("E040_NATIVE_BINDER_SERVICE_READY instance=%s",
              BVB_NATIVE_BINDER_INSTANCE);
-    /* The service manager owns a remote strong reference for process life. */
-    AIBinder_decStrong(binder);
 }
 
 /* external_memory_mutex must be held. */
