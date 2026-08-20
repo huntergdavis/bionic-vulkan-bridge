@@ -164,7 +164,7 @@ imported it, mapped it, and recovered all 4,096 patterned bytes with zero
 mismatches. E036's cross-UID path is implemented: the visible renderer exports
 from its own device, Binder carries the descriptor into Termux, and a Bionic
 receiver imports and verifies it. Hardware validation is pending installation
-of visible-host v23; no E036 pass is claimed yet. Binder is allocation-time
+of visible-host v24; no E036 pass is claimed yet. Binder is allocation-time
 control only and is absent from the frame path.
 
 ## Build and test on a normal Linux host

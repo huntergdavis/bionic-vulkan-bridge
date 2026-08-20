@@ -1897,17 +1897,16 @@ triangle, DXVK startup, a game FPS result, or removal of Termux.
 
 ## E036 — Visible-renderer external-memory handoff (2026-08-19)
 
-Status: implemented at source commit `8cc3cad`; real-hardware validation is
-pending installation of visible-host v23. No E036 pass is claimed.
+Status: implemented; real-hardware validation is pending installation of
+visible-host v24. No E036 pass is claimed.
 
 The bounded gate creates the exportable allocation on the visible Activity's
 actual Adreno `VkDevice`, exports one opaque FD, returns it through the existing
 Binder callback, relays it into Termux with same-UID `SCM_RIGHTS`, and imports
 it in a separate Android-Bionic Vulkan process. The receiver checks all 4,096
 deterministic bytes and rejects a wrong 256-bit capability. The host contract
-suite now contains 20 tests and passes 20/20. The v23 APK also compiles under
-NDK r29 with `-O3 -Werror`, has a valid v2/v3 signature, and declares version
-code 23.
+suite now contains 20 tests and passes 20/20. The APK compiles under NDK r29
+with `-O3 -Werror` and has a valid v2/v3 signature.
 
 Hardware attempts through installed v21 reached a live, focused 2800x1752
 renderer but failed before Vulkan import. The fixed internal endpoint in v19
@@ -1925,17 +1924,18 @@ shape from repository commit `52165b7` while avoiding a stale
 `pthread_once`-derived address. Java, Binder, and socket setup execute only when
 an allocation is shared; none are present in the frame hot path.
 
-v23 also restores an explicit visual liveness signal. When no external frame
-producer is attached, the already-created native Vulkan device and swapchain
-present a rotating triangle at 30 FPS. External ingress disables this local
-heartbeat, so it cannot consume game-frame budget. This reuses E033's typed
-push-constant rotation from commit `3be1388` rather than adding a Java animation
-path.
+v23 restored an explicit visual liveness signal. v24 removes its artificial
+30-FPS sleep and lets FIFO swapchain acquisition/presentation follow the active
+display refresh: 60 Hz in the tablet's 60-Hz mode and up to 120 Hz in 120-Hz
+mode. A native counter reports achieved FPS every 120 frames. External ingress
+disables this local heartbeat, so it cannot consume game-frame budget. This
+reuses E033's typed push-constant rotation from commit `3be1388` rather than
+adding a Java animation path.
 
 The required recall queries for the broker refusal, lifecycle ordering,
 Activity reuse, and Package Manager install path returned no indexed prior
 sessions. Unattended installation was attempted without weakening security:
 SELinux denied system-server reads from Termux private storage, and streamed
-installation was rejected for the Termux caller. The signed v23 APK therefore
+installation was rejected for the Termux caller. The signed v24 APK therefore
 requires the normal one-tap Android update confirmation before the hardware
 gate can run.

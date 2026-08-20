@@ -117,7 +117,6 @@ enum {
     BVB_E020_REGION_BYTES = 4096,
     BVB_E022_REGION_GENERATION = 1,
     BVB_E023_MAX_FRAMES = 4096,
-    BVB_LOCAL_HEARTBEAT_INTERVAL_NS = 33333333,
     BVB_E036_TOKEN_HEX_BYTES = BVB_LIFECYCLE_TOKEN_SIZE * 2,
     BVB_E036_RESPONSE_BYTES = 20,
 };
@@ -2201,18 +2200,20 @@ static bool renderer_generation_current(uint64_t generation,
     return current;
 }
 
+static uint64_t monotonic_nanoseconds(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0U;
+    return (uint64_t)now.tv_sec * UINT64_C(1000000000) +
+           (uint64_t)now.tv_nsec;
+}
+
 static int animate_local_heartbeat(uint64_t generation,
                                    ANativeWindow *window) {
-    const struct timespec interval = {
-        .tv_nsec = BVB_LOCAL_HEARTBEAT_INTERVAL_NS,
-    };
     uint64_t sequence = 2U;
-    BVB_LOGI("E033_HEARTBEAT_BEGIN fps=30");
+    uint64_t measurement_started_ns = monotonic_nanoseconds();
+    uint32_t measured_frames = 0U;
+    BVB_LOGI("E033_HEARTBEAT_BEGIN pacing=fifo_display target_hz=60_or_120");
     while (renderer_generation_current(generation, window)) {
-        struct timespec remaining = interval;
-        while (nanosleep(&remaining, &remaining) != 0 && errno == EINTR) {}
-        if (!renderer_generation_current(generation, window)) break;
-
         uint8_t triangle_batch[512];
         size_t triangle_batch_length = 0U;
         int status = build_triangle_batch(
@@ -2230,9 +2231,21 @@ static int animate_local_heartbeat(uint64_t generation,
                      (unsigned long long)sequence, status);
             return status;
         }
-        if (sequence % 300U == 0U) {
-            BVB_LOGI("E033_HEARTBEAT_ALIVE sequence=%llu index=%u",
-                     (unsigned long long)sequence, image_index);
+        measured_frames += 1U;
+        if (measured_frames == 120U) {
+            const uint64_t measured_ns = monotonic_nanoseconds();
+            if (measurement_started_ns != 0U &&
+                measured_ns > measurement_started_ns) {
+                const uint64_t elapsed_ns =
+                    measured_ns - measurement_started_ns;
+                const uint64_t fps_milli =
+                    UINT64_C(120000000000000) / elapsed_ns;
+                BVB_LOGI("E033_HEARTBEAT_RATE fps=%llu.%03llu index=%u",
+                         (unsigned long long)(fps_milli / 1000U),
+                         (unsigned long long)(fps_milli % 1000U), image_index);
+            }
+            measurement_started_ns = measured_ns;
+            measured_frames = 0U;
         }
         sequence = sequence == UINT64_MAX ? 1U : sequence + 1U;
     }
