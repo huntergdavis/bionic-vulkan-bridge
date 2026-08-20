@@ -81,7 +81,7 @@ int main(void) {
     };
     CHECK(bvb_protocol_encode_header(wire, &last_opcode_header) == 0);
     CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
-    CHECK(decoded.opcode == BVB_OPCODE_EXTERNAL_IMAGE_IMPORT_TEST);
+    CHECK(decoded.opcode == BVB_OPCODE_EXTERNAL_IMAGE_FENCED_IMPORT_TEST);
 
     const struct bvb_hello_request hello = {
         .minimum_version = 1,

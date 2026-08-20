@@ -30,13 +30,16 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        boolean externalImage =
+        boolean fencedImage =
+                SharedRegionClient.ACTION_EXTERNAL_IMAGE_FENCED.equals(
+                        intent.getAction());
+        boolean externalImage = fencedImage ||
                 SharedRegionClient.ACTION_EXTERNAL_IMAGE.equals(
                         intent.getAction());
-        boolean externalSync = externalImage ||
+        boolean externalSync = !fencedImage && (externalImage ||
                 SharedRegionClient.ACTION_EXTERNAL_SYNC.equals(
-                        intent.getAction());
-        boolean external = externalSync ||
+                        intent.getAction()));
+        boolean external = externalImage || externalSync ||
                 SharedRegionClient.ACTION_EXTERNAL_MEMORY.equals(
                 intent.getAction());
         if (!external &&
@@ -65,7 +68,7 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
                             "external-memory capability rejected");
                 }
                 externalResult = SharedRegionProvider.openExternalMemory(
-                        token, externalSync, externalImage);
+                        token, externalSync, externalImage, fencedImage);
                 status = externalResult.status;
                 region = externalResult.descriptor;
                 syncDescriptor = externalResult.syncDescriptor;
@@ -102,7 +105,7 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
                     data.writeLong(externalResult.allocationSize);
                     data.writeInt(externalResult.memoryTypeIndex);
                     data.writeInt(externalResult.bufferBytes);
-                    if (externalSync) {
+                    if (externalImage || externalSync) {
                         data.writeInt(externalResult.expectedFillWord);
                     }
                 }

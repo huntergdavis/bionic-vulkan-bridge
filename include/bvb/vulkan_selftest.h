@@ -103,6 +103,14 @@ int bvb_vulkan_batch_context_import_external_image_fds(
     uint32_t format, uint32_t expected_color,
     struct bvb_vulkan_external_image_result *result,
     char *error, size_t error_size);
+/* Consumes external_memory_fd. The producer must complete and externally
+ * release its GPU writes before this host-fenced import begins. */
+int bvb_vulkan_batch_context_import_external_image_fenced_fd(
+    struct bvb_vulkan_batch_context *context, int external_memory_fd,
+    uint64_t allocation_size, uint32_t memory_type_index, uint32_t width,
+    uint32_t height, uint32_t format, uint32_t expected_color,
+    struct bvb_vulkan_external_image_result *result,
+    char *error, size_t error_size);
 void bvb_vulkan_batch_context_destroy(
     struct bvb_vulkan_batch_context *context);
 

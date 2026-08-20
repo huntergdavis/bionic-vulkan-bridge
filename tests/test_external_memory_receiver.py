@@ -152,6 +152,56 @@ def main():
     assert image_document["mismatched_pixels"] == 0
     assert image_document["gpu_wait_elapsed_ns"] >= 0
 
+    fenced_socket_name = f"bvb-e041-host-{os.getpid()}"
+    fenced_process = subprocess.Popen(
+        [receiver, "--socket", fenced_socket_name, "--loader", loader],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert fenced_process.stdout.readline().startswith(
+        "bvb-external-memory-receiver: ready"
+    )
+    fenced_memory = os.memfd_create("bvb-e041-image", os.MFD_CLOEXEC)
+    os.ftruncate(fenced_memory, image_bytes)
+    os.pwrite(
+        fenced_memory,
+        struct.pack("<I", expected_color) * (width * height),
+        0,
+    )
+    fenced_client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    fenced_client.connect("\0" + fenced_socket_name)
+    fenced_header = struct.pack(
+        "<IHHHHIIi", 0x31425642, 1, 1, 53, 0, 0xE041, 32, 0
+    )
+    fenced_rights = array.array("i", [fenced_memory])
+    fenced_client.sendmsg(
+        [fenced_header + image_payload],
+        [(socket.SOL_SOCKET, socket.SCM_RIGHTS, fenced_rights.tobytes())],
+    )
+    fenced_response = b""
+    while len(fenced_response) < 24:
+        fenced_response += fenced_client.recv(24 - len(fenced_response))
+    fenced_client.close()
+    os.close(fenced_memory)
+    fenced_fields = struct.unpack("<IHHHHIIi", fenced_response)
+    assert fenced_fields == (0x31425642, 1, 2, 53, 0, 0xE041, 0, 0)
+    fenced_output, fenced_error = fenced_process.communicate(timeout=10)
+    assert fenced_process.returncode == 0, fenced_error
+    fenced_document = json.loads(fenced_output)
+    assert fenced_document["gate"] == "E041"
+    assert fenced_document["result"] == "pass"
+    assert fenced_document["descriptor_count"] == 1
+    assert fenced_document["transport"] == (
+        "binder_then_scm_rights_opaque_image_after_producer_fence"
+    )
+    assert fenced_document["width"] == width
+    assert fenced_document["height"] == height
+    assert fenced_document["format"] == 37
+    assert fenced_document["expected_color"] == expected_color
+    assert fenced_document["mismatched_pixels"] == 0
+    assert fenced_document["gpu_wait_elapsed_ns"] >= 0
+
 
 if __name__ == "__main__":
     main()

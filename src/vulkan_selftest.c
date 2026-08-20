@@ -1731,8 +1731,9 @@ int bvb_vulkan_batch_context_import_external_image_fds(
     if (output != NULL) memset(output, 0, sizeof(*output));
     const uint64_t pixel_bytes =
         (uint64_t)width * (uint64_t)height * sizeof(uint32_t);
+    const bool semaphore_synchronized = external_semaphore_fd >= 0;
     if (context == NULL || output == NULL || external_memory_fd < 0 ||
-        external_semaphore_fd < 0 || allocation_size == 0U ||
+        external_semaphore_fd < -1 || allocation_size == 0U ||
         memory_type_index >= context->memory_properties.memoryTypeCount ||
         width == 0U || height == 0U || width > 4096U || height > 4096U ||
         pixel_bytes == 0U || pixel_bytes > UINT64_C(16) * 1024U * 1024U ||
@@ -1798,9 +1799,10 @@ int bvb_vulkan_batch_context_import_external_image_fds(
         imported_vkBindBufferMemory == NULL || imported_vkMapMemory == NULL ||
         imported_vkUnmapMemory == NULL ||
         imported_vkInvalidateMappedMemoryRanges == NULL ||
-        imported_vkCreateSemaphore == NULL ||
-        imported_vkDestroySemaphore == NULL ||
-        imported_vkImportSemaphoreFdKHR == NULL ||
+        (semaphore_synchronized &&
+         (imported_vkCreateSemaphore == NULL ||
+          imported_vkDestroySemaphore == NULL ||
+          imported_vkImportSemaphoreFdKHR == NULL)) ||
         imported_vkResetCommandPool == NULL ||
         imported_vkBeginCommandBuffer == NULL ||
         imported_vkEndCommandBuffer == NULL ||
@@ -1998,12 +2000,14 @@ int bvb_vulkan_batch_context_import_external_image_fds(
         goto done;
     }
 
-    const VkSemaphoreCreateInfo semaphore_info = {
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-    };
-    vk_result = imported_vkCreateSemaphore(
-        context->objects.device, &semaphore_info, NULL, &semaphore);
-    if (vk_result == VK_SUCCESS) {
+    if (semaphore_synchronized) {
+        const VkSemaphoreCreateInfo semaphore_info = {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        };
+        vk_result = imported_vkCreateSemaphore(
+            context->objects.device, &semaphore_info, NULL, &semaphore);
+    }
+    if (semaphore_synchronized && vk_result == VK_SUCCESS) {
         const VkImportSemaphoreFdInfoKHR semaphore_import = {
             .sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR,
             .semaphore = semaphore,
@@ -2086,9 +2090,9 @@ int bvb_vulkan_batch_context_import_external_image_fds(
     const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
     const VkSubmitInfo submit_info = {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .waitSemaphoreCount = 1U,
-        .pWaitSemaphores = &semaphore,
-        .pWaitDstStageMask = &wait_stage,
+        .waitSemaphoreCount = semaphore_synchronized ? 1U : 0U,
+        .pWaitSemaphores = semaphore_synchronized ? &semaphore : NULL,
+        .pWaitDstStageMask = semaphore_synchronized ? &wait_stage : NULL,
         .commandBufferCount = 1U,
         .pCommandBuffers = &context->command_buffer,
     };
@@ -2174,6 +2178,17 @@ done:
         imported_vkFreeMemory(context->objects.device, image_memory, NULL);
     }
     return status;
+}
+
+int bvb_vulkan_batch_context_import_external_image_fenced_fd(
+    struct bvb_vulkan_batch_context *context, int external_memory_fd,
+    uint64_t allocation_size, uint32_t memory_type_index, uint32_t width,
+    uint32_t height, uint32_t format, uint32_t expected_color,
+    struct bvb_vulkan_external_image_result *output,
+    char *error, size_t error_size) {
+    return bvb_vulkan_batch_context_import_external_image_fds(
+        context, external_memory_fd, -1, allocation_size, memory_type_index,
+        width, height, format, expected_color, output, error, error_size);
 }
 
 void bvb_vulkan_batch_context_destroy(

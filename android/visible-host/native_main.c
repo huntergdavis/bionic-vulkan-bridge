@@ -867,11 +867,13 @@ static void handle_external_broker_connection(int connection) {
     }
     const bool direct_channel =
         request[BVB_E036_TOKEN_HEX_BYTES] == 'P';
-    const bool external_image = direct_channel ||
+    const bool fenced_image =
+        request[BVB_E036_TOKEN_HEX_BYTES] == 'F';
+    const bool external_image = direct_channel || fenced_image ||
         request[BVB_E036_TOKEN_HEX_BYTES] == 'I';
-    const bool synchronized = external_image ||
-        request[BVB_E036_TOKEN_HEX_BYTES] == 'S';
-    if (status == 0 && !synchronized &&
+    const bool synchronized = !fenced_image &&
+        (external_image || request[BVB_E036_TOKEN_HEX_BYTES] == 'S');
+    if (status == 0 && !synchronized && !fenced_image &&
         request[BVB_E036_TOKEN_HEX_BYTES] != 'M') {
         status = -EPROTO;
     }
@@ -896,33 +898,46 @@ static void handle_external_broker_connection(int connection) {
     uint64_t allocation_size = 0U;
     uint32_t memory_type_index = 0U;
     (void)pthread_mutex_lock(&external_memory_mutex);
-    if (status == 0 && synchronized) {
+    if (status == 0 && fenced_image) {
+        if (!external_image_cache.ready || state.queue == VK_NULL_HANDLE) {
+            status = -EAGAIN;
+        } else {
+            (void)pthread_mutex_lock(&queue_mutex);
+            const VkResult wait_result = vkQueueWaitIdle(state.queue);
+            (void)pthread_mutex_unlock(&queue_mutex);
+            if (wait_result != VK_SUCCESS) status = -EIO;
+        }
+    }
+    if (status == 0 && (synchronized || fenced_image)) {
         const struct bvb_external_sync_cache *cache = external_image
                                                           ? &external_image_cache
                                                           : &external_sync_cache;
         if (!cache->ready || cache->memory_fd < 0 ||
-            cache->semaphore_fd < 0) {
+            (synchronized && cache->semaphore_fd < 0)) {
             status = -EAGAIN;
         } else {
             descriptors[0] = fcntl(
                 cache->memory_fd, F_DUPFD_CLOEXEC, 0);
-            descriptors[1] = fcntl(
-                cache->semaphore_fd, F_DUPFD_CLOEXEC, 0);
-            if (descriptors[0] < 0 || descriptors[1] < 0) {
+            if (synchronized) {
+                descriptors[1] = fcntl(
+                    cache->semaphore_fd, F_DUPFD_CLOEXEC, 0);
+            }
+            if (descriptors[0] < 0 ||
+                (synchronized && descriptors[1] < 0)) {
                 status = -errno;
             } else {
                 allocation_size = cache->allocation_size;
                 memory_type_index = cache->memory_type_index;
-                descriptor_count = 2U;
+                descriptor_count = synchronized ? 2U : 1U;
             }
         }
-    } else if (status == 0 &&
+    } else if (status == 0 && !fenced_image &&
         (state.device == VK_NULL_HANDLE ||
          state.external_memory == VK_NULL_HANDLE ||
          state.get_memory_fd == NULL)) {
         status = -EAGAIN;
     }
-    if (status == 0 && !synchronized) {
+    if (status == 0 && !synchronized && !fenced_image) {
         const VkMemoryGetFdInfoKHR fd_info = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
             .memory = state.external_memory,
@@ -954,14 +969,18 @@ static void handle_external_broker_connection(int connection) {
     if (status == 0 && send_status == 0) {
         if (external_image) {
             BVB_LOGI("%s width=%u height=%u format=%u color=%u "
-                     "allocation=%llu type=%u descriptors=2 "
-                     "semaphore=sync_fd peer_uid=%u",
-                     direct_channel ? "E039_DIRECT_EXPORT_PASS"
-                                    : "E038_EXPORT_PASS",
+                     "allocation=%llu type=%u descriptors=%u "
+                     "synchronization=%s peer_uid=%u",
+                     direct_channel
+                         ? "E039_DIRECT_EXPORT_PASS"
+                         : fenced_image ? "E041_FENCED_IMAGE_EXPORT_PASS"
+                                        : "E038_EXPORT_PASS",
                      BVB_E038_IMAGE_WIDTH, BVB_E038_IMAGE_HEIGHT,
                      (unsigned int)VK_FORMAT_R8G8B8A8_UNORM,
                      BVB_E038_COLOR_WORD,
                      (unsigned long long)allocation_size, memory_type_index,
+                     fenced_image ? 1U : 2U,
+                     fenced_image ? "producer_queue_idle" : "sync_fd",
                      (unsigned int)credentials.uid);
         } else if (synchronized) {
             BVB_LOGI("E037_EXPORT_PASS bytes=%u allocation=%llu type=%u "
