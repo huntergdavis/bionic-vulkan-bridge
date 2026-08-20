@@ -155,6 +155,14 @@ int main(void) {
     PFN_vkGetPhysicalDeviceFormatProperties get_format_properties = NULL;
     PFN_vkGetPhysicalDeviceImageFormatProperties get_image_format_properties =
         NULL;
+    PFN_vkGetPhysicalDeviceFeatures2 get_features2 = NULL;
+    PFN_vkGetPhysicalDeviceProperties2 get_properties2 = NULL;
+    PFN_vkGetPhysicalDeviceFormatProperties2 get_format_properties2 = NULL;
+    PFN_vkGetPhysicalDeviceImageFormatProperties2 get_image_properties2 = NULL;
+    PFN_vkGetPhysicalDeviceQueueFamilyProperties2 get_queue_properties2 = NULL;
+    PFN_vkGetPhysicalDeviceMemoryProperties2 get_memory_properties2 = NULL;
+    PFN_vkGetPhysicalDeviceSparseImageFormatProperties2 get_sparse_properties2 =
+        NULL;
     PFN_vkEnumerateDeviceExtensionProperties enumerate_device_extensions =
         NULL;
 #define RESOLVE_INSTANCE(entry_name, variable)                                \
@@ -173,6 +181,18 @@ int main(void) {
                      get_format_properties);
     RESOLVE_INSTANCE(vkGetPhysicalDeviceImageFormatProperties,
                      get_image_format_properties);
+    RESOLVE_INSTANCE(vkGetPhysicalDeviceFeatures2, get_features2);
+    RESOLVE_INSTANCE(vkGetPhysicalDeviceProperties2, get_properties2);
+    RESOLVE_INSTANCE(vkGetPhysicalDeviceFormatProperties2,
+                     get_format_properties2);
+    RESOLVE_INSTANCE(vkGetPhysicalDeviceImageFormatProperties2,
+                     get_image_properties2);
+    RESOLVE_INSTANCE(vkGetPhysicalDeviceQueueFamilyProperties2,
+                     get_queue_properties2);
+    RESOLVE_INSTANCE(vkGetPhysicalDeviceMemoryProperties2,
+                     get_memory_properties2);
+    RESOLVE_INSTANCE(vkGetPhysicalDeviceSparseImageFormatProperties2,
+                     get_sparse_properties2);
     RESOLVE_INSTANCE(vkEnumerateDeviceExtensionProperties,
                      enumerate_device_extensions);
 #undef RESOLVE_INSTANCE
@@ -211,6 +231,51 @@ int main(void) {
               &image_format_properties) == VK_ERROR_FORMAT_NOT_SUPPORTED);
     CHECK(image_format_properties.maxExtent.width == 0U);
 
+    VkPhysicalDeviceFeatures2 features2 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+    };
+    get_features2(physical_device, &features2);
+    CHECK(features2.features.samplerAnisotropy == VK_TRUE);
+    VkPhysicalDeviceProperties2 properties2 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+    };
+    get_properties2(physical_device, &properties2);
+    CHECK(properties2.properties.vendorID == properties.vendorID);
+    VkFormatProperties2 format_properties2 = {
+        .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2,
+    };
+    get_format_properties2(
+        physical_device, VK_FORMAT_R8G8B8A8_UNORM, &format_properties2);
+    CHECK(format_properties2.formatProperties.optimalTilingFeatures ==
+          format_properties.optimalTilingFeatures);
+    const VkPhysicalDeviceImageFormatInfo2 image_info2 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
+        .format = VK_FORMAT_R8G8B8A8_UNORM,
+        .type = VK_IMAGE_TYPE_2D,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+    };
+    VkImageFormatProperties2 image_properties2 = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2,
+    };
+    CHECK(get_image_properties2(
+              physical_device, &image_info2, &image_properties2) ==
+          VK_SUCCESS);
+    CHECK(image_properties2.imageFormatProperties.maxExtent.width == 4096U);
+    const VkPhysicalDeviceSparseImageFormatInfo2 sparse_info2 = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SPARSE_IMAGE_FORMAT_INFO_2,
+        .format = VK_FORMAT_R8G8B8A8_UNORM,
+        .type = VK_IMAGE_TYPE_2D,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+    };
+    uint32_t sparse_count = 99U;
+    get_sparse_properties2(
+        physical_device, &sparse_info2, &sparse_count, NULL);
+    CHECK(sparse_count == 0U);
+
     uint32_t queue_count = 0U;
     get_queue_properties(physical_device, &queue_count, NULL);
     CHECK(queue_count > 0U);
@@ -237,6 +302,17 @@ int main(void) {
     }
     CHECK(usable_queue);
     CHECK(queue_family_index != UINT32_MAX);
+    uint32_t queue2_count = available_queue_count;
+    VkQueueFamilyProperties2 *queues2 =
+        calloc(queue2_count, sizeof(*queues2));
+    CHECK(queues2 != NULL);
+    for (uint32_t index = 0U; index < queue2_count; ++index) {
+        queues2[index].sType = VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2;
+    }
+    get_queue_properties2(physical_device, &queue2_count, queues2);
+    CHECK(queue2_count == available_queue_count);
+    CHECK(queues2[queue_family_index].queueFamilyProperties.queueCount > 0U);
+    free(queues2);
     free(queues);
 
     VkPhysicalDeviceMemoryProperties memory;
@@ -248,6 +324,12 @@ int main(void) {
     for (uint32_t index = 0U; index < memory.memoryTypeCount; ++index) {
         CHECK(memory.memoryTypes[index].heapIndex < memory.memoryHeapCount);
     }
+    VkPhysicalDeviceMemoryProperties2 memory2 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2,
+    };
+    get_memory_properties2(physical_device, &memory2);
+    CHECK(memory2.memoryProperties.memoryTypeCount == memory.memoryTypeCount);
+    CHECK(memory2.memoryProperties.memoryHeapCount == memory.memoryHeapCount);
 
     uint32_t device_extension_count = 0U;
     CHECK(enumerate_device_extensions(

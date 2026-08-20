@@ -14,7 +14,7 @@ int main(void) {
     }
     const VkApplicationInfo application = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-        .pApplicationName = "bvb-e046-icd-loader",
+        .pApplicationName = "bvb-e047-icd-loader",
         .applicationVersion = 1U,
         .pEngineName = "bvb",
         .engineVersion = 1U,
@@ -58,13 +58,40 @@ int main(void) {
         vkDestroyInstance(instance, NULL);
         return 1;
     }
+    VkPhysicalDeviceProperties2 properties2 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+    };
+    vkGetPhysicalDeviceProperties2(physical_device, &properties2);
+    VkPhysicalDeviceFeatures2 features2 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+    };
+    vkGetPhysicalDeviceFeatures2(physical_device, &features2);
+    VkPhysicalDeviceMemoryProperties2 memory2 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2,
+    };
+    vkGetPhysicalDeviceMemoryProperties2(physical_device, &memory2);
+    if (strcmp(properties2.properties.deviceName, properties.deviceName) != 0 ||
+        features2.features.samplerAnisotropy != VK_TRUE ||
+        memory2.memoryProperties.memoryTypeCount == 0U ||
+        memory2.memoryProperties.memoryHeapCount == 0U) {
+        fputs("Vulkan 1.1 physical-device discovery failed\n", stderr);
+        vkDestroyInstance(instance, NULL);
+        return 1;
+    }
 
     VkFormatProperties format_properties;
     memset(&format_properties, 0, sizeof(format_properties));
     vkGetPhysicalDeviceFormatProperties(
         physical_device, VK_FORMAT_R8G8B8A8_UNORM, &format_properties);
+    VkFormatProperties2 format_properties2 = {
+        .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2,
+    };
+    vkGetPhysicalDeviceFormatProperties2(
+        physical_device, VK_FORMAT_R8G8B8A8_UNORM, &format_properties2);
     if ((format_properties.optimalTilingFeatures &
-         VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) == 0U) {
+         VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) == 0U ||
+        format_properties2.formatProperties.optimalTilingFeatures !=
+            format_properties.optimalTilingFeatures) {
         fputs("RGBA8 optimal tiling lacks sampled-image support\n", stderr);
         vkDestroyInstance(instance, NULL);
         return 1;
@@ -179,13 +206,16 @@ int main(void) {
     }
     vkDestroyDevice(device, NULL);
     vkDestroyInstance(instance, NULL);
-    printf("PASS: Vulkan loader selected BVB ICD api=%u device=%s vendor=%u device_id=%u rgba8_optimal=%u max_extent=%ux%ux%u max_resource=%llu queue_family=%u enabled_extension=%s device_idle=pass\n",
+    printf("PASS: Vulkan loader selected BVB ICD api=%u device=%s vendor=%u device_id=%u rgba8_optimal=%u max_extent=%ux%ux%u max_resource=%llu queue_family=%u enabled_extension=%s features2_anisotropy=%u memory2_types=%u memory2_heaps=%u device_idle=pass\n",
            api_version, properties.deviceName, properties.vendorID,
            properties.deviceID, format_properties.optimalTilingFeatures,
            image_properties.maxExtent.width,
            image_properties.maxExtent.height,
            image_properties.maxExtent.depth,
            (unsigned long long)image_properties.maxResourceSize,
-           queue_family_index, VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+           queue_family_index, VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+           features2.features.samplerAnisotropy,
+           memory2.memoryProperties.memoryTypeCount,
+           memory2.memoryProperties.memoryHeapCount);
     return 0;
 }

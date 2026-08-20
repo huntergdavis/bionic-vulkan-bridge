@@ -1304,6 +1304,115 @@ bvb_bridge_vkGetPhysicalDeviceSparseImageFormatProperties(
     *property_count = 0U;
 }
 
+static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFeatures2(
+    VkPhysicalDevice physical_device, VkPhysicalDeviceFeatures2 *features) {
+    if (features == NULL ||
+        features->sType != VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2) {
+        return;
+    }
+    bvb_bridge_vkGetPhysicalDeviceFeatures(
+        physical_device, &features->features);
+}
+
+static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceProperties2(
+    VkPhysicalDevice physical_device,
+    VkPhysicalDeviceProperties2 *properties) {
+    if (properties == NULL ||
+        properties->sType != VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2) {
+        return;
+    }
+    bvb_bridge_vkGetPhysicalDeviceProperties(
+        physical_device, &properties->properties);
+}
+
+static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFormatProperties2(
+    VkPhysicalDevice physical_device, VkFormat format,
+    VkFormatProperties2 *properties) {
+    if (properties == NULL ||
+        properties->sType !=
+            VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2) {
+        return;
+    }
+    bvb_bridge_vkGetPhysicalDeviceFormatProperties(
+        physical_device, format, &properties->formatProperties);
+}
+
+static VkResult VKAPI_CALL
+bvb_bridge_vkGetPhysicalDeviceImageFormatProperties2(
+    VkPhysicalDevice physical_device,
+    const VkPhysicalDeviceImageFormatInfo2 *image_info,
+    VkImageFormatProperties2 *properties) {
+    if (image_info == NULL || properties == NULL ||
+        image_info->sType !=
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2 ||
+        properties->sType !=
+            VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2 ||
+        image_info->pNext != NULL || properties->pNext != NULL) {
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    }
+    return bvb_bridge_vkGetPhysicalDeviceImageFormatProperties(
+        physical_device, image_info->format, image_info->type,
+        image_info->tiling, image_info->usage, image_info->flags,
+        &properties->imageFormatProperties);
+}
+
+static void VKAPI_CALL
+bvb_bridge_vkGetPhysicalDeviceQueueFamilyProperties2(
+    VkPhysicalDevice physical_device, uint32_t *property_count,
+    VkQueueFamilyProperties2 *properties) {
+    if (property_count == NULL) {
+        return;
+    }
+    if (properties == NULL) {
+        bvb_bridge_vkGetPhysicalDeviceQueueFamilyProperties(
+            physical_device, property_count, NULL);
+        return;
+    }
+    const uint32_t capacity = *property_count;
+    if (capacity > BVB_VULKAN_MAX_QUEUE_FAMILIES) {
+        *property_count = 0U;
+        return;
+    }
+    VkQueueFamilyProperties decoded[BVB_VULKAN_MAX_QUEUE_FAMILIES];
+    uint32_t written = capacity;
+    bvb_bridge_vkGetPhysicalDeviceQueueFamilyProperties(
+        physical_device, &written, decoded);
+    for (uint32_t index = 0U; index < written; ++index) {
+        if (properties[index].sType ==
+            VK_STRUCTURE_TYPE_QUEUE_FAMILY_PROPERTIES_2) {
+            properties[index].queueFamilyProperties = decoded[index];
+        }
+    }
+    *property_count = written;
+}
+
+static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceMemoryProperties2(
+    VkPhysicalDevice physical_device,
+    VkPhysicalDeviceMemoryProperties2 *properties) {
+    if (properties == NULL || properties->sType !=
+                                  VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2) {
+        return;
+    }
+    bvb_bridge_vkGetPhysicalDeviceMemoryProperties(
+        physical_device, &properties->memoryProperties);
+}
+
+static void VKAPI_CALL
+bvb_bridge_vkGetPhysicalDeviceSparseImageFormatProperties2(
+    VkPhysicalDevice physical_device,
+    const VkPhysicalDeviceSparseImageFormatInfo2 *format_info,
+    uint32_t *property_count,
+    VkSparseImageFormatProperties2 *properties) {
+    (void)properties;
+    if (physical_device_proxy(physical_device) == NULL ||
+        format_info == NULL || property_count == NULL ||
+        format_info->sType !=
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SPARSE_IMAGE_FORMAT_INFO_2) {
+        return;
+    }
+    *property_count = 0U;
+}
+
 static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
     VkPhysicalDevice physical_device, const VkDeviceCreateInfo *create_info,
     const VkAllocationCallbacks *allocator, VkDevice *device) {
@@ -2861,6 +2970,40 @@ vkGetInstanceProcAddr(VkInstance instance, const char *name) {
         BVB_INSTANCE_MATCH(
             "vkGetPhysicalDeviceSparseImageFormatProperties",
             bvb_bridge_vkGetPhysicalDeviceSparseImageFormatProperties)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceFeatures2",
+                           bvb_bridge_vkGetPhysicalDeviceFeatures2)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceFeatures2KHR",
+                           bvb_bridge_vkGetPhysicalDeviceFeatures2)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceProperties2",
+                           bvb_bridge_vkGetPhysicalDeviceProperties2)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceProperties2KHR",
+                           bvb_bridge_vkGetPhysicalDeviceProperties2)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceFormatProperties2",
+                           bvb_bridge_vkGetPhysicalDeviceFormatProperties2)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceFormatProperties2KHR",
+                           bvb_bridge_vkGetPhysicalDeviceFormatProperties2)
+        BVB_INSTANCE_MATCH(
+            "vkGetPhysicalDeviceImageFormatProperties2",
+            bvb_bridge_vkGetPhysicalDeviceImageFormatProperties2)
+        BVB_INSTANCE_MATCH(
+            "vkGetPhysicalDeviceImageFormatProperties2KHR",
+            bvb_bridge_vkGetPhysicalDeviceImageFormatProperties2)
+        BVB_INSTANCE_MATCH(
+            "vkGetPhysicalDeviceQueueFamilyProperties2",
+            bvb_bridge_vkGetPhysicalDeviceQueueFamilyProperties2)
+        BVB_INSTANCE_MATCH(
+            "vkGetPhysicalDeviceQueueFamilyProperties2KHR",
+            bvb_bridge_vkGetPhysicalDeviceQueueFamilyProperties2)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceMemoryProperties2",
+                           bvb_bridge_vkGetPhysicalDeviceMemoryProperties2)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceMemoryProperties2KHR",
+                           bvb_bridge_vkGetPhysicalDeviceMemoryProperties2)
+        BVB_INSTANCE_MATCH(
+            "vkGetPhysicalDeviceSparseImageFormatProperties2",
+            bvb_bridge_vkGetPhysicalDeviceSparseImageFormatProperties2)
+        BVB_INSTANCE_MATCH(
+            "vkGetPhysicalDeviceSparseImageFormatProperties2KHR",
+            bvb_bridge_vkGetPhysicalDeviceSparseImageFormatProperties2)
         BVB_INSTANCE_MATCH("vkCreateDevice",
                            bvb_bridge_vkCreateDevice)
 #undef BVB_INSTANCE_MATCH
