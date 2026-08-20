@@ -294,11 +294,9 @@ events = [
 ]
 event_codes = {record["event"] for record in events}
 window_events = [record for record in events if record["event"] == 7]
-assert wrong == {
-    "result": "fail",
-    "stage": "request_region",
-    "native_status": -13,
-}
+assert wrong["result"] == "fail"
+assert wrong["stage"] == "request_region"
+assert wrong["native_status"] == -13
 assert valid["result"] == "pass"
 assert valid["binder_region_received"] is True
 assert valid["relay"] == "same_uid_scm_rights"

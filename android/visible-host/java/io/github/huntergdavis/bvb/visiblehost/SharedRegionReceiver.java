@@ -48,6 +48,7 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
 
         SharedRegionProvider.ExternalMemoryResult externalResult = null;
         int status;
+        String failureDetail = null;
         ParcelFileDescriptor region = null;
         try {
             if (external) {
@@ -64,12 +65,24 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
         } catch (Throwable failure) {
             Log.e(LOG_TAG, "failed to obtain shared descriptor", failure);
             status = -5;
+            StringBuilder detail = new StringBuilder();
+            Throwable current = failure;
+            while (current != null) {
+                if (detail.length() != 0) detail.append(" <- ");
+                detail.append(current.toString());
+                current = current.getCause();
+            }
+            failureDetail = detail.toString();
         }
         Parcel data = Parcel.obtain();
         Parcel reply = Parcel.obtain();
         try {
             data.writeInterfaceToken(SharedRegionClient.CALLBACK_DESCRIPTOR);
             data.writeInt(status);
+            if (status != 0) {
+                data.writeString(failureDetail == null
+                        ? "native_status=" + status : failureDetail);
+            }
             if (region != null) {
                 if (external) {
                     data.writeLong(externalResult.allocationSize);

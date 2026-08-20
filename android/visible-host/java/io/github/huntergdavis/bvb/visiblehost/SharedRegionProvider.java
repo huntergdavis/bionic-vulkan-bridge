@@ -63,11 +63,31 @@ public final class SharedRegionProvider extends ContentProvider {
         if (token == null || token.length() != 64) {
             throw new IllegalArgumentException("invalid lifecycle token");
         }
-        LocalSocket socket = new LocalSocket();
+        LocalSocket socket = null;
         try {
-            socket.connect(new LocalSocketAddress(
-                    EXTERNAL_BROKER_SOCKET,
-                    LocalSocketAddress.Namespace.ABSTRACT));
+            Exception lastConnectFailure = null;
+            for (int attempt = 0; attempt < 100; ++attempt) {
+                socket = new LocalSocket();
+                try {
+                    socket.connect(new LocalSocketAddress(
+                            EXTERNAL_BROKER_SOCKET,
+                            LocalSocketAddress.Namespace.ABSTRACT));
+                    lastConnectFailure = null;
+                    break;
+                } catch (Exception failure) {
+                    lastConnectFailure = failure;
+                    try {
+                        socket.close();
+                    } catch (Exception ignored) {}
+                    socket = null;
+                    Thread.sleep(10);
+                }
+            }
+            if (socket == null) {
+                throw new IllegalStateException(
+                        "external broker connect failed",
+                        lastConnectFailure);
+            }
             socket.setSoTimeout(10000);
             OutputStream output = socket.getOutputStream();
             output.write(token.getBytes("US-ASCII"));
@@ -90,7 +110,9 @@ public final class SharedRegionProvider extends ContentProvider {
             }
             return result;
         } finally {
-            socket.close();
+            if (socket != null) {
+                socket.close();
+            }
         }
     }
 

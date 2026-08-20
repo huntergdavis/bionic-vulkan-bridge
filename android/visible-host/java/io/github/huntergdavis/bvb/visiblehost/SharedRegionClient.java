@@ -53,6 +53,7 @@ public final class SharedRegionClient extends Binder {
 
     private boolean delivered;
     private int deliveryStatus;
+    private String deliveryDetail;
     private ParcelFileDescriptor region;
     private boolean requestExternal;
     private long allocationSize;
@@ -71,6 +72,7 @@ public final class SharedRegionClient extends Binder {
         }
         data.enforceInterface(CALLBACK_DESCRIPTOR);
         int status = data.readInt();
+        String detail = status == 0 ? null : data.readString();
         long deliveredAllocationSize = 0L;
         int deliveredMemoryTypeIndex = 0;
         int deliveredBufferBytes = 0;
@@ -92,6 +94,7 @@ public final class SharedRegionClient extends Binder {
                 throw new IllegalStateException("duplicate shared-region delivery");
             }
             deliveryStatus = status;
+            deliveryDetail = detail;
             region = descriptor;
             allocationSize = deliveredAllocationSize;
             memoryTypeIndex = deliveredMemoryTypeIndex;
@@ -381,7 +384,10 @@ public final class SharedRegionClient extends Binder {
                 writeResult(arguments[1],
                         "{\"result\":\"fail\",\"stage\":\"request_region\","
                                 + "\"native_status\":"
-                                + client.deliveryStatus + "}");
+                                + client.deliveryStatus
+                                + ",\"native_detail\":"
+                                + jsonString(client.deliveryDetail == null
+                                        ? "" : client.deliveryDetail) + "}");
                 System.exit(1);
             }
             if (client.region == null) {

@@ -367,11 +367,9 @@ events = [
     for match in event_pattern.finditer(service_path.read_text())
 ]
 event_codes = {record["event"] for record in events}
-assert wrong == {
-    "result": "fail",
-    "stage": "request_region",
-    "native_status": -13,
-}
+assert wrong["result"] == "fail"
+assert wrong["stage"] == "request_region"
+assert wrong["native_status"] == -13
 assert valid["result"] == "pass"
 assert valid["binder_region_received"] is True
 assert valid["relay"] == "same_uid_scm_rights"
