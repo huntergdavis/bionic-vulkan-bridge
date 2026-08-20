@@ -180,8 +180,11 @@ the Vulkan FDs, and E040 proved an ordinary app cannot publish a global native
 Binder service. E041 now proves the revised fast path: framework Binder hands
 off one long-lived image-memory FD, the producer completes its GPU work before
 the handoff, and the consumer imports and matches all 4,096 pixels without an
-external semaphore FD. The next boundary is a shared control page and sustained
-native frame coordination with no per-frame Binder, Java, socket, or FD work.
+external semaphore FD. E042 makes that import persistent and adds a shared
+control page: 120 alternating GPU frames completed with zero pixel mismatches
+in 233.7 ms, while Java, Binder, sockets, and FD transfer remained absent from
+every frame. The next boundary is connecting this persistent presentation path
+to the measured DXVK command stream and launching Tomb Raider 2013.
 
 ## Build and test on a normal Linux host
 

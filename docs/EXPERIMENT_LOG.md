@@ -2117,3 +2117,42 @@ Producer and consumer will use shared atomic sequence/acknowledgement words,
 futex wakeups, and local GPU fences. Java, Binder, sockets, and descriptor
 transfer must remain absent from every measured frame; the initial serialized
 proof can then expand to multiple pipelined slots.
+
+## E042 — Persistent native external-image frame ring (2026-08-20)
+
+Status: passed on real Adreno 730 hardware with visible-host v39. The fixed
+cross-libc synchronization ABI is commit `8b7d593`; the persistent producer,
+consumer, protocol, and Android relay are commit `434439d`; the repeatable
+hardware harness is commit `6369442`.
+
+The framework path transfers exactly two long-lived descriptors during setup:
+one opaque image-memory FD and one 4 KiB control memfd. The consumer imports the
+64×64 optimal-tiling RGBA8 image once and retains that image, its allocation,
+readback allocation, mapping, command pool, and Vulkan device for the complete
+run. Each of 120 measured frames then uses only fixed-width shared atomics,
+process-shared Linux futex wakeups, a producer-local GPU fence, and a
+consumer-local GPU fence. No Java, Binder, socket message, or descriptor
+transfer occurs inside the frame loop.
+
+All 120 alternating magenta/green frames completed and all 491,520 aggregate
+pixel comparisons matched. The serialized native loop took 233,743,020 ns,
+or 1.948 ms per 64×64 validation frame (513.4 handoffs/s). Consumer GPU fence
+waits totaled 59,211,559 ns, or 0.493 ms/frame. Complete receive, one-time
+import, persistent loop, and teardown took 368,773,176 ns. These figures prove
+that allocation/import setup is no longer paid per frame; they are not a
+native-resolution game FPS prediction because the validation image is only
+64×64 and each frame deliberately performs CPU pixel comparison.
+
+The wrong 256-bit capability was rejected with `-EACCES`, receiver stderr was
+empty, and Android surface loss did not destroy the retained external renderer.
+Canonical evidence is `docs/evidence/e042-persistent-frame-ring.json`, 2,276
+bytes, SHA-256
+`b828195c8fd8ca1b8dbe37e1b46d700beb7ec27ce92e4aa0675616e9c18e6744`.
+
+This implementation reuses E035's external allocation ownership, E036's
+one-time Binder relay, E038's external-image import, and the E023 ring's
+sequence/ownership discipline recalled from prior sessions. The required
+`deja` query found no prior E042 implementation or failure diagnosis. The next
+gate connects the persistent native consumer to the generated DXVK path and
+must show a real DXVK frame before attempting the fixed native-resolution Tomb
+Raider 2013 benchmark.
