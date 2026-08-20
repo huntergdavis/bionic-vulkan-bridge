@@ -1895,10 +1895,10 @@ add explicit cross-device synchronization. E035 does not yet claim cross-UID
 sharing, visible consumption, glibc Vulkan import dispatch, a vertex-buffer
 triangle, DXVK startup, a game FPS result, or removal of Termux.
 
-## E036 — Visible-renderer external-memory handoff (2026-08-19)
+## E036 — Visible-renderer external-memory handoff (2026-08-19/20)
 
-Status: implemented; real-hardware validation is pending installation of
-visible-host v24. No E036 pass is claimed.
+Status: passed on real Adreno 730 hardware with visible-host v24 at source
+commit `7388d52`.
 
 The bounded gate creates the exportable allocation on the visible Activity's
 actual Adreno `VkDevice`, exports one opaque FD, returns it through the existing
@@ -1936,6 +1936,30 @@ The required recall queries for the broker refusal, lifecycle ordering,
 Activity reuse, and Package Manager install path returned no indexed prior
 sessions. Unattended installation was attempted without weakening security:
 SELinux denied system-server reads from Termux private storage, and streamed
-installation was rejected for the Termux caller. The signed v24 APK therefore
-requires the normal one-tap Android update confirmation before the hardware
-gate can run.
+installation was rejected for the Termux caller, so the signed v24 APK used the
+normal Android install confirmation.
+
+The hardware gate passed on 2026-08-20. The focused 2800x1752 Activity exported
+a 9,396-byte allocation from its own renderer device. The Binder helper
+received an opaque FD, relayed it by same-UID `SCM_RIGHTS`, and the separate
+Bionic consumer imported it through `/system/lib64/libvulkan.so`. Adreno chose
+host-visible/coherent memory type 4 with flags 7. The consumer recovered all
+4,096 patterned bytes with zero mismatches; its stderr was empty. End-to-end
+receive/import took 155,340,885 ns. The deliberately wrong capability was
+rejected with `-EACCES` before descriptor delivery.
+
+Canonical evidence is `docs/evidence/e036-external-memory-broker.json`, 1,797
+bytes, SHA-256
+`976b6835cbe5233ccba37bbe018d41438cf12770330515842a9eeef58735eb22`.
+The signed v24 APK is 61,865 bytes with SHA-256
+`f91c6b53add62caefe5c671f77a7506c0fd4fb7a47716ef23a6b833fab58f94d`;
+the Bionic receiver is 72,624 bytes with SHA-256
+`b607e5051f67e67b33ed0b0bd259f94ec17f5cf472d788bebda9df5f59358e98`.
+`renderer_export_log_seen` is false because Termux cannot read the other UID's
+logcat buffer; the successful opaque-FD callback and independent import are the
+gate's direct evidence.
+
+The next bounded gate is E037: export/import a GPU synchronization primitive
+and prove ordered producer-to-consumer access without CPU waits or per-frame
+Binder traffic. E036 proves the cross-UID zero-copy transport primitive, not
+shared images, DXVK startup, Tomb Raider output, or a game FPS improvement.

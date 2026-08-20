@@ -1,0 +1,62 @@
+{
+  "schema_version": 1,
+  "gate": "E036",
+  "result": "pass",
+  "target": "Galaxy Tab S8+ Android Bionic Adreno 730",
+  "producer": "visible Android Activity renderer VkDevice",
+  "consumer": "Termux Bionic Vulkan process",
+  "cross_uid_transport": "Binder ParcelFileDescriptor then LocalSocket SCM_RIGHTS",
+  "wrong_capability": {
+    "result": "fail",
+    "stage": "request_region",
+    "native_status": -13,
+    "native_detail": "java.lang.SecurityException: external-memory capability rejected"
+  },
+  "binder_helper": {
+    "result": "pass",
+    "binder_region_received": true,
+    "descriptor_kind": "opaque_fd",
+    "relay": "same_uid_scm_rights",
+    "allocation_size": 9396,
+    "memory_type_index": 4,
+    "buffer_bytes": 4096,
+    "relay_round_trip_ns": 155783281
+  },
+  "external_memory_import": {
+    "schema_version": 1,
+    "gate": "E036",
+    "result": "pass",
+    "transport": "binder_then_scm_rights_opaque_fd",
+    "loader_path": "/system/lib64/libvulkan.so",
+    "peer_uid": 10469,
+    "peer_pid": 29306,
+    "allocation_size": 9396,
+    "memory_type_index": 4,
+    "memory_property_flags": 7,
+    "buffer_bytes": 4096,
+    "mismatched_bytes": 0,
+    "receive_import_ns": 155340885
+  },
+  "activity_status": {
+    "ingress_configured": true,
+    "authenticated_event_count": 6,
+    "rejected_event_count": 0,
+    "last_sequence": 6,
+    "last_event": 11,
+    "state_flags": 63,
+    "created": true,
+    "started": true,
+    "resumed": true,
+    "window_present": true,
+    "renderer_ready": true,
+    "focused": true,
+    "destroyed": false,
+    "width": 2800,
+    "height": 1752,
+    "activity_pid": 5265,
+    "last_event_monotonic_ns": 1027277694860518,
+    "last_event_received_ns": 1027277696096716
+  },
+  "renderer_export_log_seen": false,
+  "receiver_stderr_bytes": 0
+}

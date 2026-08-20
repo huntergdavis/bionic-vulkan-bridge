@@ -163,9 +163,10 @@ device exported a dedicated opaque-FD allocation and a second logical device
 imported it, mapped it, and recovered all 4,096 patterned bytes with zero
 mismatches. E036's cross-UID path is implemented: the visible renderer exports
 from its own device, Binder carries the descriptor into Termux, and a Bionic
-receiver imports and verifies it. Hardware validation is pending installation
-of visible-host v24; no E036 pass is claimed yet. Binder is allocation-time
-control only and is absent from the frame path.
+receiver imports and verifies it. The real Adreno run imported the 9,396-byte
+allocation and recovered all 4,096 patterned bytes with zero mismatches; the
+wrong capability returned `-EACCES`. Binder is allocation-time control only
+and is absent from the frame path.
 
 ## Build and test on a normal Linux host
 
