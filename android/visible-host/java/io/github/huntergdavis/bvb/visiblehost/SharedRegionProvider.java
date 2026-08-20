@@ -16,7 +16,8 @@ import java.util.List;
 
 public final class SharedRegionProvider extends ContentProvider {
     private static final String EXTERNAL_BROKER_SOCKET =
-            "bvb-visible-external-memory-";
+            "bvb-e036-";
+    private static final int EXTERNAL_SOCKET_TOKEN_CHARS = 32;
     private static final int EXTERNAL_RESPONSE_BYTES = 20;
 
     static {
@@ -70,7 +71,9 @@ public final class SharedRegionProvider extends ContentProvider {
                 socket = new LocalSocket();
                 try {
                     socket.connect(new LocalSocketAddress(
-                            EXTERNAL_BROKER_SOCKET + token,
+                            EXTERNAL_BROKER_SOCKET
+                                    + token.substring(
+                                            0, EXTERNAL_SOCKET_TOKEN_CHARS),
                             LocalSocketAddress.Namespace.ABSTRACT));
                     lastConnectFailure = null;
                     break;
