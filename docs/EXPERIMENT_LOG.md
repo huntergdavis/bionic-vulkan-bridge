@@ -2070,3 +2070,50 @@ FDs, and an untrusted app cannot globally publish its own native Binder
 service. The next gate transfers long-lived memory/control handles once via
 the proven Binder callback, exits Java, and tests shared-memory/fence frame
 coordination with no per-frame Binder, Java, socket, or FD transfer.
+
+## E041 — Producer-fenced external image without external semaphore (2026-08-20)
+
+Status: passed on real Adreno 730 hardware with visible-host v38 at source
+commit `12c22f5`. The signed 74,153-byte APK has SHA-256
+`3f6f9b5206e66fa35ee5880967e90db04a0f03d8f2b2dcb3af65e8264e9731a6`.
+
+E037 established that this Adreno supports temporary one-shot `SYNC_FD`
+semaphores but not reusable opaque-FD semaphores. E039 then proved Android
+blocks native cross-UID Vulkan-FD transfer, so a per-frame `SYNC_FD` channel is
+not available to ordinary app UIDs. E041 tests the alternative ownership rule:
+the producer completes and externally releases its image writes with
+`vkQueueWaitIdle` before a one-time framework Binder handoff. The consumer
+imports only the long-lived opaque image-memory FD and uses its own local GPU
+fence for the readback submission; no external semaphore is created or
+imported.
+
+The first unattended v36/v37 attempts exposed a real Android lifecycle race:
+renderer-ready event 11 was followed by window-destroyed event 8 and Activity
+stop event 5 before the Termux `app_process` helper completed startup. v38's
+explicit E041 mode disables the visible heartbeat and retains the external
+Vulkan device/cache across temporary window loss, while real Activity
+destruction still schedules full cleanup. That offscreen lifetime is required
+for a bridge that must survive Android surface churn; it is not a retry around
+`-EAGAIN`.
+
+The hardware gate transferred one 25,780-byte optimal-tiling 64×64 RGBA8 image
+allocation. The consumer imported it through `/system/lib64/libvulkan.so`,
+copied it on-GPU, and matched all 4,096 `0xffff00ff` pixels with zero errors.
+The consumer fence wait was 4,836,562 ns and the complete receive/import path
+was 241,366,667 ns. Exactly one descriptor crossed Binder and the same-UID
+`SCM_RIGHTS` relay. The wrong capability returned `-EACCES`; receiver stderr
+was empty.
+
+Canonical evidence is `docs/evidence/e041-fenced-external-image.json`, 2,329
+bytes, SHA-256
+`42482a09591b0710901c6bf47c951f19857aab785e649e440193c892305e415d`.
+This reuses E035's external allocation ownership, E036's one-time Binder relay,
+E038's image metadata/import path, and E023's sequence/ring discipline for the
+next gate. The required `deja` searches found the prior gate plan but no prior
+E041 implementation or lifecycle diagnosis.
+
+E042 now adds a shared control page beside the long-lived image allocation.
+Producer and consumer will use shared atomic sequence/acknowledgement words,
+futex wakeups, and local GPU fences. Java, Binder, sockets, and descriptor
+transfer must remain absent from every measured frame; the initial serialized
+proof can then expand to multiple pipelined slots.

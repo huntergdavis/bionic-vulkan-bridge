@@ -86,6 +86,8 @@
 - [x] Implement shared GPU synchronization for externally shared resources
 - [x] Share and consume a real GPU image/frame using external memory plus
   `SYNC_FD` ordering, with deterministic GPU readback parity
+- [x] Import a producer-fenced external image from one long-lived memory FD
+  with no external semaphore or per-frame framework IPC
 - [ ] Establish one persistent native frame path using one-time Binder handle
   setup plus shared-memory/fence coordination without per-frame Binder/Java
 - [x] Reach a rendered test triangle

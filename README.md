@@ -177,8 +177,11 @@ cleared a 64×64 optimal-tiling sampled RGBA8 image to magenta, the consumer
 imported it, waited on-GPU, copied it to readback memory, and matched all 4,096
 pixels with zero errors. E039 then proved raw cross-UID sockets cannot transfer
 the Vulkan FDs, and E040 proved an ordinary app cannot publish a global native
-Binder service. The next performance boundary is one-time framework Binder
-setup followed by shared-memory/fence coordination with no per-frame IPC.
+Binder service. E041 now proves the revised fast path: framework Binder hands
+off one long-lived image-memory FD, the producer completes its GPU work before
+the handoff, and the consumer imports and matches all 4,096 pixels without an
+external semaphore FD. The next boundary is a shared control page and sustained
+native frame coordination with no per-frame Binder, Java, socket, or FD work.
 
 ## Build and test on a normal Linux host
 
