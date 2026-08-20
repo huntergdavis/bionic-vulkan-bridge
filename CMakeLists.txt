@@ -334,6 +334,12 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Android")
     bvb-external-image-binder
     PRIVATE bvb-wire bvb-vulkan-selftest-core /system/lib64/libbinder_ndk.so
   )
+  target_compile_options(
+    bvb-external-image-binder PRIVATE --target=aarch64-linux-android29
+  )
+  target_link_options(
+    bvb-external-image-binder PRIVATE --target=aarch64-linux-android29
+  )
   bvb_enable_warnings(bvb-external-image-binder)
   install(TARGETS bvb-external-image-binder RUNTIME DESTINATION bin)
 endif()

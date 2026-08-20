@@ -128,7 +128,8 @@ python "$project_dir/scripts/embed-spirv.py" \
     "$shader_dir/triangle.vert.spv" "$shader_dir/triangle.frag.spv" \
     "$shader_include"
 
-clang -std=c17 -O3 -DNDEBUG -fPIC -fvisibility=hidden \
+clang --target=aarch64-linux-android29 \
+    -std=c17 -O3 -DNDEBUG -fPIC -fvisibility=hidden \
     -Wall -Wextra -Werror -pthread \
     -shared -Wl,-soname,libbvb-visible-host.so \
     -I"$project_dir/include" -I"$vulkan_headers" -I"$shader_dir" \
