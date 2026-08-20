@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <pthread.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -40,6 +41,14 @@ struct shared_batch_region {
     size_t length;
     uint64_t generation;
     uint64_t last_sequence;
+};
+
+struct connection_worker {
+    int client_fd;
+    const char *loader_path;
+    bool activity_ingress;
+    struct bvb_activity_status activity_status;
+    pid_t peer_pid;
 };
 
 static void usage(const char *program) {
@@ -2131,6 +2140,49 @@ static int serve_connection(int client_fd, const char *loader_path,
     return connection_status;
 }
 
+static void *serve_connection_worker(void *opaque) {
+    struct connection_worker *worker = opaque;
+    int result = serve_connection(worker->client_fd, worker->loader_path,
+                                  worker->activity_ingress,
+                                  &worker->activity_status);
+    (void)close(worker->client_fd);
+    if (result != 0) {
+        fprintf(stderr, "bvb: connection from pid %ld failed: %s\n",
+                (long)worker->peer_pid, strerror(-result));
+    }
+    free(worker);
+    return NULL;
+}
+
+static int start_connection_worker(
+    int client_fd, pid_t peer_pid, const struct service_options *options,
+    const struct bvb_activity_status *activity_status) {
+    struct connection_worker *worker = calloc(1, sizeof(*worker));
+    if (worker == NULL) {
+        return -ENOMEM;
+    }
+    *worker = (struct connection_worker){
+        .client_fd = client_fd,
+        .loader_path = options->loader_path,
+        .activity_ingress = options->activity_ingress,
+        .activity_status = *activity_status,
+        .peer_pid = peer_pid,
+    };
+    pthread_t thread;
+    int result = pthread_create(&thread, NULL, serve_connection_worker,
+                                worker);
+    if (result != 0) {
+        free(worker);
+        return -result;
+    }
+    result = pthread_detach(thread);
+    if (result != 0) {
+        fprintf(stderr, "bvb: could not detach client worker: %s\n",
+                strerror(result));
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     struct service_options options;
     int exit_code = parse_arguments(argc, argv, &options);
@@ -2207,16 +2259,24 @@ int main(int argc, char **argv) {
         }
         pid_t peer_pid = 0;
         int result = bvb_transport_authenticate(client_fd, geteuid(), &peer_pid);
-        if (result == 0) {
+        if (result == 0 && options.once) {
             result = serve_connection(client_fd, options.loader_path,
                                       options.activity_ingress, &activity_status);
+        } else if (result == 0) {
+            result = start_connection_worker(
+                client_fd, peer_pid, &options, &activity_status);
+            if (result == 0) {
+                client_fd = -1;
+            }
         }
-        (void)close(client_fd);
+        if (client_fd >= 0) {
+            (void)close(client_fd);
+        }
         if (result != 0) {
             fprintf(stderr, "bvb: connection from pid %ld failed: %s\n",
                     (long)peer_pid, strerror(-result));
-            exit_code = 5;
             if (options.once) {
+                exit_code = 5;
                 break;
             }
         }

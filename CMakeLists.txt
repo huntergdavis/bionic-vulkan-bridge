@@ -307,7 +307,7 @@ add_executable(bvb-bridge-service src/bridge_service.c)
 target_link_libraries(
   bvb-bridge-service
   PRIVATE bvb-wire bvb-command-batch bvb-vulkan-caps bvb-vulkan-global
-          bvb-vulkan-selftest-core
+          bvb-vulkan-selftest-core Threads::Threads
 )
 bvb_enable_warnings(bvb-bridge-service)
 

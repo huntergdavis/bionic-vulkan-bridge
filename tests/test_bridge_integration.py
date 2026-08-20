@@ -134,6 +134,90 @@ def run_exchange(
             server.wait(timeout=5.0)
 
 
+def hello_packet(request_id: int) -> bytes:
+    return struct.pack(
+        "<IHHHHIIiHHI",
+        0x31425642,
+        1,
+        1,
+        1,
+        0,
+        request_id,
+        8,
+        0,
+        1,
+        1,
+        0,
+    )
+
+
+def receive_exact(connection: socket.socket, length: int) -> bytes:
+    output = b""
+    while len(output) < length:
+        part = connection.recv(length - len(output))
+        assert part
+        output += part
+    return output
+
+
+def run_concurrent_connection_contract(
+    service: str, socket_path: pathlib.Path
+) -> None:
+    server = subprocess.Popen(
+        [service, "--socket", str(socket_path)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    first: socket.socket | None = None
+    second: socket.socket | None = None
+    try:
+        deadline = time.monotonic() + 5.0
+        while not socket_path.exists() and time.monotonic() < deadline:
+            if server.poll() is not None:
+                break
+            time.sleep(0.01)
+        assert socket_path.exists(), server.communicate(timeout=1.0)
+        assert server.stdout is not None
+        assert "ready socket=" in server.stdout.readline()
+
+        first = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        first.settimeout(2.0)
+        first.connect(str(socket_path))
+        first.sendall(hello_packet(101))
+        first_response = receive_exact(first, 40)
+        assert struct.unpack_from("<IHHHHI", first_response) == (
+            0x31425642,
+            1,
+            2,
+            1,
+            0,
+            101,
+        )
+
+        second = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        second.settimeout(2.0)
+        second.connect(str(socket_path))
+        second.sendall(hello_packet(202))
+        second_response = receive_exact(second, 40)
+        assert struct.unpack_from("<IHHHHI", second_response) == (
+            0x31425642,
+            1,
+            2,
+            1,
+            0,
+            202,
+        )
+    finally:
+        if second is not None:
+            second.close()
+        if first is not None:
+            first.close()
+        if server.poll() is None:
+            server.terminate()
+            server.wait(timeout=5.0)
+
+
 def main() -> int:
     if len(sys.argv) != 4:
         raise SystemExit(
@@ -145,6 +229,9 @@ def main() -> int:
     fake_loader = str(pathlib.Path(sys.argv[3]).resolve())
     with tempfile.TemporaryDirectory(prefix="bvb-test-") as temp_directory:
         temp_path = pathlib.Path(temp_directory)
+        run_concurrent_connection_contract(
+            service, temp_path / "concurrent" / "bridge.sock"
+        )
         run_exchange(service, client, temp_path / "hello" / "bridge.sock")
         document = run_exchange(
             service,
