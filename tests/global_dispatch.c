@@ -101,7 +101,9 @@ int main(void) {
     create_info.ppEnabledExtensionNames = NULL;
     const uint32_t loader_private_chain_marker = UINT32_C(0x7ffffffe);
     create_info.pNext = &loader_private_chain_marker;
-    CHECK(vkCreateInstance(&create_info, NULL, &instance_one) == VK_SUCCESS);
+    const VkAllocationCallbacks loader_private_allocator = {0};
+    CHECK(vkCreateInstance(&create_info, &loader_private_allocator,
+                           &instance_one) == VK_SUCCESS);
     CHECK(instance_one != VK_NULL_HANDLE);
     const uint64_t instance_one_id = bvb_instance_proxy_id(instance_one);
     CHECK(bvb_handle_type(instance_one_id) == BVB_OBJECT_INSTANCE);

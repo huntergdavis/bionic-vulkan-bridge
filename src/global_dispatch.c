@@ -678,12 +678,13 @@ static VkResult VKAPI_CALL bvb_bridge_vkEnumerateInstanceLayerProperties(
 static VkResult VKAPI_CALL bvb_bridge_vkCreateInstance(
     const VkInstanceCreateInfo *create_info,
     const VkAllocationCallbacks *allocator, VkInstance *instance) {
+    (void)allocator;
     if (instance != NULL) {
         *instance = VK_NULL_HANDLE;
     }
     if (create_info == NULL || instance == NULL ||
         create_info->sType != VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO ||
-        create_info->flags != 0U || allocator != NULL ||
+        create_info->flags != 0U ||
         (create_info->pApplicationInfo != NULL &&
          (create_info->pApplicationInfo->sType !=
               VK_STRUCTURE_TYPE_APPLICATION_INFO ||
@@ -764,8 +765,9 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateInstance(
 
 static void VKAPI_CALL bvb_bridge_vkDestroyInstance(
     VkInstance instance, const VkAllocationCallbacks *allocator) {
+    (void)allocator;
     struct bvb_instance_proxy *proxy = instance_proxy(instance);
-    if (proxy == NULL || allocator != NULL) {
+    if (proxy == NULL) {
         return;
     }
     int lock_result = pthread_mutex_lock(&bvb_global_client.mutex);
