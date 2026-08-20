@@ -13,7 +13,7 @@ int main(void) {
     }
     const VkApplicationInfo application = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-        .pApplicationName = "bvb-e044-icd-loader",
+        .pApplicationName = "bvb-e045-icd-loader",
         .applicationVersion = 1U,
         .pEngineName = "bvb",
         .engineVersion = 1U,
@@ -83,13 +83,71 @@ int main(void) {
         vkDestroyInstance(instance, NULL);
         return 1;
     }
+
+    uint32_t queue_family_count = 0U;
+    vkGetPhysicalDeviceQueueFamilyProperties(
+        physical_device, &queue_family_count, NULL);
+    if (queue_family_count == 0U || queue_family_count > 16U) {
+        fprintf(stderr, "invalid queue-family count: %u\n",
+                queue_family_count);
+        vkDestroyInstance(instance, NULL);
+        return 1;
+    }
+    VkQueueFamilyProperties queue_families[16];
+    memset(queue_families, 0, sizeof(queue_families));
+    vkGetPhysicalDeviceQueueFamilyProperties(
+        physical_device, &queue_family_count, queue_families);
+    uint32_t queue_family_index = UINT32_MAX;
+    for (uint32_t index = 0U; index < queue_family_count; ++index) {
+        if (queue_families[index].queueCount != 0U &&
+            (queue_families[index].queueFlags & VK_QUEUE_GRAPHICS_BIT) != 0U) {
+            queue_family_index = index;
+            break;
+        }
+    }
+    if (queue_family_index == UINT32_MAX) {
+        fputs("no graphics queue family available\n", stderr);
+        vkDestroyInstance(instance, NULL);
+        return 1;
+    }
+    const float queue_priority = 1.0F;
+    const VkDeviceQueueCreateInfo queue_create_info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .queueFamilyIndex = queue_family_index,
+        .queueCount = 1U,
+        .pQueuePriorities = &queue_priority,
+    };
+    const VkDeviceCreateInfo device_create_info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .queueCreateInfoCount = 1U,
+        .pQueueCreateInfos = &queue_create_info,
+    };
+    VkDevice device = VK_NULL_HANDLE;
+    result = vkCreateDevice(
+        physical_device, &device_create_info, NULL, &device);
+    if (result != VK_SUCCESS || device == VK_NULL_HANDLE) {
+        fprintf(stderr, "logical-device creation failed: %d\n", (int)result);
+        vkDestroyInstance(instance, NULL);
+        return 1;
+    }
+    VkQueue queue = VK_NULL_HANDLE;
+    vkGetDeviceQueue(device, queue_family_index, 0U, &queue);
+    if (queue == VK_NULL_HANDLE || vkQueueWaitIdle(queue) != VK_SUCCESS ||
+        vkDeviceWaitIdle(device) != VK_SUCCESS) {
+        fputs("standard-loader queue/device idle path failed\n", stderr);
+        vkDestroyDevice(device, NULL);
+        vkDestroyInstance(instance, NULL);
+        return 1;
+    }
+    vkDestroyDevice(device, NULL);
     vkDestroyInstance(instance, NULL);
-    printf("PASS: Vulkan loader selected BVB ICD api=%u device=%s vendor=%u device_id=%u rgba8_optimal=%u max_extent=%ux%ux%u max_resource=%llu\n",
+    printf("PASS: Vulkan loader selected BVB ICD api=%u device=%s vendor=%u device_id=%u rgba8_optimal=%u max_extent=%ux%ux%u max_resource=%llu queue_family=%u device_idle=pass\n",
            api_version, properties.deviceName, properties.vendorID,
            properties.deviceID, format_properties.optimalTilingFeatures,
            image_properties.maxExtent.width,
            image_properties.maxExtent.height,
            image_properties.maxExtent.depth,
-           (unsigned long long)image_properties.maxResourceSize);
+           (unsigned long long)image_properties.maxResourceSize,
+           queue_family_index);
     return 0;
 }
