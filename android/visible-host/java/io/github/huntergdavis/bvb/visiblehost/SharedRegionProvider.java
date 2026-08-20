@@ -61,7 +61,7 @@ public final class SharedRegionProvider extends ContentProvider {
     }
 
     static ExternalMemoryResult openExternalMemory(
-            String token, boolean synchronizedAccess)
+            String token, boolean synchronizedAccess, boolean imageAccess)
             throws Exception {
         if (token == null || token.length() != 64) {
             throw new IllegalArgumentException("invalid lifecycle token");
@@ -96,7 +96,8 @@ public final class SharedRegionProvider extends ContentProvider {
             byte[] request = new byte[65];
             byte[] tokenBytes = token.getBytes("US-ASCII");
             System.arraycopy(tokenBytes, 0, request, 0, tokenBytes.length);
-            request[64] = (byte)(synchronizedAccess ? 'S' : 'M');
+            request[64] = (byte)(imageAccess ? 'I'
+                    : synchronizedAccess ? 'S' : 'M');
             output.write(request);
             output.flush();
             byte[] response = new byte[EXTERNAL_RESPONSE_BYTES];

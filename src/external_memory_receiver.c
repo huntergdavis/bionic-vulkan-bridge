@@ -96,21 +96,29 @@ int main(int argc, char **argv) {
     }
     struct bvb_external_memory_import_request import_request = {0};
     struct bvb_external_sync_import_request sync_request = {0};
-    const bool synchronized =
+    struct bvb_external_image_import_request image_request = {0};
+    const bool external_image =
+        request.header.opcode == BVB_OPCODE_EXTERNAL_IMAGE_IMPORT_TEST;
+    const bool synchronized = external_image ||
         request.header.opcode == BVB_OPCODE_EXTERNAL_SYNC_IMPORT_TEST;
     if (result == 0 &&
         (request.header.version != BVB_PROTOCOL_VERSION ||
          request.header.kind != BVB_PROTOCOL_REQUEST ||
          (request.header.opcode != BVB_OPCODE_EXTERNAL_MEMORY_IMPORT_TEST &&
-          request.header.opcode != BVB_OPCODE_EXTERNAL_SYNC_IMPORT_TEST) ||
+          request.header.opcode != BVB_OPCODE_EXTERNAL_SYNC_IMPORT_TEST &&
+          request.header.opcode != BVB_OPCODE_EXTERNAL_IMAGE_IMPORT_TEST) ||
          request.header.payload_length !=
-             (synchronized ? BVB_EXTERNAL_SYNC_IMPORT_REQUEST_SIZE
+             (external_image ? BVB_EXTERNAL_IMAGE_IMPORT_REQUEST_SIZE
+              : synchronized ? BVB_EXTERNAL_SYNC_IMPORT_REQUEST_SIZE
                            : BVB_EXTERNAL_MEMORY_IMPORT_REQUEST_SIZE) ||
          external_fd_count != (synchronized ? 2U : 1U) ||
          request.header.status != 0)) {
         result = -EPROTO;
     }
-    if (result == 0 && synchronized) {
+    if (result == 0 && external_image) {
+        result = bvb_protocol_decode_external_image_import_request(
+            request.payload, &image_request);
+    } else if (result == 0 && synchronized) {
         result = bvb_protocol_decode_external_sync_import_request(
             request.payload, &sync_request);
     } else if (result == 0) {
@@ -122,12 +130,23 @@ int main(int argc, char **argv) {
     struct bvb_vulkan_batch_context *context = NULL;
     struct bvb_vulkan_external_memory_result import_result = {0};
     struct bvb_vulkan_external_sync_result sync_result = {0};
+    struct bvb_vulkan_external_image_result image_result = {0};
     if (result == 0) {
         result = bvb_vulkan_batch_context_create(
             loader_path, &context, error, sizeof(error));
     }
     if (result == 0) {
-        if (synchronized) {
+        if (external_image) {
+            result = bvb_vulkan_batch_context_import_external_image_fds(
+                context, external_fds[0], external_fds[1],
+                image_request.allocation_size,
+                image_request.memory_type_index, image_request.width,
+                image_request.height, image_request.format,
+                image_request.expected_color, &image_result, error,
+                sizeof(error));
+            external_fds[0] = -1;
+            external_fds[1] = -1;
+        } else if (synchronized) {
             result = bvb_vulkan_batch_context_import_external_sync_fds(
                 context, external_fds[0], external_fds[1],
                 sync_request.allocation_size,
@@ -160,7 +179,30 @@ int main(int argc, char **argv) {
         return 4;
     }
     const int64_t finished_ns = monotonic_ns();
-    if (synchronized) {
+    if (external_image) {
+        printf("{\"schema_version\":1,\"gate\":\"E038\","
+               "\"result\":\"pass\","
+               "\"transport\":\"binder_then_scm_rights_opaque_image_plus_sync_fd\","
+               "\"loader_path\":\"%s\",\"peer_uid\":%lu,"
+               "\"peer_pid\":%ld,\"descriptor_count\":2,"
+               "\"allocation_size\":%" PRIu64 ","
+               "\"memory_type_index\":%" PRIu32 ","
+               "\"width\":%" PRIu32 ",\"height\":%" PRIu32 ","
+               "\"format\":%" PRIu32 ","
+               "\"expected_color\":%" PRIu32 ","
+               "\"mismatched_pixels\":%" PRIu32 ","
+               "\"readback_memory_property_flags\":%" PRIu32 ","
+               "\"gpu_wait_elapsed_ns\":%" PRIu64 ","
+               "\"receive_import_ns\":%" PRId64 "}\n",
+               loader_path, (unsigned long)peer_uid, (long)peer_pid,
+               image_request.allocation_size,
+               image_request.memory_type_index, image_result.width,
+               image_result.height, image_result.format,
+               image_result.expected_color, image_result.mismatched_pixels,
+               image_result.readback_memory_property_flags,
+               image_result.gpu_wait_elapsed_ns,
+               finished_ns >= started_ns ? finished_ns - started_ns : -1);
+    } else if (synchronized) {
         printf("{\"schema_version\":1,\"gate\":\"E037\","
                "\"result\":\"pass\","
                "\"transport\":\"binder_then_scm_rights_opaque_memory_plus_sync_fd\","

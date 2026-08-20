@@ -58,6 +58,16 @@ struct bvb_vulkan_external_sync_result {
     uint64_t gpu_wait_elapsed_ns;
 };
 
+struct bvb_vulkan_external_image_result {
+    uint32_t width;
+    uint32_t height;
+    uint32_t format;
+    uint32_t expected_color;
+    uint32_t mismatched_pixels;
+    uint32_t readback_memory_property_flags;
+    uint64_t gpu_wait_elapsed_ns;
+};
+
 struct bvb_vulkan_batch_context;
 
 int bvb_vulkan_batch_context_create(
@@ -84,6 +94,14 @@ int bvb_vulkan_batch_context_import_external_sync_fds(
     uint32_t memory_type_index, uint32_t buffer_bytes,
     uint32_t expected_fill_word,
     struct bvb_vulkan_external_sync_result *result,
+    char *error, size_t error_size);
+/* Consumes both descriptors on every return path. */
+int bvb_vulkan_batch_context_import_external_image_fds(
+    struct bvb_vulkan_batch_context *context, int external_memory_fd,
+    int external_semaphore_fd, uint64_t allocation_size,
+    uint32_t memory_type_index, uint32_t width, uint32_t height,
+    uint32_t format, uint32_t expected_color,
+    struct bvb_vulkan_external_image_result *result,
     char *error, size_t error_size);
 void bvb_vulkan_batch_context_destroy(
     struct bvb_vulkan_batch_context *context);

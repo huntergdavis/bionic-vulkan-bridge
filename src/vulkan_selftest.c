@@ -1721,6 +1721,461 @@ int bvb_vulkan_batch_context_import_external_sync_fds(
     return result;
 }
 
+int bvb_vulkan_batch_context_import_external_image_fds(
+    struct bvb_vulkan_batch_context *context, int external_memory_fd,
+    int external_semaphore_fd, uint64_t allocation_size,
+    uint32_t memory_type_index, uint32_t width, uint32_t height,
+    uint32_t format, uint32_t expected_color,
+    struct bvb_vulkan_external_image_result *output,
+    char *error, size_t error_size) {
+    if (output != NULL) memset(output, 0, sizeof(*output));
+    const uint64_t pixel_bytes =
+        (uint64_t)width * (uint64_t)height * sizeof(uint32_t);
+    if (context == NULL || output == NULL || external_memory_fd < 0 ||
+        external_semaphore_fd < 0 || allocation_size == 0U ||
+        memory_type_index >= context->memory_properties.memoryTypeCount ||
+        width == 0U || height == 0U || width > 4096U || height > 4096U ||
+        pixel_bytes == 0U || pixel_bytes > UINT64_C(16) * 1024U * 1024U ||
+        format != (uint32_t)VK_FORMAT_R8G8B8A8_UNORM) {
+        if (external_memory_fd >= 0) (void)close(external_memory_fd);
+        if (external_semaphore_fd >= 0) (void)close(external_semaphore_fd);
+        set_error(error, error_size, "invalid external-image import request");
+        return -EINVAL;
+    }
+    output->width = width;
+    output->height = height;
+    output->format = format;
+    output->expected_color = expected_color;
+
+    PFN_vkGetPhysicalDeviceImageFormatProperties2 query =
+        (PFN_vkGetPhysicalDeviceImageFormatProperties2)
+            context->get_instance_proc_addr(
+                context->objects.instance,
+                "vkGetPhysicalDeviceImageFormatProperties2");
+    if (query == NULL) {
+        query = (PFN_vkGetPhysicalDeviceImageFormatProperties2)
+            context->get_instance_proc_addr(
+                context->objects.instance,
+                "vkGetPhysicalDeviceImageFormatProperties2KHR");
+    }
+#define LOAD_IMAGE_IMPORT(name)                                                \
+    PFN_##name imported_##name = (PFN_##name)                                 \
+        context->get_device_proc_addr(context->objects.device, #name)
+    LOAD_IMAGE_IMPORT(vkCreateImage);
+    LOAD_IMAGE_IMPORT(vkDestroyImage);
+    LOAD_IMAGE_IMPORT(vkGetImageMemoryRequirements);
+    LOAD_IMAGE_IMPORT(vkAllocateMemory);
+    LOAD_IMAGE_IMPORT(vkFreeMemory);
+    LOAD_IMAGE_IMPORT(vkBindImageMemory);
+    LOAD_IMAGE_IMPORT(vkCreateBuffer);
+    LOAD_IMAGE_IMPORT(vkDestroyBuffer);
+    LOAD_IMAGE_IMPORT(vkGetBufferMemoryRequirements);
+    LOAD_IMAGE_IMPORT(vkBindBufferMemory);
+    LOAD_IMAGE_IMPORT(vkMapMemory);
+    LOAD_IMAGE_IMPORT(vkUnmapMemory);
+    LOAD_IMAGE_IMPORT(vkInvalidateMappedMemoryRanges);
+    LOAD_IMAGE_IMPORT(vkCreateSemaphore);
+    LOAD_IMAGE_IMPORT(vkDestroySemaphore);
+    LOAD_IMAGE_IMPORT(vkImportSemaphoreFdKHR);
+    LOAD_IMAGE_IMPORT(vkResetCommandPool);
+    LOAD_IMAGE_IMPORT(vkBeginCommandBuffer);
+    LOAD_IMAGE_IMPORT(vkEndCommandBuffer);
+    LOAD_IMAGE_IMPORT(vkCmdPipelineBarrier);
+    LOAD_IMAGE_IMPORT(vkCmdCopyImageToBuffer);
+    LOAD_IMAGE_IMPORT(vkCreateFence);
+    LOAD_IMAGE_IMPORT(vkDestroyFence);
+    LOAD_IMAGE_IMPORT(vkQueueSubmit);
+    LOAD_IMAGE_IMPORT(vkWaitForFences);
+#undef LOAD_IMAGE_IMPORT
+    if (query == NULL || imported_vkCreateImage == NULL ||
+        imported_vkDestroyImage == NULL ||
+        imported_vkGetImageMemoryRequirements == NULL ||
+        imported_vkAllocateMemory == NULL || imported_vkFreeMemory == NULL ||
+        imported_vkBindImageMemory == NULL ||
+        imported_vkCreateBuffer == NULL ||
+        imported_vkDestroyBuffer == NULL ||
+        imported_vkGetBufferMemoryRequirements == NULL ||
+        imported_vkBindBufferMemory == NULL || imported_vkMapMemory == NULL ||
+        imported_vkUnmapMemory == NULL ||
+        imported_vkInvalidateMappedMemoryRanges == NULL ||
+        imported_vkCreateSemaphore == NULL ||
+        imported_vkDestroySemaphore == NULL ||
+        imported_vkImportSemaphoreFdKHR == NULL ||
+        imported_vkResetCommandPool == NULL ||
+        imported_vkBeginCommandBuffer == NULL ||
+        imported_vkEndCommandBuffer == NULL ||
+        imported_vkCmdPipelineBarrier == NULL ||
+        imported_vkCmdCopyImageToBuffer == NULL ||
+        imported_vkCreateFence == NULL || imported_vkDestroyFence == NULL ||
+        imported_vkQueueSubmit == NULL || imported_vkWaitForFences == NULL) {
+        (void)close(external_memory_fd);
+        (void)close(external_semaphore_fd);
+        set_error(error, error_size,
+                  "driver is missing external-image import entry points");
+        return -ENOSYS;
+    }
+
+    const VkImageUsageFlags image_usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                          VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                          VK_IMAGE_USAGE_SAMPLED_BIT;
+    const VkPhysicalDeviceExternalImageFormatInfo external_query = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO,
+        .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
+    const VkPhysicalDeviceImageFormatInfo2 image_query = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
+        .pNext = &external_query,
+        .format = (VkFormat)format,
+        .type = VK_IMAGE_TYPE_2D,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = image_usage,
+    };
+    VkExternalImageFormatProperties external_properties = {
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES,
+    };
+    VkImageFormatProperties2 image_properties = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2,
+        .pNext = &external_properties,
+    };
+    VkResult vk_result = query(
+        context->physical_device, &image_query, &image_properties);
+    const VkExternalMemoryProperties *external =
+        &external_properties.externalMemoryProperties;
+    if (vk_result != VK_SUCCESS ||
+        (external->externalMemoryFeatures &
+         VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) == 0U ||
+        (external->compatibleHandleTypes &
+         VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT) == 0U) {
+        (void)close(external_memory_fd);
+        (void)close(external_semaphore_fd);
+        set_error(error, error_size,
+                  "opaque FD image is not importable: %d", (int)vk_result);
+        return -ENOTSUP;
+    }
+
+    int status = 0;
+    VkImage image = VK_NULL_HANDLE;
+    VkDeviceMemory image_memory = VK_NULL_HANDLE;
+    VkBuffer readback = VK_NULL_HANDLE;
+    VkDeviceMemory readback_memory = VK_NULL_HANDLE;
+    void *mapped = NULL;
+    VkSemaphore semaphore = VK_NULL_HANDLE;
+    VkFence fence = VK_NULL_HANDLE;
+    const VkExternalMemoryImageCreateInfo external_image_info = {
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
+    const VkImageCreateInfo image_info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .pNext = &external_image_info,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = (VkFormat)format,
+        .extent = {width, height, 1U},
+        .mipLevels = 1U,
+        .arrayLayers = 1U,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = image_usage,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    vk_result = imported_vkCreateImage(
+        context->objects.device, &image_info, NULL, &image);
+    if (vk_result != VK_SUCCESS) {
+        set_error(error, error_size, "external image creation failed: %d",
+                  (int)vk_result);
+        status = -EIO;
+        goto done;
+    }
+    VkMemoryRequirements image_requirements = {0};
+    imported_vkGetImageMemoryRequirements(
+        context->objects.device, image, &image_requirements);
+    if (image_requirements.size > allocation_size ||
+        (image_requirements.memoryTypeBits &
+         (UINT32_C(1) << memory_type_index)) == 0U) {
+        set_error(error, error_size,
+                  "external image allocation metadata is incompatible");
+        status = -EPROTO;
+        goto done;
+    }
+    const bool dedicated_only =
+        (external->externalMemoryFeatures &
+         VK_EXTERNAL_MEMORY_FEATURE_DEDICATED_ONLY_BIT) != 0U;
+    const VkMemoryDedicatedAllocateInfo dedicated_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
+        .image = image,
+    };
+    const VkImportMemoryFdInfoKHR import_info = {
+        .sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR,
+        .pNext = dedicated_only ? &dedicated_info : NULL,
+        .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+        .fd = external_memory_fd,
+    };
+    const VkMemoryAllocateInfo image_allocation = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .pNext = &import_info,
+        .allocationSize = allocation_size,
+        .memoryTypeIndex = memory_type_index,
+    };
+    vk_result = imported_vkAllocateMemory(
+        context->objects.device, &image_allocation, NULL, &image_memory);
+    if (vk_result == VK_SUCCESS) external_memory_fd = -1;
+    if (vk_result == VK_SUCCESS) {
+        vk_result = imported_vkBindImageMemory(
+            context->objects.device, image, image_memory, 0U);
+    }
+    if (vk_result != VK_SUCCESS) {
+        set_error(error, error_size,
+                  "external image memory import failed: %d",
+                  (int)vk_result);
+        status = -EIO;
+        goto done;
+    }
+
+    const VkBufferCreateInfo readback_info = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = pixel_bytes,
+        .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+    vk_result = imported_vkCreateBuffer(
+        context->objects.device, &readback_info, NULL, &readback);
+    VkMemoryRequirements readback_requirements = {0};
+    if (vk_result == VK_SUCCESS) {
+        imported_vkGetBufferMemoryRequirements(
+            context->objects.device, readback, &readback_requirements);
+    }
+    uint32_t readback_type = UINT32_MAX;
+    bool coherent = false;
+    if (vk_result == VK_SUCCESS) {
+        for (uint32_t index = 0U;
+             index < context->memory_properties.memoryTypeCount; ++index) {
+            const VkMemoryPropertyFlags flags =
+                context->memory_properties.memoryTypes[index].propertyFlags;
+            if ((readback_requirements.memoryTypeBits &
+                 (UINT32_C(1) << index)) == 0U ||
+                (flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0U) {
+                continue;
+            }
+            const bool candidate_coherent =
+                (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0U;
+            if (readback_type == UINT32_MAX ||
+                (candidate_coherent && !coherent)) {
+                readback_type = index;
+                coherent = candidate_coherent;
+                output->readback_memory_property_flags = flags;
+            }
+        }
+    }
+    if (vk_result != VK_SUCCESS || readback_type == UINT32_MAX) {
+        set_error(error, error_size,
+                  "could not create host-visible image readback buffer");
+        status = -ENOTSUP;
+        goto done;
+    }
+    const VkMemoryAllocateInfo readback_allocation = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = readback_requirements.size,
+        .memoryTypeIndex = readback_type,
+    };
+    vk_result = imported_vkAllocateMemory(
+        context->objects.device, &readback_allocation, NULL,
+        &readback_memory);
+    if (vk_result == VK_SUCCESS) {
+        vk_result = imported_vkBindBufferMemory(
+            context->objects.device, readback, readback_memory, 0U);
+    }
+    if (vk_result == VK_SUCCESS) {
+        vk_result = imported_vkMapMemory(
+            context->objects.device, readback_memory, 0U, pixel_bytes, 0U,
+            &mapped);
+    }
+    if (vk_result != VK_SUCCESS || mapped == NULL) {
+        set_error(error, error_size, "image readback setup failed: %d",
+                  (int)vk_result);
+        status = -EIO;
+        goto done;
+    }
+
+    const VkSemaphoreCreateInfo semaphore_info = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+    };
+    vk_result = imported_vkCreateSemaphore(
+        context->objects.device, &semaphore_info, NULL, &semaphore);
+    if (vk_result == VK_SUCCESS) {
+        const VkImportSemaphoreFdInfoKHR semaphore_import = {
+            .sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR,
+            .semaphore = semaphore,
+            .flags = VK_SEMAPHORE_IMPORT_TEMPORARY_BIT,
+            .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
+            .fd = external_semaphore_fd,
+        };
+        vk_result = imported_vkImportSemaphoreFdKHR(
+            context->objects.device, &semaphore_import);
+        if (vk_result == VK_SUCCESS) external_semaphore_fd = -1;
+    }
+    if (vk_result == VK_SUCCESS) {
+        vk_result = imported_vkResetCommandPool(
+            context->objects.device, context->objects.command_pool, 0U);
+    }
+    const VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    if (vk_result == VK_SUCCESS) {
+        vk_result = imported_vkBeginCommandBuffer(
+            context->command_buffer, &begin_info);
+    }
+    const VkImageSubresourceRange color_range = {
+        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .levelCount = 1U,
+        .layerCount = 1U,
+    };
+    if (vk_result == VK_SUCCESS) {
+        const VkImageMemoryBarrier to_transfer = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = image,
+            .subresourceRange = color_range,
+        };
+        imported_vkCmdPipelineBarrier(
+            context->command_buffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+            VK_PIPELINE_STAGE_TRANSFER_BIT, 0U, 0U, NULL, 0U, NULL, 1U,
+            &to_transfer);
+        const VkBufferImageCopy copy = {
+            .imageSubresource = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .mipLevel = 0U,
+                .baseArrayLayer = 0U,
+                .layerCount = 1U,
+            },
+            .imageExtent = {width, height, 1U},
+        };
+        imported_vkCmdCopyImageToBuffer(
+            context->command_buffer, image,
+            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, readback, 1U, &copy);
+        const VkBufferMemoryBarrier host_barrier = {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_HOST_READ_BIT,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer = readback,
+            .offset = 0U,
+            .size = pixel_bytes,
+        };
+        imported_vkCmdPipelineBarrier(
+            context->command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+            VK_PIPELINE_STAGE_HOST_BIT, 0U, 0U, NULL, 1U, &host_barrier, 0U,
+            NULL);
+        vk_result = imported_vkEndCommandBuffer(context->command_buffer);
+    }
+    const VkFenceCreateInfo fence_info = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+    };
+    if (vk_result == VK_SUCCESS) {
+        vk_result = imported_vkCreateFence(
+            context->objects.device, &fence_info, NULL, &fence);
+    }
+    const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    const VkSubmitInfo submit_info = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .waitSemaphoreCount = 1U,
+        .pWaitSemaphores = &semaphore,
+        .pWaitDstStageMask = &wait_stage,
+        .commandBufferCount = 1U,
+        .pCommandBuffers = &context->command_buffer,
+    };
+    uint64_t wait_started_ns = 0U;
+    uint64_t wait_finished_ns = 0U;
+    if (vk_result == VK_SUCCESS && monotonic_ns(&wait_started_ns) != 0) {
+        set_error(error, error_size, "could not read image-wait start clock");
+        status = -EIO;
+        goto done;
+    }
+    if (vk_result == VK_SUCCESS) {
+        vk_result = imported_vkQueueSubmit(
+            context->queue, 1U, &submit_info, fence);
+    }
+    if (vk_result == VK_SUCCESS) {
+        vk_result = imported_vkWaitForFences(
+            context->objects.device, 1U, &fence, VK_TRUE, UINT64_MAX);
+    }
+    if (vk_result == VK_SUCCESS && monotonic_ns(&wait_finished_ns) != 0) {
+        set_error(error, error_size, "could not read image-wait finish clock");
+        status = -EIO;
+        goto done;
+    }
+    if (vk_result != VK_SUCCESS) {
+        set_error(error, error_size, "external image GPU copy failed: %d",
+                  (int)vk_result);
+        status = -EIO;
+        goto done;
+    }
+    output->gpu_wait_elapsed_ns = wait_finished_ns - wait_started_ns;
+    if (!coherent) {
+        const VkMappedMemoryRange range = {
+            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .memory = readback_memory,
+            .offset = 0U,
+            .size = VK_WHOLE_SIZE,
+        };
+        vk_result = imported_vkInvalidateMappedMemoryRanges(
+            context->objects.device, 1U, &range);
+        if (vk_result != VK_SUCCESS) {
+            set_error(error, error_size,
+                      "external image readback invalidate failed: %d",
+                      (int)vk_result);
+            status = -EIO;
+            goto done;
+        }
+    }
+    for (uint64_t index = 0U; index < pixel_bytes / sizeof(uint32_t);
+         ++index) {
+        if (((const uint32_t *)mapped)[index] != expected_color) {
+            ++output->mismatched_pixels;
+        }
+    }
+    if (output->mismatched_pixels != 0U) {
+        set_error(error, error_size,
+                  "external image found %u mismatched pixels",
+                  output->mismatched_pixels);
+        status = -EIO;
+    }
+
+done:
+    if (external_memory_fd >= 0) (void)close(external_memory_fd);
+    if (external_semaphore_fd >= 0) (void)close(external_semaphore_fd);
+    if (fence != VK_NULL_HANDLE) {
+        imported_vkDestroyFence(context->objects.device, fence, NULL);
+    }
+    if (semaphore != VK_NULL_HANDLE) {
+        imported_vkDestroySemaphore(context->objects.device, semaphore, NULL);
+    }
+    if (mapped != NULL) {
+        imported_vkUnmapMemory(context->objects.device, readback_memory);
+    }
+    if (readback != VK_NULL_HANDLE) {
+        imported_vkDestroyBuffer(context->objects.device, readback, NULL);
+    }
+    if (readback_memory != VK_NULL_HANDLE) {
+        imported_vkFreeMemory(context->objects.device, readback_memory, NULL);
+    }
+    if (image != VK_NULL_HANDLE) {
+        imported_vkDestroyImage(context->objects.device, image, NULL);
+    }
+    if (image_memory != VK_NULL_HANDLE) {
+        imported_vkFreeMemory(context->objects.device, image_memory, NULL);
+    }
+    return status;
+}
+
 void bvb_vulkan_batch_context_destroy(
     struct bvb_vulkan_batch_context *context) {
     if (context != NULL) {

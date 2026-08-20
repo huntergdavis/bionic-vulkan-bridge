@@ -28,6 +28,8 @@ public final class SharedRegionClient extends Binder {
             "io.github.huntergdavis.bvb.visiblehost.REQUEST_EXTERNAL_MEMORY";
     public static final String ACTION_EXTERNAL_SYNC =
             "io.github.huntergdavis.bvb.visiblehost.REQUEST_EXTERNAL_SYNC";
+    public static final String ACTION_EXTERNAL_IMAGE =
+            "io.github.huntergdavis.bvb.visiblehost.REQUEST_EXTERNAL_IMAGE";
     public static final String EXTRA_REQUEST = "bvb_request";
     public static final String EXTRA_CALLBACK = "bvb_callback";
     public static final String EXTRA_TOKEN = "bvb_token";
@@ -49,10 +51,12 @@ public final class SharedRegionClient extends Binder {
     private static final int OPCODE_HELLO = 1;
     private static final int OPCODE_EXTERNAL_MEMORY_IMPORT_TEST = 50;
     private static final int OPCODE_EXTERNAL_SYNC_IMPORT_TEST = 51;
+    private static final int OPCODE_EXTERNAL_IMAGE_IMPORT_TEST = 52;
     private static final int PROTOCOL_HEADER_SIZE = 24;
     private static final int HELLO_REQUEST_SIZE = 8;
     private static final int EXTERNAL_MEMORY_IMPORT_REQUEST_SIZE = 16;
     private static final int EXTERNAL_SYNC_IMPORT_REQUEST_SIZE = 24;
+    private static final int EXTERNAL_IMAGE_IMPORT_REQUEST_SIZE = 32;
     private static final int RELAY_REQUEST_ID = 0xE021;
 
     private boolean delivered;
@@ -62,6 +66,7 @@ public final class SharedRegionClient extends Binder {
     private ParcelFileDescriptor syncDescriptor;
     private boolean requestExternal;
     private boolean requestExternalSync;
+    private boolean requestExternalImage;
     private long allocationSize;
     private int memoryTypeIndex;
     private int bufferBytes;
@@ -226,14 +231,16 @@ public final class SharedRegionClient extends Binder {
 
     private static void requestRegion(String token, IBinder callback,
                                       boolean external,
-                                      boolean externalSync)
+                                      boolean externalSync,
+                                      boolean externalImage)
             throws Exception {
         Bundle request = new Bundle();
         Method putBinder = Bundle.class.getMethod(
                 "putBinder", String.class, IBinder.class);
         putBinder.invoke(request, EXTRA_CALLBACK, callback);
         request.putString(EXTRA_TOKEN, token);
-        Intent intent = new Intent(externalSync ? ACTION_EXTERNAL_SYNC
+        Intent intent = new Intent(externalImage ? ACTION_EXTERNAL_IMAGE
+                : externalSync ? ACTION_EXTERNAL_SYNC
                 : external ? ACTION_EXTERNAL_MEMORY : ACTION_REQUEST);
         intent.setPackage(HOST_PACKAGE);
         intent.putExtra(EXTRA_REQUEST, request);
@@ -269,11 +276,15 @@ public final class SharedRegionClient extends Binder {
     }
 
     private byte[] relayRequest() {
-        int payloadSize = requestExternalSync
+        int payloadSize = requestExternalImage
+                ? EXTERNAL_IMAGE_IMPORT_REQUEST_SIZE
+                : requestExternalSync
                 ? EXTERNAL_SYNC_IMPORT_REQUEST_SIZE
                 : requestExternal
                     ? EXTERNAL_MEMORY_IMPORT_REQUEST_SIZE : HELLO_REQUEST_SIZE;
-        int opcode = requestExternalSync
+        int opcode = requestExternalImage
+                ? OPCODE_EXTERNAL_IMAGE_IMPORT_TEST
+                : requestExternalSync
                 ? OPCODE_EXTERNAL_SYNC_IMPORT_TEST
                 : requestExternal
                     ? OPCODE_EXTERNAL_MEMORY_IMPORT_TEST : OPCODE_HELLO;
@@ -288,7 +299,13 @@ public final class SharedRegionClient extends Binder {
             putU64(request, PROTOCOL_HEADER_SIZE, allocationSize);
             putU32(request, PROTOCOL_HEADER_SIZE + 8, memoryTypeIndex);
             putU32(request, PROTOCOL_HEADER_SIZE + 12, bufferBytes);
-            if (requestExternalSync) {
+            if (requestExternalImage) {
+                putU32(request, PROTOCOL_HEADER_SIZE + 16,
+                       expectedFillWord);
+                putU32(request, PROTOCOL_HEADER_SIZE + 20, 37);
+                putU32(request, PROTOCOL_HEADER_SIZE + 24, 0xffff00ff);
+                putU32(request, PROTOCOL_HEADER_SIZE + 28, 0);
+            } else if (requestExternalSync) {
                 putU32(request, PROTOCOL_HEADER_SIZE + 16, expectedFillWord);
                 putU32(request, PROTOCOL_HEADER_SIZE + 20, 0);
             }
@@ -335,7 +352,9 @@ public final class SharedRegionClient extends Binder {
             if (getU32(response, 0) != PROTOCOL_MAGIC
                     || getU16(response, 4) != PROTOCOL_VERSION
                     || getU16(response, 6) != PROTOCOL_RESPONSE
-                    || getU16(response, 8) != (requestExternalSync
+                    || getU16(response, 8) != (requestExternalImage
+                            ? OPCODE_EXTERNAL_IMAGE_IMPORT_TEST
+                            : requestExternalSync
                             ? OPCODE_EXTERNAL_SYNC_IMPORT_TEST
                             : requestExternal
                                 ? OPCODE_EXTERNAL_MEMORY_IMPORT_TEST
@@ -399,7 +418,9 @@ public final class SharedRegionClient extends Binder {
     }
 
     public static void main(String[] arguments) {
-        boolean externalSync = arguments.length == 4 &&
+        boolean externalImage = arguments.length == 4 &&
+                "image".equals(arguments[3]);
+        boolean externalSync = externalImage || arguments.length == 4 &&
                 "sync".equals(arguments[3]);
         boolean external = externalSync || arguments.length == 4 &&
                 "external".equals(arguments[3]);
@@ -407,7 +428,7 @@ public final class SharedRegionClient extends Binder {
                 (arguments.length == 4 && !external)) {
             System.err.println(
                     "usage: SharedRegionClient TOKEN RESULT_JSON "
-                            + "[RELAY_SOCKET [external|sync]]");
+                            + "[RELAY_SOCKET [external|sync|image]]");
             System.exit(2);
         }
         String stage = "send_broadcast";
@@ -415,7 +436,9 @@ public final class SharedRegionClient extends Binder {
             SharedRegionClient client = new SharedRegionClient();
             client.requestExternal = external;
             client.requestExternalSync = externalSync;
-            requestRegion(arguments[0], client, external, externalSync);
+            client.requestExternalImage = externalImage;
+            requestRegion(arguments[0], client, external, externalSync,
+                          externalImage);
             stage = "wait_callback";
             if (!client.waitForDelivery()) {
                 throw new IllegalStateException("Binder callback timed out");
@@ -444,7 +467,9 @@ public final class SharedRegionClient extends Binder {
                 writeResult(arguments[1],
                         "{\"result\":\"pass\",\"binder_region_received\":true,"
                                 + "\"descriptor_kind\":"
-                                + (externalSync
+                                + (externalImage
+                                    ? "\"opaque_image_memory_plus_sync_fd\""
+                                    : externalSync
                                     ? "\"opaque_memory_plus_sync_fd\""
                                     : external ? "\"opaque_fd\""
                                     : "\"memfd\"")
@@ -454,9 +479,17 @@ public final class SharedRegionClient extends Binder {
                                             + client.allocationSize
                                             + ",\"memory_type_index\":"
                                             + client.memoryTypeIndex
-                                            + ",\"buffer_bytes\":"
-                                            + client.bufferBytes + ","
-                                            + (externalSync
+                                            + (externalImage
+                                                ? ",\"width\":"
+                                                    + client.bufferBytes
+                                                    + ",\"height\":"
+                                                    + client.expectedFillWord
+                                                    + ",\"format\":37,"
+                                                    + "\"expected_color\":"
+                                                    + 4294902015L + ","
+                                                : ",\"buffer_bytes\":"
+                                                    + client.bufferBytes + ",")
+                                            + (!externalImage && externalSync
                                                 ? "\"expected_fill_word\":"
                                                     + (client.expectedFillWord
                                                         & 0xffffffffL) + ","

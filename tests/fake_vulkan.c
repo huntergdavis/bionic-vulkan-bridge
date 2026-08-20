@@ -22,6 +22,8 @@
 #endif
 
 static VkDeviceMemory fake_bound_memory = VK_NULL_HANDLE;
+static VkDeviceMemory fake_bound_image_memory = VK_NULL_HANDLE;
+static VkDeviceSize fake_buffer_size = 4096U;
 static int fake_android_surface_enabled;
 static int fake_swapchain_enabled;
 static int fake_swapchain_created;
@@ -351,6 +353,44 @@ static void VKAPI_CALL fake_get_external_buffer_properties(
     }
 }
 
+static VkResult VKAPI_CALL fake_get_image_format_properties2(
+    VkPhysicalDevice device,
+    const VkPhysicalDeviceImageFormatInfo2 *info,
+    VkImageFormatProperties2 *properties) {
+    (void)device;
+    if (info == NULL || properties == NULL ||
+        info->format != VK_FORMAT_R8G8B8A8_UNORM ||
+        info->type != VK_IMAGE_TYPE_2D ||
+        info->tiling != VK_IMAGE_TILING_OPTIMAL || info->usage == 0U) {
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    }
+    properties->imageFormatProperties = (VkImageFormatProperties){
+        .maxExtent = {4096U, 4096U, 1U},
+        .maxMipLevels = 1U,
+        .maxArrayLayers = 1U,
+        .sampleCounts = VK_SAMPLE_COUNT_1_BIT,
+        .maxResourceSize = UINT64_C(16) * 1024U * 1024U,
+    };
+    for (VkBaseOutStructure *next = (VkBaseOutStructure *)properties->pNext;
+         next != NULL; next = next->pNext) {
+        if (next->sType == VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES) {
+            VkExternalImageFormatProperties *external =
+                (VkExternalImageFormatProperties *)next;
+            external->externalMemoryProperties =
+                (VkExternalMemoryProperties){
+                    .externalMemoryFeatures =
+                        VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT |
+                        VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT,
+                    .exportFromImportedHandleTypes =
+                        VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+                    .compatibleHandleTypes =
+                        VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+                };
+        }
+    }
+    return VK_SUCCESS;
+}
+
 static void VKAPI_CALL fake_get_external_semaphore_properties(
     VkPhysicalDevice device,
     const VkPhysicalDeviceExternalSemaphoreInfo *info,
@@ -616,8 +656,11 @@ static VkResult VKAPI_CALL fake_create_buffer(
     const VkAllocationCallbacks *allocator,
     VkBuffer *buffer) {
     (void)device;
-    (void)create_info;
     (void)allocator;
+    if (create_info == NULL || create_info->size == 0U) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    fake_buffer_size = create_info->size;
     *buffer = (VkBuffer)(uintptr_t)0x4000U;
     return VK_SUCCESS;
 }
@@ -638,7 +681,7 @@ static void VKAPI_CALL fake_get_buffer_memory_requirements(
     (void)device;
     (void)buffer;
     *requirements = (VkMemoryRequirements){
-        .size = 4096,
+        .size = fake_buffer_size,
         .alignment = 4,
         .memoryTypeBits = 1,
     };
@@ -713,6 +756,9 @@ static void VKAPI_CALL fake_free_memory(
     if (fake_bound_memory == memory) {
         fake_bound_memory = VK_NULL_HANDLE;
     }
+    if (fake_bound_image_memory == memory) {
+        fake_bound_image_memory = VK_NULL_HANDLE;
+    }
     void *address = (void *)(uintptr_t)memory;
     struct bvb_fake_memory_record *record = fake_memory_record(address);
     if (record == NULL) {
@@ -754,6 +800,49 @@ static VkResult VKAPI_CALL fake_bind_buffer_memory(
     (void)buffer;
     (void)offset;
     fake_bound_memory = memory;
+    return VK_SUCCESS;
+}
+
+static VkResult VKAPI_CALL fake_create_image(
+    VkDevice device, const VkImageCreateInfo *create_info,
+    const VkAllocationCallbacks *allocator, VkImage *image) {
+    (void)device;
+    (void)allocator;
+    if (create_info == NULL || image == NULL ||
+        create_info->format != VK_FORMAT_R8G8B8A8_UNORM ||
+        create_info->extent.width != 64U ||
+        create_info->extent.height != 64U) {
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    }
+    *image = (VkImage)(uintptr_t)UINT64_C(0xa000);
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL fake_destroy_image(
+    VkDevice device, VkImage image, const VkAllocationCallbacks *allocator) {
+    (void)device;
+    (void)image;
+    (void)allocator;
+}
+
+static void VKAPI_CALL fake_get_image_memory_requirements(
+    VkDevice device, VkImage image, VkMemoryRequirements *requirements) {
+    (void)device;
+    (void)image;
+    *requirements = (VkMemoryRequirements){
+        .size = 64U * 64U * sizeof(uint32_t),
+        .alignment = 4096U,
+        .memoryTypeBits = 1U,
+    };
+}
+
+static VkResult VKAPI_CALL fake_bind_image_memory(
+    VkDevice device, VkImage image, VkDeviceMemory memory,
+    VkDeviceSize offset) {
+    (void)device;
+    (void)image;
+    (void)offset;
+    fake_bound_image_memory = memory;
     return VK_SUCCESS;
 }
 
@@ -879,6 +968,26 @@ static void VKAPI_CALL fake_cmd_clear_color_image(
         color->float32[3] == 1.0F && range_count == 1U) {
         fake_clear_recorded = 1;
     }
+}
+
+static void VKAPI_CALL fake_cmd_copy_image_to_buffer(
+    VkCommandBuffer command_buffer, VkImage source_image,
+    VkImageLayout source_layout, VkBuffer destination_buffer,
+    uint32_t region_count, const VkBufferImageCopy *regions) {
+    (void)command_buffer;
+    (void)source_image;
+    (void)destination_buffer;
+    if (fake_bound_image_memory == VK_NULL_HANDLE ||
+        fake_bound_memory == VK_NULL_HANDLE ||
+        source_layout != VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL ||
+        region_count != 1U || regions == NULL) {
+        return;
+    }
+    const size_t bytes = (size_t)regions[0].imageExtent.width *
+                         (size_t)regions[0].imageExtent.height *
+                         sizeof(uint32_t);
+    memcpy((void *)(uintptr_t)fake_bound_memory,
+           (const void *)(uintptr_t)fake_bound_image_memory, bytes);
 }
 
 static VkResult VKAPI_CALL fake_queue_submit(
@@ -1008,6 +1117,10 @@ static PFN_vkVoidFunction function_pointer(const char *name) {
               fake_get_external_buffer_properties)
     BVB_MATCH("vkGetPhysicalDeviceExternalBufferPropertiesKHR",
               fake_get_external_buffer_properties)
+    BVB_MATCH("vkGetPhysicalDeviceImageFormatProperties2",
+              fake_get_image_format_properties2)
+    BVB_MATCH("vkGetPhysicalDeviceImageFormatProperties2KHR",
+              fake_get_image_format_properties2)
     BVB_MATCH("vkGetPhysicalDeviceExternalSemaphoreProperties",
               fake_get_external_semaphore_properties)
     BVB_MATCH("vkGetPhysicalDeviceExternalSemaphorePropertiesKHR",
@@ -1057,6 +1170,11 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkAllocateMemory", fake_allocate_memory)
     BVB_DEVICE_MATCH("vkFreeMemory", fake_free_memory)
     BVB_DEVICE_MATCH("vkBindBufferMemory", fake_bind_buffer_memory)
+    BVB_DEVICE_MATCH("vkCreateImage", fake_create_image)
+    BVB_DEVICE_MATCH("vkDestroyImage", fake_destroy_image)
+    BVB_DEVICE_MATCH("vkGetImageMemoryRequirements",
+                     fake_get_image_memory_requirements)
+    BVB_DEVICE_MATCH("vkBindImageMemory", fake_bind_image_memory)
     BVB_DEVICE_MATCH("vkCreateCommandPool", fake_create_command_pool)
     BVB_DEVICE_MATCH("vkDestroyCommandPool", fake_destroy_command_pool)
     BVB_DEVICE_MATCH("vkResetCommandPool", fake_reset_command_pool)
@@ -1067,6 +1185,7 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkCmdFillBuffer", fake_cmd_fill_buffer)
     BVB_DEVICE_MATCH("vkCmdPipelineBarrier", fake_cmd_pipeline_barrier)
     BVB_DEVICE_MATCH("vkCmdClearColorImage", fake_cmd_clear_color_image)
+    BVB_DEVICE_MATCH("vkCmdCopyImageToBuffer", fake_cmd_copy_image_to_buffer)
     BVB_DEVICE_MATCH("vkQueueSubmit", fake_queue_submit)
     BVB_DEVICE_MATCH("vkQueuePresentKHR", fake_queue_present)
     BVB_DEVICE_MATCH("vkQueueWaitIdle", fake_queue_wait_idle)

@@ -30,8 +30,12 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        boolean externalSync = SharedRegionClient.ACTION_EXTERNAL_SYNC.equals(
-                intent.getAction());
+        boolean externalImage =
+                SharedRegionClient.ACTION_EXTERNAL_IMAGE.equals(
+                        intent.getAction());
+        boolean externalSync = externalImage ||
+                SharedRegionClient.ACTION_EXTERNAL_SYNC.equals(
+                        intent.getAction());
         boolean external = externalSync ||
                 SharedRegionClient.ACTION_EXTERNAL_MEMORY.equals(
                 intent.getAction());
@@ -61,7 +65,7 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
                             "external-memory capability rejected");
                 }
                 externalResult = SharedRegionProvider.openExternalMemory(
-                        token, externalSync);
+                        token, externalSync, externalImage);
                 status = externalResult.status;
                 region = externalResult.descriptor;
                 syncDescriptor = externalResult.syncDescriptor;

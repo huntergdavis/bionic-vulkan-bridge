@@ -96,6 +96,62 @@ def main():
     assert sync_document["mismatched_words"] == 0
     assert sync_document["gpu_wait_elapsed_ns"] >= 0
 
+    image_socket_name = f"bvb-e038-host-{os.getpid()}"
+    image_process = subprocess.Popen(
+        [receiver, "--socket", image_socket_name, "--loader", loader],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert image_process.stdout.readline().startswith(
+        "bvb-external-memory-receiver: ready"
+    )
+    image_memory = os.memfd_create("bvb-e038-image", os.MFD_CLOEXEC)
+    image_semaphore = os.memfd_create("bvb-e038-semaphore", os.MFD_CLOEXEC)
+    width = 64
+    height = 64
+    image_bytes = width * height * 4
+    expected_color = 0xFFFF00FF
+    os.ftruncate(image_memory, image_bytes)
+    os.pwrite(
+        image_memory,
+        struct.pack("<I", expected_color) * (width * height),
+        0,
+    )
+    image_client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    image_client.connect("\0" + image_socket_name)
+    image_header = struct.pack(
+        "<IHHHHIIi", 0x31425642, 1, 1, 52, 0, 0xE038, 32, 0
+    )
+    image_payload = struct.pack(
+        "<QIIIIII", image_bytes, 0, width, height, 37, expected_color, 0
+    )
+    image_rights = array.array("i", [image_memory, image_semaphore])
+    image_client.sendmsg(
+        [image_header + image_payload],
+        [(socket.SOL_SOCKET, socket.SCM_RIGHTS, image_rights.tobytes())],
+    )
+    image_response = b""
+    while len(image_response) < 24:
+        image_response += image_client.recv(24 - len(image_response))
+    image_client.close()
+    os.close(image_memory)
+    os.close(image_semaphore)
+    image_fields = struct.unpack("<IHHHHIIi", image_response)
+    assert image_fields == (0x31425642, 1, 2, 52, 0, 0xE038, 0, 0)
+    image_output, image_error = image_process.communicate(timeout=10)
+    assert image_process.returncode == 0, image_error
+    image_document = json.loads(image_output)
+    assert image_document["gate"] == "E038"
+    assert image_document["result"] == "pass"
+    assert image_document["descriptor_count"] == 2
+    assert image_document["width"] == width
+    assert image_document["height"] == height
+    assert image_document["format"] == 37
+    assert image_document["expected_color"] == expected_color
+    assert image_document["mismatched_pixels"] == 0
+    assert image_document["gpu_wait_elapsed_ns"] >= 0
+
 
 if __name__ == "__main__":
     main()
