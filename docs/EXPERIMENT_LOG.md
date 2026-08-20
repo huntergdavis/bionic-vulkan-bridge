@@ -1963,3 +1963,42 @@ The next bounded gate is E037: export/import a GPU synchronization primitive
 and prove ordered producer-to-consumer access without CPU waits or per-frame
 Binder traffic. E036 proves the cross-UID zero-copy transport primitive, not
 shared images, DXVK startup, Tomb Raider output, or a game FPS improvement.
+
+## E037 — Cross-process GPU synchronization (2026-08-20)
+
+Status: passed on real Adreno 730 hardware with visible-host v27. The producer
+path is source commit `33c9bb3`; the final lifecycle-aware evidence harness is
+commit `486c9eb`.
+
+The real device capability probe rejected the original semaphore assumption:
+`OPAQUE_FD` reports no external-semaphore features, while `SYNC_FD` reports
+features 3 (both exportable and importable). E037 therefore retains E036's
+opaque-FD external memory allocation but pairs it with a temporary one-shot
+`SYNC_FD` binary-semaphore payload. The visible Activity queues the GPU signal
+before exporting the sync FD. The separate Bionic consumer imports it with
+`VK_SEMAPHORE_IMPORT_TEMPORARY_BIT`, queues a GPU wait, waits on an evidence
+fence, and only then validates the shared allocation.
+
+The hardware gate received both descriptors through Binder and same-UID
+`SCM_RIGHTS`, imported them through `/system/lib64/libvulkan.so`, and recovered
+all 1,024 expected 32-bit words with zero mismatches. The consumer GPU fence
+wait took 54,948 ns; receive/import took 140,961,146 ns. The wrong 256-bit
+capability was rejected with `-EACCES`, both native stderr streams were empty,
+and the final Activity status correctly records Android tearing down the
+window after the earlier renderer-ready event. The evidence harness now tests
+that renderer readiness occurred rather than incorrectly requiring it to
+remain the final lifecycle state. This reuses E035's external-memory ownership
+model and E036's allocation-time capability broker; Binder and Java remain
+absent from the measured per-frame path. The required `deja` recall query
+returned no indexed prior session.
+
+Canonical evidence is `docs/evidence/e037-external-sync-broker.json`, 2,161
+bytes, SHA-256
+`478171f4a89ae0efa51f903a117d645f35e0b018d2d479a8ad7cde43d29a307c`.
+
+The next bounded gate is E038: export/import an actual Vulkan image and deliver
+per-frame `SYNC_FD` payloads over a persistent native descriptor channel. The
+one-time Binder setup may establish that channel, but steady-state frames must
+not cross Binder or Java. E037 proves ordering for one shared buffer; it does
+not yet prove shared image layout, sampling/presentation, DXVK startup, Tomb
+Raider output, or an FPS improvement.

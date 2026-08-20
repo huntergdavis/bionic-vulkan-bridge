@@ -83,7 +83,9 @@
   across Binder/SCM_RIGHTS, and import it in the game-facing Bionic device
 - [ ] Expand generated dispatch to the measured DXVK startup subset
 - [x] Implement GPU external-memory transport across the Android UID boundary
-- [ ] Implement shared GPU synchronization for externally shared resources
+- [x] Implement shared GPU synchronization for externally shared resources
+- [ ] Share and consume a real GPU image/frame using external memory plus
+  per-frame native `SYNC_FD` delivery without per-frame Binder/Java work
 - [x] Reach a rendered test triangle
 - [x] Deliver the glibc-generated triangle batch to the visible host
 - [x] Drive sustained per-frame shader data through the shared ring and render

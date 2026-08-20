@@ -166,7 +166,12 @@ from its own device, Binder carries the descriptor into Termux, and a Bionic
 receiver imports and verifies it. The real Adreno run imported the 9,396-byte
 allocation and recovered all 4,096 patterned bytes with zero mismatches; the
 wrong capability returned `-EACCES`. Binder is allocation-time control only
-and is absent from the frame path.
+and is absent from the frame path. E037 adds ordered GPU-to-GPU access using
+Adreno's supported one-shot `SYNC_FD` semaphore payload: the visible renderer
+signals it, the separate Bionic consumer imports and waits on it, and the same
+4,096 bytes match with zero errors. The measured consumer fence wait was
+54,948 ns. Opaque-FD semaphores are unsupported on this Adreno 730, so the
+bridge uses opaque FD for memory and temporary `SYNC_FD` for synchronization.
 
 ## Build and test on a normal Linux host
 
