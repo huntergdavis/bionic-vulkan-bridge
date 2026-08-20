@@ -776,6 +776,77 @@ static int answer_vulkan_physical_device_features(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_format_properties(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length != BVB_VULKAN_FORMAT_QUERY_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_format_query query;
+    int result = bvb_protocol_decode_vulkan_format_query(
+        request->payload, &query);
+    struct bvb_vulkan_format_properties properties;
+    char diagnostic[512];
+    if (result == 0) {
+        result = bvb_vulkan_global_context_get_format_properties(
+            context, &query, &properties, diagnostic, sizeof(diagnostic));
+        if (result != 0) {
+            fprintf(stderr, "bvb: format properties failed: %s\n",
+                    diagnostic);
+        }
+    }
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_format_properties(
+            response.payload, &properties);
+    }
+    if (result == 0) {
+        response.header.payload_length = BVB_VULKAN_FORMAT_PROPERTIES_SIZE;
+    } else {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_image_format_properties(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL || request->header.payload_length !=
+        BVB_VULKAN_IMAGE_FORMAT_QUERY_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_image_format_query query;
+    int result = bvb_protocol_decode_vulkan_image_format_query(
+        request->payload, &query);
+    struct bvb_vulkan_image_format_properties properties;
+    char diagnostic[512];
+    if (result == 0) {
+        result = bvb_vulkan_global_context_get_image_format_properties(
+            context, &query, &properties, diagnostic, sizeof(diagnostic));
+        if (result != 0) {
+            fprintf(stderr, "bvb: image-format properties failed: %s\n",
+                    diagnostic);
+        }
+    }
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_image_format_properties(
+            response.payload, &properties);
+    }
+    if (result == 0) {
+        response.header.payload_length =
+            BVB_VULKAN_IMAGE_FORMAT_PROPERTIES_SIZE;
+    } else {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_device_create(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context) {
@@ -1852,6 +1923,14 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_PHYSICAL_DEVICE_FEATURES) {
             result = answer_vulkan_physical_device_features(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_FORMAT_PROPERTIES) {
+            result = answer_vulkan_format_properties(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_IMAGE_FORMAT_PROPERTIES) {
+            result = answer_vulkan_image_format_properties(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_DEVICE_CREATE) {

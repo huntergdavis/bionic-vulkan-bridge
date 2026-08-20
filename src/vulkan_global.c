@@ -761,6 +761,91 @@ int bvb_vulkan_global_context_get_physical_device_features(
     return 0;
 }
 
+int bvb_vulkan_global_context_get_format_properties(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_format_query *query,
+    struct bvb_vulkan_format_properties *properties,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (query == NULL || properties == NULL) {
+        return -EINVAL;
+    }
+    *properties = (struct bvb_vulkan_format_properties){0};
+    VkInstance instance = VK_NULL_HANDLE;
+    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+    int result = resolve_physical_device(
+        context, query->physical_device_id, &instance, &physical_device);
+    if (result != 0) {
+        set_error(error, error_size, "unknown physical-device handle");
+        return result;
+    }
+    PFN_vkGetPhysicalDeviceFormatProperties get_properties =
+        (PFN_vkGetPhysicalDeviceFormatProperties)
+            context->get_instance_proc_addr(
+                instance, "vkGetPhysicalDeviceFormatProperties");
+    if (get_properties == NULL) {
+        set_error(error, error_size,
+                  "instance has no vkGetPhysicalDeviceFormatProperties");
+        return -ENOSYS;
+    }
+    VkFormatProperties native = {0};
+    get_properties(physical_device, (VkFormat)query->format, &native);
+    properties->linear_tiling_features = native.linearTilingFeatures;
+    properties->optimal_tiling_features = native.optimalTilingFeatures;
+    properties->buffer_features = native.bufferFeatures;
+    return 0;
+}
+
+int bvb_vulkan_global_context_get_image_format_properties(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_image_format_query *query,
+    struct bvb_vulkan_image_format_properties *properties,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (query == NULL || properties == NULL) {
+        return -EINVAL;
+    }
+    *properties = (struct bvb_vulkan_image_format_properties){0};
+    VkInstance instance = VK_NULL_HANDLE;
+    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+    int result = resolve_physical_device(
+        context, query->physical_device_id, &instance, &physical_device);
+    if (result != 0) {
+        set_error(error, error_size, "unknown physical-device handle");
+        return result;
+    }
+    PFN_vkGetPhysicalDeviceImageFormatProperties get_properties =
+        (PFN_vkGetPhysicalDeviceImageFormatProperties)
+            context->get_instance_proc_addr(
+                instance, "vkGetPhysicalDeviceImageFormatProperties");
+    if (get_properties == NULL) {
+        set_error(
+            error, error_size,
+            "instance has no vkGetPhysicalDeviceImageFormatProperties");
+        return -ENOSYS;
+    }
+    VkImageFormatProperties native = {0};
+    const VkResult vulkan_result = get_properties(
+        physical_device, (VkFormat)query->format, (VkImageType)query->type,
+        (VkImageTiling)query->tiling, (VkImageUsageFlags)query->usage,
+        (VkImageCreateFlags)query->flags, &native);
+    properties->vulkan_result = vulkan_result;
+    if (vulkan_result == VK_SUCCESS) {
+        properties->max_extent_width = native.maxExtent.width;
+        properties->max_extent_height = native.maxExtent.height;
+        properties->max_extent_depth = native.maxExtent.depth;
+        properties->max_mip_levels = native.maxMipLevels;
+        properties->max_array_layers = native.maxArrayLayers;
+        properties->sample_counts = native.sampleCounts;
+        properties->max_resource_size = native.maxResourceSize;
+    }
+    return 0;
+}
+
 static struct bvb_device_metadata *device_metadata_slot(
     struct bvb_vulkan_global_context *context, uint64_t device_id) {
     struct bvb_device_metadata *empty = NULL;

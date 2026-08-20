@@ -152,6 +152,9 @@ int main(void) {
     PFN_vkGetPhysicalDeviceProperties get_physical_device_properties = NULL;
     PFN_vkGetPhysicalDeviceQueueFamilyProperties get_queue_properties = NULL;
     PFN_vkGetPhysicalDeviceMemoryProperties get_memory_properties = NULL;
+    PFN_vkGetPhysicalDeviceFormatProperties get_format_properties = NULL;
+    PFN_vkGetPhysicalDeviceImageFormatProperties get_image_format_properties =
+        NULL;
     PFN_vkEnumerateDeviceExtensionProperties enumerate_device_extensions =
         NULL;
 #define RESOLVE_INSTANCE(entry_name, variable)                                \
@@ -166,6 +169,10 @@ int main(void) {
                      get_queue_properties);
     RESOLVE_INSTANCE(vkGetPhysicalDeviceMemoryProperties,
                      get_memory_properties);
+    RESOLVE_INSTANCE(vkGetPhysicalDeviceFormatProperties,
+                     get_format_properties);
+    RESOLVE_INSTANCE(vkGetPhysicalDeviceImageFormatProperties,
+                     get_image_format_properties);
     RESOLVE_INSTANCE(vkEnumerateDeviceExtensionProperties,
                      enumerate_device_extensions);
 #undef RESOLVE_INSTANCE
@@ -175,6 +182,34 @@ int main(void) {
     CHECK(properties.apiVersion >= VK_API_VERSION_1_0);
     CHECK(properties.vendorID != 0U);
     CHECK(properties.deviceName[0] != '\0');
+
+    VkFormatProperties format_properties;
+    get_format_properties(
+        physical_device, VK_FORMAT_R8G8B8A8_UNORM, &format_properties);
+    CHECK((format_properties.optimalTilingFeatures &
+           VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) != 0U);
+    CHECK((format_properties.optimalTilingFeatures &
+           VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT) != 0U);
+    CHECK((format_properties.bufferFeatures &
+           VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT) != 0U);
+
+    VkImageFormatProperties image_format_properties;
+    CHECK(get_image_format_properties(
+              physical_device, VK_FORMAT_R8G8B8A8_UNORM,
+              VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
+              VK_IMAGE_USAGE_SAMPLED_BIT, 0U,
+              &image_format_properties) == VK_SUCCESS);
+    CHECK(image_format_properties.maxExtent.width == 4096U);
+    CHECK(image_format_properties.maxExtent.height == 2048U);
+    CHECK(image_format_properties.maxMipLevels == 12U);
+    CHECK(image_format_properties.maxArrayLayers == 256U);
+    CHECK(image_format_properties.maxResourceSize == UINT64_C(0x100000000));
+    memset(&image_format_properties, 0xff, sizeof(image_format_properties));
+    CHECK(get_image_format_properties(
+              physical_device, VK_FORMAT_UNDEFINED, VK_IMAGE_TYPE_2D,
+              VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, 0U,
+              &image_format_properties) == VK_ERROR_FORMAT_NOT_SUPPORTED);
+    CHECK(image_format_properties.maxExtent.width == 0U);
 
     uint32_t queue_count = 0U;
     get_queue_properties(physical_device, &queue_count, NULL);

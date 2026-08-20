@@ -50,6 +50,16 @@ int bvb_vulkan_global_context_get_physical_device_features(
     const struct bvb_vulkan_global_context *context,
     uint64_t physical_device_id, VkPhysicalDeviceFeatures *features,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_get_format_properties(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_format_query *query,
+    struct bvb_vulkan_format_properties *properties,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_get_image_format_properties(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_image_format_query *query,
+    struct bvb_vulkan_image_format_properties *properties,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_create_device(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_device_create_request *request,

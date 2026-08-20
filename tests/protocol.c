@@ -81,7 +81,7 @@ int main(void) {
     };
     CHECK(bvb_protocol_encode_header(wire, &last_opcode_header) == 0);
     CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
-    CHECK(decoded.opcode == BVB_OPCODE_EXTERNAL_IMAGE_FRAME_RING_TEST);
+    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_IMAGE_FORMAT_PROPERTIES);
 
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
@@ -258,6 +258,83 @@ int main(void) {
     CHECK(physical_id_decoded == physical_devices.ids[0]);
     CHECK(bvb_protocol_decode_vulkan_instance_id(
               physical_id_wire, &instance_id_decoded) == -EPROTO);
+
+    const struct bvb_vulkan_format_query format_query = {
+        .physical_device_id = physical_devices.ids[0],
+        .format = 37U,
+    };
+    uint8_t format_query_wire[BVB_VULKAN_FORMAT_QUERY_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_format_query(
+              format_query_wire, &format_query) == 0);
+    struct bvb_vulkan_format_query format_query_decoded;
+    CHECK(bvb_protocol_decode_vulkan_format_query(
+              format_query_wire, &format_query_decoded) == 0);
+    CHECK(format_query_decoded.physical_device_id ==
+          format_query.physical_device_id);
+    CHECK(format_query_decoded.format == format_query.format);
+    format_query_wire[12] = 1U;
+    CHECK(bvb_protocol_decode_vulkan_format_query(
+              format_query_wire, &format_query_decoded) == -EPROTO);
+    format_query_wire[12] = 0U;
+
+    const struct bvb_vulkan_format_properties format_properties = {
+        .linear_tiling_features = 1U,
+        .optimal_tiling_features = 2U,
+        .buffer_features = 4U,
+    };
+    uint8_t format_properties_wire[BVB_VULKAN_FORMAT_PROPERTIES_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_format_properties(
+              format_properties_wire, &format_properties) == 0);
+    struct bvb_vulkan_format_properties format_properties_decoded;
+    CHECK(bvb_protocol_decode_vulkan_format_properties(
+              format_properties_wire, &format_properties_decoded) == 0);
+    CHECK(format_properties_decoded.linear_tiling_features == 1U);
+    CHECK(format_properties_decoded.optimal_tiling_features == 2U);
+    CHECK(format_properties_decoded.buffer_features == 4U);
+
+    const struct bvb_vulkan_image_format_query image_format_query = {
+        .physical_device_id = physical_devices.ids[0],
+        .format = 37U,
+        .type = 1U,
+        .tiling = 0U,
+        .usage = 20U,
+        .flags = 2U,
+    };
+    uint8_t image_format_query_wire[BVB_VULKAN_IMAGE_FORMAT_QUERY_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_image_format_query(
+              image_format_query_wire, &image_format_query) == 0);
+    struct bvb_vulkan_image_format_query image_format_query_decoded;
+    CHECK(bvb_protocol_decode_vulkan_image_format_query(
+              image_format_query_wire, &image_format_query_decoded) == 0);
+    CHECK(image_format_query_decoded.physical_device_id ==
+          image_format_query.physical_device_id);
+    CHECK(image_format_query_decoded.format == 37U);
+    CHECK(image_format_query_decoded.type == 1U);
+    CHECK(image_format_query_decoded.usage == 20U);
+
+    const struct bvb_vulkan_image_format_properties image_format_properties = {
+        .vulkan_result = 0,
+        .max_extent_width = 4096U,
+        .max_extent_height = 2048U,
+        .max_extent_depth = 1U,
+        .max_mip_levels = 12U,
+        .max_array_layers = 256U,
+        .sample_counts = 5U,
+        .max_resource_size = UINT64_C(0x100000000),
+    };
+    uint8_t image_format_properties_wire[
+        BVB_VULKAN_IMAGE_FORMAT_PROPERTIES_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_image_format_properties(
+              image_format_properties_wire, &image_format_properties) == 0);
+    struct bvb_vulkan_image_format_properties image_format_properties_decoded;
+    CHECK(bvb_protocol_decode_vulkan_image_format_properties(
+              image_format_properties_wire,
+              &image_format_properties_decoded) == 0);
+    CHECK(image_format_properties_decoded.vulkan_result == 0);
+    CHECK(image_format_properties_decoded.max_extent_width == 4096U);
+    CHECK(image_format_properties_decoded.max_array_layers == 256U);
+    CHECK(image_format_properties_decoded.max_resource_size ==
+          UINT64_C(0x100000000));
 
     const struct bvb_vulkan_device_extension_query extension_query = {
         .physical_device_id = physical_devices.ids[0],

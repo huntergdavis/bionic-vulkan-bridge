@@ -69,7 +69,9 @@ enum {
     BVB_OPCODE_EXTERNAL_IMAGE_IMPORT_TEST = 52,
     BVB_OPCODE_EXTERNAL_IMAGE_FENCED_IMPORT_TEST = 53,
     BVB_OPCODE_EXTERNAL_IMAGE_FRAME_RING_TEST = 54,
-    BVB_OPCODE_LAST = BVB_OPCODE_EXTERNAL_IMAGE_FRAME_RING_TEST,
+    BVB_OPCODE_VULKAN_FORMAT_PROPERTIES = 55,
+    BVB_OPCODE_VULKAN_IMAGE_FORMAT_PROPERTIES = 56,
+    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_IMAGE_FORMAT_PROPERTIES,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -90,6 +92,10 @@ enum {
     BVB_VULKAN_INSTANCE_CREATE_RESPONSE_SIZE = 16,
     BVB_VULKAN_INSTANCE_ID_SIZE = 8,
     BVB_VULKAN_PHYSICAL_DEVICE_ID_SIZE = 8,
+    BVB_VULKAN_FORMAT_QUERY_SIZE = 16,
+    BVB_VULKAN_FORMAT_PROPERTIES_SIZE = 12,
+    BVB_VULKAN_IMAGE_FORMAT_QUERY_SIZE = 32,
+    BVB_VULKAN_IMAGE_FORMAT_PROPERTIES_SIZE = 40,
     BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE = 16,
     BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE = 32,
     BVB_VULKAN_DEVICE_CREATE_RESPONSE_SIZE = 16,
@@ -230,6 +236,37 @@ struct bvb_vulkan_physical_devices {
     int32_t vulkan_result;
     uint32_t count;
     uint64_t ids[BVB_VULKAN_MAX_PHYSICAL_DEVICES];
+};
+
+struct bvb_vulkan_format_query {
+    uint64_t physical_device_id;
+    uint32_t format;
+};
+
+struct bvb_vulkan_format_properties {
+    uint32_t linear_tiling_features;
+    uint32_t optimal_tiling_features;
+    uint32_t buffer_features;
+};
+
+struct bvb_vulkan_image_format_query {
+    uint64_t physical_device_id;
+    uint32_t format;
+    uint32_t type;
+    uint32_t tiling;
+    uint32_t usage;
+    uint32_t flags;
+};
+
+struct bvb_vulkan_image_format_properties {
+    int32_t vulkan_result;
+    uint32_t max_extent_width;
+    uint32_t max_extent_height;
+    uint32_t max_extent_depth;
+    uint32_t max_mip_levels;
+    uint32_t max_array_layers;
+    uint32_t sample_counts;
+    uint64_t max_resource_size;
 };
 
 struct bvb_vulkan_device_extension_query {
@@ -502,6 +539,30 @@ int bvb_protocol_encode_vulkan_physical_device_id(
 int bvb_protocol_decode_vulkan_physical_device_id(
     const uint8_t input[BVB_VULKAN_PHYSICAL_DEVICE_ID_SIZE],
     uint64_t *physical_device_id);
+int bvb_protocol_encode_vulkan_format_query(
+    uint8_t output[BVB_VULKAN_FORMAT_QUERY_SIZE],
+    const struct bvb_vulkan_format_query *query);
+int bvb_protocol_decode_vulkan_format_query(
+    const uint8_t input[BVB_VULKAN_FORMAT_QUERY_SIZE],
+    struct bvb_vulkan_format_query *query);
+int bvb_protocol_encode_vulkan_format_properties(
+    uint8_t output[BVB_VULKAN_FORMAT_PROPERTIES_SIZE],
+    const struct bvb_vulkan_format_properties *properties);
+int bvb_protocol_decode_vulkan_format_properties(
+    const uint8_t input[BVB_VULKAN_FORMAT_PROPERTIES_SIZE],
+    struct bvb_vulkan_format_properties *properties);
+int bvb_protocol_encode_vulkan_image_format_query(
+    uint8_t output[BVB_VULKAN_IMAGE_FORMAT_QUERY_SIZE],
+    const struct bvb_vulkan_image_format_query *query);
+int bvb_protocol_decode_vulkan_image_format_query(
+    const uint8_t input[BVB_VULKAN_IMAGE_FORMAT_QUERY_SIZE],
+    struct bvb_vulkan_image_format_query *query);
+int bvb_protocol_encode_vulkan_image_format_properties(
+    uint8_t output[BVB_VULKAN_IMAGE_FORMAT_PROPERTIES_SIZE],
+    const struct bvb_vulkan_image_format_properties *properties);
+int bvb_protocol_decode_vulkan_image_format_properties(
+    const uint8_t input[BVB_VULKAN_IMAGE_FORMAT_PROPERTIES_SIZE],
+    struct bvb_vulkan_image_format_properties *properties);
 int bvb_protocol_encode_vulkan_device_extension_query(
     uint8_t output[BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE],
     const struct bvb_vulkan_device_extension_query *query);

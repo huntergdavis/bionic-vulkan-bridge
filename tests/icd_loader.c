@@ -13,7 +13,7 @@ int main(void) {
     }
     const VkApplicationInfo application = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-        .pApplicationName = "bvb-e043-icd-loader",
+        .pApplicationName = "bvb-e044-icd-loader",
         .applicationVersion = 1U,
         .pEngineName = "bvb",
         .engineVersion = 1U,
@@ -51,14 +51,45 @@ int main(void) {
     VkPhysicalDeviceProperties properties;
     memset(&properties, 0, sizeof(properties));
     vkGetPhysicalDeviceProperties(physical_device, &properties);
-    vkDestroyInstance(instance, NULL);
     if (strcmp(properties.deviceName, "Adreno (TM) 730") != 0) {
         fprintf(stderr, "unexpected Vulkan device: %s\n",
                 properties.deviceName);
+        vkDestroyInstance(instance, NULL);
         return 1;
     }
-    printf("PASS: Vulkan loader selected BVB ICD api=%u device=%s vendor=%u device_id=%u\n",
+
+    VkFormatProperties format_properties;
+    memset(&format_properties, 0, sizeof(format_properties));
+    vkGetPhysicalDeviceFormatProperties(
+        physical_device, VK_FORMAT_R8G8B8A8_UNORM, &format_properties);
+    if ((format_properties.optimalTilingFeatures &
+         VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT) == 0U) {
+        fputs("RGBA8 optimal tiling lacks sampled-image support\n", stderr);
+        vkDestroyInstance(instance, NULL);
+        return 1;
+    }
+    VkImageFormatProperties image_properties;
+    memset(&image_properties, 0, sizeof(image_properties));
+    result = vkGetPhysicalDeviceImageFormatProperties(
+        physical_device, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TYPE_2D,
+        VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_SAMPLED_BIT, 0U,
+        &image_properties);
+    if (result != VK_SUCCESS || image_properties.maxExtent.width < 2800U ||
+        image_properties.maxExtent.height < 1752U) {
+        fprintf(stderr,
+                "RGBA8 image-format query failed: %d max_extent=%ux%u\n",
+                (int)result, image_properties.maxExtent.width,
+                image_properties.maxExtent.height);
+        vkDestroyInstance(instance, NULL);
+        return 1;
+    }
+    vkDestroyInstance(instance, NULL);
+    printf("PASS: Vulkan loader selected BVB ICD api=%u device=%s vendor=%u device_id=%u rgba8_optimal=%u max_extent=%ux%ux%u max_resource=%llu\n",
            api_version, properties.deviceName, properties.vendorID,
-           properties.deviceID);
+           properties.deviceID, format_properties.optimalTilingFeatures,
+           image_properties.maxExtent.width,
+           image_properties.maxExtent.height,
+           image_properties.maxExtent.depth,
+           (unsigned long long)image_properties.maxResourceSize);
     return 0;
 }

@@ -1164,11 +1164,55 @@ static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFeatures(
 static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFormatProperties(
     VkPhysicalDevice physical_device, VkFormat format,
     VkFormatProperties *properties) {
-    (void)format;
-    if (physical_device_proxy(physical_device) == NULL || properties == NULL) {
+    if (properties == NULL) {
         return;
     }
     memset(properties, 0, sizeof(*properties));
+    struct bvb_physical_device_proxy *proxy =
+        physical_device_proxy(physical_device);
+    if (proxy == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return;
+    }
+    int result = connect_locked();
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_FORMAT_PROPERTIES,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_FORMAT_QUERY_SIZE,
+    };
+    const struct bvb_vulkan_format_query query = {
+        .physical_device_id = proxy->wire_id,
+        .format = (uint32_t)format,
+    };
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_format_query(
+            request.payload, &query);
+    }
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        result = exchange_locked(&request, &response);
+    }
+    if (result == 0 && response.header.status != 0) {
+        result = response.header.status;
+    }
+    struct bvb_vulkan_format_properties decoded = {0};
+    if (result == 0 && response.header.payload_length !=
+                           BVB_VULKAN_FORMAT_PROPERTIES_SIZE) {
+        result = -EPROTO;
+    }
+    if (result == 0) {
+        result = bvb_protocol_decode_vulkan_format_properties(
+            response.payload, &decoded);
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result == 0) {
+        properties->linearTilingFeatures = decoded.linear_tiling_features;
+        properties->optimalTilingFeatures = decoded.optimal_tiling_features;
+        properties->bufferFeatures = decoded.buffer_features;
+    }
 }
 
 static VkResult VKAPI_CALL
@@ -1176,16 +1220,69 @@ bvb_bridge_vkGetPhysicalDeviceImageFormatProperties(
     VkPhysicalDevice physical_device, VkFormat format, VkImageType type,
     VkImageTiling tiling, VkImageUsageFlags usage,
     VkImageCreateFlags flags, VkImageFormatProperties *properties) {
-    (void)format;
-    (void)type;
-    (void)tiling;
-    (void)usage;
-    (void)flags;
-    if (physical_device_proxy(physical_device) == NULL || properties == NULL) {
+    if (properties == NULL) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     memset(properties, 0, sizeof(*properties));
-    return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    struct bvb_physical_device_proxy *proxy =
+        physical_device_proxy(physical_device);
+    if (proxy == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    int result = connect_locked();
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_IMAGE_FORMAT_PROPERTIES,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_IMAGE_FORMAT_QUERY_SIZE,
+    };
+    const struct bvb_vulkan_image_format_query query = {
+        .physical_device_id = proxy->wire_id,
+        .format = (uint32_t)format,
+        .type = (uint32_t)type,
+        .tiling = (uint32_t)tiling,
+        .usage = (uint32_t)usage,
+        .flags = (uint32_t)flags,
+    };
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_image_format_query(
+            request.payload, &query);
+    }
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        result = exchange_locked(&request, &response);
+    }
+    if (result == 0 && response.header.status != 0) {
+        result = response.header.status;
+    }
+    struct bvb_vulkan_image_format_properties decoded = {0};
+    if (result == 0 && response.header.payload_length !=
+                           BVB_VULKAN_IMAGE_FORMAT_PROPERTIES_SIZE) {
+        result = -EPROTO;
+    }
+    if (result == 0) {
+        result = bvb_protocol_decode_vulkan_image_format_properties(
+            response.payload, &decoded);
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result != 0) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (decoded.vulkan_result == VK_SUCCESS) {
+        properties->maxExtent = (VkExtent3D){
+            decoded.max_extent_width,
+            decoded.max_extent_height,
+            decoded.max_extent_depth,
+        };
+        properties->maxMipLevels = decoded.max_mip_levels;
+        properties->maxArrayLayers = decoded.max_array_layers;
+        properties->sampleCounts = decoded.sample_counts;
+        properties->maxResourceSize = decoded.max_resource_size;
+    }
+    return (VkResult)decoded.vulkan_result;
 }
 
 static void VKAPI_CALL

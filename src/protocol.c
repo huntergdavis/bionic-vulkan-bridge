@@ -272,6 +272,142 @@ int bvb_protocol_decode_vulkan_physical_device_id(
     return 0;
 }
 
+int bvb_protocol_encode_vulkan_format_query(
+    uint8_t output[BVB_VULKAN_FORMAT_QUERY_SIZE],
+    const struct bvb_vulkan_format_query *query) {
+    if (output == NULL || query == NULL ||
+        !wire_id_is_type(query->physical_device_id, 2U)) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_FORMAT_QUERY_SIZE);
+    bvb_wire_put_u64(output, query->physical_device_id);
+    bvb_wire_put_u32(output + 8, query->format);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_format_query(
+    const uint8_t input[BVB_VULKAN_FORMAT_QUERY_SIZE],
+    struct bvb_vulkan_format_query *query) {
+    if (input == NULL || query == NULL) {
+        return -EINVAL;
+    }
+    const struct bvb_vulkan_format_query decoded = {
+        .physical_device_id = bvb_wire_get_u64(input),
+        .format = bvb_wire_get_u32(input + 8),
+    };
+    if (!wire_id_is_type(decoded.physical_device_id, 2U) ||
+        bvb_wire_get_u32(input + 12) != 0U) {
+        return -EPROTO;
+    }
+    *query = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_format_properties(
+    uint8_t output[BVB_VULKAN_FORMAT_PROPERTIES_SIZE],
+    const struct bvb_vulkan_format_properties *properties) {
+    if (output == NULL || properties == NULL) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u32(output, properties->linear_tiling_features);
+    bvb_wire_put_u32(output + 4, properties->optimal_tiling_features);
+    bvb_wire_put_u32(output + 8, properties->buffer_features);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_format_properties(
+    const uint8_t input[BVB_VULKAN_FORMAT_PROPERTIES_SIZE],
+    struct bvb_vulkan_format_properties *properties) {
+    if (input == NULL || properties == NULL) {
+        return -EINVAL;
+    }
+    *properties = (struct bvb_vulkan_format_properties){
+        .linear_tiling_features = bvb_wire_get_u32(input),
+        .optimal_tiling_features = bvb_wire_get_u32(input + 4),
+        .buffer_features = bvb_wire_get_u32(input + 8),
+    };
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_image_format_query(
+    uint8_t output[BVB_VULKAN_IMAGE_FORMAT_QUERY_SIZE],
+    const struct bvb_vulkan_image_format_query *query) {
+    if (output == NULL || query == NULL ||
+        !wire_id_is_type(query->physical_device_id, 2U)) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_IMAGE_FORMAT_QUERY_SIZE);
+    bvb_wire_put_u64(output, query->physical_device_id);
+    bvb_wire_put_u32(output + 8, query->format);
+    bvb_wire_put_u32(output + 12, query->type);
+    bvb_wire_put_u32(output + 16, query->tiling);
+    bvb_wire_put_u32(output + 20, query->usage);
+    bvb_wire_put_u32(output + 24, query->flags);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_image_format_query(
+    const uint8_t input[BVB_VULKAN_IMAGE_FORMAT_QUERY_SIZE],
+    struct bvb_vulkan_image_format_query *query) {
+    if (input == NULL || query == NULL) {
+        return -EINVAL;
+    }
+    const struct bvb_vulkan_image_format_query decoded = {
+        .physical_device_id = bvb_wire_get_u64(input),
+        .format = bvb_wire_get_u32(input + 8),
+        .type = bvb_wire_get_u32(input + 12),
+        .tiling = bvb_wire_get_u32(input + 16),
+        .usage = bvb_wire_get_u32(input + 20),
+        .flags = bvb_wire_get_u32(input + 24),
+    };
+    if (!wire_id_is_type(decoded.physical_device_id, 2U) ||
+        bvb_wire_get_u32(input + 28) != 0U) {
+        return -EPROTO;
+    }
+    *query = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_image_format_properties(
+    uint8_t output[BVB_VULKAN_IMAGE_FORMAT_PROPERTIES_SIZE],
+    const struct bvb_vulkan_image_format_properties *properties) {
+    if (output == NULL || properties == NULL) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_IMAGE_FORMAT_PROPERTIES_SIZE);
+    bvb_wire_put_i32(output, properties->vulkan_result);
+    bvb_wire_put_u32(output + 8, properties->max_extent_width);
+    bvb_wire_put_u32(output + 12, properties->max_extent_height);
+    bvb_wire_put_u32(output + 16, properties->max_extent_depth);
+    bvb_wire_put_u32(output + 20, properties->max_mip_levels);
+    bvb_wire_put_u32(output + 24, properties->max_array_layers);
+    bvb_wire_put_u32(output + 28, properties->sample_counts);
+    bvb_wire_put_u64(output + 32, properties->max_resource_size);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_image_format_properties(
+    const uint8_t input[BVB_VULKAN_IMAGE_FORMAT_PROPERTIES_SIZE],
+    struct bvb_vulkan_image_format_properties *properties) {
+    if (input == NULL || properties == NULL) {
+        return -EINVAL;
+    }
+    if (bvb_wire_get_u32(input + 4) != 0U) {
+        return -EPROTO;
+    }
+    *properties = (struct bvb_vulkan_image_format_properties){
+        .vulkan_result = bvb_wire_get_i32(input),
+        .max_extent_width = bvb_wire_get_u32(input + 8),
+        .max_extent_height = bvb_wire_get_u32(input + 12),
+        .max_extent_depth = bvb_wire_get_u32(input + 16),
+        .max_mip_levels = bvb_wire_get_u32(input + 20),
+        .max_array_layers = bvb_wire_get_u32(input + 24),
+        .sample_counts = bvb_wire_get_u32(input + 28),
+        .max_resource_size = bvb_wire_get_u64(input + 32),
+    };
+    return 0;
+}
+
 int bvb_protocol_encode_vulkan_device_extension_query(
     uint8_t output[BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE],
     const struct bvb_vulkan_device_extension_query *query) {

@@ -300,6 +300,44 @@ static void VKAPI_CALL fake_get_device_features(
     features->shaderInt64 = VK_TRUE;
 }
 
+static void VKAPI_CALL fake_get_format_properties(
+    VkPhysicalDevice device, VkFormat format,
+    VkFormatProperties *properties) {
+    (void)device;
+    memset(properties, 0, sizeof(*properties));
+    if (format == VK_FORMAT_R8G8B8A8_UNORM) {
+        properties->linearTilingFeatures =
+            VK_FORMAT_FEATURE_TRANSFER_SRC_BIT;
+        properties->optimalTilingFeatures =
+            VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT |
+            VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT |
+            VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+        properties->bufferFeatures =
+            VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT;
+    }
+}
+
+static VkResult VKAPI_CALL fake_get_image_format_properties(
+    VkPhysicalDevice device, VkFormat format, VkImageType type,
+    VkImageTiling tiling, VkImageUsageFlags usage,
+    VkImageCreateFlags flags, VkImageFormatProperties *properties) {
+    (void)device;
+    (void)flags;
+    if (format != VK_FORMAT_R8G8B8A8_UNORM ||
+        type != VK_IMAGE_TYPE_2D || tiling != VK_IMAGE_TILING_OPTIMAL ||
+        usage == 0U || properties == NULL) {
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    }
+    *properties = (VkImageFormatProperties){
+        .maxExtent = {4096U, 2048U, 1U},
+        .maxMipLevels = 12U,
+        .maxArrayLayers = 256U,
+        .sampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT,
+        .maxResourceSize = UINT64_C(0x100000000),
+    };
+    return VK_SUCCESS;
+}
+
 static void VKAPI_CALL fake_get_queue_properties(
     VkPhysicalDevice device,
     uint32_t *count,
@@ -1117,6 +1155,9 @@ static PFN_vkVoidFunction function_pointer(const char *name) {
     BVB_MATCH("vkEnumeratePhysicalDevices", fake_enumerate_devices)
     BVB_MATCH("vkGetPhysicalDeviceProperties", fake_get_device_properties)
     BVB_MATCH("vkGetPhysicalDeviceFeatures", fake_get_device_features)
+    BVB_MATCH("vkGetPhysicalDeviceFormatProperties", fake_get_format_properties)
+    BVB_MATCH("vkGetPhysicalDeviceImageFormatProperties",
+              fake_get_image_format_properties)
     BVB_MATCH("vkGetPhysicalDeviceQueueFamilyProperties", fake_get_queue_properties)
     BVB_MATCH("vkGetPhysicalDeviceMemoryProperties", fake_get_memory_properties)
     BVB_MATCH("vkGetPhysicalDeviceExternalBufferProperties",
