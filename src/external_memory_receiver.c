@@ -163,7 +163,7 @@ int main(int argc, char **argv) {
     if (synchronized) {
         printf("{\"schema_version\":1,\"gate\":\"E037\","
                "\"result\":\"pass\","
-               "\"transport\":\"binder_then_scm_rights_opaque_fd_pair\","
+               "\"transport\":\"binder_then_scm_rights_opaque_memory_plus_sync_fd\","
                "\"loader_path\":\"%s\",\"peer_uid\":%lu,"
                "\"peer_pid\":%ld,\"descriptor_count\":2,"
                "\"allocation_size\":%" PRIu64 ","

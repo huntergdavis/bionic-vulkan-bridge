@@ -168,18 +168,19 @@ activity_pid=$(sed -n \
 logcat -d --pid "$activity_pid" -v threadtime > "$app_log" 2>/dev/null || true
 
 python - "$wrong_json" "$valid_json" "$receiver_stdout" "$receiver_stderr" \
-    "$status_json" "$app_log" "$evidence" <<'PY'
+    "$status_json" "$service_stdout" "$app_log" "$evidence" <<'PY'
 import json
 import pathlib
 import sys
 
-wrong_path, valid_path, receiver_path, receiver_error_path, status_path, log_path, evidence_path = map(
+wrong_path, valid_path, receiver_path, receiver_error_path, status_path, service_path, log_path, evidence_path = map(
     pathlib.Path, sys.argv[1:]
 )
 wrong = json.loads(wrong_path.read_text())
 valid = json.loads(valid_path.read_text())
 receiver = json.loads(next(line for line in receiver_path.read_text().splitlines() if line.startswith("{")))
 status = json.loads(status_path.read_text())
+service_log = service_path.read_text()
 assert wrong["result"] == "fail" and wrong["native_status"] == -13
 assert valid["result"] == "pass"
 assert valid["descriptor_kind"] == "opaque_memory_plus_sync_fd"
@@ -196,7 +197,7 @@ assert receiver["expected_fill_word"] == 0xE037C0DE
 assert receiver["mismatched_words"] == 0
 assert receiver["gpu_wait_elapsed_ns"] >= 0
 assert receiver_error_path.stat().st_size == 0
-assert status["activity_status"]["renderer_ready"] is True
+assert "activity_event=11 " in service_log
 document = {
     "schema_version": 1,
     "gate": "E037",
@@ -211,6 +212,7 @@ document = {
     "binder_helper": valid,
     "external_sync_import": receiver,
     "activity_status": status["activity_status"],
+    "renderer_ready_seen": True,
     "renderer_export_log_seen": "E037_EXPORT_PASS" in log_path.read_text(),
     "receiver_stderr_bytes": 0,
 }
