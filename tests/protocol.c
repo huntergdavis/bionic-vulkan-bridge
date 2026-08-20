@@ -81,7 +81,7 @@ int main(void) {
     };
     CHECK(bvb_protocol_encode_header(wire, &last_opcode_header) == 0);
     CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
-    CHECK(decoded.opcode == BVB_OPCODE_EXTERNAL_MEMORY_IMPORT_TEST);
+    CHECK(decoded.opcode == BVB_OPCODE_EXTERNAL_SYNC_IMPORT_TEST);
 
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
@@ -130,6 +130,26 @@ int main(void) {
     bvb_wire_put_u32(external_import_wire + 8, 32U);
     CHECK(bvb_protocol_decode_external_memory_import_request(
               external_import_wire, &external_import_decoded) == -EPROTO);
+
+    const struct bvb_external_sync_import_request external_sync = {
+        .allocation_size = 8192U,
+        .memory_type_index = 4U,
+        .buffer_bytes = 4096U,
+        .expected_fill_word = UINT32_C(0xe037c0de),
+    };
+    uint8_t external_sync_wire[BVB_EXTERNAL_SYNC_IMPORT_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_external_sync_import_request(
+              external_sync_wire, &external_sync) == 0);
+    struct bvb_external_sync_import_request external_sync_decoded;
+    CHECK(bvb_protocol_decode_external_sync_import_request(
+              external_sync_wire, &external_sync_decoded) == 0);
+    CHECK(external_sync_decoded.allocation_size == 8192U);
+    CHECK(external_sync_decoded.memory_type_index == 4U);
+    CHECK(external_sync_decoded.buffer_bytes == 4096U);
+    CHECK(external_sync_decoded.expected_fill_word == UINT32_C(0xe037c0de));
+    bvb_wire_put_u32(external_sync_wire + 20, 1U);
+    CHECK(bvb_protocol_decode_external_sync_import_request(
+              external_sync_wire, &external_sync_decoded) == -EINVAL);
 
     const struct bvb_vulkan_global_info global_info = {
         .loader_api_version = UINT32_C(0x00403000),

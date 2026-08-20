@@ -150,6 +150,21 @@ int main(void) {
     CHECK(bvb_transport_send_fd(sockets[0], &sent, memory) == 0);
     CHECK(bvb_transport_receive(sockets[1], &received) == -EPROTO);
 
+    const int passed_fds[2] = {memory, memory};
+    CHECK(hello_packet(&sent, 12U) == 0);
+    CHECK(bvb_transport_send_fds(sockets[0], &sent, passed_fds, 2U) == 0);
+    int received_fds[2] = {-1, -1};
+    size_t received_count = 0U;
+    CHECK(bvb_transport_receive_fds(sockets[1], &received, received_fds, 2U,
+                                    &received_count) == 0);
+    CHECK(received.header.request_id == 12U);
+    CHECK(received_count == 2U);
+    CHECK(received_fds[0] >= 0 && received_fds[1] >= 0);
+    CHECK((fcntl(received_fds[0], F_GETFD) & FD_CLOEXEC) != 0);
+    CHECK((fcntl(received_fds[1], F_GETFD) & FD_CLOEXEC) != 0);
+    CHECK(close(received_fds[0]) == 0);
+    CHECK(close(received_fds[1]) == 0);
+
     CHECK(test_abstract_descriptor_transport(memory) == 0);
     CHECK(test_loopback_transport() == 0);
 

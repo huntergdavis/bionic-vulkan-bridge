@@ -7,6 +7,7 @@
 
 enum {
     BVB_TRANSPORT_EOF = 1,
+    BVB_TRANSPORT_MAX_FDS = 8,
 };
 
 /*
@@ -29,10 +30,17 @@ int bvb_transport_receive(int socket_fd, struct bvb_protocol_packet *packet);
 int bvb_transport_receive_fd(int socket_fd,
                              struct bvb_protocol_packet *packet,
                              int *received_fd);
+int bvb_transport_receive_fds(int socket_fd,
+                              struct bvb_protocol_packet *packet,
+                              int *received_fds, size_t fd_capacity,
+                              size_t *received_fd_count);
 int bvb_transport_send(int socket_fd,
                        const struct bvb_protocol_packet *packet);
 int bvb_transport_send_fd(int socket_fd,
                           const struct bvb_protocol_packet *packet,
                           int passed_fd);
+int bvb_transport_send_fds(int socket_fd,
+                           const struct bvb_protocol_packet *packet,
+                           const int *passed_fds, size_t fd_count);
 
 #endif

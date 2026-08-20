@@ -323,16 +323,23 @@ static int receive_exact(int socket_fd, uint8_t *output, size_t length,
     return 0;
 }
 
-int bvb_transport_receive_fd(int socket_fd, struct bvb_protocol_packet *packet,
-                             int *received_fd) {
-    if (socket_fd < 0 || packet == NULL || received_fd == NULL) {
+int bvb_transport_receive_fds(int socket_fd,
+                              struct bvb_protocol_packet *packet,
+                              int *received_fds, size_t fd_capacity,
+                              size_t *received_fd_count) {
+    if (socket_fd < 0 || packet == NULL || received_fds == NULL ||
+        received_fd_count == NULL || fd_capacity == 0U ||
+        fd_capacity > BVB_TRANSPORT_MAX_FDS) {
         return -EINVAL;
     }
-    *received_fd = -1;
+    for (size_t index = 0U; index < fd_capacity; ++index) {
+        received_fds[index] = -1;
+    }
+    *received_fd_count = 0U;
     uint8_t wire_header[BVB_PROTOCOL_HEADER_SIZE];
     union {
         struct cmsghdr alignment;
-        uint8_t bytes[CMSG_SPACE(sizeof(int) * 2U)];
+        uint8_t bytes[CMSG_SPACE(sizeof(int) * BVB_TRANSPORT_MAX_FDS)];
     } control;
     memset(&control, 0, sizeof(control));
     struct iovec vector = {
@@ -356,7 +363,6 @@ int bvb_transport_receive_fd(int socket_fd, struct bvb_protocol_packet *packet,
         return -errno;
     }
 
-    int descriptor = -1;
     int ancillary_invalid =
         (message.msg_flags & (MSG_CTRUNC | MSG_TRUNC)) != 0;
     for (struct cmsghdr *header = CMSG_FIRSTHDR(&message); header != NULL;
@@ -369,8 +375,8 @@ int bvb_transport_receive_fd(int socket_fd, struct bvb_protocol_packet *packet,
         }
         size_t descriptor_bytes = header->cmsg_len - CMSG_LEN(0U);
         size_t descriptor_count = descriptor_bytes / sizeof(int);
-        if (descriptor_bytes % sizeof(int) != 0U || descriptor_count != 1U ||
-            descriptor >= 0) {
+        if (descriptor_bytes % sizeof(int) != 0U ||
+            descriptor_count > fd_capacity - *received_fd_count) {
             ancillary_invalid = 1;
             for (size_t index = 0; index < descriptor_count; ++index) {
                 int extra = -1;
@@ -383,20 +389,33 @@ int bvb_transport_receive_fd(int socket_fd, struct bvb_protocol_packet *packet,
             }
             continue;
         }
-        memcpy(&descriptor, CMSG_DATA(header), sizeof(descriptor));
+        for (size_t index = 0U; index < descriptor_count; ++index) {
+            memcpy(&received_fds[*received_fd_count],
+                   (uint8_t *)CMSG_DATA(header) + index * sizeof(int),
+                   sizeof(int));
+            ++*received_fd_count;
+        }
     }
     if (ancillary_invalid) {
-        if (descriptor >= 0) {
-            (void)close(descriptor);
+        for (size_t index = 0U; index < *received_fd_count; ++index) {
+            if (received_fds[index] >= 0) {
+                (void)close(received_fds[index]);
+                received_fds[index] = -1;
+            }
         }
+        *received_fd_count = 0U;
         return -EPROTO;
     }
 
     size_t header_bytes = (size_t)received;
     if (header_bytes > sizeof(wire_header)) {
-        if (descriptor >= 0) {
-            (void)close(descriptor);
+        for (size_t index = 0U; index < *received_fd_count; ++index) {
+            if (received_fds[index] >= 0) {
+                (void)close(received_fds[index]);
+                received_fds[index] = -1;
+            }
         }
+        *received_fd_count = 0U;
         return -EPROTO;
     }
     int result = 0;
@@ -412,13 +431,25 @@ int bvb_transport_receive_fd(int socket_fd, struct bvb_protocol_packet *packet,
                                packet->header.payload_length, 0);
     }
     if (result != 0) {
-        if (descriptor >= 0) {
-            (void)close(descriptor);
+        for (size_t index = 0U; index < *received_fd_count; ++index) {
+            if (received_fds[index] >= 0) {
+                (void)close(received_fds[index]);
+                received_fds[index] = -1;
+            }
         }
+        *received_fd_count = 0U;
         return result;
     }
-    *received_fd = descriptor;
     return 0;
+}
+
+int bvb_transport_receive_fd(int socket_fd, struct bvb_protocol_packet *packet,
+                             int *received_fd) {
+    if (received_fd == NULL) return -EINVAL;
+    size_t received_count = 0U;
+    const int result = bvb_transport_receive_fds(
+        socket_fd, packet, received_fd, 1U, &received_count);
+    return result;
 }
 
 int bvb_transport_receive(int socket_fd, struct bvb_protocol_packet *packet) {
@@ -471,12 +502,17 @@ int bvb_transport_send(int socket_fd,
                       BVB_PROTOCOL_HEADER_SIZE + packet->header.payload_length);
 }
 
-int bvb_transport_send_fd(int socket_fd,
-                          const struct bvb_protocol_packet *packet,
-                          int passed_fd) {
-    if (socket_fd < 0 || packet == NULL || passed_fd < 0 ||
-        fcntl(passed_fd, F_GETFD) < 0) {
+int bvb_transport_send_fds(int socket_fd,
+                           const struct bvb_protocol_packet *packet,
+                           const int *passed_fds, size_t fd_count) {
+    if (socket_fd < 0 || packet == NULL || passed_fds == NULL ||
+        fd_count == 0U || fd_count > BVB_TRANSPORT_MAX_FDS) {
         return -EINVAL;
+    }
+    for (size_t index = 0U; index < fd_count; ++index) {
+        if (passed_fds[index] < 0 || fcntl(passed_fds[index], F_GETFD) < 0) {
+            return -EINVAL;
+        }
     }
     uint8_t wire[BVB_PROTOCOL_HEADER_SIZE + BVB_PROTOCOL_MAX_PAYLOAD];
     int result = bvb_protocol_encode_header(wire, &packet->header);
@@ -495,7 +531,7 @@ int bvb_transport_send_fd(int socket_fd,
     };
     union {
         struct cmsghdr alignment;
-        uint8_t bytes[CMSG_SPACE(sizeof(int))];
+        uint8_t bytes[CMSG_SPACE(sizeof(int) * BVB_TRANSPORT_MAX_FDS)];
     } control;
     memset(&control, 0, sizeof(control));
     struct msghdr message = {
@@ -510,8 +546,9 @@ int bvb_transport_send_fd(int socket_fd,
     }
     header->cmsg_level = SOL_SOCKET;
     header->cmsg_type = SCM_RIGHTS;
-    header->cmsg_len = CMSG_LEN(sizeof(int));
-    memcpy(CMSG_DATA(header), &passed_fd, sizeof(passed_fd));
+    header->cmsg_len = CMSG_LEN(sizeof(int) * fd_count);
+    message.msg_controllen = CMSG_SPACE(sizeof(int) * fd_count);
+    memcpy(CMSG_DATA(header), passed_fds, sizeof(int) * fd_count);
     ssize_t sent;
     do {
         sent = sendmsg(socket_fd, &message, MSG_NOSIGNAL);
@@ -527,4 +564,10 @@ int bvb_transport_send_fd(int socket_fd,
                           wire_length - (size_t)sent);
     }
     return (size_t)sent == wire_length ? 0 : -EPROTO;
+}
+
+int bvb_transport_send_fd(int socket_fd,
+                          const struct bvb_protocol_packet *packet,
+                          int passed_fd) {
+    return bvb_transport_send_fds(socket_fd, packet, &passed_fd, 1U);
 }

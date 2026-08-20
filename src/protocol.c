@@ -1206,6 +1206,45 @@ int bvb_protocol_decode_external_memory_import_request(
     return 0;
 }
 
+int bvb_protocol_encode_external_sync_import_request(
+    uint8_t output[BVB_EXTERNAL_SYNC_IMPORT_REQUEST_SIZE],
+    const struct bvb_external_sync_import_request *request) {
+    if (output == NULL || request == NULL || request->allocation_size == 0U ||
+        request->allocation_size > BVB_SHARED_BATCH_MAX_BYTES ||
+        request->memory_type_index >= 32U || request->buffer_bytes == 0U ||
+        request->buffer_bytes > request->allocation_size ||
+        (request->buffer_bytes % sizeof(uint32_t)) != 0U) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u64(output, request->allocation_size);
+    bvb_wire_put_u32(output + 8, request->memory_type_index);
+    bvb_wire_put_u32(output + 12, request->buffer_bytes);
+    bvb_wire_put_u32(output + 16, request->expected_fill_word);
+    bvb_wire_put_u32(output + 20, 0U);
+    return 0;
+}
+
+int bvb_protocol_decode_external_sync_import_request(
+    const uint8_t input[BVB_EXTERNAL_SYNC_IMPORT_REQUEST_SIZE],
+    struct bvb_external_sync_import_request *request) {
+    if (input == NULL || request == NULL || bvb_wire_get_u32(input + 20) != 0U) {
+        return -EINVAL;
+    }
+    const struct bvb_external_sync_import_request decoded = {
+        .allocation_size = bvb_wire_get_u64(input),
+        .memory_type_index = bvb_wire_get_u32(input + 8),
+        .buffer_bytes = bvb_wire_get_u32(input + 12),
+        .expected_fill_word = bvb_wire_get_u32(input + 16),
+    };
+    uint8_t validation[BVB_EXTERNAL_SYNC_IMPORT_REQUEST_SIZE];
+    if (bvb_protocol_encode_external_sync_import_request(validation,
+                                                         &decoded) != 0) {
+        return -EPROTO;
+    }
+    *request = decoded;
+    return 0;
+}
+
 static int validate_memory_io_request(
     const struct bvb_vulkan_memory_io_request *request) {
     return request != NULL && wire_id_is_type(request->memory_id, 9U) &&
