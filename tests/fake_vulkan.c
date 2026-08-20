@@ -351,6 +351,26 @@ static void VKAPI_CALL fake_get_external_buffer_properties(
     }
 }
 
+static void VKAPI_CALL fake_get_external_semaphore_properties(
+    VkPhysicalDevice device,
+    const VkPhysicalDeviceExternalSemaphoreInfo *info,
+    VkExternalSemaphoreProperties *properties) {
+    (void)device;
+    *properties = (VkExternalSemaphoreProperties){
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES,
+    };
+    if (info != NULL &&
+        (info->handleType ==
+             VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT ||
+         info->handleType == VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT)) {
+        properties->externalSemaphoreFeatures =
+            VK_EXTERNAL_SEMAPHORE_FEATURE_EXPORTABLE_BIT |
+            VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT;
+        properties->compatibleHandleTypes = info->handleType;
+        properties->exportFromImportedHandleTypes = info->handleType;
+    }
+}
+
 static VkResult VKAPI_CALL fake_enumerate_device_extensions(
     VkPhysicalDevice device,
     const char *layer_name,
@@ -988,6 +1008,10 @@ static PFN_vkVoidFunction function_pointer(const char *name) {
               fake_get_external_buffer_properties)
     BVB_MATCH("vkGetPhysicalDeviceExternalBufferPropertiesKHR",
               fake_get_external_buffer_properties)
+    BVB_MATCH("vkGetPhysicalDeviceExternalSemaphoreProperties",
+              fake_get_external_semaphore_properties)
+    BVB_MATCH("vkGetPhysicalDeviceExternalSemaphorePropertiesKHR",
+              fake_get_external_semaphore_properties)
     BVB_MATCH("vkEnumerateDeviceExtensionProperties", fake_enumerate_device_extensions)
     BVB_MATCH("vkCreateDevice", fake_create_device)
     BVB_MATCH("vkGetDeviceProcAddr", fake_get_device_proc_addr)

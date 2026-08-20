@@ -322,13 +322,22 @@ target_link_libraries(
 )
 bvb_enable_warnings(bvb-external-memory-receiver)
 
+add_executable(
+  bvb-vulkan-external-semaphore-probe
+  src/vulkan_external_semaphore_probe.c
+)
+target_link_libraries(
+  bvb-vulkan-external-semaphore-probe PRIVATE Vulkan::Headers ${CMAKE_DL_LIBS}
+)
+bvb_enable_warnings(bvb-vulkan-external-semaphore-probe)
+
 install(
   TARGETS bvb-vulkan-probe bvb-bridge-service bvb-bridge-client
           bvb-vulkan-selftest bvb-vulkan-surface-probe
           bvb-vulkan-external-memory-selftest
           bvb-vulkan-present-selftest bvb-vulkan-client-dispatch
           bvb-visible-triangle-client bvb-shared-region-relay
-          bvb-external-memory-receiver
+          bvb-external-memory-receiver bvb-vulkan-external-semaphore-probe
   RUNTIME DESTINATION bin
 )
 
@@ -519,6 +528,15 @@ if(BUILD_TESTING)
       "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_external_memory_receiver.py"
       "$<TARGET_FILE:bvb-external-memory-receiver>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+  )
+
+  add_test(
+    NAME external-semaphore-probe-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_external_semaphore_probe.py"
+      "$<TARGET_FILE:bvb-vulkan-external-semaphore-probe>"
       "$<TARGET_FILE:bvb-fake-vulkan>"
   )
 
