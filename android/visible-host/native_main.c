@@ -3,6 +3,7 @@
 
 #include <bvb/command_batch.h>
 #include <bvb/lifecycle.h>
+#include <bvb/native_binder.h>
 #include <bvb/protocol.h>
 #include <bvb/triangle_batch_builder.h>
 #include <bvb/visible_ingress.h>
@@ -126,6 +127,7 @@ static pthread_mutex_t lifecycle_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t external_memory_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_once_t external_broker_once = PTHREAD_ONCE_INIT;
+static pthread_once_t native_binder_once = PTHREAD_ONCE_INIT;
 static struct bvb_renderer_control renderer = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
     .condition = PTHREAD_COND_INITIALIZER,
@@ -334,6 +336,188 @@ static int send_external_broker_response(
     return send_external_broker_response_to(
         socket_fd, status, descriptors, descriptor_count, allocation_size,
         memory_type_index, metadata0, metadata1, NULL, 0);
+}
+
+static void *native_binder_channel_main(void *argument) {
+    const int channel = (int)(intptr_t)argument;
+    uint8_t acknowledgement = 0U;
+    int status = receive_broker_token_exact(
+        channel, &acknowledgement, sizeof(acknowledgement));
+    if (status == 0 && acknowledgement != UINT8_C(0xa5)) status = -EPROTO;
+    uint8_t response[8] = {0};
+    bvb_wire_put_i32(response, status);
+    bvb_wire_put_u32(response + 4, UINT32_C(0xe040c0de));
+    size_t offset = 0U;
+    while (offset < sizeof(response)) {
+        ssize_t sent = send(channel, response + offset,
+                            sizeof(response) - offset, MSG_NOSIGNAL);
+        if (sent < 0 && errno == EINTR) continue;
+        if (sent <= 0) {
+            status = sent == 0 ? -EPIPE : -errno;
+            break;
+        }
+        offset += (size_t)sent;
+    }
+    (void)close(channel);
+    if (status == 0) {
+        BVB_LOGI("E040_NATIVE_BINDER_CHANNEL_PASS");
+    } else {
+        BVB_LOGE("E040_NATIVE_BINDER_CHANNEL_FAIL status=%d", status);
+    }
+    return NULL;
+}
+
+static void *native_binder_on_create(void *argument) {
+    return argument;
+}
+
+static void native_binder_on_destroy(void *user_data) {
+    (void)user_data;
+}
+
+static binder_status_t native_binder_on_transact(
+    AIBinder *binder, transaction_code_t code, const AParcel *input,
+    AParcel *output) {
+    (void)binder;
+    if (code != BVB_NATIVE_BINDER_TRANSACTION_OPEN) {
+        return STATUS_UNKNOWN_TRANSACTION;
+    }
+    uint8_t parsed_token[BVB_LIFECYCLE_TOKEN_SIZE] = {0};
+    binder_status_t parcel_status = STATUS_OK;
+    for (size_t index = 0U;
+         index < BVB_NATIVE_BINDER_TOKEN_WORDS && parcel_status == STATUS_OK;
+         ++index) {
+        int32_t word = 0;
+        parcel_status = AParcel_readInt32(input, &word);
+        const uint32_t value = (uint32_t)word;
+        parsed_token[index * 4U] = (uint8_t)value;
+        parsed_token[index * 4U + 1U] = (uint8_t)(value >> 8U);
+        parsed_token[index * 4U + 2U] = (uint8_t)(value >> 16U);
+        parsed_token[index * 4U + 3U] = (uint8_t)(value >> 24U);
+    }
+    if (parcel_status != STATUS_OK) return parcel_status;
+
+    (void)pthread_mutex_lock(&lifecycle_mutex);
+    const bool authorized = lifecycle.configured &&
+                            token_matches(parsed_token, lifecycle.token);
+    (void)pthread_mutex_unlock(&lifecycle_mutex);
+    int status = authorized ? 0 : -EACCES;
+    int descriptors[2] = {-1, -1};
+    int channel_pair[2] = {-1, -1};
+    uint64_t allocation_size = 0U;
+    uint32_t memory_type_index = 0U;
+    (void)pthread_mutex_lock(&external_memory_mutex);
+    if (status == 0 &&
+        (!external_image_cache.ready || external_image_cache.memory_fd < 0 ||
+         external_image_cache.semaphore_fd < 0)) {
+        status = -EAGAIN;
+    }
+    if (status == 0) {
+        descriptors[0] = fcntl(external_image_cache.memory_fd,
+                               F_DUPFD_CLOEXEC, 0);
+        descriptors[1] = fcntl(external_image_cache.semaphore_fd,
+                               F_DUPFD_CLOEXEC, 0);
+        if (descriptors[0] < 0 || descriptors[1] < 0) {
+            status = -errno;
+        } else {
+            allocation_size = external_image_cache.allocation_size;
+            memory_type_index = external_image_cache.memory_type_index;
+        }
+    }
+    (void)pthread_mutex_unlock(&external_memory_mutex);
+    if (status == 0 &&
+        socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, channel_pair) != 0) {
+        status = -errno;
+    }
+    pthread_t channel_thread;
+    if (status == 0) {
+        const int thread_status = pthread_create(
+            &channel_thread, NULL, native_binder_channel_main,
+            (void *)(intptr_t)channel_pair[0]);
+        if (thread_status != 0) {
+            status = -thread_status;
+        } else {
+            channel_pair[0] = -1;
+            const int detach_status = pthread_detach(channel_thread);
+            if (detach_status != 0) {
+                BVB_LOGE("E040_NATIVE_BINDER_DETACH_FAIL status=%d",
+                         detach_status);
+            }
+        }
+    }
+
+    parcel_status = AParcel_writeInt32(output, status);
+    if (status == 0 && parcel_status == STATUS_OK) {
+        parcel_status = AParcel_writeInt64(output, (int64_t)allocation_size);
+    }
+    if (status == 0 && parcel_status == STATUS_OK) {
+        parcel_status = AParcel_writeInt32(output,
+                                           (int32_t)memory_type_index);
+    }
+    if (status == 0 && parcel_status == STATUS_OK) {
+        parcel_status = AParcel_writeInt32(output, BVB_E038_IMAGE_WIDTH);
+    }
+    if (status == 0 && parcel_status == STATUS_OK) {
+        parcel_status = AParcel_writeInt32(output, BVB_E038_IMAGE_HEIGHT);
+    }
+    if (status == 0 && parcel_status == STATUS_OK) {
+        parcel_status = AParcel_writeInt32(output,
+                                           (int32_t)BVB_E038_COLOR_WORD);
+    }
+    if (status == 0 && parcel_status == STATUS_OK) {
+        parcel_status = AParcel_writeParcelFileDescriptor(output,
+                                                           descriptors[0]);
+    }
+    if (status == 0 && parcel_status == STATUS_OK) {
+        parcel_status = AParcel_writeParcelFileDescriptor(output,
+                                                           descriptors[1]);
+    }
+    if (status == 0 && parcel_status == STATUS_OK) {
+        parcel_status = AParcel_writeParcelFileDescriptor(output,
+                                                           channel_pair[1]);
+    }
+    for (size_t index = 0U; index < 2U; ++index) {
+        if (descriptors[index] >= 0) (void)close(descriptors[index]);
+    }
+    for (size_t index = 0U; index < 2U; ++index) {
+        if (channel_pair[index] >= 0) (void)close(channel_pair[index]);
+    }
+    if (status == 0 && parcel_status == STATUS_OK) {
+        BVB_LOGI("E040_NATIVE_BINDER_EXPORT_PASS allocation=%llu type=%u "
+                 "descriptors=3",
+                 (unsigned long long)allocation_size, memory_type_index);
+    } else {
+        BVB_LOGE("E040_NATIVE_BINDER_EXPORT_FAIL status=%d parcel=%d",
+                 status, parcel_status);
+    }
+    return parcel_status;
+}
+
+static void start_native_binder_service(void) {
+    AIBinder_Class *binder_class = AIBinder_Class_define(
+        BVB_NATIVE_BINDER_DESCRIPTOR, native_binder_on_create,
+        native_binder_on_destroy, native_binder_on_transact);
+    if (binder_class == NULL) {
+        BVB_LOGE("E040_NATIVE_BINDER_SERVICE_FAIL class=null");
+        return;
+    }
+    AIBinder *binder = AIBinder_new(binder_class, NULL);
+    if (binder == NULL) {
+        BVB_LOGE("E040_NATIVE_BINDER_SERVICE_FAIL binder=null");
+        return;
+    }
+    const binder_status_t status = AServiceManager_addService(
+        binder, BVB_NATIVE_BINDER_INSTANCE);
+    if (status != STATUS_OK) {
+        BVB_LOGE("E040_NATIVE_BINDER_SERVICE_FAIL add=%d", status);
+        AIBinder_decStrong(binder);
+        return;
+    }
+    ABinderProcess_startThreadPool();
+    BVB_LOGI("E040_NATIVE_BINDER_SERVICE_READY instance=%s",
+             BVB_NATIVE_BINDER_INSTANCE);
+    /* The service manager owns a remote strong reference for process life. */
+    AIBinder_decStrong(binder);
 }
 
 /* external_memory_mutex must be held. */
@@ -3354,6 +3538,7 @@ ANativeActivity_onCreate(ANativeActivity *activity, void *saved_state,
     (void)saved_state_size;
     configure_lifecycle(activity);
     (void)pthread_once(&external_broker_once, start_external_broker);
+    (void)pthread_once(&native_binder_once, start_native_binder_service);
     activity->callbacks->onStart = on_start;
     activity->callbacks->onResume = on_resume;
     activity->callbacks->onPause = on_pause;

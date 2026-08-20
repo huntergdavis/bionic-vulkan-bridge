@@ -328,6 +328,16 @@ target_link_libraries(
 )
 bvb_enable_warnings(bvb-external-image-direct)
 
+if(CMAKE_SYSTEM_NAME STREQUAL "Android")
+  add_executable(bvb-external-image-binder src/external_image_binder.c)
+  target_link_libraries(
+    bvb-external-image-binder
+    PRIVATE bvb-wire bvb-vulkan-selftest-core /system/lib64/libbinder_ndk.so
+  )
+  bvb_enable_warnings(bvb-external-image-binder)
+  install(TARGETS bvb-external-image-binder RUNTIME DESTINATION bin)
+endif()
+
 add_executable(
   bvb-vulkan-external-semaphore-probe
   src/vulkan_external_semaphore_probe.c

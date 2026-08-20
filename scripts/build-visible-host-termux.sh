@@ -60,7 +60,10 @@ for required_file in "$manifest" "$source_file" "$activity_java" \
     "$project_dir/include/bvb/lifecycle.h" \
     "$project_dir/include/bvb/command_batch.h" "$framework_resources" \
     "$vulkan_headers/vulkan/vulkan.h" /system/lib64/libandroid.so \
-    /system/lib64/liblog.so /system/lib64/libvulkan.so; do
+    /system/lib64/liblog.so /system/lib64/libvulkan.so \
+    /system/lib64/libbinder_ndk.so \
+    "$PREFIX/include/android/binder_ibinder.h" \
+    "$PREFIX/include/android/binder_parcel.h"; do
     if [ ! -f "$required_file" ]; then
         printf 'missing required file: %s\n' "$required_file" >&2
         exit 2
@@ -133,7 +136,7 @@ clang -std=c17 -O3 -DNDEBUG -fPIC -fvisibility=hidden \
     "$handle_source" "$batch_source" "$transport_source" \
     "$visible_batch_source" "$visible_ingress_source" \
     /system/lib64/libandroid.so /system/lib64/liblog.so \
-    /system/lib64/libvulkan.so \
+    /system/lib64/libvulkan.so /system/lib64/libbinder_ndk.so \
     -o "$native_dir/libbvb-visible-host.so"
 
 aapt package -f -M "$manifest" -I "$framework_resources" -F "$unsigned_apk"
