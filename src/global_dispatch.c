@@ -13,6 +13,7 @@
 #include <stdbool.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -678,6 +679,26 @@ static VkResult VKAPI_CALL bvb_bridge_vkEnumerateInstanceLayerProperties(
 static VkResult VKAPI_CALL bvb_bridge_vkCreateInstance(
     const VkInstanceCreateInfo *create_info,
     const VkAllocationCallbacks *allocator, VkInstance *instance) {
+    if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        fprintf(stderr,
+                "BVB_ICD_CREATE_INSTANCE info=%p stype=%u pnext=%p "
+                "flags=%u allocator=%p app=%p app_stype=%u app_pnext=%p "
+                "layers=%u extensions=%u\n",
+                (const void *)create_info,
+                create_info == NULL ? 0U : (unsigned int)create_info->sType,
+                create_info == NULL ? NULL : create_info->pNext,
+                create_info == NULL ? 0U : (unsigned int)create_info->flags,
+                (const void *)allocator,
+                create_info == NULL
+                    ? NULL : (const void *)create_info->pApplicationInfo,
+                create_info == NULL || create_info->pApplicationInfo == NULL
+                    ? 0U
+                    : (unsigned int)create_info->pApplicationInfo->sType,
+                create_info == NULL || create_info->pApplicationInfo == NULL
+                    ? NULL : create_info->pApplicationInfo->pNext,
+                create_info == NULL ? 0U : create_info->enabledLayerCount,
+                create_info == NULL ? 0U : create_info->enabledExtensionCount);
+    }
     (void)allocator;
     if (instance != NULL) {
         *instance = VK_NULL_HANDLE;
