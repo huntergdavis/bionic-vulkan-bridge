@@ -102,6 +102,14 @@ struct bvb_renderer_control {
     ANativeWindow *window;
 };
 
+struct bvb_external_sync_cache {
+    int memory_fd;
+    int semaphore_fd;
+    uint64_t allocation_size;
+    uint32_t memory_type_index;
+    bool ready;
+};
+
 static struct bvb_visible_state state;
 static struct bvb_lifecycle_client lifecycle;
 static struct bvb_visible_ingress *visible_ingress;
@@ -115,6 +123,10 @@ static pthread_once_t external_broker_once = PTHREAD_ONCE_INIT;
 static struct bvb_renderer_control renderer = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
     .condition = PTHREAD_COND_INITIALIZER,
+};
+static struct bvb_external_sync_cache external_sync_cache = {
+    .memory_fd = -1,
+    .semaphore_fd = -1,
 };
 
 enum {
@@ -137,6 +149,19 @@ static bool token_matches(const uint8_t *left, const uint8_t *right) {
         difference |= left[index] ^ right[index];
     }
     return difference == 0U;
+}
+
+static void clear_external_sync_cache_locked(void) {
+    if (external_sync_cache.memory_fd >= 0) {
+        (void)close(external_sync_cache.memory_fd);
+    }
+    if (external_sync_cache.semaphore_fd >= 0) {
+        (void)close(external_sync_cache.semaphore_fd);
+    }
+    external_sync_cache = (struct bvb_external_sync_cache){
+        .memory_fd = -1,
+        .semaphore_fd = -1,
+    };
 }
 
 JNIEXPORT jint JNICALL
@@ -370,6 +395,41 @@ static int prepare_external_sync(int *semaphore_fd) {
     return 0;
 }
 
+/* external_memory_mutex must be held. */
+static int cache_external_sync(void) {
+    clear_external_sync_cache_locked();
+    int semaphore_fd = -1;
+    int status = prepare_external_sync(&semaphore_fd);
+    int memory_fd = -1;
+    if (status == 0) {
+        const VkMemoryGetFdInfoKHR memory_fd_info = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
+            .memory = state.external_memory,
+            .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+        };
+        const VkResult result = state.get_memory_fd(
+            state.device, &memory_fd_info, &memory_fd);
+        if (result != VK_SUCCESS || memory_fd < 0) status = -EIO;
+    }
+    if (status != 0) {
+        if (memory_fd >= 0) (void)close(memory_fd);
+        if (semaphore_fd >= 0) (void)close(semaphore_fd);
+        return status;
+    }
+    external_sync_cache = (struct bvb_external_sync_cache){
+        .memory_fd = memory_fd,
+        .semaphore_fd = semaphore_fd,
+        .allocation_size = state.external_allocation_size,
+        .memory_type_index = state.external_memory_type_index,
+        .ready = true,
+    };
+    BVB_LOGI("E037_CACHE_READY bytes=%u allocation=%llu type=%u fill=%u",
+             BVB_E020_REGION_BYTES,
+             (unsigned long long)external_sync_cache.allocation_size,
+             external_sync_cache.memory_type_index, BVB_E037_FILL_WORD);
+    return 0;
+}
+
 static void handle_external_broker_connection(int connection) {
     int status = 0;
     struct ucred credentials;
@@ -401,18 +461,31 @@ static void handle_external_broker_connection(int connection) {
     uint64_t allocation_size = 0U;
     uint32_t memory_type_index = 0U;
     (void)pthread_mutex_lock(&external_memory_mutex);
-    if (status == 0 &&
+    if (status == 0 && synchronized) {
+        if (!external_sync_cache.ready ||
+            external_sync_cache.memory_fd < 0 ||
+            external_sync_cache.semaphore_fd < 0) {
+            status = -EAGAIN;
+        } else {
+            descriptors[0] = fcntl(
+                external_sync_cache.memory_fd, F_DUPFD_CLOEXEC, 0);
+            descriptors[1] = fcntl(
+                external_sync_cache.semaphore_fd, F_DUPFD_CLOEXEC, 0);
+            if (descriptors[0] < 0 || descriptors[1] < 0) {
+                status = -errno;
+            } else {
+                allocation_size = external_sync_cache.allocation_size;
+                memory_type_index = external_sync_cache.memory_type_index;
+                descriptor_count = 2U;
+            }
+        }
+    } else if (status == 0 &&
         (state.device == VK_NULL_HANDLE ||
          state.external_memory == VK_NULL_HANDLE ||
          state.get_memory_fd == NULL)) {
         status = -EAGAIN;
     }
-    if (status == 0) {
-        if (synchronized) {
-            status = prepare_external_sync(&descriptors[1]);
-        }
-    }
-    if (status == 0) {
+    if (status == 0 && !synchronized) {
         const VkMemoryGetFdInfoKHR fd_info = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
             .memory = state.external_memory,
@@ -427,7 +500,7 @@ static void handle_external_broker_connection(int connection) {
         } else {
             allocation_size = state.external_allocation_size;
             memory_type_index = state.external_memory_type_index;
-            descriptor_count = synchronized ? 2U : 1U;
+            descriptor_count = 1U;
         }
     }
     (void)pthread_mutex_unlock(&external_memory_mutex);
@@ -513,6 +586,9 @@ static void start_external_broker(void) {
 }
 
 static void configure_lifecycle(ANativeActivity *activity) {
+    (void)pthread_mutex_lock(&external_memory_mutex);
+    clear_external_sync_cache_locked();
+    (void)pthread_mutex_unlock(&external_memory_mutex);
     (void)pthread_mutex_lock(&lifecycle_mutex);
     if (visible_ingress != NULL) {
         struct bvb_visible_ingress *stale_ingress = visible_ingress;
@@ -2089,6 +2165,13 @@ static bool create_renderer(ANativeWindow *window) {
     }
     if (result != VK_SUCCESS) {
         BVB_LOGE("E008_FAIL semaphore=%d", (int)result);
+        return false;
+    }
+    (void)pthread_mutex_lock(&external_memory_mutex);
+    const int external_sync_status = cache_external_sync();
+    (void)pthread_mutex_unlock(&external_memory_mutex);
+    if (external_sync_status != 0) {
+        BVB_LOGE("E037_CACHE_FAIL status=%d", external_sync_status);
         return false;
     }
 
