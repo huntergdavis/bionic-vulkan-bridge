@@ -664,19 +664,52 @@ static VkResult VKAPI_CALL bvb_bridge_vkEnumerateInstanceExtensionProperties(
     if (layer_name != NULL) {
         return VK_ERROR_LAYER_NOT_PRESENT;
     }
-    struct bvb_vulkan_global_info info;
     int lock_result = pthread_mutex_lock(&bvb_global_client.mutex);
     if (lock_result != 0) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    int result = global_info_locked(&info);
+    int result = connect_locked();
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_INSTANCE_EXTENSIONS,
+        .request_id = next_request_id_locked(),
+    };
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        result = exchange_locked(&request, &response);
+    }
+    if (result == 0 && response.header.status != 0) {
+        result = response.header.status;
+    }
+    struct bvb_vulkan_extension_page page = {0};
+    if (result == 0) {
+        result = bvb_vulkan_decode_extension_page(
+            response.payload, response.header.payload_length, &page);
+    }
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
     if (result != 0) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    uint32_t capacity = properties == NULL ? 0U : *property_count;
-    *property_count = 0U;
-    return capacity < info.exposed_extension_count ? VK_INCOMPLETE : VK_SUCCESS;
+    if (page.vulkan_result != VK_SUCCESS) {
+        return (VkResult)page.vulkan_result;
+    }
+    if (page.first != 0U || page.count != page.total_count) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    const uint32_t capacity = properties == NULL ? 0U : *property_count;
+    if (properties == NULL) {
+        *property_count = page.total_count;
+        return VK_SUCCESS;
+    }
+    const uint32_t written = capacity < page.count ? capacity : page.count;
+    if (written != 0U) {
+        memcpy(properties, page.properties,
+               written * sizeof(*properties));
+    }
+    *property_count = written;
+    return capacity < page.total_count ? VK_INCOMPLETE : VK_SUCCESS;
 }
 
 static VkResult VKAPI_CALL bvb_bridge_vkEnumerateInstanceLayerProperties(
@@ -738,8 +771,20 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateInstance(
     if (create_info->enabledLayerCount != 0U) {
         return VK_ERROR_LAYER_NOT_PRESENT;
     }
-    if (create_info->enabledExtensionCount != 0U) {
-        return VK_ERROR_EXTENSION_NOT_PRESENT;
+    if (create_info->enabledExtensionCount >
+            BVB_VULKAN_MAX_ENABLED_EXTENSIONS ||
+        (create_info->enabledExtensionCount != 0U &&
+         create_info->ppEnabledExtensionNames == NULL)) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    for (uint32_t index = 0U;
+         index < create_info->enabledExtensionCount; ++index) {
+        const char *name = create_info->ppEnabledExtensionNames[index];
+        if (name == NULL || name[0] == '\0' ||
+            memchr(name, '\0', BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE) ==
+                NULL) {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
     }
     struct bvb_instance_proxy *proxy = calloc(1, sizeof(*proxy));
     if (proxy == NULL) {
@@ -763,13 +808,35 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateInstance(
     request.header = (struct bvb_protocol_header){
         .version = BVB_PROTOCOL_VERSION,
         .kind = BVB_PROTOCOL_REQUEST,
-        .opcode = BVB_OPCODE_VULKAN_INSTANCE_CREATE,
+        .opcode = create_info->enabledExtensionCount == 0U
+                      ? BVB_OPCODE_VULKAN_INSTANCE_CREATE
+                      : BVB_OPCODE_VULKAN_INSTANCE_CREATE_EXTENDED,
         .request_id = next_request_id_locked(),
-        .payload_length = BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE,
     };
     if (result == 0) {
-        result = bvb_protocol_encode_vulkan_instance_create_request(
-            request.payload, &create_request);
+        if (create_info->enabledExtensionCount == 0U) {
+            request.header.payload_length =
+                BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE;
+            result = bvb_protocol_encode_vulkan_instance_create_request(
+                request.payload, &create_request);
+        } else {
+            struct bvb_vulkan_instance_create_extended_request extended = {
+                .base = create_request,
+            };
+            for (uint32_t index = 0U;
+                 index < create_info->enabledExtensionCount; ++index) {
+                const char *name =
+                    create_info->ppEnabledExtensionNames[index];
+                const char *terminator = memchr(
+                    name, '\0', BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE);
+                const size_t length = (size_t)(terminator - name) + 1U;
+                memcpy(extended.enabled_extensions[index], name, length);
+            }
+            result =
+                bvb_protocol_encode_vulkan_instance_create_extended_request(
+                    request.payload, &extended,
+                    &request.header.payload_length);
+        }
     }
     struct bvb_protocol_packet response = {0};
     if (result == 0) {

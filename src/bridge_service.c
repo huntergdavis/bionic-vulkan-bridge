@@ -507,14 +507,33 @@ static int answer_vulkan_instance_create(
     struct bvb_protocol_packet response;
     prepare_response(&response, request);
     if (!negotiated || context == NULL ||
-        request->header.payload_length !=
-            BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE) {
+        (request->header.opcode == BVB_OPCODE_VULKAN_INSTANCE_CREATE &&
+         request->header.payload_length !=
+             BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE) ||
+        (request->header.opcode != BVB_OPCODE_VULKAN_INSTANCE_CREATE &&
+         request->header.opcode !=
+             BVB_OPCODE_VULKAN_INSTANCE_CREATE_EXTENDED)) {
         response.header.status = -EPROTO;
         return bvb_transport_send(client_fd, &response);
     }
-    struct bvb_vulkan_instance_create_request create_request;
-    int result = bvb_protocol_decode_vulkan_instance_create_request(
-        request->payload, &create_request);
+    struct bvb_vulkan_instance_create_request create_request = {0};
+    struct bvb_vulkan_instance_create_extended_request extended = {0};
+    const char *enabled_extensions[BVB_VULKAN_MAX_ENABLED_EXTENSIONS] = {0};
+    int result = 0;
+    if (request->header.opcode == BVB_OPCODE_VULKAN_INSTANCE_CREATE) {
+        result = bvb_protocol_decode_vulkan_instance_create_request(
+            request->payload, &create_request);
+    } else {
+        result = bvb_protocol_decode_vulkan_instance_create_extended_request(
+            request->payload, request->header.payload_length, &extended);
+        if (result == 0) {
+            create_request = extended.base;
+            for (uint32_t index = 0U;
+                 index < create_request.enabled_extension_count; ++index) {
+                enabled_extensions[index] = extended.enabled_extensions[index];
+            }
+        }
+    }
     if (result == 0) {
         result = ensure_vulkan_global_context(loader_path, context);
     }
@@ -522,7 +541,10 @@ static int answer_vulkan_instance_create(
     char diagnostic[512];
     if (result == 0) {
         result = bvb_vulkan_global_context_create_instance(
-            *context, &create_request, &create_response,
+            *context, &create_request,
+            create_request.enabled_extension_count == 0U
+                ? NULL : enabled_extensions,
+            &create_response,
             diagnostic, sizeof(diagnostic));
         if (result != 0) {
             fprintf(stderr, "bvb: Vulkan instance create failed: %s\n",
@@ -537,6 +559,33 @@ static int answer_vulkan_instance_create(
         response.header.payload_length =
             BVB_VULKAN_INSTANCE_CREATE_RESPONSE_SIZE;
     } else {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_instance_extensions(
+    int client_fd, const struct bvb_protocol_packet *request,
+    const char *loader_path, bool negotiated,
+    struct bvb_vulkan_global_context **context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length != 0U) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    int result = ensure_vulkan_global_context(loader_path, context);
+    struct bvb_vulkan_extension_page page;
+    if (result == 0) {
+        result = bvb_vulkan_global_context_enumerate_instance_extensions(
+            *context, &page);
+    }
+    if (result == 0) {
+        result = bvb_vulkan_encode_extension_page(
+            response.payload, &page, &response.header.payload_length);
+    }
+    if (result != 0) {
         response.header.status = result;
     }
     return bvb_transport_send(client_fd, &response);
@@ -1915,8 +1964,14 @@ static int serve_connection(int client_fd, const char *loader_path,
             result = answer_vulkan_global_info(
                 client_fd, &request, loader_path, negotiated, &global_context);
         } else if (request.header.opcode ==
-                   BVB_OPCODE_VULKAN_INSTANCE_CREATE) {
+                       BVB_OPCODE_VULKAN_INSTANCE_CREATE ||
+                   request.header.opcode ==
+                       BVB_OPCODE_VULKAN_INSTANCE_CREATE_EXTENDED) {
             result = answer_vulkan_instance_create(
+                client_fd, &request, loader_path, negotiated, &global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_INSTANCE_EXTENSIONS) {
+            result = answer_vulkan_instance_extensions(
                 client_fd, &request, loader_path, negotiated, &global_context);
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_INSTANCE_DESTROY) {

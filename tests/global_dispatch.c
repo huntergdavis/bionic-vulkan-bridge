@@ -61,12 +61,15 @@ int main(void) {
     uint32_t extension_count = 99U;
     CHECK(vkEnumerateInstanceExtensionProperties(
               NULL, &extension_count, NULL) == VK_SUCCESS);
-    CHECK(extension_count == 0U);
+    CHECK(extension_count == 1U);
     VkExtensionProperties extension = {{0}, 0U};
     extension_count = 1U;
     CHECK(vkEnumerateInstanceExtensionProperties(
               NULL, &extension_count, &extension) == VK_SUCCESS);
-    CHECK(extension_count == 0U);
+    CHECK(extension_count == 1U);
+    CHECK(strcmp(extension.extensionName,
+                 VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) ==
+          0);
     CHECK(vkEnumerateInstanceExtensionProperties(
               "VK_LAYER_BVB_fake_native_only", &extension_count,
               NULL) == VK_ERROR_LAYER_NOT_PRESENT);
@@ -97,8 +100,9 @@ int main(void) {
           VK_ERROR_EXTENSION_NOT_PRESENT);
     CHECK(instance_one == VK_NULL_HANDLE);
 
-    create_info.enabledExtensionCount = 0U;
-    create_info.ppEnabledExtensionNames = NULL;
+    const char *enabled_instance_extension = extension.extensionName;
+    create_info.enabledExtensionCount = 1U;
+    create_info.ppEnabledExtensionNames = &enabled_instance_extension;
     const uint32_t loader_private_chain_marker = UINT32_C(0x7ffffffe);
     create_info.pNext = &loader_private_chain_marker;
     const VkAllocationCallbacks loader_private_allocator = {0};
@@ -686,7 +690,7 @@ int main(void) {
     destroy_instance_two(instance_two, NULL);
 
     printf("PASS: global Vulkan discovery api=%u "
-           "exposed_extensions=0 exposed_layers=0 "
+           "exposed_extensions=1 exposed_layers=0 "
            "instance_one=%llu instance_two=%llu physical_device=%llu "
            "device=%s device_api=%u driver=%u vendor=%u device_id=%u "
            "queues=%u memory_types=%u memory_heaps=%u device_extensions=%u "

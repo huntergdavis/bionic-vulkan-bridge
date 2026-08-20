@@ -72,7 +72,9 @@ enum {
     BVB_OPCODE_VULKAN_FORMAT_PROPERTIES = 55,
     BVB_OPCODE_VULKAN_IMAGE_FORMAT_PROPERTIES = 56,
     BVB_OPCODE_VULKAN_DEVICE_CREATE_EXTENDED = 57,
-    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_DEVICE_CREATE_EXTENDED,
+    BVB_OPCODE_VULKAN_INSTANCE_EXTENSIONS = 58,
+    BVB_OPCODE_VULKAN_INSTANCE_CREATE_EXTENDED = 59,
+    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_INSTANCE_CREATE_EXTENDED,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -228,6 +230,12 @@ struct bvb_vulkan_instance_create_request {
     uint32_t flags;
     uint32_t enabled_layer_count;
     uint32_t enabled_extension_count;
+};
+
+struct bvb_vulkan_instance_create_extended_request {
+    struct bvb_vulkan_instance_create_request base;
+    char enabled_extensions[BVB_VULKAN_MAX_ENABLED_EXTENSIONS]
+                           [BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE];
 };
 
 struct bvb_vulkan_instance_create_response {
@@ -525,6 +533,13 @@ int bvb_protocol_encode_vulkan_instance_create_request(
 int bvb_protocol_decode_vulkan_instance_create_request(
     const uint8_t input[BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE],
     struct bvb_vulkan_instance_create_request *request);
+int bvb_protocol_encode_vulkan_instance_create_extended_request(
+    uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
+    const struct bvb_vulkan_instance_create_extended_request *request,
+    uint32_t *output_length);
+int bvb_protocol_decode_vulkan_instance_create_extended_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_instance_create_extended_request *request);
 int bvb_protocol_encode_vulkan_instance_create_response(
     uint8_t output[BVB_VULKAN_INSTANCE_CREATE_RESPONSE_SIZE],
     const struct bvb_vulkan_instance_create_response *response);

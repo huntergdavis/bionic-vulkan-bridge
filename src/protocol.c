@@ -139,6 +139,88 @@ int bvb_protocol_decode_vulkan_instance_create_request(
     return 0;
 }
 
+int bvb_protocol_encode_vulkan_instance_create_extended_request(
+    uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
+    const struct bvb_vulkan_instance_create_extended_request *request,
+    uint32_t *output_length) {
+    if (output == NULL || request == NULL || output_length == NULL ||
+        request->base.enabled_extension_count == 0U ||
+        request->base.enabled_extension_count >
+            BVB_VULKAN_MAX_ENABLED_EXTENSIONS) {
+        return -EINVAL;
+    }
+    const uint32_t length = BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE +
+        request->base.enabled_extension_count *
+            BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE;
+    memset(output, 0, length);
+    int result = bvb_protocol_encode_vulkan_instance_create_request(
+        output, &request->base);
+    for (uint32_t index = 0U;
+         result == 0 && index < request->base.enabled_extension_count;
+         ++index) {
+        const char *name = request->enabled_extensions[index];
+        const char *terminator = memchr(
+            name, '\0', BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE);
+        if (name[0] == '\0' || terminator == NULL) {
+            result = -EINVAL;
+            break;
+        }
+        const size_t name_length = (size_t)(terminator - name) + 1U;
+        memcpy(output + BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE +
+                   index * BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE,
+               name, name_length);
+    }
+    if (result == 0) {
+        *output_length = length;
+    }
+    return result;
+}
+
+int bvb_protocol_decode_vulkan_instance_create_extended_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_instance_create_extended_request *request) {
+    if (input == NULL || request == NULL ||
+        input_length < BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE) {
+        return -EINVAL;
+    }
+    struct bvb_vulkan_instance_create_extended_request decoded = {0};
+    int result = bvb_protocol_decode_vulkan_instance_create_request(
+        input, &decoded.base);
+    if (result != 0 || decoded.base.enabled_extension_count == 0U ||
+        decoded.base.enabled_extension_count >
+            BVB_VULKAN_MAX_ENABLED_EXTENSIONS) {
+        return result != 0 ? result : -EPROTO;
+    }
+    const uint32_t expected = BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE +
+        decoded.base.enabled_extension_count *
+            BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE;
+    if (input_length != expected) {
+        return -EPROTO;
+    }
+    for (uint32_t index = 0U;
+         index < decoded.base.enabled_extension_count; ++index) {
+        const uint8_t *slot =
+            input + BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE +
+            index * BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE;
+        const uint8_t *terminator = memchr(
+            slot, '\0', BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE);
+        if (slot[0] == '\0' || terminator == NULL) {
+            return -EPROTO;
+        }
+        for (const uint8_t *padding = terminator + 1;
+             padding < slot + BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE;
+             ++padding) {
+            if (*padding != 0U) {
+                return -EPROTO;
+            }
+        }
+        memcpy(decoded.enabled_extensions[index], slot,
+               BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE);
+    }
+    *request = decoded;
+    return 0;
+}
+
 int bvb_protocol_encode_vulkan_instance_create_response(
     uint8_t output[BVB_VULKAN_INSTANCE_CREATE_RESPONSE_SIZE],
     const struct bvb_vulkan_instance_create_response *response) {

@@ -14,18 +14,47 @@ int main(void) {
     }
     const VkApplicationInfo application = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-        .pApplicationName = "bvb-e047-icd-loader",
+        .pApplicationName = "bvb-e048-icd-loader",
         .applicationVersion = 1U,
         .pEngineName = "bvb",
         .engineVersion = 1U,
         .apiVersion = VK_API_VERSION_1_1,
     };
+    uint32_t instance_extension_count = 0U;
+    VkResult result = vkEnumerateInstanceExtensionProperties(
+        NULL, &instance_extension_count, NULL);
+    if (result != VK_SUCCESS || instance_extension_count == 0U ||
+        instance_extension_count > 64U) {
+        fprintf(stderr, "instance-extension count failed: %d count=%u\n",
+                (int)result, instance_extension_count);
+        return 1;
+    }
+    VkExtensionProperties instance_extensions[64];
+    memset(instance_extensions, 0, sizeof(instance_extensions));
+    result = vkEnumerateInstanceExtensionProperties(
+        NULL, &instance_extension_count, instance_extensions);
+    int properties2_advertised = 0;
+    if (result == VK_SUCCESS) {
+        for (uint32_t index = 0U; index < instance_extension_count; ++index) {
+            properties2_advertised |= strcmp(
+                instance_extensions[index].extensionName,
+                VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) == 0;
+        }
+    }
+    if (result != VK_SUCCESS || properties2_advertised == 0) {
+        fputs("required instance extension unavailable\n", stderr);
+        return 1;
+    }
+    const char *enabled_instance_extension =
+        VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
     const VkInstanceCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &application,
+        .enabledExtensionCount = 1U,
+        .ppEnabledExtensionNames = &enabled_instance_extension,
     };
     VkInstance instance = VK_NULL_HANDLE;
-    VkResult result = vkCreateInstance(&create_info, NULL, &instance);
+    result = vkCreateInstance(&create_info, NULL, &instance);
     if (result != VK_SUCCESS || instance == VK_NULL_HANDLE) {
         fprintf(stderr, "Vulkan loader instance creation failed: %d\n",
                 (int)result);
@@ -206,8 +235,9 @@ int main(void) {
     }
     vkDestroyDevice(device, NULL);
     vkDestroyInstance(instance, NULL);
-    printf("PASS: Vulkan loader selected BVB ICD api=%u device=%s vendor=%u device_id=%u rgba8_optimal=%u max_extent=%ux%ux%u max_resource=%llu queue_family=%u enabled_extension=%s features2_anisotropy=%u memory2_types=%u memory2_heaps=%u device_idle=pass\n",
-           api_version, properties.deviceName, properties.vendorID,
+    printf("PASS: Vulkan loader selected BVB ICD api=%u instance_extension=%s device=%s vendor=%u device_id=%u rgba8_optimal=%u max_extent=%ux%ux%u max_resource=%llu queue_family=%u enabled_extension=%s features2_anisotropy=%u memory2_types=%u memory2_heaps=%u device_idle=pass\n",
+           api_version, enabled_instance_extension, properties.deviceName,
+           properties.vendorID,
            properties.deviceID, format_properties.optimalTilingFeatures,
            image_properties.maxExtent.width,
            image_properties.maxExtent.height,

@@ -36,6 +36,7 @@ struct bvb_vulkan_global_context {
     PFN_vkDestroyInstance destroy_instance;
     PFN_vkGetDeviceProcAddr get_device_proc_addr;
     struct bvb_vulkan_global_info info;
+    VkExtensionProperties exposed_instance_extension;
     struct bvb_handle_entry object_entries[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_handle_table objects;
     uint64_t next_instance_serial;
@@ -235,6 +236,30 @@ int bvb_vulkan_global_context_create(
         result = enumerate_extensions(
             NULL, &context->info.native_extension_count, NULL);
     }
+    if (result == VK_SUCCESS && context->info.native_extension_count != 0U) {
+        const uint32_t available = context->info.native_extension_count;
+        VkExtensionProperties *extensions =
+            calloc(available, sizeof(*extensions));
+        if (extensions == NULL) {
+            result = VK_ERROR_OUT_OF_HOST_MEMORY;
+        } else {
+            uint32_t returned = available;
+            result = enumerate_extensions(NULL, &returned, extensions);
+            if (result == VK_SUCCESS) {
+                for (uint32_t index = 0U; index < returned; ++index) {
+                    if (strcmp(
+                            extensions[index].extensionName,
+                            VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) ==
+                        0) {
+                        context->exposed_instance_extension = extensions[index];
+                        context->info.exposed_extension_count = 1U;
+                        break;
+                    }
+                }
+            }
+            free(extensions);
+        }
+    }
     if (result == VK_SUCCESS) {
         result = enumerate_layers(&context->info.native_layer_count, NULL);
     }
@@ -244,7 +269,6 @@ int bvb_vulkan_global_context_create(
         bvb_vulkan_global_context_destroy(context);
         return -EIO;
     }
-    context->info.exposed_extension_count = 0U;
     context->info.exposed_layer_count = 0U;
     int status = bvb_handle_table_init(
         &context->objects, context->object_entries,
@@ -315,9 +339,27 @@ int bvb_vulkan_global_context_info(
     return 0;
 }
 
+int bvb_vulkan_global_context_enumerate_instance_extensions(
+    const struct bvb_vulkan_global_context *context,
+    struct bvb_vulkan_extension_page *page) {
+    if (context == NULL || page == NULL) {
+        return -EINVAL;
+    }
+    *page = (struct bvb_vulkan_extension_page){
+        .vulkan_result = VK_SUCCESS,
+        .total_count = context->info.exposed_extension_count,
+        .count = context->info.exposed_extension_count,
+    };
+    if (page->count != 0U) {
+        page->properties[0] = context->exposed_instance_extension;
+    }
+    return 0;
+}
+
 int bvb_vulkan_global_context_create_instance(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_instance_create_request *request,
+    const char *const *enabled_extensions,
     struct bvb_vulkan_instance_create_response *response,
     char *error, size_t error_size) {
     if (error != NULL && error_size != 0U) {
@@ -335,9 +377,20 @@ int bvb_vulkan_global_context_create_instance(
         response->vulkan_result = VK_ERROR_LAYER_NOT_PRESENT;
         return 0;
     }
-    if (request->enabled_extension_count != 0U) {
+    if (request->enabled_extension_count > 1U ||
+        (request->enabled_extension_count != 0U &&
+         enabled_extensions == NULL)) {
         response->vulkan_result = VK_ERROR_EXTENSION_NOT_PRESENT;
         return 0;
+    }
+    for (uint32_t index = 0U;
+         index < request->enabled_extension_count; ++index) {
+        if (context->info.exposed_extension_count == 0U ||
+            strcmp(enabled_extensions[index],
+                   context->exposed_instance_extension.extensionName) != 0) {
+            response->vulkan_result = VK_ERROR_EXTENSION_NOT_PRESENT;
+            return 0;
+        }
     }
     if (context->objects.count == context->objects.capacity) {
         response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
@@ -354,6 +407,8 @@ int bvb_vulkan_global_context_create_instance(
     const VkInstanceCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &application_info,
+        .enabledExtensionCount = request->enabled_extension_count,
+        .ppEnabledExtensionNames = enabled_extensions,
     };
     VkInstance instance = VK_NULL_HANDLE;
     VkResult result = context->create_instance(&create_info, NULL, &instance);

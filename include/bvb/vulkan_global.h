@@ -16,9 +16,13 @@ void bvb_vulkan_global_context_destroy(
 int bvb_vulkan_global_context_info(
     const struct bvb_vulkan_global_context *context,
     struct bvb_vulkan_global_info *info);
+int bvb_vulkan_global_context_enumerate_instance_extensions(
+    const struct bvb_vulkan_global_context *context,
+    struct bvb_vulkan_extension_page *page);
 int bvb_vulkan_global_context_create_instance(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_instance_create_request *request,
+    const char *const *enabled_extensions,
     struct bvb_vulkan_instance_create_response *response,
     char *error, size_t error_size);
 int bvb_vulkan_global_context_destroy_instance(
