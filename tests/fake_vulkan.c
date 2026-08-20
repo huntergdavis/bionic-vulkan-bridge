@@ -13,7 +13,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/syscall.h>
 #include <unistd.h>
+
+#if !defined(SYS_memfd_create) && defined(__NR_memfd_create)
+#define SYS_memfd_create __NR_memfd_create
+#endif
 
 #if defined(_WIN32)
 #define BVB_EXPORT __declspec(dllexport)
@@ -725,7 +730,8 @@ static VkResult VKAPI_CALL fake_allocate_memory(
              VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT) == 0U) {
             return VK_ERROR_INVALID_EXTERNAL_HANDLE;
         }
-        descriptor = memfd_create("bvb-fake-external", MFD_CLOEXEC);
+        descriptor = (int)syscall(
+            SYS_memfd_create, "bvb-fake-external", MFD_CLOEXEC);
         if (descriptor >= 0 && ftruncate(descriptor, (off_t)size) == 0) {
             allocation = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED,
                               descriptor, 0);
