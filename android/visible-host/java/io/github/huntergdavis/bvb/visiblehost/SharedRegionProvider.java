@@ -17,7 +17,7 @@ import java.util.List;
 public final class SharedRegionProvider extends ContentProvider {
     private static final String EXTERNAL_BROKER_SOCKET =
             "bvb-visible-external-memory";
-    private static final int EXTERNAL_RESPONSE_BYTES = 20;
+    private static final int EXTERNAL_RESPONSE_BYTES = 24;
 
     static {
         System.loadLibrary("bvb-visible-host");
@@ -28,9 +28,11 @@ public final class SharedRegionProvider extends ContentProvider {
     static final class ExternalMemoryResult {
         int status;
         ParcelFileDescriptor descriptor;
+        ParcelFileDescriptor syncDescriptor;
         long allocationSize;
         int memoryTypeIndex;
         int bufferBytes;
+        int expectedFillWord;
     }
 
     private static int getI32(byte[] input, int offset) {
@@ -58,7 +60,8 @@ public final class SharedRegionProvider extends ContentProvider {
         }
     }
 
-    static ExternalMemoryResult openExternalMemory(String token)
+    static ExternalMemoryResult openExternalMemory(
+            String token, boolean synchronizedAccess)
             throws Exception {
         if (token == null || token.length() != 64) {
             throw new IllegalArgumentException("invalid lifecycle token");
@@ -90,7 +93,11 @@ public final class SharedRegionProvider extends ContentProvider {
             }
             socket.setSoTimeout(10000);
             OutputStream output = socket.getOutputStream();
-            output.write(token.getBytes("US-ASCII"));
+            byte[] request = new byte[65];
+            byte[] tokenBytes = token.getBytes("US-ASCII");
+            System.arraycopy(tokenBytes, 0, request, 0, tokenBytes.length);
+            request[64] = (byte)(synchronizedAccess ? 'S' : 'M');
+            output.write(request);
             output.flush();
             byte[] response = new byte[EXTERNAL_RESPONSE_BYTES];
             readExact(socket.getInputStream(), response);
@@ -99,14 +106,21 @@ public final class SharedRegionProvider extends ContentProvider {
             result.allocationSize = getU64(response, 4);
             result.memoryTypeIndex = getI32(response, 12);
             result.bufferBytes = getI32(response, 16);
+            result.expectedFillWord = getI32(response, 20);
             if (result.status == 0) {
                 FileDescriptor[] descriptors =
                         socket.getAncillaryFileDescriptors();
-                if (descriptors == null || descriptors.length != 1) {
+                int expectedDescriptors = synchronizedAccess ? 2 : 1;
+                if (descriptors == null ||
+                        descriptors.length != expectedDescriptors) {
                     throw new IllegalStateException(
-                            "external broker returned no descriptor");
+                            "external broker returned wrong descriptor count");
                 }
                 result.descriptor = ParcelFileDescriptor.dup(descriptors[0]);
+                if (synchronizedAccess) {
+                    result.syncDescriptor =
+                            ParcelFileDescriptor.dup(descriptors[1]);
+                }
             }
             return result;
         } finally {

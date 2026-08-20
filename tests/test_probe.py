@@ -25,7 +25,7 @@ def main() -> int:
     assert document["loader_api_version"]["major"] == 1
     assert document["loader_api_version"]["minor"] == 4
     assert document["loader_api_version"]["patch"] == 354
-    assert document["instance_extension_count"] == 4
+    assert document["instance_extension_count"] == 5
     assert document["physical_device_count"] == 1
     device = document["physical_devices"][0]
     assert device["name"] == 'BVB Fake Adreno 730 "quoted"'

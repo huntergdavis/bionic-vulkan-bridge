@@ -74,10 +74,13 @@ struct bvb_visible_state {
     VkSemaphore render_semaphore;
     VkBuffer external_buffer;
     VkDeviceMemory external_memory;
+    VkSemaphore external_sync_semaphore;
+    VkCommandBuffer external_sync_command_buffer;
     VkDeviceSize external_allocation_size;
     uint32_t external_memory_type_index;
     VkMemoryPropertyFlags external_memory_property_flags;
     PFN_vkGetMemoryFdKHR get_memory_fd;
+    PFN_vkGetSemaphoreFdKHR get_semaphore_fd;
 };
 
 struct bvb_lifecycle_client {
@@ -107,6 +110,7 @@ static atomic_bool visible_brokered_ingress;
 static atomic_uint visible_frame_count = 1U;
 static pthread_mutex_t lifecycle_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t external_memory_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_once_t external_broker_once = PTHREAD_ONCE_INIT;
 static struct bvb_renderer_control renderer = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
@@ -118,8 +122,11 @@ enum {
     BVB_E022_REGION_GENERATION = 1,
     BVB_E023_MAX_FRAMES = 4096,
     BVB_E036_TOKEN_HEX_BYTES = BVB_LIFECYCLE_TOKEN_SIZE * 2,
-    BVB_E036_RESPONSE_BYTES = 20,
+    BVB_E036_REQUEST_BYTES = BVB_E036_TOKEN_HEX_BYTES + 1,
+    BVB_E036_RESPONSE_BYTES = 24,
 };
+
+static const uint32_t BVB_E037_FILL_WORD = UINT32_C(0xe037c0de);
 
 static const char BVB_E036_BROKER_SOCKET[] =
     "bvb-visible-external-memory";
@@ -227,30 +234,34 @@ static int receive_broker_token_exact(int socket_fd, uint8_t *output,
 }
 
 static int send_external_broker_response(
-    int socket_fd, int status, int descriptor, uint64_t allocation_size,
-    uint32_t memory_type_index) {
+    int socket_fd, int status, const int *descriptors,
+    size_t descriptor_count, uint64_t allocation_size,
+    uint32_t memory_type_index, uint32_t fill_word) {
     uint8_t response[BVB_E036_RESPONSE_BYTES] = {0};
     bvb_wire_put_i32(response, status);
     bvb_wire_put_u64(response + 4, allocation_size);
     bvb_wire_put_u32(response + 12, memory_type_index);
     bvb_wire_put_u32(response + 16, BVB_E020_REGION_BYTES);
+    bvb_wire_put_u32(response + 20, fill_word);
     struct iovec vector = {
         .iov_base = response,
         .iov_len = sizeof(response),
     };
-    uint8_t control[CMSG_SPACE(sizeof(int))] = {0};
+    uint8_t control[CMSG_SPACE(sizeof(int) * 2U)] = {0};
     struct msghdr message = {
         .msg_iov = &vector,
         .msg_iovlen = 1U,
     };
-    if (status == 0 && descriptor >= 0) {
+    if (status == 0 && descriptors != NULL && descriptor_count > 0U &&
+        descriptor_count <= 2U) {
         message.msg_control = control;
-        message.msg_controllen = sizeof(control);
+        message.msg_controllen = CMSG_SPACE(sizeof(int) * descriptor_count);
         struct cmsghdr *rights = CMSG_FIRSTHDR(&message);
         rights->cmsg_level = SOL_SOCKET;
         rights->cmsg_type = SCM_RIGHTS;
-        rights->cmsg_len = CMSG_LEN(sizeof(int));
-        memcpy(CMSG_DATA(rights), &descriptor, sizeof(descriptor));
+        rights->cmsg_len = CMSG_LEN(sizeof(int) * descriptor_count);
+        memcpy(CMSG_DATA(rights), descriptors,
+               sizeof(int) * descriptor_count);
     }
     ssize_t sent;
     do {
@@ -258,6 +269,105 @@ static int send_external_broker_response(
     } while (sent < 0 && errno == EINTR);
     if (sent < 0) return -errno;
     return sent == (ssize_t)sizeof(response) ? 0 : -EIO;
+}
+
+/* external_memory_mutex must be held. */
+static int prepare_external_sync(int *semaphore_fd) {
+    if (semaphore_fd == NULL || state.device == VK_NULL_HANDLE ||
+        state.queue == VK_NULL_HANDLE || state.command_pool == VK_NULL_HANDLE ||
+        state.external_buffer == VK_NULL_HANDLE ||
+        state.get_semaphore_fd == NULL) {
+        return -EAGAIN;
+    }
+    *semaphore_fd = -1;
+    if (state.external_sync_semaphore != VK_NULL_HANDLE) {
+        return -EALREADY;
+    }
+    const VkExportSemaphoreCreateInfo export_info = {
+        .sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
+        .handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
+    const VkSemaphoreCreateInfo semaphore_info = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = &export_info,
+    };
+    VkSemaphore semaphore = VK_NULL_HANDLE;
+    VkResult result = vkCreateSemaphore(
+        state.device, &semaphore_info, NULL, &semaphore);
+    if (result != VK_SUCCESS) return -EIO;
+    const VkSemaphoreGetFdInfoKHR get_fd_info = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR,
+        .semaphore = semaphore,
+        .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
+    result = state.get_semaphore_fd(
+        state.device, &get_fd_info, semaphore_fd);
+    if (result != VK_SUCCESS || *semaphore_fd < 0) {
+        vkDestroySemaphore(state.device, semaphore, NULL);
+        *semaphore_fd = -1;
+        return -EIO;
+    }
+
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    (void)pthread_mutex_lock(&queue_mutex);
+    const VkCommandBufferAllocateInfo command_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = state.command_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1U,
+    };
+    result = vkAllocateCommandBuffers(
+        state.device, &command_info, &command_buffer);
+    const VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    if (result == VK_SUCCESS) {
+        result = vkBeginCommandBuffer(command_buffer, &begin_info);
+    }
+    if (result == VK_SUCCESS) {
+        vkCmdFillBuffer(command_buffer, state.external_buffer, 0U,
+                        BVB_E020_REGION_BYTES, BVB_E037_FILL_WORD);
+        const VkBufferMemoryBarrier release_barrier = {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .buffer = state.external_buffer,
+            .offset = 0U,
+            .size = BVB_E020_REGION_BYTES,
+        };
+        vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                             VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0U, 0U, NULL,
+                             1U, &release_barrier, 0U, NULL);
+        result = vkEndCommandBuffer(command_buffer);
+    }
+    const VkSubmitInfo submit_info = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1U,
+        .pCommandBuffers = &command_buffer,
+        .signalSemaphoreCount = 1U,
+        .pSignalSemaphores = &semaphore,
+    };
+    if (result == VK_SUCCESS) {
+        result = vkQueueSubmit(state.queue, 1U, &submit_info, VK_NULL_HANDLE);
+    }
+    if (result != VK_SUCCESS && command_buffer != VK_NULL_HANDLE) {
+        vkFreeCommandBuffers(state.device, state.command_pool, 1U,
+                             &command_buffer);
+        command_buffer = VK_NULL_HANDLE;
+    }
+    (void)pthread_mutex_unlock(&queue_mutex);
+    if (result != VK_SUCCESS) {
+        (void)close(*semaphore_fd);
+        *semaphore_fd = -1;
+        vkDestroySemaphore(state.device, semaphore, NULL);
+        return -EIO;
+    }
+    state.external_sync_semaphore = semaphore;
+    state.external_sync_command_buffer = command_buffer;
+    return 0;
 }
 
 static void handle_external_broker_connection(int connection) {
@@ -270,17 +380,24 @@ static void handle_external_broker_connection(int connection) {
         credentials.uid != getuid()) {
         status = -EACCES;
     }
-    uint8_t token_hex[BVB_E036_TOKEN_HEX_BYTES + 1U] = {0};
+    uint8_t request[BVB_E036_REQUEST_BYTES] = {0};
     if (status == 0) {
-        status = receive_broker_token_exact(connection, token_hex,
-                                            BVB_E036_TOKEN_HEX_BYTES);
+        status = receive_broker_token_exact(connection, request,
+                                            sizeof(request));
+    }
+    const bool synchronized = request[BVB_E036_TOKEN_HEX_BYTES] == 'S';
+    if (status == 0 && !synchronized &&
+        request[BVB_E036_TOKEN_HEX_BYTES] != 'M') {
+        status = -EPROTO;
     }
     uint8_t parsed_token[BVB_LIFECYCLE_TOKEN_SIZE] = {0};
     if (status == 0) {
-        status = bvb_lifecycle_token_from_hex((const char *)token_hex,
+        request[BVB_E036_TOKEN_HEX_BYTES] = '\0';
+        status = bvb_lifecycle_token_from_hex((const char *)request,
                                               parsed_token);
     }
-    int descriptor = -1;
+    int descriptors[2] = {-1, -1};
+    size_t descriptor_count = 0U;
     uint64_t allocation_size = 0U;
     uint32_t memory_type_index = 0U;
     (void)pthread_mutex_lock(&external_memory_mutex);
@@ -291,31 +408,48 @@ static void handle_external_broker_connection(int connection) {
         status = -EAGAIN;
     }
     if (status == 0) {
+        if (synchronized) {
+            status = prepare_external_sync(&descriptors[1]);
+        }
+    }
+    if (status == 0) {
         const VkMemoryGetFdInfoKHR fd_info = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
             .memory = state.external_memory,
             .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
         };
         const VkResult result = state.get_memory_fd(
-            state.device, &fd_info, &descriptor);
-        if (result != VK_SUCCESS || descriptor < 0) {
+            state.device, &fd_info, &descriptors[0]);
+        if (result != VK_SUCCESS || descriptors[0] < 0) {
             status = -EIO;
-            descriptor = -1;
+            descriptors[0] = -1;
             BVB_LOGE("E036_EXPORT_FAIL vkGetMemoryFdKHR=%d", (int)result);
         } else {
             allocation_size = state.external_allocation_size;
             memory_type_index = state.external_memory_type_index;
+            descriptor_count = synchronized ? 2U : 1U;
         }
     }
     (void)pthread_mutex_unlock(&external_memory_mutex);
 
     const int send_status = send_external_broker_response(
-        connection, status, descriptor, allocation_size, memory_type_index);
-    if (descriptor >= 0) (void)close(descriptor);
+        connection, status, descriptors, descriptor_count, allocation_size,
+        memory_type_index, synchronized ? BVB_E037_FILL_WORD : 0U);
+    for (size_t index = 0U; index < 2U; ++index) {
+        if (descriptors[index] >= 0) (void)close(descriptors[index]);
+    }
     if (status == 0 && send_status == 0) {
-        BVB_LOGI("E036_EXPORT_PASS bytes=%u allocation=%llu type=%u",
-                 BVB_E020_REGION_BYTES,
-                 (unsigned long long)allocation_size, memory_type_index);
+        if (synchronized) {
+            BVB_LOGI("E037_EXPORT_PASS bytes=%u allocation=%llu type=%u "
+                     "fill=%u descriptors=2",
+                     BVB_E020_REGION_BYTES,
+                     (unsigned long long)allocation_size, memory_type_index,
+                     BVB_E037_FILL_WORD);
+        } else {
+            BVB_LOGI("E036_EXPORT_PASS bytes=%u allocation=%llu type=%u",
+                     BVB_E020_REGION_BYTES,
+                     (unsigned long long)allocation_size, memory_type_index);
+        }
     } else {
         BVB_LOGE("E036_BROKER_REQUEST_FAIL status=%d send=%d", status,
                  send_status);
@@ -740,6 +874,10 @@ static void destroy_renderer(void) {
     (void)pthread_mutex_lock(&external_memory_mutex);
     if (state.device != VK_NULL_HANDLE) {
         (void)vkDeviceWaitIdle(state.device);
+        if (state.external_sync_semaphore != VK_NULL_HANDLE) {
+            vkDestroySemaphore(state.device, state.external_sync_semaphore,
+                               NULL);
+        }
         if (state.external_buffer != VK_NULL_HANDLE) {
             vkDestroyBuffer(state.device, state.external_buffer, NULL);
         }
@@ -845,7 +983,10 @@ static bool create_external_memory(VkPhysicalDevice physical_device) {
     }
     state.get_memory_fd = (PFN_vkGetMemoryFdKHR)vkGetDeviceProcAddr(
         state.device, "vkGetMemoryFdKHR");
-    if (query == NULL || state.get_memory_fd == NULL) {
+    state.get_semaphore_fd = (PFN_vkGetSemaphoreFdKHR)vkGetDeviceProcAddr(
+        state.device, "vkGetSemaphoreFdKHR");
+    if (query == NULL || state.get_memory_fd == NULL ||
+        state.get_semaphore_fd == NULL) {
         BVB_LOGE("E036_FAIL missing_external_memory_entry_points");
         return false;
     }
@@ -1334,7 +1475,7 @@ static void complete_external_batch(bool claimed, int status) {
     (void)complete_external_batch_mode(claimed, status, false);
 }
 
-static int render_triangle_frame(
+static int render_triangle_frame_unlocked(
     const uint8_t *render_batch, size_t render_batch_length,
     const VkImage *images, uint32_t image_count, VkFormat image_format,
     VkExtent2D extent, uint32_t *presented_image_index) {
@@ -1525,11 +1666,24 @@ cleanup:
     return status;
 }
 
+static int render_triangle_frame(
+    const uint8_t *render_batch, size_t render_batch_length,
+    const VkImage *images, uint32_t image_count, VkFormat image_format,
+    VkExtent2D extent, uint32_t *presented_image_index) {
+    (void)pthread_mutex_lock(&queue_mutex);
+    const int status = render_triangle_frame_unlocked(
+        render_batch, render_batch_length, images, image_count, image_format,
+        extent, presented_image_index);
+    (void)pthread_mutex_unlock(&queue_mutex);
+    return status;
+}
+
 static bool create_renderer(ANativeWindow *window) {
     static const char *const instance_extensions[] = {
         VK_KHR_SURFACE_EXTENSION_NAME,
         VK_KHR_ANDROID_SURFACE_EXTENSION_NAME,
         VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME,
     };
     const VkApplicationInfo application_info = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -1541,7 +1695,7 @@ static bool create_renderer(ANativeWindow *window) {
     const VkInstanceCreateInfo instance_info = {
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &application_info,
-        .enabledExtensionCount = 3,
+        .enabledExtensionCount = 4,
         .ppEnabledExtensionNames = instance_extensions,
     };
     VkResult result = vkCreateInstance(&instance_info, NULL, &state.instance);
@@ -1580,7 +1734,11 @@ static bool create_renderer(ANativeWindow *window) {
         !has_device_extension(physical_device,
                               VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME) ||
         !has_device_extension(physical_device,
-                              VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME)) {
+                              VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) ||
+        !has_device_extension(physical_device,
+                              VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME) ||
+        !has_device_extension(physical_device,
+                              VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME)) {
         BVB_LOGE("E016_FAIL required_device_extension");
         return false;
     }
@@ -1682,12 +1840,14 @@ static bool create_renderer(ANativeWindow *window) {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
         VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
     };
     const VkDeviceCreateInfo device_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .queueCreateInfoCount = 1,
         .pQueueCreateInfos = &queue_info,
-        .enabledExtensionCount = 3,
+        .enabledExtensionCount = 5,
         .ppEnabledExtensionNames = device_extensions,
     };
     result = vkCreateDevice(physical_device, &device_info, NULL,

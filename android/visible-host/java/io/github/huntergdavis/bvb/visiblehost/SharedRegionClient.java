@@ -26,6 +26,8 @@ public final class SharedRegionClient extends Binder {
             "io.github.huntergdavis.bvb.visiblehost.REQUEST_SHARED_REGION";
     public static final String ACTION_EXTERNAL_MEMORY =
             "io.github.huntergdavis.bvb.visiblehost.REQUEST_EXTERNAL_MEMORY";
+    public static final String ACTION_EXTERNAL_SYNC =
+            "io.github.huntergdavis.bvb.visiblehost.REQUEST_EXTERNAL_SYNC";
     public static final String EXTRA_REQUEST = "bvb_request";
     public static final String EXTRA_CALLBACK = "bvb_callback";
     public static final String EXTRA_TOKEN = "bvb_token";
@@ -46,19 +48,24 @@ public final class SharedRegionClient extends Binder {
     private static final int PROTOCOL_RESPONSE = 2;
     private static final int OPCODE_HELLO = 1;
     private static final int OPCODE_EXTERNAL_MEMORY_IMPORT_TEST = 50;
+    private static final int OPCODE_EXTERNAL_SYNC_IMPORT_TEST = 51;
     private static final int PROTOCOL_HEADER_SIZE = 24;
     private static final int HELLO_REQUEST_SIZE = 8;
     private static final int EXTERNAL_MEMORY_IMPORT_REQUEST_SIZE = 16;
+    private static final int EXTERNAL_SYNC_IMPORT_REQUEST_SIZE = 24;
     private static final int RELAY_REQUEST_ID = 0xE021;
 
     private boolean delivered;
     private int deliveryStatus;
     private String deliveryDetail;
     private ParcelFileDescriptor region;
+    private ParcelFileDescriptor syncDescriptor;
     private boolean requestExternal;
+    private boolean requestExternalSync;
     private long allocationSize;
     private int memoryTypeIndex;
     private int bufferBytes;
+    private int expectedFillWord;
 
     @Override
     protected boolean onTransact(int code, Parcel data, Parcel reply, int flags)
@@ -76,12 +83,20 @@ public final class SharedRegionClient extends Binder {
         long deliveredAllocationSize = 0L;
         int deliveredMemoryTypeIndex = 0;
         int deliveredBufferBytes = 0;
+        int deliveredExpectedFillWord = 0;
         if (status == 0 && requestExternal) {
             deliveredAllocationSize = data.readLong();
             deliveredMemoryTypeIndex = data.readInt();
             deliveredBufferBytes = data.readInt();
+            if (requestExternalSync) {
+                deliveredExpectedFillWord = data.readInt();
+            }
         }
         ParcelFileDescriptor descriptor = status == 0
+                ? ParcelFileDescriptor.CREATOR.createFromParcel(data)
+                : null;
+        ParcelFileDescriptor deliveredSyncDescriptor =
+                status == 0 && requestExternalSync
                 ? ParcelFileDescriptor.CREATOR.createFromParcel(data)
                 : null;
         synchronized (this) {
@@ -91,14 +106,21 @@ public final class SharedRegionClient extends Binder {
                         descriptor.close();
                     } catch (Exception ignored) {}
                 }
+                if (deliveredSyncDescriptor != null) {
+                    try {
+                        deliveredSyncDescriptor.close();
+                    } catch (Exception ignored) {}
+                }
                 throw new IllegalStateException("duplicate shared-region delivery");
             }
             deliveryStatus = status;
             deliveryDetail = detail;
             region = descriptor;
+            syncDescriptor = deliveredSyncDescriptor;
             allocationSize = deliveredAllocationSize;
             memoryTypeIndex = deliveredMemoryTypeIndex;
             bufferBytes = deliveredBufferBytes;
+            expectedFillWord = deliveredExpectedFillWord;
             delivered = true;
             notifyAll();
         }
@@ -203,15 +225,16 @@ public final class SharedRegionClient extends Binder {
     }
 
     private static void requestRegion(String token, IBinder callback,
-                                      boolean external)
+                                      boolean external,
+                                      boolean externalSync)
             throws Exception {
         Bundle request = new Bundle();
         Method putBinder = Bundle.class.getMethod(
                 "putBinder", String.class, IBinder.class);
         putBinder.invoke(request, EXTRA_CALLBACK, callback);
         request.putString(EXTRA_TOKEN, token);
-        Intent intent = new Intent(
-                external ? ACTION_EXTERNAL_MEMORY : ACTION_REQUEST);
+        Intent intent = new Intent(externalSync ? ACTION_EXTERNAL_SYNC
+                : external ? ACTION_EXTERNAL_MEMORY : ACTION_REQUEST);
         intent.setPackage(HOST_PACKAGE);
         intent.putExtra(EXTRA_REQUEST, request);
         sendBroadcast(intent);
@@ -246,10 +269,14 @@ public final class SharedRegionClient extends Binder {
     }
 
     private byte[] relayRequest() {
-        int payloadSize = requestExternal
-                ? EXTERNAL_MEMORY_IMPORT_REQUEST_SIZE : HELLO_REQUEST_SIZE;
-        int opcode = requestExternal
-                ? OPCODE_EXTERNAL_MEMORY_IMPORT_TEST : OPCODE_HELLO;
+        int payloadSize = requestExternalSync
+                ? EXTERNAL_SYNC_IMPORT_REQUEST_SIZE
+                : requestExternal
+                    ? EXTERNAL_MEMORY_IMPORT_REQUEST_SIZE : HELLO_REQUEST_SIZE;
+        int opcode = requestExternalSync
+                ? OPCODE_EXTERNAL_SYNC_IMPORT_TEST
+                : requestExternal
+                    ? OPCODE_EXTERNAL_MEMORY_IMPORT_TEST : OPCODE_HELLO;
         byte[] request = new byte[PROTOCOL_HEADER_SIZE + payloadSize];
         putU32(request, 0, PROTOCOL_MAGIC);
         putU16(request, 4, PROTOCOL_VERSION);
@@ -261,6 +288,10 @@ public final class SharedRegionClient extends Binder {
             putU64(request, PROTOCOL_HEADER_SIZE, allocationSize);
             putU32(request, PROTOCOL_HEADER_SIZE + 8, memoryTypeIndex);
             putU32(request, PROTOCOL_HEADER_SIZE + 12, bufferBytes);
+            if (requestExternalSync) {
+                putU32(request, PROTOCOL_HEADER_SIZE + 16, expectedFillWord);
+                putU32(request, PROTOCOL_HEADER_SIZE + 20, 0);
+            }
         } else {
             putU16(request, PROTOCOL_HEADER_SIZE, PROTOCOL_VERSION);
             putU16(request, PROTOCOL_HEADER_SIZE + 2, PROTOCOL_VERSION);
@@ -289,9 +320,12 @@ public final class SharedRegionClient extends Binder {
             socket.connect(new LocalSocketAddress(
                     socketName, LocalSocketAddress.Namespace.ABSTRACT));
             socket.setSoTimeout(RELAY_COMPLETION_TIMEOUT_MS);
-            socket.setFileDescriptorsForSend(new FileDescriptor[] {
-                    descriptor.getFileDescriptor()
-            });
+            socket.setFileDescriptorsForSend(requestExternalSync
+                    ? new FileDescriptor[] {
+                        descriptor.getFileDescriptor(),
+                        syncDescriptor.getFileDescriptor()
+                    }
+                    : new FileDescriptor[] {descriptor.getFileDescriptor()});
             OutputStream output = socket.getOutputStream();
             output.write(relayRequest());
             output.flush();
@@ -301,8 +335,11 @@ public final class SharedRegionClient extends Binder {
             if (getU32(response, 0) != PROTOCOL_MAGIC
                     || getU16(response, 4) != PROTOCOL_VERSION
                     || getU16(response, 6) != PROTOCOL_RESPONSE
-                    || getU16(response, 8) != (requestExternal
-                            ? OPCODE_EXTERNAL_MEMORY_IMPORT_TEST : OPCODE_HELLO)
+                    || getU16(response, 8) != (requestExternalSync
+                            ? OPCODE_EXTERNAL_SYNC_IMPORT_TEST
+                            : requestExternal
+                                ? OPCODE_EXTERNAL_MEMORY_IMPORT_TEST
+                                : OPCODE_HELLO)
                     || getU32(response, 12) != RELAY_REQUEST_ID
                     || getU32(response, 16) != 0
                     || getU32(response, 20) != 0) {
@@ -362,20 +399,23 @@ public final class SharedRegionClient extends Binder {
     }
 
     public static void main(String[] arguments) {
-        boolean external = arguments.length == 4 &&
+        boolean externalSync = arguments.length == 4 &&
+                "sync".equals(arguments[3]);
+        boolean external = externalSync || arguments.length == 4 &&
                 "external".equals(arguments[3]);
         if ((arguments.length != 2 && arguments.length != 3 && !external) ||
                 (arguments.length == 4 && !external)) {
             System.err.println(
                     "usage: SharedRegionClient TOKEN RESULT_JSON "
-                            + "[RELAY_SOCKET [external]]");
+                            + "[RELAY_SOCKET [external|sync]]");
             System.exit(2);
         }
         String stage = "send_broadcast";
         try {
             SharedRegionClient client = new SharedRegionClient();
             client.requestExternal = external;
-            requestRegion(arguments[0], client, external);
+            client.requestExternalSync = externalSync;
+            requestRegion(arguments[0], client, external, externalSync);
             stage = "wait_callback";
             if (!client.waitForDelivery()) {
                 throw new IllegalStateException("Binder callback timed out");
@@ -398,10 +438,15 @@ public final class SharedRegionClient extends Binder {
                 long relayRoundTripNs = client.relayRegion(
                         arguments[2], client.region);
                 client.region.close();
+                if (client.syncDescriptor != null) {
+                    client.syncDescriptor.close();
+                }
                 writeResult(arguments[1],
                         "{\"result\":\"pass\",\"binder_region_received\":true,"
                                 + "\"descriptor_kind\":"
-                                + (external ? "\"opaque_fd\"" : "\"memfd\"")
+                                + (externalSync ? "\"opaque_fd_pair\""
+                                    : external ? "\"opaque_fd\""
+                                    : "\"memfd\"")
                                 + ",\"relay\":\"same_uid_scm_rights\","
                                 + (external
                                     ? "\"allocation_size\":"
@@ -410,6 +455,11 @@ public final class SharedRegionClient extends Binder {
                                             + client.memoryTypeIndex
                                             + ",\"buffer_bytes\":"
                                             + client.bufferBytes + ","
+                                            + (externalSync
+                                                ? "\"expected_fill_word\":"
+                                                    + (client.expectedFillWord
+                                                        & 0xffffffffL) + ","
+                                                : "")
                                     : "")
                                 + "\"relay_round_trip_ns\":"
                                 + relayRoundTripNs + "}");

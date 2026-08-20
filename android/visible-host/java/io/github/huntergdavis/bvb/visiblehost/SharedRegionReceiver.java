@@ -30,7 +30,10 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
-        boolean external = SharedRegionClient.ACTION_EXTERNAL_MEMORY.equals(
+        boolean externalSync = SharedRegionClient.ACTION_EXTERNAL_SYNC.equals(
+                intent.getAction());
+        boolean external = externalSync ||
+                SharedRegionClient.ACTION_EXTERNAL_MEMORY.equals(
                 intent.getAction());
         if (!external &&
                 !SharedRegionClient.ACTION_REQUEST.equals(intent.getAction())) {
@@ -50,15 +53,18 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
         int status;
         String failureDetail = null;
         ParcelFileDescriptor region = null;
+        ParcelFileDescriptor syncDescriptor = null;
         try {
             if (external) {
                 if (!VisibleHostActivity.authorizes(token)) {
                     throw new SecurityException(
                             "external-memory capability rejected");
                 }
-                externalResult = SharedRegionProvider.openExternalMemory(token);
+                externalResult = SharedRegionProvider.openExternalMemory(
+                        token, externalSync);
                 status = externalResult.status;
                 region = externalResult.descriptor;
+                syncDescriptor = externalResult.syncDescriptor;
             } else {
                 int descriptor = SharedRegionProvider.nativeOpenRegion(token);
                 status = descriptor < 0 ? descriptor : 0;
@@ -92,8 +98,14 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
                     data.writeLong(externalResult.allocationSize);
                     data.writeInt(externalResult.memoryTypeIndex);
                     data.writeInt(externalResult.bufferBytes);
+                    if (externalSync) {
+                        data.writeInt(externalResult.expectedFillWord);
+                    }
                 }
                 region.writeToParcel(data, 0);
+                if (externalSync) {
+                    syncDescriptor.writeToParcel(data, 0);
+                }
             }
             if (!callback.transact(SharedRegionClient.TRANSACTION_DELIVER,
                                    data, reply, 0)) {
@@ -106,6 +118,11 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
             if (region != null) {
                 try {
                     region.close();
+                } catch (Exception ignored) {}
+            }
+            if (syncDescriptor != null) {
+                try {
+                    syncDescriptor.close();
                 } catch (Exception ignored) {}
             }
             data.recycle();

@@ -418,17 +418,25 @@ int bvb_vulkan_batch_context_create(
         .pEngineName = "none",
         .apiVersion = VK_API_VERSION_1_0,
     };
-    static const char *const external_instance_extensions[] = {
-        VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
-    };
+    const char *external_instance_extensions[2];
+    uint32_t external_instance_extension_count = 0U;
     const bool enable_external_memory_capabilities =
         (output->instance_extension_flags &
          BVB_INSTANCE_KHR_EXTERNAL_MEMORY_CAPS) != 0U;
+    if (enable_external_memory_capabilities) {
+        external_instance_extensions[external_instance_extension_count++] =
+            VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME;
+    }
+    if ((output->instance_extension_flags &
+         BVB_INSTANCE_KHR_EXTERNAL_SEMAPHORE_CAPS) != 0U) {
+        external_instance_extensions[external_instance_extension_count++] =
+            VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME;
+    }
     const VkInstanceCreateInfo instance_info = {
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &application_info,
-        .enabledExtensionCount = enable_external_memory_capabilities ? 1U : 0U,
-        .ppEnabledExtensionNames = enable_external_memory_capabilities
+        .enabledExtensionCount = external_instance_extension_count,
+        .ppEnabledExtensionNames = external_instance_extension_count > 0U
                                        ? external_instance_extensions
                                        : NULL,
     };
@@ -568,22 +576,36 @@ int bvb_vulkan_batch_context_create(
         .queueCount = 1,
         .pQueuePriorities = &queue_priority,
     };
-    static const char *const external_device_extensions[] = {
-        VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
-        VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
-    };
+    const char *external_device_extensions[4];
+    uint32_t external_device_extension_count = 0U;
     const bool enable_external_memory_fd =
         (output->device_extension_flags &
          (BVB_DEVICE_KHR_EXTERNAL_MEMORY |
           BVB_DEVICE_KHR_EXTERNAL_MEMORY_FD)) ==
         (BVB_DEVICE_KHR_EXTERNAL_MEMORY |
          BVB_DEVICE_KHR_EXTERNAL_MEMORY_FD);
+    if (enable_external_memory_fd) {
+        external_device_extensions[external_device_extension_count++] =
+            VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME;
+        external_device_extensions[external_device_extension_count++] =
+            VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME;
+    }
+    if ((output->device_extension_flags &
+         (BVB_DEVICE_KHR_EXTERNAL_SEMAPHORE |
+          BVB_DEVICE_KHR_EXTERNAL_SEMAPHORE_FD)) ==
+        (BVB_DEVICE_KHR_EXTERNAL_SEMAPHORE |
+         BVB_DEVICE_KHR_EXTERNAL_SEMAPHORE_FD)) {
+        external_device_extensions[external_device_extension_count++] =
+            VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME;
+        external_device_extensions[external_device_extension_count++] =
+            VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME;
+    }
     const VkDeviceCreateInfo device_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .queueCreateInfoCount = 1,
         .pQueueCreateInfos = &queue_info,
-        .enabledExtensionCount = enable_external_memory_fd ? 2U : 0U,
-        .ppEnabledExtensionNames = enable_external_memory_fd
+        .enabledExtensionCount = external_device_extension_count,
+        .ppEnabledExtensionNames = external_device_extension_count > 0U
                                        ? external_device_extensions
                                        : NULL,
     };
@@ -1301,19 +1323,32 @@ done:
     return status;
 }
 
-int bvb_vulkan_batch_context_import_external_memory_fd(
+static int import_external_memory_fds(
     struct bvb_vulkan_batch_context *context, int external_fd,
+    int external_semaphore_fd,
     uint64_t allocation_size, uint32_t memory_type_index,
     uint32_t buffer_bytes, struct bvb_vulkan_external_memory_result *output,
+    struct bvb_vulkan_external_sync_result *sync_output,
+    uint32_t expected_fill_word,
     char *error, size_t error_size) {
     if (error != NULL && error_size > 0U) error[0] = '\0';
+    const bool synchronized = sync_output != NULL;
     if (context == NULL || external_fd < 0 || allocation_size == 0U ||
         buffer_bytes == 0U || buffer_bytes > BVB_SELFTEST_BUFFER_BYTES ||
-        buffer_bytes > allocation_size || output == NULL) {
+        buffer_bytes > allocation_size || output == NULL ||
+        (synchronized && (external_semaphore_fd < 0 ||
+                          (buffer_bytes % sizeof(uint32_t)) != 0U)) ||
+        (!synchronized && external_semaphore_fd >= 0)) {
         if (external_fd >= 0) (void)close(external_fd);
+        if (external_semaphore_fd >= 0) (void)close(external_semaphore_fd);
         return -EINVAL;
     }
     memset(output, 0, sizeof(*output));
+    if (sync_output != NULL) {
+        memset(sync_output, 0, sizeof(*sync_output));
+        sync_output->buffer_bytes = buffer_bytes;
+        sync_output->expected_fill_word = expected_fill_word;
+    }
     output->buffer_bytes = buffer_bytes;
     output->memory_type_index = memory_type_index;
     if ((context->base_result.instance_extension_flags &
@@ -1326,6 +1361,19 @@ int bvb_vulkan_batch_context_import_external_memory_fd(
         set_error(error, error_size,
                   "external-memory FD extensions are unavailable");
         (void)close(external_fd);
+        if (external_semaphore_fd >= 0) (void)close(external_semaphore_fd);
+        return -ENOTSUP;
+    }
+    if (synchronized &&
+        (context->base_result.device_extension_flags &
+         (BVB_DEVICE_KHR_EXTERNAL_SEMAPHORE |
+          BVB_DEVICE_KHR_EXTERNAL_SEMAPHORE_FD)) !=
+            (BVB_DEVICE_KHR_EXTERNAL_SEMAPHORE |
+             BVB_DEVICE_KHR_EXTERNAL_SEMAPHORE_FD)) {
+        set_error(error, error_size,
+                  "external-semaphore FD extensions are unavailable");
+        (void)close(external_fd);
+        (void)close(external_semaphore_fd);
         return -ENOTSUP;
     }
 
@@ -1344,6 +1392,7 @@ int bvb_vulkan_batch_context_import_external_memory_fd(
         set_error(error, error_size,
                   "driver has no external-buffer-properties query");
         (void)close(external_fd);
+        if (external_semaphore_fd >= 0) (void)close(external_semaphore_fd);
         return -ENOSYS;
     }
     const VkBufferUsageFlags usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
@@ -1370,6 +1419,7 @@ int bvb_vulkan_batch_context_import_external_memory_fd(
          VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT) == 0U) {
         set_error(error, error_size, "opaque FD buffers are not importable");
         (void)close(external_fd);
+        if (external_semaphore_fd >= 0) (void)close(external_semaphore_fd);
         return -ENOTSUP;
     }
 
@@ -1388,6 +1438,13 @@ int bvb_vulkan_batch_context_import_external_memory_fd(
     LOAD_IMPORT(vkMapMemory);
     LOAD_IMPORT(vkUnmapMemory);
     LOAD_IMPORT(vkInvalidateMappedMemoryRanges);
+    LOAD_IMPORT(vkCreateSemaphore);
+    LOAD_IMPORT(vkDestroySemaphore);
+    LOAD_IMPORT(vkImportSemaphoreFdKHR);
+    LOAD_IMPORT(vkCreateFence);
+    LOAD_IMPORT(vkDestroyFence);
+    LOAD_IMPORT(vkQueueSubmit);
+    LOAD_IMPORT(vkWaitForFences);
 #undef LOAD_IMPORT
     imported.destroy_buffer = imported_vkDestroyBuffer;
     imported.free_memory = imported_vkFreeMemory;
@@ -1402,11 +1459,26 @@ int bvb_vulkan_batch_context_import_external_memory_fd(
         set_error(error, error_size,
                   "driver is missing external-memory import entry points");
         (void)close(external_fd);
+        if (external_semaphore_fd >= 0) (void)close(external_semaphore_fd);
+        return -ENOSYS;
+    }
+    if (synchronized &&
+        (imported_vkCreateSemaphore == NULL ||
+         imported_vkDestroySemaphore == NULL ||
+         imported_vkImportSemaphoreFdKHR == NULL ||
+         imported_vkCreateFence == NULL || imported_vkDestroyFence == NULL ||
+         imported_vkQueueSubmit == NULL || imported_vkWaitForFences == NULL)) {
+        set_error(error, error_size,
+                  "driver is missing external-semaphore wait entry points");
+        (void)close(external_fd);
+        (void)close(external_semaphore_fd);
         return -ENOSYS;
     }
 
     int status = 0;
     VkResult vk_result = VK_SUCCESS;
+    VkSemaphore imported_semaphore = VK_NULL_HANDLE;
+    VkFence completion_fence = VK_NULL_HANDLE;
     const VkExternalMemoryBufferCreateInfo external_buffer_info = {
         .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
         .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
@@ -1488,6 +1560,71 @@ int bvb_vulkan_batch_context_import_external_memory_fd(
         status = -EIO;
         goto done;
     }
+    if (synchronized) {
+        const VkSemaphoreCreateInfo semaphore_info = {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        };
+        vk_result = imported_vkCreateSemaphore(
+            imported.device, &semaphore_info, NULL, &imported_semaphore);
+        if (vk_result == VK_SUCCESS) {
+            const VkImportSemaphoreFdInfoKHR semaphore_import = {
+                .sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR,
+                .semaphore = imported_semaphore,
+                .handleType =
+                    VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
+                .fd = external_semaphore_fd,
+            };
+            vk_result = imported_vkImportSemaphoreFdKHR(
+                imported.device, &semaphore_import);
+            if (vk_result == VK_SUCCESS) external_semaphore_fd = -1;
+        }
+        const VkFenceCreateInfo fence_info = {
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        };
+        if (vk_result == VK_SUCCESS) {
+            vk_result = imported_vkCreateFence(
+                imported.device, &fence_info, NULL, &completion_fence);
+        }
+        const VkPipelineStageFlags wait_stage =
+            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+        const VkSubmitInfo submit_info = {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .waitSemaphoreCount = 1U,
+            .pWaitSemaphores = &imported_semaphore,
+            .pWaitDstStageMask = &wait_stage,
+        };
+        uint64_t wait_started_ns = 0U;
+        uint64_t wait_finished_ns = 0U;
+        if (vk_result == VK_SUCCESS && monotonic_ns(&wait_started_ns) != 0) {
+            set_error(error, error_size,
+                      "could not read external-wait start clock");
+            status = -EIO;
+            goto done;
+        }
+        if (vk_result == VK_SUCCESS) {
+            vk_result = imported_vkQueueSubmit(
+                context->queue, 1U, &submit_info, completion_fence);
+        }
+        if (vk_result == VK_SUCCESS) {
+            vk_result = imported_vkWaitForFences(
+                imported.device, 1U, &completion_fence, VK_TRUE, UINT64_MAX);
+        }
+        if (vk_result == VK_SUCCESS && monotonic_ns(&wait_finished_ns) != 0) {
+            set_error(error, error_size,
+                      "could not read external-wait finish clock");
+            status = -EIO;
+            goto done;
+        }
+        if (vk_result != VK_SUCCESS) {
+            set_error(error, error_size,
+                      "external semaphore GPU wait failed: %d",
+                      (int)vk_result);
+            status = -EIO;
+            goto done;
+        }
+        sync_output->gpu_wait_elapsed_ns =
+            wait_finished_ns - wait_started_ns;
+    }
     if ((output->memory_property_flags &
          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U) {
         const VkMappedMemoryRange range = {
@@ -1506,24 +1643,81 @@ int bvb_vulkan_batch_context_import_external_memory_fd(
             goto done;
         }
     }
-    for (uint32_t index = 0U; index < buffer_bytes; ++index) {
-        const uint8_t expected =
-            (uint8_t)(index ^ (index >> 4U) ^ UINT32_C(0x5a));
-        if (((const uint8_t *)imported.mapped)[index] != expected) {
-            ++output->mismatched_bytes;
+    if (synchronized) {
+        for (uint32_t index = 0U;
+             index < buffer_bytes / sizeof(uint32_t); ++index) {
+            if (((const uint32_t *)imported.mapped)[index] !=
+                sync_output->expected_fill_word) {
+                ++sync_output->mismatched_words;
+            }
         }
-    }
-    if (output->mismatched_bytes != 0U) {
-        set_error(error, error_size,
-                  "external-memory import found %u mismatched bytes",
-                  output->mismatched_bytes);
-        status = -EIO;
+        if (sync_output->mismatched_words != 0U) {
+            set_error(error, error_size,
+                      "external-sync import found %u mismatched words",
+                      sync_output->mismatched_words);
+            status = -EIO;
+        }
+    } else {
+        for (uint32_t index = 0U; index < buffer_bytes; ++index) {
+            const uint8_t expected =
+                (uint8_t)(index ^ (index >> 4U) ^ UINT32_C(0x5a));
+            if (((const uint8_t *)imported.mapped)[index] != expected) {
+                ++output->mismatched_bytes;
+            }
+        }
+        if (output->mismatched_bytes != 0U) {
+            set_error(error, error_size,
+                      "external-memory import found %u mismatched bytes",
+                      output->mismatched_bytes);
+            status = -EIO;
+        }
     }
 
 done:
     if (external_fd >= 0) (void)close(external_fd);
+    if (external_semaphore_fd >= 0) (void)close(external_semaphore_fd);
+    if (completion_fence != VK_NULL_HANDLE && imported_vkDestroyFence != NULL) {
+        imported_vkDestroyFence(imported.device, completion_fence, NULL);
+    }
+    if (imported_semaphore != VK_NULL_HANDLE &&
+        imported_vkDestroySemaphore != NULL) {
+        imported_vkDestroySemaphore(imported.device, imported_semaphore, NULL);
+    }
     cleanup_external_resources(&imported);
     return status;
+}
+
+int bvb_vulkan_batch_context_import_external_memory_fd(
+    struct bvb_vulkan_batch_context *context, int external_fd,
+    uint64_t allocation_size, uint32_t memory_type_index,
+    uint32_t buffer_bytes, struct bvb_vulkan_external_memory_result *output,
+    char *error, size_t error_size) {
+    return import_external_memory_fds(
+        context, external_fd, -1, allocation_size, memory_type_index,
+        buffer_bytes, output, NULL, 0U, error, error_size);
+}
+
+int bvb_vulkan_batch_context_import_external_sync_fds(
+    struct bvb_vulkan_batch_context *context, int external_memory_fd,
+    int external_semaphore_fd, uint64_t allocation_size,
+    uint32_t memory_type_index, uint32_t buffer_bytes,
+    uint32_t expected_fill_word,
+    struct bvb_vulkan_external_sync_result *output,
+    char *error, size_t error_size) {
+    if (output == NULL) {
+        if (external_memory_fd >= 0) (void)close(external_memory_fd);
+        if (external_semaphore_fd >= 0) (void)close(external_semaphore_fd);
+        return -EINVAL;
+    }
+    struct bvb_vulkan_external_memory_result memory_result;
+    const int result = import_external_memory_fds(
+        context, external_memory_fd, external_semaphore_fd, allocation_size,
+        memory_type_index, buffer_bytes, &memory_result, output,
+        expected_fill_word, error, error_size);
+    if (result == 0) {
+        output->memory_property_flags = memory_result.memory_property_flags;
+    }
+    return result;
 }
 
 void bvb_vulkan_batch_context_destroy(

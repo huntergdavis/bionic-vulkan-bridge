@@ -91,6 +91,7 @@ static VkResult VKAPI_CALL fake_enumerate_extensions(
         "VK_KHR_android_surface",
         "VK_KHR_get_physical_device_properties2",
         "VK_KHR_external_memory_capabilities",
+        "VK_KHR_external_semaphore_capabilities",
     };
     const uint32_t available = (uint32_t)(sizeof(names) / sizeof(names[0]));
     if (properties == NULL) {
@@ -362,6 +363,8 @@ static VkResult VKAPI_CALL fake_enumerate_device_extensions(
         "VK_KHR_external_memory",
         "VK_KHR_external_memory_fd",
         "VK_ANDROID_external_memory_android_hardware_buffer",
+        "VK_KHR_external_semaphore",
+        "VK_KHR_external_semaphore_fd",
         "VK_KHR_dynamic_rendering",
     };
     const uint32_t available = (uint32_t)(sizeof(names) / sizeof(names[0]));
@@ -487,6 +490,20 @@ static void VKAPI_CALL fake_destroy_semaphore(
     (void)device;
     (void)semaphore;
     (void)allocator;
+}
+
+static VkResult VKAPI_CALL fake_import_semaphore_fd(
+    VkDevice device, const VkImportSemaphoreFdInfoKHR *import_info) {
+    (void)device;
+    if (import_info == NULL || import_info->semaphore == VK_NULL_HANDLE ||
+        import_info->flags != 0U ||
+        import_info->handleType !=
+            VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT ||
+        import_info->fd < 0) {
+        return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+    }
+    (void)close(import_info->fd);
+    return VK_SUCCESS;
 }
 
 static VkResult VKAPI_CALL fake_create_fence(
@@ -1002,6 +1019,7 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkGetSwapchainImagesKHR", fake_get_swapchain_images)
     BVB_DEVICE_MATCH("vkCreateSemaphore", fake_create_semaphore)
     BVB_DEVICE_MATCH("vkDestroySemaphore", fake_destroy_semaphore)
+    BVB_DEVICE_MATCH("vkImportSemaphoreFdKHR", fake_import_semaphore_fd)
     BVB_DEVICE_MATCH("vkCreateFence", fake_create_fence)
     BVB_DEVICE_MATCH("vkDestroyFence", fake_destroy_fence)
     BVB_DEVICE_MATCH("vkGetFenceStatus", fake_get_fence_status)

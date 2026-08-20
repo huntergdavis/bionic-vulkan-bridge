@@ -154,7 +154,7 @@ def main() -> int:
         )
         caps = document["vulkan_caps"]
         assert isinstance(caps, dict)
-        assert caps["instance_extension_count"] == 4
+        assert caps["instance_extension_count"] == 5
         assert caps["physical_device_count"] == 1
         device = caps["physical_devices"][0]
         assert device["name"] == 'BVB Fake Adreno 730 "quoted"'

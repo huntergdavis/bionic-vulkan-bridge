@@ -58,7 +58,7 @@ def main() -> int:
             assert 'device=BVB Fake Adreno 730 "quoted"' in completed.stdout
             assert f"device_api={0x00400000 | (3 << 12) | 275}" in completed.stdout
             assert "driver=16909060 vendor=20803 device_id=1840" in completed.stdout
-            assert "queues=2 memory_types=1 memory_heaps=2 device_extensions=5" in completed.stdout
+            assert "queues=2 memory_types=1 memory_heaps=2 device_extensions=7" in completed.stdout
             assert "sampler_anisotropy=1" in completed.stdout
             assert f"logical_device={0x0300000000000001}" in completed.stdout
             assert f"queue={0x0400000000000001}" in completed.stdout
