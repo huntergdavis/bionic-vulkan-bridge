@@ -116,8 +116,10 @@ enum {
     BVB_E036_RESPONSE_BYTES = 20,
 };
 
-static const char BVB_E036_BROKER_SOCKET[] =
-    "bvb-visible-external-memory";
+static const char BVB_E036_BROKER_PREFIX[] =
+    "bvb-visible-external-memory-";
+static char external_broker_socket[
+    sizeof(BVB_E036_BROKER_PREFIX) + BVB_E036_TOKEN_HEX_BYTES];
 
 static bool token_matches(const uint8_t *left, const uint8_t *right) {
     uint8_t difference = 0U;
@@ -275,12 +277,11 @@ static void handle_external_broker_connection(int connection) {
         status = bvb_lifecycle_token_from_hex((const char *)token_hex,
                                               parsed_token);
     }
-    if (status == 0) {
-        (void)pthread_mutex_lock(&lifecycle_mutex);
-        const bool authorized = lifecycle.configured &&
-                                token_matches(parsed_token, lifecycle.token);
-        (void)pthread_mutex_unlock(&lifecycle_mutex);
-        if (!authorized) status = -EACCES;
+    if (status == 0 &&
+        memcmp(token_hex,
+               external_broker_socket + strlen(BVB_E036_BROKER_PREFIX),
+               BVB_E036_TOKEN_HEX_BYTES) != 0) {
+        status = -EACCES;
     }
 
     int descriptor = -1;
@@ -335,8 +336,8 @@ static void *external_broker_main(void *unused) {
     struct sockaddr_un address;
     memset(&address, 0, sizeof(address));
     address.sun_family = AF_UNIX;
-    const size_t name_length = strlen(BVB_E036_BROKER_SOCKET);
-    memcpy(address.sun_path + 1, BVB_E036_BROKER_SOCKET, name_length);
+    const size_t name_length = strlen(external_broker_socket);
+    memcpy(address.sun_path + 1, external_broker_socket, name_length);
     const socklen_t address_size =
         (socklen_t)(offsetof(struct sockaddr_un, sun_path) + 1U + name_length);
     if (bind(listener, (const struct sockaddr *)&address, address_size) != 0 ||
@@ -345,7 +346,7 @@ static void *external_broker_main(void *unused) {
         (void)close(listener);
         return NULL;
     }
-    BVB_LOGI("E036_BROKER_READY socket=%s", BVB_E036_BROKER_SOCKET);
+    BVB_LOGI("E036_BROKER_READY socket=%s", external_broker_socket);
     for (;;) {
         int connection = accept4(listener, NULL, NULL, SOCK_CLOEXEC);
         if (connection < 0) {
@@ -361,6 +362,23 @@ static void *external_broker_main(void *unused) {
 }
 
 static void start_external_broker(void) {
+    static const char digits[] = "0123456789abcdef";
+    (void)pthread_mutex_lock(&lifecycle_mutex);
+    if (!lifecycle.configured) {
+        (void)pthread_mutex_unlock(&lifecycle_mutex);
+        BVB_LOGE("E036_BROKER_FAIL lifecycle_unconfigured");
+        return;
+    }
+    memcpy(external_broker_socket, BVB_E036_BROKER_PREFIX,
+           sizeof(BVB_E036_BROKER_PREFIX) - 1U);
+    char *hex = external_broker_socket +
+                sizeof(BVB_E036_BROKER_PREFIX) - 1U;
+    for (size_t index = 0U; index < BVB_LIFECYCLE_TOKEN_SIZE; ++index) {
+        hex[index * 2U] = digits[lifecycle.token[index] >> 4U];
+        hex[index * 2U + 1U] = digits[lifecycle.token[index] & 0x0fU];
+    }
+    hex[BVB_E036_TOKEN_HEX_BYTES] = '\0';
+    (void)pthread_mutex_unlock(&lifecycle_mutex);
     pthread_t thread;
     int result = pthread_create(&thread, NULL, external_broker_main, NULL);
     if (result == 0) result = pthread_detach(thread);

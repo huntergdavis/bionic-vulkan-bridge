@@ -64,7 +64,7 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
             }
         } catch (Throwable failure) {
             Log.e(LOG_TAG, "failed to obtain shared descriptor", failure);
-            status = -5;
+            status = failure instanceof SecurityException ? -13 : -5;
             StringBuilder detail = new StringBuilder();
             Throwable current = failure;
             while (current != null) {
