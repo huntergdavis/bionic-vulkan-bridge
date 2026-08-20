@@ -824,7 +824,7 @@ static ssize_t receive_external_datagram(
             memcpy(credentials, CMSG_DATA(item), sizeof(*credentials));
         }
     }
-    return credentials->pid < 0 ? -EACCES : count;
+    return count;
 }
 
 static bool same_datagram_peer(const struct sockaddr_un *left,
@@ -921,8 +921,9 @@ static void handle_external_datagram_request(int socket_fd) {
     int channel_status = count < 0 ? (int)count : 0;
     if (channel_status == 0 &&
         (count != 1 || acknowledgement != UINT8_C(0xa5) ||
-         acknowledgement_credentials.uid != credentials.uid ||
-         acknowledgement_credentials.pid != credentials.pid ||
+         (credentials.pid >= 0 && acknowledgement_credentials.pid >= 0 &&
+          (acknowledgement_credentials.uid != credentials.uid ||
+           acknowledgement_credentials.pid != credentials.pid)) ||
          !same_datagram_peer(&peer_address, peer_address_size,
                              &acknowledgement_address,
                              acknowledgement_address_size))) {

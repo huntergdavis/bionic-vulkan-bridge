@@ -216,7 +216,11 @@ int main(int argc, char **argv) {
                 strerror(-socket_fd), socket_fd);
         return 3;
     }
-    struct ucred peer = {0};
+    struct ucred peer = {
+        .pid = -1,
+        .uid = (uid_t)-1,
+        .gid = (gid_t)-1,
+    };
     socklen_t peer_size = sizeof(peer);
     if (!datagram &&
         (getsockopt(socket_fd, SOL_SOCKET, SO_PEERCRED, &peer, &peer_size) != 0 ||
@@ -240,8 +244,11 @@ int main(int argc, char **argv) {
     if (broker_status != 0 || descriptor_count != 2U) {
         printf("{\"schema_version\":1,\"gate\":\"E039\","
                "\"result\":\"fail\",\"native_status\":%d,"
-               "\"descriptor_count\":%zu,\"peer_uid\":%u}\n",
-               broker_status, descriptor_count, (unsigned int)peer.uid);
+               "\"descriptor_count\":%zu,"
+               "\"peer_credentials_available\":%s,"
+               "\"peer_uid\":%d}\n",
+               broker_status, descriptor_count,
+               peer.pid >= 0 ? "true" : "false", (int)peer.uid);
         for (size_t index = 0U; index < 2U; ++index) {
             if (descriptors[index] >= 0) (void)close(descriptors[index]);
         }
@@ -300,7 +307,8 @@ int main(int argc, char **argv) {
            "\"result\":\"pass\","
            "\"transport\":\"%s\","
            "\"binder_calls\":0,\"java_calls\":0,"
-           "\"channel_acknowledged\":true,\"peer_uid\":%u,"
+           "\"channel_acknowledged\":true,"
+           "\"peer_credentials_available\":%s,\"peer_uid\":%d,"
            "\"peer_pid\":%d,\"descriptor_count\":2,"
            "\"allocation_size\":%" PRIu64 ","
            "\"memory_type_index\":%" PRIu32 ","
@@ -312,7 +320,8 @@ int main(int argc, char **argv) {
            "\"channel_round_trip_ns\":%" PRId64 "}\n",
            datagram ? "direct_native_capability_datagram_scm_rights"
                     : "direct_native_capability_socket_scm_rights",
-           (unsigned int)peer.uid, peer.pid, allocation_size,
+           peer.pid >= 0 ? "true" : "false", (int)peer.uid, peer.pid,
+           allocation_size,
            memory_type_index, image.width, image.height, image.format,
            image.expected_color, image.mismatched_pixels,
            image.gpu_wait_elapsed_ns,
