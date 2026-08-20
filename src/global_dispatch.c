@@ -683,8 +683,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateInstance(
     }
     if (create_info == NULL || instance == NULL ||
         create_info->sType != VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO ||
-        create_info->pNext != NULL || create_info->flags != 0U ||
-        allocator != NULL ||
+        create_info->flags != 0U || allocator != NULL ||
         (create_info->pApplicationInfo != NULL &&
          (create_info->pApplicationInfo->sType !=
               VK_STRUCTURE_TYPE_APPLICATION_INFO ||
