@@ -32,6 +32,12 @@ BVB_GLOBAL_EXPORT int bvb_verify_memory_fill(
     uint32_t expected_word, uint32_t *mismatched_words);
 PFN_vkVoidFunction bvb_global_device_proc_addr(
     VkDevice device, const char *name);
+BVB_GLOBAL_EXPORT VKAPI_ATTR VkResult VKAPI_CALL
+vk_icdNegotiateLoaderICDInterfaceVersion(uint32_t *version);
+BVB_GLOBAL_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
+vk_icdGetInstanceProcAddr(VkInstance instance, const char *name);
+BVB_GLOBAL_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
+vk_icdGetPhysicalDeviceProcAddr(VkInstance instance, const char *name);
 
 #ifdef __cplusplus
 }

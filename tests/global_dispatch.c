@@ -36,6 +36,18 @@ vkGetDeviceProcAddr(VkDevice device, const char *name);
     } while (0)
 
 int main(void) {
+    uint32_t icd_interface_version = 7U;
+    CHECK(vk_icdNegotiateLoaderICDInterfaceVersion(
+              &icd_interface_version) == VK_SUCCESS);
+    CHECK(icd_interface_version == 5U);
+    CHECK(vk_icdGetInstanceProcAddr(
+              VK_NULL_HANDLE,
+              "vk_icdNegotiateLoaderICDInterfaceVersion") != NULL);
+    CHECK(vk_icdGetInstanceProcAddr(
+              VK_NULL_HANDLE, "vkCreateInstance") != NULL);
+    CHECK(vk_icdGetPhysicalDeviceProcAddr(
+              VK_NULL_HANDLE, "vkGetPhysicalDeviceProperties") == NULL);
+
     RESOLVE_GLOBAL(vkEnumerateInstanceVersion);
     RESOLVE_GLOBAL(vkEnumerateInstanceExtensionProperties);
     RESOLVE_GLOBAL(vkEnumerateInstanceLayerProperties);

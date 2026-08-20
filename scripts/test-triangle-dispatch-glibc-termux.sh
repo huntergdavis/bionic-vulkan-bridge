@@ -8,7 +8,7 @@ generated_dir="$out_dir/generated"
 registry="$build_dir/_deps/vulkanheaders-src/registry/vk.xml"
 manifest="$project_dir/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
 
-for command_name in cmake grun gcc python readelf; do
+for command_name in cmake cp grun gcc python readelf; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         printf 'missing required command: %s\n' "$command_name" >&2
         exit 2
@@ -41,6 +41,7 @@ python "$project_dir/scripts/generate-vulkan-discovery-wire.py" \
     "$generated_dir/bvb_vulkan_discovery_wire.inc"
 
 library="$out_dir/libvulkan-bvb-glibc.so"
+icd_manifest="$out_dir/bvb_icd.aarch64.json"
 test_binary="$out_dir/bvb-triangle-dispatch-test-glibc"
 
 grun -s gcc -std=c17 -O3 -DNDEBUG -fPIC -fvisibility=hidden \
@@ -58,6 +59,7 @@ grun -s gcc -std=c17 -O3 -DNDEBUG -fPIC -fvisibility=hidden \
     -pthread \
     -Wl,-soname,libvulkan-bvb-glibc.so \
     -o "$library"
+cp "$project_dir/config/bvb_icd.aarch64.json" "$icd_manifest"
 
 grun -s gcc -std=c17 -O3 -DNDEBUG -Wall -Wextra -Werror \
     -I"$project_dir/include" \
@@ -74,10 +76,10 @@ if ! readelf -l "$test_binary" | grep -q '/glibc/lib/ld-linux-aarch64.so.1'; the
     exit 4
 fi
 exports=$(readelf --wide --dyn-syms "$library" | \
-    awk '$7 != "UND" && $8 ~ /^(vkGet(Instance|Device)ProcAddr|bvb_triangle_|bvb_(instance|physical_device)_proxy_id)/ {print $8}' | \
+    awk '$7 != "UND" && $8 ~ /^(vkGet(Instance|Device)ProcAddr|vk_icd|bvb_triangle_|bvb_(instance|physical_device)_proxy_id)/ {print $8}' | \
     sort -u)
 export_count=$(printf '%s\n' "$exports" | sed '/^$/d' | wc -l)
-if [ "$export_count" -ne 8 ]; then
+if [ "$export_count" -ne 11 ]; then
     printf 'unexpected triangle dispatch export surface:\n%s\n' "$exports" >&2
     exit 4
 fi
@@ -90,5 +92,6 @@ grep -qx 'PASS: generated executable triangle dispatch' \
 
 printf 'triangle_dispatch_glibc=PASS\n'
 printf 'library=%s\n' "$library"
+printf 'icd_manifest=%s\n' "$icd_manifest"
 printf 'test_binary=%s\n' "$test_binary"
 printf 'exports=%s\n' "$(printf '%s' "$exports" | tr '\n' ',')"
