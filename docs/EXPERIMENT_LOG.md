@@ -2266,3 +2266,29 @@ implementation. E046 removes the unconditional device-extension rejection but
 does not yet support instance extensions, feature `pNext` chains, swapchain
 commands, DXVK execution, or a game frame. The next gate covers the measured
 instance-extension/WSI boundary and then the feature-chain subset DXVK asks for.
+
+## E047 — Vulkan 1.1 physical-device discovery through the ICD (2026-08-20)
+
+Status: passed through Steam's real AArch64 glibc loader and the Adreno 730.
+The ICD now resolves core and KHR aliases for Features2, Properties2, Format2,
+ImageFormat2, QueueFamilyProperties2, MemoryProperties2, and
+SparseImageFormatProperties2. Their base structures reuse the already-proven
+fixed-width Vulkan 1.0 RPCs, preserving the caller's structure headers and
+never sending a pointer across the socket.
+
+On hardware, `VkPhysicalDeviceFeatures2` reported sampler anisotropy,
+`VkPhysicalDeviceMemoryProperties2` reported 9 memory types and 2 heaps, and
+FormatProperties2 matched the RGBA8 optimal-tiling feature bits from E044.
+The standard-loader device still enabled `VK_KHR_swapchain` and completed
+queue/device idle. Client and service stderr were empty; all 23 host tests
+passed across all seven base wrappers and aliases.
+
+Canonical evidence is `docs/evidence/e047-vulkan11-discovery.json`, 1,563
+bytes, SHA-256
+`132bd04e8fe9fa4720fed397bb401d7c4009b5903457f24e517fdcc4344bf20b`.
+Implementation and harness are commit `6970fa3`. The required `deja` search
+found no prior Features2/Properties2 bridge implementation. E047 covers base
+Vulkan 1.1 structures only; it does not claim extended `pNext` capability
+chains, instance WSI, DXVK execution, or a game frame. The next measured gate
+serializes the specific extended feature/property structures requested by
+Wine/DXVK or reaches the virtual-surface boundary, whichever occurs first.
