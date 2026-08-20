@@ -111,6 +111,14 @@ int main(void) {
     CHECK(vkGetInstanceProcAddr(instance_one, "vkCmdDraw") != NULL);
     CHECK(vkGetInstanceProcAddr(instance_one,
                                 "vkGetPhysicalDeviceProperties") != NULL);
+    CHECK(vkGetInstanceProcAddr(
+              instance_one, "vkGetPhysicalDeviceFormatProperties") != NULL);
+    CHECK(vkGetInstanceProcAddr(
+              instance_one,
+              "vkGetPhysicalDeviceImageFormatProperties") != NULL);
+    CHECK(vkGetInstanceProcAddr(
+              instance_one,
+              "vkGetPhysicalDeviceSparseImageFormatProperties") != NULL);
 
     PFN_vkEnumeratePhysicalDevices enumerate_physical_devices = NULL;
     PFN_vkDestroyInstance destroy_instance = NULL;

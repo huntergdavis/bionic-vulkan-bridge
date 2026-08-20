@@ -1161,6 +1161,52 @@ static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFeatures(
     }
 }
 
+static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFormatProperties(
+    VkPhysicalDevice physical_device, VkFormat format,
+    VkFormatProperties *properties) {
+    (void)format;
+    if (physical_device_proxy(physical_device) == NULL || properties == NULL) {
+        return;
+    }
+    memset(properties, 0, sizeof(*properties));
+}
+
+static VkResult VKAPI_CALL
+bvb_bridge_vkGetPhysicalDeviceImageFormatProperties(
+    VkPhysicalDevice physical_device, VkFormat format, VkImageType type,
+    VkImageTiling tiling, VkImageUsageFlags usage,
+    VkImageCreateFlags flags, VkImageFormatProperties *properties) {
+    (void)format;
+    (void)type;
+    (void)tiling;
+    (void)usage;
+    (void)flags;
+    if (physical_device_proxy(physical_device) == NULL || properties == NULL) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    memset(properties, 0, sizeof(*properties));
+    return VK_ERROR_FORMAT_NOT_SUPPORTED;
+}
+
+static void VKAPI_CALL
+bvb_bridge_vkGetPhysicalDeviceSparseImageFormatProperties(
+    VkPhysicalDevice physical_device, VkFormat format, VkImageType type,
+    VkSampleCountFlagBits samples, VkImageUsageFlags usage,
+    VkImageTiling tiling, uint32_t *property_count,
+    VkSparseImageFormatProperties *properties) {
+    (void)format;
+    (void)type;
+    (void)samples;
+    (void)usage;
+    (void)tiling;
+    (void)properties;
+    if (physical_device_proxy(physical_device) == NULL ||
+        property_count == NULL) {
+        return;
+    }
+    *property_count = 0U;
+}
+
 static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
     VkPhysicalDevice physical_device, const VkDeviceCreateInfo *create_info,
     const VkAllocationCallbacks *allocator, VkDevice *device) {
@@ -2653,6 +2699,14 @@ vkGetInstanceProcAddr(VkInstance instance, const char *name) {
                            bvb_bridge_vkEnumerateDeviceExtensionProperties)
         BVB_INSTANCE_MATCH("vkGetPhysicalDeviceFeatures",
                            bvb_bridge_vkGetPhysicalDeviceFeatures)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceFormatProperties",
+                           bvb_bridge_vkGetPhysicalDeviceFormatProperties)
+        BVB_INSTANCE_MATCH(
+            "vkGetPhysicalDeviceImageFormatProperties",
+            bvb_bridge_vkGetPhysicalDeviceImageFormatProperties)
+        BVB_INSTANCE_MATCH(
+            "vkGetPhysicalDeviceSparseImageFormatProperties",
+            bvb_bridge_vkGetPhysicalDeviceSparseImageFormatProperties)
         BVB_INSTANCE_MATCH("vkCreateDevice",
                            bvb_bridge_vkCreateDevice)
 #undef BVB_INSTANCE_MATCH
