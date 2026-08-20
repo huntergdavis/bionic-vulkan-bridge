@@ -96,6 +96,8 @@
   glibc-to-Bionic physical-device path
 - [x] Create a real logical device and queue through Steam's standard loader,
   then complete queue/device idle and teardown through Bionic
+- [x] Preserve bounded device-extension names across glibc-to-Bionic and enable
+  an extension advertised by the real Adreno device
 - [x] Reach a rendered test triangle
 - [x] Deliver the glibc-generated triangle batch to the visible host
 - [x] Drive sustained per-frame shader data through the shared ring and render

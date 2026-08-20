@@ -187,9 +187,10 @@ every frame. E043 then proves Steam's real AArch64 glibc Vulkan loader can selec
 the bridge as a standard ICD and enumerate the Bionic Adreno 730. E044 returns
 real RGBA8 format/image limits through that standard path, including a
 16384×16384 maximum extent. E045 creates a real logical device and graphics
-queue through Steam's loader and completes queue/device idle. The next boundary
-is bridging Wine/DXVK's measured extension requirements and launching Tomb
-Raider 2013.
+queue through Steam's loader and completes queue/device idle. E046 carries a
+real advertised device-extension name into native Bionic device creation. The
+next boundary is Wine/DXVK's instance/WSI and feature-chain requirements, then
+launching Tomb Raider 2013.
 
 ## Build and test on a normal Linux host
 

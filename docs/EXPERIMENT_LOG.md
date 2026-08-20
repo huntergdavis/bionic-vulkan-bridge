@@ -2239,3 +2239,30 @@ the E043 loader-private instance handling recovered in the current experiment
 log. E045 does not yet pass application feature/extension chains, execute DXVK,
 or render a game frame. The next gate bridges the measured instance/device
 extension requirements that Wine/DXVK needs before resource creation.
+
+## E046 — Device extension names reach native Bionic creation (2026-08-20)
+
+Status: passed through Steam's standard AArch64 glibc Vulkan loader and the
+real Adreno 730. The client enumerated the physical device's real extension
+list, confirmed `VK_KHR_swapchain`, encoded the name in the bounded canonical
+wire format, and enabled that same extension in the Bionic driver's native
+`VkDeviceCreateInfo`. Logical-device creation, queue family 0 retrieval,
+queue/device idle, and teardown all passed; client and service stderr were
+empty.
+
+The wire format carries up to 24 extension names in 128-byte zero-padded slots.
+It rejects missing terminators, empty names, excess counts, inconsistent
+payload lengths, and nonzero bytes after a terminator. Only string values cross
+the libc boundary; the service builds its own Bionic pointer array. All 23 host
+tests pass, including an end-to-end fake driver that observes the enabled
+extension and a codec test that rejects corrupted padding.
+
+Canonical evidence is `docs/evidence/e046-device-extension-create.json`,
+1,482 bytes, SHA-256
+`6713be83250541f1e93ffb07c233709e92fceda209f9bcb86379ae97a6f5500c`.
+Implementation is commit `2df2488`; distinct E046 artifact naming is
+`814d346`. The required `deja` search found no prior extension-name transport
+implementation. E046 removes the unconditional device-extension rejection but
+does not yet support instance extensions, feature `pNext` chains, swapchain
+commands, DXVK execution, or a game frame. The next gate covers the measured
+instance-extension/WSI boundary and then the feature-chain subset DXVK asks for.
