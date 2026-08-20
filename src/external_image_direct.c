@@ -244,10 +244,14 @@ int main(int argc, char **argv) {
     if (broker_status != 0 || descriptor_count != 2U) {
         printf("{\"schema_version\":1,\"gate\":\"E039\","
                "\"result\":\"fail\",\"native_status\":%d,"
+               "\"transport_status\":%d,\"response_received\":%s,"
+               "\"broker_status\":%d,"
                "\"descriptor_count\":%zu,"
                "\"peer_credentials_available\":%s,"
                "\"peer_uid\":%d}\n",
-               broker_status, descriptor_count,
+               broker_status, result, result == 0 ? "true" : "false",
+               result == 0 ? bvb_wire_get_i32(response) : 0,
+               descriptor_count,
                peer.pid >= 0 ? "true" : "false", (int)peer.uid);
         for (size_t index = 0U; index < 2U; ++index) {
             if (descriptors[index] >= 0) (void)close(descriptors[index]);
