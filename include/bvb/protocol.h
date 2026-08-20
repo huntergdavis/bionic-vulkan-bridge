@@ -66,7 +66,8 @@ enum {
     BVB_OPCODE_VULKAN_MEMORY_READ = 49,
     BVB_OPCODE_EXTERNAL_MEMORY_IMPORT_TEST = 50,
     BVB_OPCODE_EXTERNAL_SYNC_IMPORT_TEST = 51,
-    BVB_OPCODE_LAST = BVB_OPCODE_EXTERNAL_SYNC_IMPORT_TEST,
+    BVB_OPCODE_EXTERNAL_IMAGE_IMPORT_TEST = 52,
+    BVB_OPCODE_LAST = BVB_OPCODE_EXTERNAL_IMAGE_IMPORT_TEST,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -120,6 +121,7 @@ enum {
     BVB_VULKAN_MEMORY_IO_RESPONSE_PREFIX_SIZE = 8,
     BVB_EXTERNAL_MEMORY_IMPORT_REQUEST_SIZE = 16,
     BVB_EXTERNAL_SYNC_IMPORT_REQUEST_SIZE = 24,
+    BVB_EXTERNAL_IMAGE_IMPORT_REQUEST_SIZE = 32,
     BVB_VULKAN_MEMORY_IO_MAX_BYTES =
         BVB_PROTOCOL_MAX_PAYLOAD - BVB_VULKAN_MEMORY_IO_PREFIX_SIZE,
     BVB_VULKAN_PHYSICAL_DEVICES_PREFIX_SIZE = 8,
@@ -169,6 +171,15 @@ struct bvb_external_sync_import_request {
     uint32_t memory_type_index;
     uint32_t buffer_bytes;
     uint32_t expected_fill_word;
+};
+
+struct bvb_external_image_import_request {
+    uint64_t allocation_size;
+    uint32_t memory_type_index;
+    uint32_t width;
+    uint32_t height;
+    uint32_t format;
+    uint32_t expected_color;
 };
 
 struct bvb_shared_batch_setup {
@@ -404,6 +415,12 @@ int bvb_protocol_encode_external_sync_import_request(
 int bvb_protocol_decode_external_sync_import_request(
     const uint8_t input[BVB_EXTERNAL_SYNC_IMPORT_REQUEST_SIZE],
     struct bvb_external_sync_import_request *request);
+int bvb_protocol_encode_external_image_import_request(
+    uint8_t output[BVB_EXTERNAL_IMAGE_IMPORT_REQUEST_SIZE],
+    const struct bvb_external_image_import_request *request);
+int bvb_protocol_decode_external_image_import_request(
+    const uint8_t input[BVB_EXTERNAL_IMAGE_IMPORT_REQUEST_SIZE],
+    struct bvb_external_image_import_request *request);
 int bvb_protocol_encode_vulkan_caps(
     uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
     const struct bvb_vulkan_caps *caps,

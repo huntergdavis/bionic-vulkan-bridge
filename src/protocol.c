@@ -1245,6 +1245,50 @@ int bvb_protocol_decode_external_sync_import_request(
     return 0;
 }
 
+int bvb_protocol_encode_external_image_import_request(
+    uint8_t output[BVB_EXTERNAL_IMAGE_IMPORT_REQUEST_SIZE],
+    const struct bvb_external_image_import_request *request) {
+    if (output == NULL || request == NULL || request->allocation_size == 0U ||
+        request->allocation_size > BVB_SHARED_BATCH_MAX_BYTES ||
+        request->memory_type_index >= 32U || request->width == 0U ||
+        request->height == 0U || request->width > 4096U ||
+        request->height > 4096U || request->format == 0U ||
+        request->width > BVB_SHARED_BATCH_MAX_BYTES / 4U / request->height) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u64(output, request->allocation_size);
+    bvb_wire_put_u32(output + 8, request->memory_type_index);
+    bvb_wire_put_u32(output + 12, request->width);
+    bvb_wire_put_u32(output + 16, request->height);
+    bvb_wire_put_u32(output + 20, request->format);
+    bvb_wire_put_u32(output + 24, request->expected_color);
+    bvb_wire_put_u32(output + 28, 0U);
+    return 0;
+}
+
+int bvb_protocol_decode_external_image_import_request(
+    const uint8_t input[BVB_EXTERNAL_IMAGE_IMPORT_REQUEST_SIZE],
+    struct bvb_external_image_import_request *request) {
+    if (input == NULL || request == NULL || bvb_wire_get_u32(input + 28) != 0U) {
+        return -EINVAL;
+    }
+    const struct bvb_external_image_import_request decoded = {
+        .allocation_size = bvb_wire_get_u64(input),
+        .memory_type_index = bvb_wire_get_u32(input + 8),
+        .width = bvb_wire_get_u32(input + 12),
+        .height = bvb_wire_get_u32(input + 16),
+        .format = bvb_wire_get_u32(input + 20),
+        .expected_color = bvb_wire_get_u32(input + 24),
+    };
+    uint8_t validation[BVB_EXTERNAL_IMAGE_IMPORT_REQUEST_SIZE];
+    if (bvb_protocol_encode_external_image_import_request(validation,
+                                                          &decoded) != 0) {
+        return -EPROTO;
+    }
+    *request = decoded;
+    return 0;
+}
+
 static int validate_memory_io_request(
     const struct bvb_vulkan_memory_io_request *request) {
     return request != NULL && wire_id_is_type(request->memory_id, 9U) &&

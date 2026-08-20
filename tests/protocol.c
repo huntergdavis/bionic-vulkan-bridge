@@ -81,7 +81,7 @@ int main(void) {
     };
     CHECK(bvb_protocol_encode_header(wire, &last_opcode_header) == 0);
     CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
-    CHECK(decoded.opcode == BVB_OPCODE_EXTERNAL_SYNC_IMPORT_TEST);
+    CHECK(decoded.opcode == BVB_OPCODE_EXTERNAL_IMAGE_IMPORT_TEST);
 
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
@@ -150,6 +150,30 @@ int main(void) {
     bvb_wire_put_u32(external_sync_wire + 20, 1U);
     CHECK(bvb_protocol_decode_external_sync_import_request(
               external_sync_wire, &external_sync_decoded) == -EINVAL);
+
+    const struct bvb_external_image_import_request external_image = {
+        .allocation_size = 65536U,
+        .memory_type_index = 2U,
+        .width = 64U,
+        .height = 64U,
+        .format = 37U,
+        .expected_color = UINT32_C(0xffff00ff),
+    };
+    uint8_t external_image_wire[BVB_EXTERNAL_IMAGE_IMPORT_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_external_image_import_request(
+              external_image_wire, &external_image) == 0);
+    struct bvb_external_image_import_request external_image_decoded;
+    CHECK(bvb_protocol_decode_external_image_import_request(
+              external_image_wire, &external_image_decoded) == 0);
+    CHECK(external_image_decoded.allocation_size == 65536U);
+    CHECK(external_image_decoded.memory_type_index == 2U);
+    CHECK(external_image_decoded.width == 64U);
+    CHECK(external_image_decoded.height == 64U);
+    CHECK(external_image_decoded.format == 37U);
+    CHECK(external_image_decoded.expected_color == UINT32_C(0xffff00ff));
+    bvb_wire_put_u32(external_image_wire + 28, 1U);
+    CHECK(bvb_protocol_decode_external_image_import_request(
+              external_image_wire, &external_image_decoded) == -EINVAL);
 
     const struct bvb_vulkan_global_info global_info = {
         .loader_api_version = UINT32_C(0x00403000),
