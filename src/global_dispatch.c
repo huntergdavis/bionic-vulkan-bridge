@@ -165,11 +165,26 @@ static int connect_locked(void) {
     }
     const char *socket_path = getenv("BVB_BRIDGE_SOCKET");
     if (socket_path == NULL || socket_path[0] != '/') {
+        if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+            fprintf(stderr,
+                    "BVB_ICD_CONNECT path=%s euid=%lu status=%d\n",
+                    socket_path == NULL ? "(null)" : socket_path,
+                    (unsigned long)geteuid(), -ENOENT);
+        }
         return -ENOENT;
     }
     int socket_fd = bvb_transport_connect(socket_path, geteuid());
     if (socket_fd < 0) {
+        if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+            fprintf(stderr,
+                    "BVB_ICD_CONNECT path=%s euid=%lu status=%d\n",
+                    socket_path, (unsigned long)geteuid(), socket_fd);
+        }
         return socket_fd;
+    }
+    if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        fprintf(stderr, "BVB_ICD_CONNECT path=%s euid=%lu status=0\n",
+                socket_path, (unsigned long)geteuid());
     }
     bvb_global_client.socket_fd = socket_fd;
     struct bvb_protocol_packet request = {0};
