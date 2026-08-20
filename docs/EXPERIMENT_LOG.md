@@ -2292,3 +2292,29 @@ Vulkan 1.1 structures only; it does not claim extended `pNext` capability
 chains, instance WSI, DXVK execution, or a game frame. The next measured gate
 serializes the specific extended feature/property structures requested by
 Wine/DXVK or reaches the virtual-surface boundary, whichever occurs first.
+
+## E048 — Command-backed instance extension crosses into Bionic (2026-08-20)
+
+Status: passed through Steam's standard AArch64 glibc Vulkan loader and the
+real Adreno 730. The Bionic service now filters the native instance-extension
+list to a bridge allowlist. The glibc ICD advertises exactly
+`VK_KHR_get_physical_device_properties2`, whose complete base command family
+was implemented in E047, transports that canonical name, and enables it in the
+native `VkInstanceCreateInfo`.
+
+The same bounded 128-byte canonical name slots used for device extensions are
+used for instance creation. The service rejects non-allowlisted names and
+builds its own Bionic pointer array. Hardware then completed the Features2,
+Properties2, Format2, and Memory2 checks, enabled `VK_KHR_swapchain` on the
+device, and passed queue/device idle with empty client and service stderr. All
+23 host tests passed.
+
+Canonical evidence is `docs/evidence/e048-instance-extension-create.json`,
+1,502 bytes, SHA-256
+`07e97299a4d98ee46bb48fec0630514140994f10300266b17464790f59f8fd4d`.
+Implementation and harness are commit `a0bce7b`. The required `deja` result
+only found the current E048 plan and no earlier implementation to reuse. E048
+does not advertise surface/WSI extensions whose commands are not yet connected,
+and it does not prove extended `pNext` chains, DXVK execution, or a game frame.
+The next gate is the virtual surface/WSI contract backed by E042's persistent
+Android image path.

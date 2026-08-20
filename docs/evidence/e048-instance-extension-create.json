@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "gate": "E048",
+  "result": "pass",
+  "target": "Galaxy Tab S8+ Android Bionic Adreno 730",
+  "client_abi": "AArch64 glibc through Steam Vulkan loader 1.3.296",
+  "service_abi": "AArch64 Android Bionic through /system/lib64/libvulkan.so",
+  "instance_extension": {
+    "name": "VK_KHR_get_physical_device_properties2",
+    "advertised_by_native_loader": true,
+    "allowlisted_by_bridge": true,
+    "transported_to_bionic": true,
+    "enabled_on_native_instance": true,
+    "required_command_family_exposed": true
+  },
+  "wire_contract": {
+    "maximum_enabled_extensions": 24,
+    "extension_name_slot_bytes": 128,
+    "zero_padding_required": true,
+    "non_allowlisted_names_rejected": true
+  },
+  "vulkan11_results": {
+    "sampler_anisotropy": true,
+    "memory_type_count": 9,
+    "memory_heap_count": 2
+  },
+  "device_extension_enabled": "VK_KHR_swapchain",
+  "device_idle_result": 0,
+  "client_stdout": {
+    "bytes": 361,
+    "sha256": "64d5f7c0ce7460a2aae6c0ab79262f1eac362137c1569deb80930792cb09ce34"
+  },
+  "client_stderr_bytes": 0,
+  "service_stdout": {
+    "bytes": 147,
+    "sha256": "ac94e3a0f81870379ea571cba3295be955f9ade4c0135b5648e9d64536da8dcb"
+  },
+  "service_stderr_bytes": 0,
+  "icd_library": {
+    "bytes": 220392,
+    "sha256": "01817973461f74e417313036814b1e1ea5894f27215ccdc3186ffb0d4b68504b"
+  },
+  "scope": "one fully command-backed instance extension; not yet surface/WSI extensions, extended pNext chains, DXVK execution, or game rendering"
+}

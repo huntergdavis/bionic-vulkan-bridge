@@ -190,8 +190,10 @@ real RGBA8 format/image limits through that standard path, including a
 queue through Steam's loader and completes queue/device idle. E046 carries a
 real advertised device-extension name into native Bionic device creation. E047
 adds the base Vulkan 1.1 physical-device discovery families used by modern
-clients. The next boundary is Wine/DXVK's instance/WSI and extended feature
-chains, then launching Tomb Raider 2013.
+clients. E048 advertises and enables the command-backed
+`VK_KHR_get_physical_device_properties2` instance extension. The next boundary
+is Wine/DXVK's virtual surface/WSI and extended feature chains, then launching
+Tomb Raider 2013.
 
 ## Build and test on a normal Linux host
 

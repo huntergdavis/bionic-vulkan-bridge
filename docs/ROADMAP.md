@@ -100,6 +100,8 @@
   an extension advertised by the real Adreno device
 - [x] Expose the base Vulkan 1.1 physical-device discovery families and KHR
   aliases through Steam's standard loader
+- [x] Advertise and enable one allowlisted instance extension only after its
+  complete base command family is available through the ICD
 - [x] Reach a rendered test triangle
 - [x] Deliver the glibc-generated triangle batch to the visible host
 - [x] Drive sustained per-frame shader data through the shared ring and render
