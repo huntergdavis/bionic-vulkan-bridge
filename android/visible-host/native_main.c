@@ -4,6 +4,7 @@
 #include <bvb/command_batch.h>
 #include <bvb/lifecycle.h>
 #include <bvb/protocol.h>
+#include <bvb/triangle_batch_builder.h>
 #include <bvb/visible_ingress.h>
 
 #include <android/log.h>
