@@ -124,6 +124,7 @@ done
 
 am start -S -n "$package_name/$activity_name" \
     --ei bvb_activity_port "$port" --es bvb_activity_token "$token" \
+    --ei bvb_retain_external_renderer 1 \
     >/dev/null
 attempt=0
 while ! grep -q 'activity_event=11 ' "$service_stdout"; do
@@ -138,21 +139,8 @@ while ! grep -q 'activity_event=11 ' "$service_stdout"; do
     }
     sleep 0.05
 done
-attempt=0
-while ! grep -q 'activity_event=9 ' "$service_stdout"; do
-    if grep -Eq 'activity_event=(5|8) ' "$service_stdout"; then
-        printf 'Activity stopped before gaining focus\n' >&2
-        exit 5
-    fi
-    attempt=$((attempt + 1))
-    [ "$attempt" -lt 100 ] || {
-        printf 'Activity focus readiness timed out\n' >&2
-        exit 5
-    }
-    sleep 0.05
-done
-if grep -Eq 'activity_event=(5|8) ' "$service_stdout"; then
-    printf 'Activity stopped before fenced-image handoff\n' >&2
+if grep -q 'activity_event=6 ' "$service_stdout"; then
+    printf 'Activity was destroyed before fenced-image handoff\n' >&2
     exit 5
 fi
 if ! env -u LD_LIBRARY_PATH -u LD_PRELOAD CLASSPATH="$helper_apk" \

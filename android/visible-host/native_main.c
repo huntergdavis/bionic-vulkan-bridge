@@ -123,6 +123,7 @@ static struct bvb_lifecycle_client lifecycle;
 static struct bvb_visible_ingress *visible_ingress;
 static bool visible_inline_ingress;
 static atomic_bool visible_brokered_ingress;
+static atomic_bool retain_external_renderer;
 static atomic_uint visible_frame_count = 1U;
 static pthread_mutex_t lifecycle_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t external_memory_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -1303,6 +1304,7 @@ static void configure_lifecycle(ANativeActivity *activity) {
         BVB_LOGI("E022_INGRESS_RESET");
     }
     memset(&lifecycle, 0, sizeof(lifecycle));
+    atomic_store(&retain_external_renderer, false);
     atomic_store(&visible_frame_count, 1U);
     JNIEnv *env = activity->env;
     jclass activity_class = (*env)->GetObjectClass(env, activity->clazz);
@@ -1335,6 +1337,8 @@ static void configure_lifecycle(ANativeActivity *activity) {
         (*env)->NewStringUTF(env, "bvb_visible_port");
     jstring visible_frames_key =
         (*env)->NewStringUTF(env, "bvb_visible_frames");
+    jstring retain_external_renderer_key =
+        (*env)->NewStringUTF(env, "bvb_retain_external_renderer");
     jint port = get_int_extra == NULL || port_key == NULL
                     ? 0
                     : (*env)->CallIntMethod(env, intent, get_int_extra, port_key,
@@ -1348,6 +1352,11 @@ static void configure_lifecycle(ANativeActivity *activity) {
             ? 1
             : (*env)->CallIntMethod(env, intent, get_int_extra,
                                     visible_frames_key, 1);
+    jint retain_renderer =
+        get_int_extra == NULL || retain_external_renderer_key == NULL
+            ? 0
+            : (*env)->CallIntMethod(env, intent, get_int_extra,
+                                    retain_external_renderer_key, 0);
     jstring token_string = get_string_extra == NULL || token_key == NULL
                                ? NULL
                                : (jstring)(*env)->CallObjectMethod(
@@ -1379,6 +1388,9 @@ static void configure_lifecycle(ANativeActivity *activity) {
                  (int)visible_frames);
     }
     BVB_LOGI("E023_CONFIG frames=%u", atomic_load(&visible_frame_count));
+    atomic_store(&retain_external_renderer, retain_renderer == 1);
+    BVB_LOGI("E041_RETAIN_EXTERNAL_RENDERER enabled=%s",
+             atomic_load(&retain_external_renderer) ? "true" : "false");
     if (token_valid && port > 0 && port <= UINT16_MAX) {
         lifecycle.configured = true;
         lifecycle.port = (uint16_t)port;
@@ -1446,6 +1458,9 @@ static void configure_lifecycle(ANativeActivity *activity) {
     }
     if (visible_frames_key != NULL) {
         (*env)->DeleteLocalRef(env, visible_frames_key);
+    }
+    if (retain_external_renderer_key != NULL) {
+        (*env)->DeleteLocalRef(env, retain_external_renderer_key);
     }
     if (token_key != NULL) {
         (*env)->DeleteLocalRef(env, token_key);
@@ -3406,7 +3421,8 @@ static void *renderer_worker_main(void *unused) {
         }
         (void)pthread_mutex_unlock(&renderer.mutex);
 
-        if (success && current && visible_ingress == NULL) {
+        if (success && current && visible_ingress == NULL &&
+            !atomic_load(&retain_external_renderer)) {
             const int heartbeat_status =
                 animate_local_heartbeat(generation, window);
             if (heartbeat_status != 0) {
@@ -3533,9 +3549,13 @@ static void on_window_destroyed(ANativeActivity *activity,
     (void)activity;
     (void)window;
     BVB_LOGI("E008_WINDOW_DESTROYED");
-    int result = schedule_renderer(NULL, true);
-    if (result != 0) {
-        BVB_LOGE("E017_DESTROY_SCHEDULE_FAIL status=%d", result);
+    if (atomic_load(&retain_external_renderer)) {
+        BVB_LOGI("E041_OFFSCREEN_CACHE_RETAINED");
+    } else {
+        int result = schedule_renderer(NULL, true);
+        if (result != 0) {
+            BVB_LOGE("E017_DESTROY_SCHEDULE_FAIL status=%d", result);
+        }
     }
     emit_lifecycle(BVB_LIFECYCLE_EVENT_WINDOW_DESTROYED, 0, 0);
 }
