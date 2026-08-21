@@ -7,6 +7,7 @@
 #include <bvb/vulkan_discovery.h>
 
 #include <vulkan/vk_icd.h>
+#include <vulkan/vk_layer.h>
 
 #include <errno.h>
 #include <pthread.h>
@@ -53,6 +54,7 @@ struct bvb_device_proxy {
     uint64_t wire_id;
     uint64_t parent_id;
     uint64_t instance_id;
+    PFN_vkSetDeviceLoaderData set_loader_data;
     bool virtual_swapchain_enabled;
     struct bvb_device_proxy *next;
 };
@@ -62,6 +64,7 @@ struct bvb_queue_proxy {
     uint64_t magic;
     uint64_t wire_id;
     uint64_t parent_id;
+    bool loader_data_initialized;
     struct bvb_queue_proxy *next;
 };
 
@@ -2344,6 +2347,34 @@ static bool zero_only_extension_feature_struct(
     return requested_feature_bools_are_supported(values, count, NULL, 0U);
 }
 
+static VkResult find_device_loader_data_callback(
+    const void *chain, PFN_vkSetDeviceLoaderData *callback) {
+    if (callback == NULL) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    *callback = NULL;
+    const VkBaseInStructure *entry = chain;
+    for (uint32_t index = 0U; entry != NULL && index < 64U; ++index) {
+        if ((uint32_t)entry->sType == UINT32_C(0x7ffffffe)) {
+            return VK_SUCCESS;
+        }
+        if (entry->sType == VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO) {
+            const VkLayerDeviceCreateInfo *loader_info =
+                (const VkLayerDeviceCreateInfo *)entry;
+            if (loader_info->function == VK_LOADER_DATA_CALLBACK) {
+                if (loader_info->u.pfnSetDeviceLoaderData == NULL ||
+                    (*callback != NULL &&
+                     *callback != loader_info->u.pfnSetDeviceLoaderData)) {
+                    return VK_ERROR_INITIALIZATION_FAILED;
+                }
+                *callback = loader_info->u.pfnSetDeviceLoaderData;
+            }
+        }
+        entry = entry->pNext;
+    }
+    return entry == NULL ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED;
+}
+
 static VkResult pack_device_feature_chain(
     const void *chain,
     struct bvb_vulkan_device_create_packed_request *packed) {
@@ -2656,6 +2687,12 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
         .enabled_layer_count = create_info->enabledLayerCount,
         .enabled_extension_count = native_extension_count,
     };
+    PFN_vkSetDeviceLoaderData set_loader_data = NULL;
+    const VkResult loader_data_result = find_device_loader_data_callback(
+        create_info->pNext, &set_loader_data);
+    if (loader_data_result != VK_SUCCESS) {
+        return loader_data_result;
+    }
     if (create_info->pEnabledFeatures != NULL) {
         packed.enabled_feature_structs |=
             BVB_VULKAN_DEVICE_FEATURE_BASE;
@@ -2806,6 +2843,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
         proxy->wire_id = decoded.device_id;
         proxy->parent_id = physical->wire_id;
         proxy->instance_id = physical->parent_id;
+        proxy->set_loader_data = set_loader_data;
         proxy->virtual_swapchain_enabled = virtual_swapchain_requested;
         proxy->next = bvb_global_client.devices;
         bvb_global_client.devices = proxy;
@@ -2910,13 +2948,25 @@ static void VKAPI_CALL bvb_bridge_vkGetDeviceQueue(
             response.payload, &queue_id);
     }
     struct bvb_queue_proxy *queue_state = NULL;
+    bool initialize_loader_data = false;
     if (result == 0) {
         queue_state = queue_proxy_locked(queue_id, proxy->wire_id);
         if (queue_state == NULL) {
             result = -ENOMEM;
+        } else if (proxy->set_loader_data != NULL &&
+                   !queue_state->loader_data_initialized) {
+            initialize_loader_data = true;
         }
     }
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result == 0 && initialize_loader_data) {
+        const VkResult loader_result =
+            proxy->set_loader_data(device, queue_state);
+        if (loader_result != VK_SUCCESS) {
+            return;
+        }
+        queue_state->loader_data_initialized = true;
+    }
     if (result == 0) {
         *queue = (VkQueue)queue_state;
     }
@@ -3184,6 +3234,13 @@ static VkResult VKAPI_CALL bvb_bridge_vkAllocateCommandBuffers(
     if (decoded.vulkan_result != VK_SUCCESS) {
         free(command_state);
         return (VkResult)decoded.vulkan_result;
+    }
+    if (device_state->set_loader_data != NULL) {
+        const VkResult loader_result =
+            device_state->set_loader_data(device, command_state);
+        if (loader_result != VK_SUCCESS) {
+            return loader_result;
+        }
     }
     *command_buffers = (VkCommandBuffer)command_state;
     return VK_SUCCESS;

@@ -5,6 +5,8 @@
 #include <bvb/handle.h>
 #include <bvb/vulkan_discovery.h>
 
+#include <vulkan/vk_layer.h>
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -31,6 +33,20 @@ typedef VkResult(VKAPI_PTR *bvb_create_platform_surface_fn)(
 typedef VkBool32(VKAPI_PTR *bvb_xlib_presentation_support_fn)(
     VkPhysicalDevice physical_device, uint32_t queue_family_index,
     void *display, unsigned long visual_id);
+
+static const uint64_t test_loader_dispatch =
+    UINT64_C(0x4256424c4f414445);
+static uint32_t test_loader_data_calls;
+
+static VkResult VKAPI_CALL test_set_device_loader_data(
+    VkDevice device, void *object) {
+    if (device == VK_NULL_HANDLE || object == NULL) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    *(const void **)object = &test_loader_dispatch;
+    ++test_loader_data_calls;
+    return VK_SUCCESS;
+}
 
 #define RESOLVE_GLOBAL(name)                                                   \
     PFN_##name name = NULL;                                                    \
@@ -1033,12 +1049,11 @@ int main(void) {
     enabled_depth_clip.pNext = &enabled_robustness2;
     enabled_robustness2.pNext = &enabled_maintenance5;
     enabled_maintenance5.pNext = &enabled_maintenance6;
-    const struct {
-        VkStructureType sType;
-        const void *pNext;
-    } loader_private_device_info = {
+    const VkLayerDeviceCreateInfo loader_private_device_info = {
         .sType = VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO,
         .pNext = &enabled_vulkan11,
+        .function = VK_LOADER_DATA_CALLBACK,
+        .u.pfnSetDeviceLoaderData = test_set_device_loader_data,
     };
     scaled_create_info.pNext = &loader_private_device_info;
     CHECK(create_device(physical_device, &scaled_create_info, NULL,
@@ -1047,6 +1062,30 @@ int main(void) {
     VkQueue scaled_transfer_queue = VK_NULL_HANDLE;
     get_device_queue(scaled_device, 1U, 0U, &scaled_transfer_queue);
     CHECK(scaled_transfer_queue != VK_NULL_HANDLE);
+    CHECK(test_loader_data_calls == 1U);
+    get_device_queue(scaled_device, 1U, 0U, &scaled_transfer_queue);
+    CHECK(test_loader_data_calls == 1U);
+    const VkCommandPoolCreateInfo scaled_pool_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .queueFamilyIndex = 0U,
+    };
+    VkCommandPool scaled_pool = VK_NULL_HANDLE;
+    CHECK(create_command_pool(scaled_device, &scaled_pool_info, NULL,
+                              &scaled_pool) == VK_SUCCESS);
+    const VkCommandBufferAllocateInfo scaled_command_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = scaled_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1U,
+    };
+    VkCommandBuffer scaled_command = VK_NULL_HANDLE;
+    CHECK(allocate_command_buffers(
+              scaled_device, &scaled_command_info, &scaled_command) ==
+          VK_SUCCESS);
+    CHECK(scaled_command != VK_NULL_HANDLE);
+    CHECK(test_loader_data_calls == 2U);
+    free_command_buffers(scaled_device, scaled_pool, 1U, &scaled_command);
+    destroy_command_pool(scaled_device, scaled_pool, NULL);
     destroy_device(scaled_device, NULL);
     destroy_surface(instance_one, surface, NULL);
 
