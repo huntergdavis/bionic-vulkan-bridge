@@ -22,6 +22,13 @@ direction required here.
   service has authenticated Activity ingress.
 - Treat that name as a bridge-owned virtual device extension. Remove it from
   the native extension list passed to raw Turnip during `vkCreateDevice`.
+- When virtual swapchain is enabled, require raw native enumeration to expose
+  `VK_KHR_external_memory_fd` and enable that implementation dependency exactly
+  once on the native device. Do not add it to advertised capabilities, require
+  the application to request it, or enable it on non-swapchain devices.
+- Keep the first occurrence and order of every non-virtual application
+  extension. If the raw external-memory-FD dependency is unavailable, fail
+  device creation with `VK_ERROR_EXTENSION_NOT_PRESENT` before the native call.
 - Remember whether each device enabled virtual swapchain and resolve the core
   swapchain/device-group entry points only for such a device.
 - Validate `vkCreateSwapchainKHR` against the virtual surface's parent instance,

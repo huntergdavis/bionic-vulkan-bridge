@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -96,9 +97,22 @@ int main(int argc, char **argv) {
     struct bvb_vulkan_swapchain_prepare_response response = {0};
     int descriptors[BVB_WSI_FRAME_RING_MAX_SLOTS + 1U];
     size_t descriptor_count = 0U;
-    CHECK(bvb_vulkan_global_context_prepare_swapchain(
-              context, &request, &response, descriptors, &descriptor_count,
-              error, sizeof(error)) == 0);
+    const int prepare_result =
+        bvb_vulkan_global_context_prepare_swapchain(
+            context, &request, &response, descriptors, &descriptor_count,
+            error, sizeof(error));
+    const char *expected_missing =
+        getenv("BVB_EXPECT_MISSING_SWAPCHAIN_ENTRY_POINT");
+    if (expected_missing != NULL) {
+        CHECK(prepare_result == -ENOSYS);
+        CHECK(strstr(error, expected_missing) != NULL);
+        CHECK(descriptor_count == 0U);
+        bvb_vulkan_global_context_destroy(context);
+        printf("PASS: exact missing swapchain entry point: %s\n",
+               expected_missing);
+        return 0;
+    }
+    CHECK(prepare_result == 0);
     CHECK(response.vulkan_result == VK_SUCCESS);
     CHECK(response.image_count == 3U && descriptor_count == 4U);
     CHECK(bvb_handle_type(response.swapchain_id) == BVB_OBJECT_SWAPCHAIN);

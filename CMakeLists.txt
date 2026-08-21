@@ -465,6 +465,17 @@ if(BUILD_TESTING)
       "$<TARGET_FILE:bvb-fake-vulkan>"
   )
   add_test(
+    NAME vulkan-swapchain-missing-entry-diagnostic-contract
+    COMMAND
+      bvb-vulkan-swapchain-transport-test
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+  )
+  set_tests_properties(
+    vulkan-swapchain-missing-entry-diagnostic-contract
+    PROPERTIES ENVIRONMENT
+      "BVB_FAKE_HIDE_GET_MEMORY_FD=1;BVB_EXPECT_MISSING_SWAPCHAIN_ENTRY_POINT=vkGetMemoryFdKHR"
+  )
+  add_test(
     NAME swapchain-service-transport-contract
     COMMAND
       "${Python3_EXECUTABLE}"
@@ -607,6 +618,24 @@ if(BUILD_TESTING)
     PRIVATE bvb-vulkan-client-dispatch bvb-command-batch Vulkan::Headers
   )
   bvb_enable_warnings(bvb-global-dispatch-test)
+  add_executable(
+    bvb-device-extension-dependency-test
+    tests/device_extension_dependency.c
+  )
+  target_link_libraries(
+    bvb-device-extension-dependency-test
+    PRIVATE bvb-vulkan-client-dispatch Vulkan::Headers
+  )
+  bvb_enable_warnings(bvb-device-extension-dependency-test)
+  add_test(
+    NAME device-extension-dependency-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_device_extension_dependency.py"
+      "$<TARGET_FILE:bvb-bridge-service>"
+      "$<TARGET_FILE:bvb-device-extension-dependency-test>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+  )
   add_test(
     NAME global-dispatch-contract
     COMMAND

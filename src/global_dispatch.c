@@ -2814,7 +2814,64 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
             strcmp(name, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0) {
             virtual_swapchain_requested = true;
         } else {
-            native_extensions[native_extension_count++] = name;
+            bool duplicate = false;
+            for (uint32_t prior = 0U;
+                 prior < native_extension_count; ++prior) {
+                if (strcmp(name, native_extensions[prior]) == 0) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate) {
+                native_extensions[native_extension_count++] = name;
+            }
+        }
+    }
+    bool external_memory_fd_injected = false;
+    if (virtual_swapchain_requested) {
+        bool native_dependency_supported = false;
+        if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        const VkExtensionProperties *native_properties = NULL;
+        uint32_t native_property_count = 0U;
+        const int extension_result = device_extensions_locked(
+            physical, &native_properties, &native_property_count);
+        if (extension_result == 0) {
+            for (uint32_t index = 0U;
+                 index < native_property_count; ++index) {
+                if (strcmp(
+                        native_properties[index].extensionName,
+                        VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) == 0) {
+                    native_dependency_supported = true;
+                    break;
+                }
+            }
+        }
+        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+        if (extension_result != 0) {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        if (!native_dependency_supported) {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
+        bool dependency_enabled = false;
+        for (uint32_t index = 0U;
+             index < native_extension_count; ++index) {
+            if (strcmp(native_extensions[index],
+                       VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) == 0) {
+                dependency_enabled = true;
+                break;
+            }
+        }
+        if (!dependency_enabled) {
+            if (native_extension_count >=
+                BVB_VULKAN_MAX_DEVICE_CREATE_EXTENSIONS) {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            native_extensions[native_extension_count++] =
+                VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME;
+            external_memory_fd_injected = true;
         }
     }
     if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
@@ -2824,6 +2881,12 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
                     "BVB_ICD_CREATE_DEVICE_EXTENSION index=%u name=%s\n",
                     index, create_info->ppEnabledExtensionNames[index]);
         }
+        fprintf(stderr,
+                "BVB_ICD_CREATE_DEVICE_NORMALIZED original=%u native=%u "
+                "virtual_swapchain=%u external_memory_fd_injected=%u\n",
+                create_info->enabledExtensionCount, native_extension_count,
+                virtual_swapchain_requested ? 1U : 0U,
+                external_memory_fd_injected ? 1U : 0U);
     }
     struct bvb_vulkan_device_create_packed_request packed = {
         .physical_device_id = physical->wire_id,

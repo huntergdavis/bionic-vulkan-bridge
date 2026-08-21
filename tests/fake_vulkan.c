@@ -38,6 +38,7 @@ static uint32_t fake_live_images;
 static uint32_t fake_live_image_views;
 static int fake_android_surface_enabled;
 static int fake_swapchain_enabled;
+static int fake_external_memory_fd_enabled;
 static int fake_swapchain_created;
 static int fake_image_acquired;
 static int fake_to_clear_barrier;
@@ -623,9 +624,13 @@ static VkResult VKAPI_CALL fake_enumerate_device_extensions(
         "VK_KHR_dynamic_rendering",
     };
     const bool hide_swapchain = getenv("BVB_FAKE_HIDE_SWAPCHAIN") != NULL;
+    const bool hide_external_memory_fd =
+        getenv("BVB_FAKE_HIDE_EXTERNAL_MEMORY_FD") != NULL;
     const uint32_t name_count =
         (uint32_t)(sizeof(names) / sizeof(names[0]));
-    const uint32_t available = name_count - (hide_swapchain ? 1U : 0U);
+    const uint32_t available =
+        name_count - (hide_swapchain ? 1U : 0U) -
+        (hide_external_memory_fd ? 1U : 0U);
     if (properties == NULL) {
         *count = available;
         return VK_SUCCESS;
@@ -636,6 +641,11 @@ static VkResult VKAPI_CALL fake_enumerate_device_extensions(
          index < name_count && written < capacity; ++index) {
         if (hide_swapchain &&
             strcmp(names[index], VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0) {
+            continue;
+        }
+        if (hide_external_memory_fd &&
+            strcmp(names[index],
+                   VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) == 0) {
             continue;
         }
         memset(&properties[written], 0, sizeof(properties[written]));
@@ -750,10 +760,56 @@ static VkResult VKAPI_CALL fake_create_device(
     (void)physical_device;
     (void)allocator;
     fake_swapchain_enabled = 0;
+    fake_external_memory_fd_enabled = 0;
     if (create_info == NULL || device == NULL) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    if (create_info->enabledExtensionCount == 58U) {
+    uint32_t external_memory_fd_count = 0U;
+    for (uint32_t index = 0U;
+         index < create_info->enabledExtensionCount; ++index) {
+        fake_swapchain_enabled |=
+            strcmp(create_info->ppEnabledExtensionNames[index],
+                   VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0;
+        external_memory_fd_count +=
+            strcmp(create_info->ppEnabledExtensionNames[index],
+                   VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) == 0
+                ? 1U : 0U;
+    }
+    const char *expected_external_memory_fd_count =
+        getenv("BVB_FAKE_EXPECT_EXTERNAL_MEMORY_FD_COUNT");
+    if (expected_external_memory_fd_count != NULL &&
+        ((strcmp(expected_external_memory_fd_count, "0") == 0 &&
+          external_memory_fd_count != 0U) ||
+         (strcmp(expected_external_memory_fd_count, "1") == 0 &&
+          external_memory_fd_count != 1U) ||
+         (strcmp(expected_external_memory_fd_count, "0") != 0 &&
+          strcmp(expected_external_memory_fd_count, "1") != 0))) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    const char *expected_extension_count =
+        getenv("BVB_FAKE_EXPECT_DEVICE_EXTENSION_COUNT");
+    if (expected_extension_count != NULL &&
+        ((strcmp(expected_extension_count, "0") == 0 &&
+          create_info->enabledExtensionCount != 0U) ||
+         (strcmp(expected_extension_count, "1") == 0 &&
+          create_info->enabledExtensionCount != 1U) ||
+         (strcmp(expected_extension_count, "0") != 0 &&
+          strcmp(expected_extension_count, "1") != 0))) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (getenv("BVB_FAKE_FORBID_CREATE_DEVICE") != NULL) {
+        return VK_ERROR_DEVICE_LOST;
+    }
+    if (getenv("BVB_FAKE_HIDE_EXTERNAL_MEMORY_FD") != NULL &&
+        external_memory_fd_count != 0U) {
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+    }
+    if (getenv("BVB_FAKE_REQUIRE_NO_NATIVE_SWAPCHAIN") != NULL &&
+        fake_swapchain_enabled != 0) {
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+    }
+    if (create_info->enabledExtensionCount == 58U ||
+        create_info->enabledExtensionCount == 59U) {
         if (create_info->queueCreateInfoCount != 2U ||
             create_info->pQueueCreateInfos == NULL ||
             create_info->pQueueCreateInfos[0].queueFamilyIndex != 0U ||
@@ -781,19 +837,17 @@ static VkResult VKAPI_CALL fake_create_device(
                 return VK_ERROR_EXTENSION_NOT_PRESENT;
             }
         }
-    }
-    if (create_info != NULL) {
-        for (uint32_t index = 0;
-             index < create_info->enabledExtensionCount; ++index) {
-            fake_swapchain_enabled |=
-                strcmp(create_info->ppEnabledExtensionNames[index],
-                       "VK_KHR_swapchain") == 0;
+        if (create_info->enabledExtensionCount == 59U &&
+            strcmp(create_info->ppEnabledExtensionNames[58],
+                   VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) != 0) {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
         }
     }
     if (getenv("BVB_FAKE_HIDE_SWAPCHAIN") != NULL &&
         fake_swapchain_enabled != 0) {
         return VK_ERROR_EXTENSION_NOT_PRESENT;
     }
+    fake_external_memory_fd_enabled = external_memory_fd_count != 0U;
     *device = (VkDevice)(uintptr_t)0x3000U;
     return VK_SUCCESS;
 }
@@ -805,6 +859,7 @@ static void VKAPI_CALL fake_destroy_device(
     (void)allocator;
     if (fake_live_image_views != 0U || fake_live_images != 0U) abort();
     fake_swapchain_enabled = 0;
+    fake_external_memory_fd_enabled = 0;
     fake_swapchain_created = 0;
     fake_image_acquired = 0;
     fake_to_clear_barrier = 0;
@@ -2286,6 +2341,12 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     VkDevice device,
     const char *name) {
     (void)device;
+    if (strcmp(name, "vkGetMemoryFdKHR") == 0 &&
+        (getenv("BVB_FAKE_HIDE_GET_MEMORY_FD") != NULL ||
+         (getenv("BVB_FAKE_REQUIRE_EXTERNAL_MEMORY_FD") != NULL &&
+          fake_external_memory_fd_enabled == 0))) {
+        return NULL;
+    }
 #define BVB_DEVICE_MATCH(vulkan_name, fake_name)                                \
     if (strcmp(name, vulkan_name) == 0) {                                       \
         return (PFN_vkVoidFunction)(fake_name);                                 \

@@ -145,6 +145,14 @@ static void set_error(char *output, size_t output_size, const char *format, ...)
     va_end(arguments);
 }
 
+static void append_error_entry_point(
+    char *output, size_t output_size, const char *name) {
+    if (output == NULL || output_size == 0U || name == NULL) return;
+    const size_t used = strnlen(output, output_size);
+    if (used >= output_size) return;
+    (void)snprintf(output + used, output_size - used, " %s", name);
+}
+
 static PFN_vkVoidFunction symbol_from_loader(void *loader, const char *name) {
     void *raw = dlsym(loader, name);
     PFN_vkVoidFunction function = NULL;
@@ -5251,7 +5259,26 @@ int bvb_vulkan_global_context_prepare_swapchain(
         get_requirements == NULL || allocate_memory == NULL ||
         free_memory == NULL || bind_image == NULL || get_memory_fd == NULL) {
         set_error(error, error_size,
-                  "device lacks external-image ring entry points");
+                  "device lacks external-image ring entry points:");
+        if (query == NULL)
+            append_error_entry_point(
+                error, error_size,
+                "vkGetPhysicalDeviceImageFormatProperties2[KHR]");
+        if (create_image == NULL)
+            append_error_entry_point(error, error_size, "vkCreateImage");
+        if (destroy_image == NULL)
+            append_error_entry_point(error, error_size, "vkDestroyImage");
+        if (get_requirements == NULL)
+            append_error_entry_point(
+                error, error_size, "vkGetImageMemoryRequirements");
+        if (allocate_memory == NULL)
+            append_error_entry_point(error, error_size, "vkAllocateMemory");
+        if (free_memory == NULL)
+            append_error_entry_point(error, error_size, "vkFreeMemory");
+        if (bind_image == NULL)
+            append_error_entry_point(error, error_size, "vkBindImageMemory");
+        if (get_memory_fd == NULL)
+            append_error_entry_point(error, error_size, "vkGetMemoryFdKHR");
         *metadata = (struct bvb_swapchain_metadata){.control_fd = -1};
         return -ENOSYS;
     }

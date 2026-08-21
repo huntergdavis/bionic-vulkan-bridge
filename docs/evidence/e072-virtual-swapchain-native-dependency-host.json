@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "gate": "E072",
+  "result": "host_contract_pass",
+  "source_base_commit": "81a539d841309efca4383575fcf7ce0f7d9daed4",
+  "objective": "enable the raw external-memory-FD implementation dependency behind virtual VK_KHR_swapchain without changing advertised application capabilities",
+  "device_create_policy": {
+    "virtual_extension_removed_before_native_create": "VK_KHR_swapchain",
+    "native_dependency": "VK_KHR_external_memory_fd",
+    "native_support_source": "cached raw vkEnumerateDeviceExtensionProperties results",
+    "injection_count": 1,
+    "application_dependency_required": false,
+    "advertised_fake_support_added": false,
+    "non_swapchain_injection_count": 0,
+    "unavailable_result": "VK_ERROR_EXTENSION_NOT_PRESENT",
+    "wire_protocol_changed": false
+  },
+  "strict_fake_native_matrix": [
+    {
+      "application_extensions": ["VK_KHR_swapchain", "VK_KHR_swapchain"],
+      "native_external_memory_fd_count": 1,
+      "result": "VK_SUCCESS"
+    },
+    {
+      "application_extensions": ["VK_KHR_swapchain", "VK_KHR_external_memory_fd"],
+      "native_external_memory_fd_count": 1,
+      "result": "VK_SUCCESS"
+    },
+    {
+      "application_extensions": [],
+      "native_external_memory_fd_count": 0,
+      "result": "VK_SUCCESS"
+    },
+    {
+      "application_extensions": ["VK_KHR_swapchain", "VK_KHR_swapchain"],
+      "native_external_memory_fd_advertised": false,
+      "native_vkCreateDevice_called": false,
+      "result": "VK_ERROR_EXTENSION_NOT_PRESENT"
+    }
+  ],
+  "missing_entry_point_diagnostic": {
+    "hidden": "vkGetMemoryFdKHR",
+    "reported_exact_name": true,
+    "result": "-ENOSYS"
+  },
+  "host_tests": {
+    "command": "./scripts/check.sh",
+    "passed": 38,
+    "failed": 0,
+    "focused_contracts": [
+      "device-extension-dependency-contract",
+      "vulkan-swapchain-missing-entry-diagnostic-contract"
+    ]
+  },
+  "dispatch_policy": {
+    "gate": "E069",
+    "command_count": 742,
+    "executable": 88,
+    "required_unimplemented": 352,
+    "probed_null": 302,
+    "changed_by_e072": false
+  },
+  "source_sha256_before_commit": {
+    "src/global_dispatch.c": "89d59eed2cdeee4f0f583a49d35cff41384d032f7f47a6af245ada287623646a",
+    "src/vulkan_global.c": "6b5d445dc2a0ece33a28ad1c5fb2a76d06edb64adf1177d65209c36c33e1931c",
+    "tests/device_extension_dependency.c": "ab9130957d164634b2826ff7e26f5a8fe8cf6253fe3f10685fd5b54182dfaafb",
+    "tests/test_device_extension_dependency.py": "f090deb0219307531514d525bc36dcd8eb5107fcdc1c339bd2b3d6611c995a42"
+  },
+  "reuse": "The required deja query returned no indexed implementation. E072 reuses E071's measured private-Turnip vkGetMemoryFdKHR boundary and the existing cached raw device-extension enumeration.",
+  "scope": "Host dependency and diagnostics contract only; no tablet redeployment, Activity image import, visible game frame, benchmark, or FPS claim"
+}

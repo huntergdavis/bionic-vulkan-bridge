@@ -2903,3 +2903,32 @@ The required `deja` queries found no indexed implementation. E071 reuses E052's
 authoritative private-Turnip route, E035's measured `OPAQUE_FD` memory and
 `SYNC_FD` semaphore split, and E070's dual strict/hardware validation design.
 Steam PID 5973 and Termux:X11 PID 27923 survived both bounded probes.
+
+## E072 — internal native export dependency for virtual swapchain (2026-08-21)
+
+Status: host contract passed; tablet redeployment and the next real-hardware
+boundary remain separate. `vkCreateDevice` now keeps the application-facing
+`VK_KHR_swapchain` virtual while enabling native
+`VK_KHR_external_memory_fd` exactly once when raw device enumeration supports
+it. It preserves first-occurrence application extension order, does not inject
+the dependency for non-swapchain devices, and returns
+`VK_ERROR_EXTENSION_NOT_PRESENT` before native device creation when the raw
+driver hides it. The implementation adds no advertised capability and no wire
+opcode.
+
+A strict fake-native matrix proves implicit injection, no duplication when the
+application already names the dependency, no injection without swapchain, and
+fail-closed behavior when native enumeration hides it. A second contract hides
+`vkGetMemoryFdKHR` and verifies that swapchain preparation names that exact
+missing function; the diagnostic also lists every other missing ring entry
+point rather than collapsing them into one generic message. The complete host
+suite passes 38/38. Dispatch policy remains 742 total commands: 88 executable,
+352 required-unimplemented, and 302 probed-null.
+
+Canonical host evidence is
+`docs/evidence/e072-virtual-swapchain-native-dependency-host.json`. The required
+`deja "E071 virtual swapchain external_memory_fd dependency injection Turnip"`
+query returned no indexed implementation. E072 reuses E071's measured private
+Turnip boundary and the existing cached raw device-extension enumeration;
+there is no imported Activity image, visible game frame, benchmark, or FPS
+claim.
