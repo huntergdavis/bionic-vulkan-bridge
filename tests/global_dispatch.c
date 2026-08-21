@@ -343,8 +343,17 @@ int main(void) {
     VkPhysicalDeviceVulkan13Features vulkan13_features = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
     };
+    VkPhysicalDeviceDepthClipEnableFeaturesEXT depth_clip_features = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT,
+    };
+    VkPhysicalDeviceRobustness2FeaturesEXT robustness2_features = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
+    };
     vulkan11_features.pNext = &vulkan12_features;
     vulkan12_features.pNext = &vulkan13_features;
+    vulkan13_features.pNext = &depth_clip_features;
+    depth_clip_features.pNext = &robustness2_features;
     VkPhysicalDeviceFeatures2 features2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         .pNext = &vulkan11_features,
@@ -373,6 +382,9 @@ int main(void) {
     CHECK(vulkan13_features.shaderZeroInitializeWorkgroupMemory == VK_TRUE);
     CHECK(vulkan13_features.subgroupSizeControl == VK_TRUE);
     CHECK(vulkan13_features.synchronization2 == VK_TRUE);
+    CHECK(depth_clip_features.depthClipEnable == VK_TRUE);
+    CHECK(robustness2_features.robustBufferAccess2 == VK_TRUE);
+    CHECK(robustness2_features.nullDescriptor == VK_TRUE);
     VkPhysicalDeviceProperties2 properties2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
     };

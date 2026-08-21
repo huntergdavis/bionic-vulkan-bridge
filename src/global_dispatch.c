@@ -1941,6 +1941,11 @@ static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFeatures2(
                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES ||
             entry->sType ==
                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
+        requested |=
+            entry->sType ==
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT ||
+            entry->sType ==
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT;
         entry = entry->pNext;
     }
     if (!requested) {
@@ -2020,6 +2025,20 @@ static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFeatures2(
                 (VkBool32)bridged.subgroup_size_control;
             vulkan13->synchronization2 =
                 (VkBool32)bridged.synchronization2;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT) {
+            VkPhysicalDeviceDepthClipEnableFeaturesEXT *depth_clip =
+                (VkPhysicalDeviceDepthClipEnableFeaturesEXT *)entry;
+            depth_clip->depthClipEnable =
+                (VkBool32)bridged.depth_clip_enable;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT) {
+            VkPhysicalDeviceRobustness2FeaturesEXT *robustness2 =
+                (VkPhysicalDeviceRobustness2FeaturesEXT *)entry;
+            robustness2->robustBufferAccess2 =
+                (VkBool32)bridged.robust_buffer_access2;
+            robustness2->nullDescriptor =
+                (VkBool32)bridged.null_descriptor;
         } else if (entry->sType ==
                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES) {
             VkPhysicalDeviceBufferDeviceAddressFeatures *buffer_address =

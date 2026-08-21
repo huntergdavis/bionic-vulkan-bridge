@@ -633,7 +633,10 @@ int bvb_protocol_encode_vulkan_core_features(
         features->shader_demote_to_helper_invocation > 1U ||
         features->shader_zero_initialize_workgroup_memory > 1U ||
         features->subgroup_size_control > 1U ||
-        features->synchronization2 > 1U) {
+        features->synchronization2 > 1U ||
+        features->depth_clip_enable > 1U ||
+        features->robust_buffer_access2 > 1U ||
+        features->null_descriptor > 1U) {
         return -EINVAL;
     }
     bvb_wire_put_u32(output, features->shader_draw_parameters);
@@ -664,6 +667,9 @@ int bvb_protocol_encode_vulkan_core_features(
         features->shader_zero_initialize_workgroup_memory);
     bvb_wire_put_u32(output + 72, features->subgroup_size_control);
     bvb_wire_put_u32(output + 76, features->synchronization2);
+    bvb_wire_put_u32(output + 80, features->depth_clip_enable);
+    bvb_wire_put_u32(output + 84, features->robust_buffer_access2);
+    bvb_wire_put_u32(output + 88, features->null_descriptor);
     return 0;
 }
 
@@ -701,6 +707,9 @@ int bvb_protocol_decode_vulkan_core_features(
         bvb_wire_get_u32(input + 68);
     const uint32_t subgroup_size_control = bvb_wire_get_u32(input + 72);
     const uint32_t synchronization2 = bvb_wire_get_u32(input + 76);
+    const uint32_t depth_clip_enable = bvb_wire_get_u32(input + 80);
+    const uint32_t robust_buffer_access2 = bvb_wire_get_u32(input + 84);
+    const uint32_t null_descriptor = bvb_wire_get_u32(input + 88);
     if (shader_draw_parameters > 1U || buffer_device_address > 1U ||
         descriptor_indexing > 1U ||
         descriptor_binding_sampled_image_update_after_bind > 1U ||
@@ -714,6 +723,10 @@ int bvb_protocol_decode_vulkan_core_features(
         shader_demote_to_helper_invocation > 1U ||
         shader_zero_initialize_workgroup_memory > 1U ||
         subgroup_size_control > 1U || synchronization2 > 1U) {
+        return -EPROTO;
+    }
+    if (depth_clip_enable > 1U || robust_buffer_access2 > 1U ||
+        null_descriptor > 1U) {
         return -EPROTO;
     }
     *features = (struct bvb_vulkan_core_features){
@@ -742,6 +755,9 @@ int bvb_protocol_decode_vulkan_core_features(
             shader_zero_initialize_workgroup_memory,
         .subgroup_size_control = subgroup_size_control,
         .synchronization2 = synchronization2,
+        .depth_clip_enable = depth_clip_enable,
+        .robust_buffer_access2 = robust_buffer_access2,
+        .null_descriptor = null_descriptor,
     };
     return 0;
 }

@@ -343,6 +343,16 @@ static void VKAPI_CALL fake_get_device_features2(
             vulkan13->subgroupSizeControl = VK_TRUE;
             vulkan13->synchronization2 = VK_TRUE;
         } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT) {
+            ((VkPhysicalDeviceDepthClipEnableFeaturesEXT *)entry)
+                ->depthClipEnable = VK_TRUE;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT) {
+            VkPhysicalDeviceRobustness2FeaturesEXT *robustness2 =
+                (VkPhysicalDeviceRobustness2FeaturesEXT *)entry;
+            robustness2->robustBufferAccess2 = VK_TRUE;
+            robustness2->nullDescriptor = VK_TRUE;
+        } else if (entry->sType ==
                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES) {
             ((VkPhysicalDeviceBufferDeviceAddressFeatures *)entry)
                 ->bufferDeviceAddress = VK_TRUE;

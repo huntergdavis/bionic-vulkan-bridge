@@ -106,7 +106,7 @@ enum {
     BVB_VULKAN_EXTERNAL_BUFFER_PROPERTIES_SIZE = 12,
     BVB_VULKAN_EXTERNAL_SEMAPHORE_QUERY_SIZE = 16,
     BVB_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES_SIZE = 12,
-    BVB_VULKAN_CORE_FEATURES_SIZE = 80,
+    BVB_VULKAN_CORE_FEATURES_SIZE = 92,
     BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE = 16,
     BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE = 32,
     BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE = 128,
@@ -333,6 +333,9 @@ struct bvb_vulkan_core_features {
     uint32_t shader_zero_initialize_workgroup_memory;
     uint32_t subgroup_size_control;
     uint32_t synchronization2;
+    uint32_t depth_clip_enable;
+    uint32_t robust_buffer_access2;
+    uint32_t null_descriptor;
 };
 
 struct bvb_vulkan_device_extension_query {

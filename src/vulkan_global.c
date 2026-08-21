@@ -913,8 +913,17 @@ int bvb_vulkan_global_context_get_core_features(
     VkPhysicalDeviceVulkan13Features vulkan13 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
     };
+    VkPhysicalDeviceDepthClipEnableFeaturesEXT depth_clip = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT,
+    };
+    VkPhysicalDeviceRobustness2FeaturesEXT robustness2 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
+    };
     vulkan11.pNext = &vulkan12;
     vulkan12.pNext = &vulkan13;
+    vulkan13.pNext = &depth_clip;
+    depth_clip.pNext = &robustness2;
     VkPhysicalDeviceFeatures2 base = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         .pNext = &vulkan11,
@@ -963,6 +972,12 @@ int bvb_vulkan_global_context_get_core_features(
         vulkan13.subgroupSizeControl == VK_TRUE ? 1U : 0U;
     features->synchronization2 =
         vulkan13.synchronization2 == VK_TRUE ? 1U : 0U;
+    features->depth_clip_enable =
+        depth_clip.depthClipEnable == VK_TRUE ? 1U : 0U;
+    features->robust_buffer_access2 =
+        robustness2.robustBufferAccess2 == VK_TRUE ? 1U : 0U;
+    features->null_descriptor =
+        robustness2.nullDescriptor == VK_TRUE ? 1U : 0U;
     return 0;
 }
 

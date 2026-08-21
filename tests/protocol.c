@@ -467,6 +467,9 @@ int main(void) {
         .shader_zero_initialize_workgroup_memory = 1U,
         .subgroup_size_control = 1U,
         .synchronization2 = 1U,
+        .depth_clip_enable = 1U,
+        .robust_buffer_access2 = 1U,
+        .null_descriptor = 1U,
     };
     uint8_t core_features_wire[BVB_VULKAN_CORE_FEATURES_SIZE];
     CHECK(bvb_protocol_encode_vulkan_core_features(
@@ -497,6 +500,9 @@ int main(void) {
               .shader_zero_initialize_workgroup_memory == 1U);
     CHECK(core_features_decoded.subgroup_size_control == 1U);
     CHECK(core_features_decoded.synchronization2 == 1U);
+    CHECK(core_features_decoded.depth_clip_enable == 1U);
+    CHECK(core_features_decoded.robust_buffer_access2 == 1U);
+    CHECK(core_features_decoded.null_descriptor == 1U);
     core_features_wire[4] = 2U;
     CHECK(bvb_protocol_decode_vulkan_core_features(
               core_features_wire, &core_features_decoded) == -EPROTO);
