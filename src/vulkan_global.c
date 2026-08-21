@@ -3529,6 +3529,197 @@ int bvb_vulkan_global_context_create_graphics_pipeline(
     return 0;
 }
 
+int bvb_vulkan_global_context_create_builtin_graphics_pipeline(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_builtin_graphics_pipeline_create_request *request,
+    int blob_fd, struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL || blob_fd < 0)
+        return -EINVAL;
+    *response = (struct bvb_vulkan_object_create_response){0};
+    struct stat metadata;
+    const int required_seals =
+        F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_WRITE | F_SEAL_SEAL;
+    const int seals = fcntl(blob_fd, F_GET_SEALS);
+    if (fstat(blob_fd, &metadata) != 0 || !S_ISREG(metadata.st_mode) ||
+        metadata.st_size != (off_t)request->blob_bytes || seals < 0 ||
+        (seals & required_seals) != required_seals) {
+        set_error(error, error_size,
+                  "built-in graphics blob size/seals are invalid");
+        return -EPROTO;
+    }
+    const uint8_t *mapping = mmap(
+        NULL, request->blob_bytes, PROT_READ, MAP_SHARED, blob_fd, 0);
+    if (mapping == MAP_FAILED) return -errno;
+    struct bvb_vulkan_builtin_graphics_pipeline_blob_view blob = {0};
+    int result = bvb_protocol_decode_vulkan_builtin_graphics_pipeline_blob(
+        mapping, request->blob_bytes, &blob);
+    if (result != 0) {
+        (void)munmap((void *)mapping, request->blob_bytes);
+        set_error(error, error_size,
+                  "built-in graphics blob is not canonical: %d", result);
+        return result;
+    }
+    uint64_t device_bits = 0U;
+    result = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE, NULL,
+        &device_bits);
+    uint64_t layout_device_id = 0U, layout_bits = 0U;
+    if (result == 0) {
+        result = bvb_handle_table_lookup(
+            &context->objects, request->pipeline_layout_id,
+            BVB_OBJECT_PIPELINE_LAYOUT, &layout_device_id, &layout_bits);
+    }
+    if (result != 0 || layout_device_id != request->device_id) {
+        (void)munmap((void *)mapping, request->blob_bytes);
+        set_error(error, error_size,
+                  "built-in graphics layout lineage failed: %d", result);
+        return result != 0 ? result : -EPROTO;
+    }
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkCreateGraphicsPipelines create_graphics_pipelines =
+        (PFN_vkCreateGraphicsPipelines)context->get_device_proc_addr(
+            device, "vkCreateGraphicsPipelines");
+    PFN_vkDestroyPipeline destroy_pipeline =
+        (PFN_vkDestroyPipeline)context->get_device_proc_addr(
+            device, "vkDestroyPipeline");
+    if (create_graphics_pipelines == NULL || destroy_pipeline == NULL) {
+        (void)munmap((void *)mapping, request->blob_bytes);
+        return -ENOSYS;
+    }
+    VkSpecializationMapEntry specialization_entries[
+        BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_ENTRY_COUNT];
+    for (uint32_t index = 0U;
+         index < BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_ENTRY_COUNT;
+         ++index) {
+        const uint8_t *entry = blob.specialization_entries +
+            index * BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_ENTRY_SIZE;
+        specialization_entries[index] = (VkSpecializationMapEntry){
+            .constantID = bvb_wire_get_u32(entry),
+            .offset = bvb_wire_get_u32(entry + 4U),
+            .size = (size_t)bvb_wire_get_u64(entry + 8U),
+        };
+    }
+    const VkSpecializationInfo specialization = {
+        .mapEntryCount =
+            BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_ENTRY_COUNT,
+        .pMapEntries = specialization_entries,
+        .dataSize = BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_DATA_SIZE,
+        .pData = blob.specialization_data,
+    };
+    const VkShaderModuleCreateInfo modules[2] = {
+        {
+            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize =
+                BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_VERTEX_CODE_SIZE,
+            .pCode = blob.vertex_words,
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize =
+                BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_FRAGMENT_CODE_SIZE,
+            .pCode = blob.fragment_words,
+        },
+    };
+    const VkPipelineShaderStageCreateInfo stages[2] = {
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .pNext = &modules[0],
+            .stage = VK_SHADER_STAGE_VERTEX_BIT,
+            .pName = "main",
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .pNext = &modules[1],
+            .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+            .pName = "main",
+            .pSpecializationInfo = &specialization,
+        },
+    };
+    const VkFormat color_format = VK_FORMAT_R8G8B8A8_UNORM;
+    const VkPipelineRenderingCreateInfo rendering = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+        .colorAttachmentCount = 1U,
+        .pColorAttachmentFormats = &color_format,
+    };
+    const VkPipelineVertexInputStateCreateInfo vertex_input = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+    };
+    const VkPipelineInputAssemblyStateCreateInfo input_assembly = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+    };
+    const VkPipelineViewportStateCreateInfo viewport = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+    };
+    const VkPipelineRasterizationStateCreateInfo rasterization = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .polygonMode = VK_POLYGON_MODE_FILL,
+        .cullMode = VK_CULL_MODE_NONE,
+        .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+        .lineWidth = 1.0F,
+    };
+    const VkSampleMask sample_mask = 1U;
+    const VkPipelineMultisampleStateCreateInfo multisample = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+        .minSampleShading = 1.0F,
+        .pSampleMask = &sample_mask,
+    };
+    const VkPipelineColorBlendAttachmentState blend_attachment = {
+        .colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+            VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+            VK_COLOR_COMPONENT_A_BIT,
+    };
+    const VkPipelineColorBlendStateCreateInfo blend = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .attachmentCount = 1U,
+        .pAttachments = &blend_attachment,
+    };
+    const VkDynamicState dynamic_states[2] = {
+        VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT,
+        VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT,
+    };
+    const VkPipelineDynamicStateCreateInfo dynamic = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .dynamicStateCount = 2U,
+        .pDynamicStates = dynamic_states,
+    };
+    const VkGraphicsPipelineCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext = &rendering,
+        .stageCount = 2U,
+        .pStages = stages,
+        .pVertexInputState = &vertex_input,
+        .pInputAssemblyState = &input_assembly,
+        .pViewportState = &viewport,
+        .pRasterizationState = &rasterization,
+        .pMultisampleState = &multisample,
+        .pColorBlendState = &blend,
+        .pDynamicState = &dynamic,
+        .layout = pipeline_layout_from_bits(layout_bits),
+        .basePipelineIndex = -1,
+    };
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    response->vulkan_result = create_graphics_pipelines(
+        device, VK_NULL_HANDLE, 1U, &create_info, NULL, &pipeline);
+    (void)munmap((void *)mapping, request->blob_bytes);
+    if (response->vulkan_result != VK_SUCCESS) return 0;
+    const uint64_t wire_id = bvb_handle_id(
+        BVB_OBJECT_PIPELINE, context->next_pipeline_serial++);
+    result = bvb_handle_table_insert(
+        &context->objects, wire_id, request->device_id,
+        handle_bits(&pipeline, sizeof(pipeline)));
+    if (result != 0) {
+        destroy_pipeline(device, pipeline, NULL);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    response->object_id = wire_id;
+    return 0;
+}
+
 int bvb_vulkan_global_context_destroy_pipeline(
     struct bvb_vulkan_global_context *context, uint64_t pipeline_id,
     char *error, size_t error_size) {

@@ -150,6 +150,11 @@ int bvb_vulkan_global_context_create_graphics_pipeline(
     const struct bvb_vulkan_graphics_pipeline_create_request *request,
     struct bvb_vulkan_object_create_response *response,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_create_builtin_graphics_pipeline(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_builtin_graphics_pipeline_create_request *request,
+    int blob_fd, struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_destroy_pipeline(
     struct bvb_vulkan_global_context *context, uint64_t pipeline_id,
     char *error, size_t error_size);

@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "gate": "E098",
+  "date": "2026-08-21",
+  "source_base_commit": "2a91432c9f4777b5e2a3c1dfdd23d369940dd18c",
+  "status": "host_pass_tablet_runtime_pending",
+  "trigger": {
+    "device": "Samsung Galaxy Tab S8+",
+    "extent": "2800x1752",
+    "sequence": ["vkAcquireNextImageKHR", "vkCreateImageView", "vkCreateGraphicsPipelines", "VK_ERROR_FEATURE_NOT_PRESENT"],
+    "dxvk_error": "Failed to create built-in graphics pipeline: VK_ERROR_FEATURE_NOT_PRESENT",
+    "actual_invocation_proven": true
+  },
+  "captured_shape": {
+    "create_info_count": 1,
+    "pipeline_cache": 0,
+    "allocator": null,
+    "root_pnext": "VkPipelineRenderingCreateInfo",
+    "color_format": "VK_FORMAT_R8G8B8A8_UNORM",
+    "shader_stages": [
+      {"stage": "vertex", "embedded_spirv_bytes": 1252, "specialization_entries": 0},
+      {"stage": "fragment", "embedded_spirv_bytes": 15656, "specialization_entries": 8, "specialization_bytes": 32}
+    ],
+    "topology": "VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST",
+    "samples": 1,
+    "color_write_mask": 15,
+    "dynamic_states": ["VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT", "VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT"]
+  },
+  "implementation": {
+    "opcode": 111,
+    "request_bytes": 32,
+    "blob_bytes": 17132,
+    "transport": "one immutable sealed memfd passed once with SCM_RIGHTS",
+    "pointer_free": true,
+    "client_validation": "exact measured DXVK swapchain-blit shape",
+    "service_validation": "exact fd size and seals, canonical offsets and specialization bounds, typed same-device layout lineage",
+    "native_reconstruction": "all Vulkan structs, pointers, embedded shader modules, specialization map, and fixed state reconstructed in Bionic-owned storage",
+    "legacy_null_fragment_pipeline_unchanged": true
+  },
+  "cross_process_contract": {
+    "vertex_spirv_bytes": 1252,
+    "fragment_spirv_bytes": 15656,
+    "specialization_entries": 8,
+    "specialization_bytes": 32,
+    "native_fake_call_required": true,
+    "distinct_typed_pipeline_id_required": true,
+    "destroy_required": true
+  },
+  "observed_runtime_logs": {
+    "master": {"bytes": 1153, "sha256": "52ed1e7f5f74e29a4fdae1d82627e5ddbb8c9bb96cd7b3c3930e9e25552437cf"},
+    "wine": {"bytes": 3098712, "sha256": "b57ec7e0a93ae9461477b519fc6e6632e4b2f25905900ed6d87967748953d785"},
+    "service": {"bytes": 871, "sha256": "f6e289e5a909424a3ed1996effade82d0ac3724a98cfbfcd314fe7b50f4c4427"},
+    "frame_helper": {"bytes": 178, "sha256": "e22d934315295cb2c5735088f04424faed11d5b6b84a6a5ad49449fbfd62a934", "native_import": "pass"}
+  },
+  "validation": {
+    "focused_contracts": "2/2",
+    "full_host_suite": "58/58",
+    "global_dispatch_test_sha256": "c0db0a85b0e61ed51a95f9f7405797110bb9c76769cbe323a920b6f348b0a175",
+    "bridge_service_sha256": "6c09096f530092ca5e3dcfbaf299030e22737de8eab3132cafd3d19ee526495f",
+    "host_icd_sha256": "9f172a2cbb53daf1929af5ea7403320f5b6729ee75f9baa79916078a68166376"
+  },
+  "reuse": [
+    "E064 Bionic-local embedded shader-module reconstruction",
+    "E075/E077 sealed memfd setup and immutable-size validation",
+    "E097 actual Tomb Raider boundary",
+    "E079a actual-invocation rejection diagnostics"
+  ],
+  "recall": "deja query 'BVB vkCreateGraphicsPipelines VK_ERROR_FEATURE_NOT_PRESENT built-in graphics pipeline DXVK E098' returned no indexed match",
+  "claims": {
+    "host_pipeline_create": true,
+    "tablet_pipeline_create": false,
+    "tomb_raider_frame": false,
+    "benchmark": false,
+    "fps": false
+  }
+}

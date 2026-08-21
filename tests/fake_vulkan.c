@@ -10,6 +10,12 @@
 
 #include <vulkan/vulkan.h>
 
+enum {
+    BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_VERTEX_CODE_SIZE = 1252,
+    BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_FRAGMENT_CODE_SIZE = 15656,
+    BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_ENTRY_COUNT = 8,
+};
+
 #ifndef VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME
 #define VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME     \
     "VK_ANDROID_external_memory_android_hardware_buffer"
@@ -93,6 +99,8 @@ static const VkPipelineLayout fake_pipeline_layout =
     (VkPipelineLayout)(uintptr_t)UINT64_C(0xa600);
 static const VkPipeline fake_graphics_pipeline =
     (VkPipeline)(uintptr_t)UINT64_C(0xa700);
+static const VkPipeline fake_builtin_graphics_pipeline =
+    (VkPipeline)(uintptr_t)UINT64_C(0xa701);
 static const VkDescriptorSetLayout fake_core_descriptor_layout =
     (VkDescriptorSetLayout)(uintptr_t)UINT64_C(0xa800);
 static const VkDescriptorPool fake_core_descriptor_pool =
@@ -117,6 +125,22 @@ static const uint32_t fake_dxvk_dummy_frag[] = {
     UINT32_C(0x00050036), UINT32_C(0x00000002), UINT32_C(0x00000004),
     UINT32_C(0x00000000), UINT32_C(0x00000003), UINT32_C(0x000200f8),
     UINT32_C(0x00000005), UINT32_C(0x000100fd), UINT32_C(0x00010038),
+};
+static const uint32_t fake_builtin_vertex[
+    BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_VERTEX_CODE_SIZE / 4U] = {
+    [0] = UINT32_C(0x07230203), [312] = UINT32_C(0x11223344),
+};
+static const uint32_t fake_builtin_fragment[
+    BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_FRAGMENT_CODE_SIZE / 4U] = {
+    [0] = UINT32_C(0x07230203), [3913] = UINT32_C(0x55667788),
+};
+static const VkSpecializationMapEntry fake_builtin_specialization_entries[
+    BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_ENTRY_COUNT] = {
+    {0U, 0U, 4U}, {1U, 4U, 4U}, {2U, 8U, 4U}, {3U, 12U, 4U},
+    {4U, 16U, 4U}, {5U, 20U, 4U}, {6U, 24U, 4U}, {7U, 28U, 4U},
+};
+static const uint32_t fake_builtin_specialization_data[8] = {
+    10U, 11U, 12U, 13U, 14U, 15U, 16U, 17U,
 };
 static const VkFence fake_fence_handle =
     (VkFence)(uintptr_t)UINT64_C(0x9000);
@@ -1331,6 +1355,87 @@ static bool fake_stencil_state_is_zero(const VkStencilOpState *state) {
         state->writeMask == 0U && state->reference == 0U;
 }
 
+static bool fake_builtin_graphics_pipeline_is_exact(
+    const VkGraphicsPipelineCreateInfo *info) {
+    if (fake_descriptor_step != 9U || info == NULL || info->pNext == NULL ||
+        ((const VkBaseInStructure *)info->pNext)->sType !=
+            VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO ||
+        info->stageCount != 2U || info->pStages == NULL) {
+        return false;
+    }
+    const VkPipelineRenderingCreateInfo *rendering = info->pNext;
+    const VkPipelineShaderStageCreateInfo *vertex = &info->pStages[0];
+    const VkPipelineShaderStageCreateInfo *fragment = &info->pStages[1];
+    const VkShaderModuleCreateInfo *vertex_module = vertex->pNext;
+    const VkShaderModuleCreateInfo *fragment_module = fragment->pNext;
+    const VkSpecializationInfo *specialization =
+        fragment->pSpecializationInfo;
+    const VkPipelineColorBlendStateCreateInfo *blend = info->pColorBlendState;
+    const VkPipelineDynamicStateCreateInfo *dynamic = info->pDynamicState;
+    static const VkDynamicState expected_dynamic[2] = {
+        VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT,
+        VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT,
+    };
+    return info->flags == 0U && rendering->pNext == NULL &&
+        rendering->viewMask == 0U &&
+        rendering->colorAttachmentCount == 1U &&
+        rendering->pColorAttachmentFormats != NULL &&
+        rendering->pColorAttachmentFormats[0] ==
+            VK_FORMAT_R8G8B8A8_UNORM &&
+        rendering->depthAttachmentFormat == VK_FORMAT_UNDEFINED &&
+        rendering->stencilAttachmentFormat == VK_FORMAT_UNDEFINED &&
+        vertex->stage == VK_SHADER_STAGE_VERTEX_BIT &&
+        vertex->module == VK_NULL_HANDLE && vertex_module != NULL &&
+        vertex_module->codeSize == sizeof(fake_builtin_vertex) &&
+        vertex_module->pCode != NULL &&
+        memcmp(vertex_module->pCode, fake_builtin_vertex,
+               sizeof(fake_builtin_vertex)) == 0 &&
+        vertex->pSpecializationInfo == NULL &&
+        fragment->stage == VK_SHADER_STAGE_FRAGMENT_BIT &&
+        fragment->module == VK_NULL_HANDLE && fragment_module != NULL &&
+        fragment_module->codeSize == sizeof(fake_builtin_fragment) &&
+        fragment_module->pCode != NULL &&
+        memcmp(fragment_module->pCode, fake_builtin_fragment,
+               sizeof(fake_builtin_fragment)) == 0 &&
+        specialization != NULL && specialization->mapEntryCount == 8U &&
+        specialization->pMapEntries != NULL &&
+        memcmp(specialization->pMapEntries,
+               fake_builtin_specialization_entries,
+               sizeof(fake_builtin_specialization_entries)) == 0 &&
+        specialization->dataSize ==
+            sizeof(fake_builtin_specialization_data) &&
+        specialization->pData != NULL &&
+        memcmp(specialization->pData, fake_builtin_specialization_data,
+               sizeof(fake_builtin_specialization_data)) == 0 &&
+        info->pVertexInputState != NULL &&
+        info->pVertexInputState->vertexBindingDescriptionCount == 0U &&
+        info->pVertexInputState->vertexAttributeDescriptionCount == 0U &&
+        info->pInputAssemblyState != NULL &&
+        info->pInputAssemblyState->topology ==
+            VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST &&
+        info->pViewportState != NULL &&
+        info->pViewportState->viewportCount == 0U &&
+        info->pViewportState->scissorCount == 0U &&
+        info->pRasterizationState != NULL &&
+        info->pRasterizationState->lineWidth == 1.0F &&
+        info->pMultisampleState != NULL &&
+        info->pMultisampleState->rasterizationSamples ==
+            VK_SAMPLE_COUNT_1_BIT &&
+        info->pMultisampleState->pSampleMask != NULL &&
+        info->pMultisampleState->pSampleMask[0] == 1U &&
+        info->pDepthStencilState == NULL && blend != NULL &&
+        blend->attachmentCount == 1U && blend->pAttachments != NULL &&
+        blend->pAttachments[0].colorWriteMask == 15U && dynamic != NULL &&
+        dynamic->dynamicStateCount == 2U &&
+        dynamic->pDynamicStates != NULL &&
+        memcmp(dynamic->pDynamicStates, expected_dynamic,
+               sizeof(expected_dynamic)) == 0 &&
+        info->layout == fake_pipeline_layout &&
+        info->renderPass == VK_NULL_HANDLE && info->subpass == 0U &&
+        info->basePipelineHandle == VK_NULL_HANDLE &&
+        info->basePipelineIndex == -1;
+}
+
 static VkResult VKAPI_CALL fake_create_graphics_pipelines(
     VkDevice device, VkPipelineCache pipeline_cache,
     uint32_t create_info_count,
@@ -1348,6 +1453,12 @@ static VkResult VKAPI_CALL fake_create_graphics_pipelines(
         VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
         VK_DYNAMIC_STATE_STENCIL_OP,
     };
+    if (pipeline_cache == VK_NULL_HANDLE && create_info_count == 1U &&
+        create_infos != NULL && allocator == NULL && pipelines != NULL &&
+        fake_builtin_graphics_pipeline_is_exact(&create_infos[0])) {
+        pipelines[0] = fake_builtin_graphics_pipeline;
+        return VK_SUCCESS;
+    }
     if (fake_descriptor_step != 7U || pipeline_cache != VK_NULL_HANDLE ||
         create_info_count != 1U || create_infos == NULL ||
         allocator != NULL || pipelines == NULL) {
@@ -1434,6 +1545,9 @@ static void VKAPI_CALL fake_destroy_pipeline(
     VkDevice device, VkPipeline pipeline,
     const VkAllocationCallbacks *allocator) {
     (void)device;
+    if (pipeline == fake_builtin_graphics_pipeline && allocator == NULL) {
+        return;
+    }
     if (fake_descriptor_step == 8U && pipeline == fake_graphics_pipeline &&
         allocator == NULL) {
         fake_descriptor_step = 9U;

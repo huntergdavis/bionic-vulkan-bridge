@@ -200,3 +200,173 @@ int bvb_protocol_decode_vulkan_graphics_pipeline_create_request(
     *request = decoded;
     return 0;
 }
+
+int bvb_protocol_encode_vulkan_builtin_graphics_pipeline_create_request(
+    uint8_t output[BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_REQUEST_SIZE],
+    const struct bvb_vulkan_builtin_graphics_pipeline_create_request *request) {
+    if (output == NULL || request == NULL ||
+        !wire_id_is(request->device_id, BVB_OBJECT_DEVICE) ||
+        !wire_id_is(request->pipeline_layout_id,
+                    BVB_OBJECT_PIPELINE_LAYOUT) ||
+        request->blob_bytes !=
+            BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_SIZE ||
+        request->schema !=
+            BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_VERSION) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_REQUEST_SIZE);
+    bvb_wire_put_u64(output, request->device_id);
+    bvb_wire_put_u64(output + 8U, request->pipeline_layout_id);
+    bvb_wire_put_u32(output + 16U, request->blob_bytes);
+    bvb_wire_put_u32(output + 20U, request->schema);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_builtin_graphics_pipeline_create_request(
+    const uint8_t input[BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_REQUEST_SIZE],
+    struct bvb_vulkan_builtin_graphics_pipeline_create_request *request) {
+    if (input == NULL || request == NULL ||
+        bvb_wire_get_u32(input + 24U) != 0U ||
+        bvb_wire_get_u32(input + 28U) != 0U) {
+        return -EPROTO;
+    }
+    const struct bvb_vulkan_builtin_graphics_pipeline_create_request decoded = {
+        .device_id = bvb_wire_get_u64(input),
+        .pipeline_layout_id = bvb_wire_get_u64(input + 8U),
+        .blob_bytes = bvb_wire_get_u32(input + 16U),
+        .schema = bvb_wire_get_u32(input + 20U),
+    };
+    uint8_t validation[BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_REQUEST_SIZE];
+    if (bvb_protocol_encode_vulkan_builtin_graphics_pipeline_create_request(
+            validation, &decoded) != 0 ||
+        memcmp(validation, input, sizeof(validation)) != 0) {
+        return -EPROTO;
+    }
+    *request = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_builtin_graphics_pipeline_blob(
+    uint8_t output[BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_SIZE],
+    const uint32_t *vertex_words, const uint32_t *fragment_words,
+    const uint8_t *specialization_entries,
+    const uint8_t *specialization_data) {
+    if (output == NULL || vertex_words == NULL || fragment_words == NULL ||
+        specialization_entries == NULL || specialization_data == NULL ||
+        vertex_words[0] != UINT32_C(0x07230203) ||
+        fragment_words[0] != UINT32_C(0x07230203)) {
+        return -EINVAL;
+    }
+    const uint32_t vertex_offset =
+        BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_HEADER_SIZE;
+    const uint32_t fragment_offset = vertex_offset +
+        BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_VERTEX_CODE_SIZE;
+    const uint32_t specialization_offset = fragment_offset +
+        BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_FRAGMENT_CODE_SIZE;
+    const uint32_t data_offset = specialization_offset +
+        BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_ENTRY_COUNT *
+            BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_ENTRY_SIZE;
+    memset(output, 0, BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_SIZE);
+    bvb_wire_put_u32(output,
+                     BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_MAGIC);
+    bvb_wire_put_u32(output + 4U,
+                     BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_VERSION);
+    bvb_wire_put_u32(output + 8U,
+                     BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_SIZE);
+    bvb_wire_put_u32(output + 12U, vertex_offset);
+    bvb_wire_put_u32(
+        output + 16U, BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_VERTEX_CODE_SIZE);
+    bvb_wire_put_u32(output + 20U, fragment_offset);
+    bvb_wire_put_u32(
+        output + 24U, BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_FRAGMENT_CODE_SIZE);
+    bvb_wire_put_u32(output + 28U, specialization_offset);
+    bvb_wire_put_u32(
+        output + 32U, BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_ENTRY_COUNT);
+    bvb_wire_put_u32(output + 36U, data_offset);
+    bvb_wire_put_u32(
+        output + 40U, BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_DATA_SIZE);
+    for (uint32_t index = 0U;
+         index < BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_VERTEX_CODE_SIZE / 4U;
+         ++index) {
+        bvb_wire_put_u32(output + vertex_offset + index * 4U,
+                         vertex_words[index]);
+    }
+    for (uint32_t index = 0U;
+         index < BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_FRAGMENT_CODE_SIZE / 4U;
+         ++index) {
+        bvb_wire_put_u32(output + fragment_offset + index * 4U,
+                         fragment_words[index]);
+    }
+    memcpy(output + specialization_offset, specialization_entries,
+           BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_ENTRY_COUNT *
+               BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_ENTRY_SIZE);
+    memcpy(output + data_offset, specialization_data,
+           BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_DATA_SIZE);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_builtin_graphics_pipeline_blob(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_builtin_graphics_pipeline_blob_view *view) {
+    if (input == NULL || view == NULL ||
+        input_length != BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_SIZE ||
+        bvb_wire_get_u32(input) !=
+            BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_MAGIC ||
+        bvb_wire_get_u32(input + 4U) !=
+            BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_VERSION ||
+        bvb_wire_get_u32(input + 8U) != input_length ||
+        bvb_wire_get_u32(input + 12U) !=
+            BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_HEADER_SIZE ||
+        bvb_wire_get_u32(input + 16U) !=
+            BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_VERTEX_CODE_SIZE ||
+        bvb_wire_get_u32(input + 20U) !=
+            BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_HEADER_SIZE +
+                BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_VERTEX_CODE_SIZE ||
+        bvb_wire_get_u32(input + 24U) !=
+            BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_FRAGMENT_CODE_SIZE ||
+        bvb_wire_get_u32(input + 28U) !=
+            BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_HEADER_SIZE +
+                BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_VERTEX_CODE_SIZE +
+                BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_FRAGMENT_CODE_SIZE ||
+        bvb_wire_get_u32(input + 32U) !=
+            BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_ENTRY_COUNT ||
+        bvb_wire_get_u32(input + 36U) !=
+            BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_SIZE -
+                BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_DATA_SIZE ||
+        bvb_wire_get_u32(input + 40U) !=
+            BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_DATA_SIZE ||
+        bvb_wire_get_u32(input + 44U) != 0U ||
+        bvb_wire_get_u64(input + 48U) != 0U ||
+        bvb_wire_get_u64(input + 56U) != 0U) {
+        return -EPROTO;
+    }
+    const uint32_t vertex_offset = bvb_wire_get_u32(input + 12U);
+    const uint32_t fragment_offset = bvb_wire_get_u32(input + 20U);
+    const uint32_t specialization_offset = bvb_wire_get_u32(input + 28U);
+    const uint32_t data_offset = bvb_wire_get_u32(input + 36U);
+    if (bvb_wire_get_u32(input + vertex_offset) != UINT32_C(0x07230203) ||
+        bvb_wire_get_u32(input + fragment_offset) != UINT32_C(0x07230203)) {
+        return -EPROTO;
+    }
+    for (uint32_t index = 0U;
+         index < BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_ENTRY_COUNT;
+         ++index) {
+        const uint8_t *entry = input + specialization_offset +
+            index * BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_ENTRY_SIZE;
+        const uint32_t offset = bvb_wire_get_u32(entry + 4U);
+        const uint64_t size = bvb_wire_get_u64(entry + 8U);
+        if (size == 0U || size > UINT32_MAX ||
+            offset > BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_DATA_SIZE ||
+            size > BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_SPEC_DATA_SIZE -
+                offset) {
+            return -EPROTO;
+        }
+    }
+    *view = (struct bvb_vulkan_builtin_graphics_pipeline_blob_view){
+        .vertex_words = (const uint32_t *)(input + vertex_offset),
+        .fragment_words = (const uint32_t *)(input + fragment_offset),
+        .specialization_entries = input + specialization_offset,
+        .specialization_data = input + data_offset,
+    };
+    return 0;
+}

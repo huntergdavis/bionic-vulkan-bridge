@@ -5,6 +5,7 @@
 #include <bvb/handle.h>
 #include <bvb/protocol.h>
 #include <bvb/vulkan_discovery.h>
+#include <bvb/vulkan_pipeline_wire.h>
 
 #include <vulkan/vk_layer.h>
 
@@ -57,6 +58,14 @@ static const uint32_t test_dxvk_dummy_frag[] = {
     UINT32_C(0x00050036), UINT32_C(0x00000002), UINT32_C(0x00000004),
     UINT32_C(0x00000000), UINT32_C(0x00000003), UINT32_C(0x000200f8),
     UINT32_C(0x00000005), UINT32_C(0x000100fd), UINT32_C(0x00010038),
+};
+static const uint32_t test_builtin_vertex[
+    BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_VERTEX_CODE_SIZE / 4U] = {
+    [0] = UINT32_C(0x07230203), [312] = UINT32_C(0x11223344),
+};
+static const uint32_t test_builtin_fragment[
+    BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_FRAGMENT_CODE_SIZE / 4U] = {
+    [0] = UINT32_C(0x07230203), [3913] = UINT32_C(0x55667788),
 };
 
 static bool bvb_hardware_validation_enabled(void) {
@@ -1780,6 +1789,120 @@ int main(void) {
            sizeof(graphics_pipeline));
     CHECK(bvb_handle_type(graphics_pipeline_id) == BVB_OBJECT_PIPELINE);
     destroy_pipeline(device, graphics_pipeline, NULL);
+
+    const VkSpecializationMapEntry builtin_specialization_entries[8] = {
+        {0U, 0U, 4U}, {1U, 4U, 4U}, {2U, 8U, 4U}, {3U, 12U, 4U},
+        {4U, 16U, 4U}, {5U, 20U, 4U}, {6U, 24U, 4U}, {7U, 28U, 4U},
+    };
+    const uint32_t builtin_specialization_data[8] = {
+        10U, 11U, 12U, 13U, 14U, 15U, 16U, 17U,
+    };
+    const VkSpecializationInfo builtin_specialization = {
+        .mapEntryCount = 8U,
+        .pMapEntries = builtin_specialization_entries,
+        .dataSize = sizeof(builtin_specialization_data),
+        .pData = builtin_specialization_data,
+    };
+    const VkShaderModuleCreateInfo builtin_modules[2] = {
+        {
+            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize = sizeof(test_builtin_vertex),
+            .pCode = test_builtin_vertex,
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize = sizeof(test_builtin_fragment),
+            .pCode = test_builtin_fragment,
+        },
+    };
+    const VkPipelineShaderStageCreateInfo builtin_stages[2] = {
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .pNext = &builtin_modules[0],
+            .stage = VK_SHADER_STAGE_VERTEX_BIT,
+            .pName = "main",
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .pNext = &builtin_modules[1],
+            .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+            .pName = "main",
+            .pSpecializationInfo = &builtin_specialization,
+        },
+    };
+    const VkFormat builtin_color_format = VK_FORMAT_R8G8B8A8_UNORM;
+    const VkPipelineRenderingCreateInfo builtin_rendering = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+        .colorAttachmentCount = 1U,
+        .pColorAttachmentFormats = &builtin_color_format,
+    };
+    const VkPipelineVertexInputStateCreateInfo builtin_vertex_input = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+    };
+    const VkPipelineInputAssemblyStateCreateInfo builtin_input_assembly = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+    };
+    const VkPipelineViewportStateCreateInfo builtin_viewport = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+    };
+    const VkPipelineRasterizationStateCreateInfo builtin_rasterization = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .polygonMode = VK_POLYGON_MODE_FILL,
+        .cullMode = VK_CULL_MODE_NONE,
+        .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+        .lineWidth = 1.0F,
+    };
+    const VkSampleMask builtin_sample_mask = 1U;
+    const VkPipelineMultisampleStateCreateInfo builtin_multisample = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+        .minSampleShading = 1.0F,
+        .pSampleMask = &builtin_sample_mask,
+    };
+    const VkPipelineColorBlendAttachmentState builtin_blend_attachment = {
+        .colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+            VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+            VK_COLOR_COMPONENT_A_BIT,
+    };
+    const VkPipelineColorBlendStateCreateInfo builtin_blend = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .attachmentCount = 1U,
+        .pAttachments = &builtin_blend_attachment,
+    };
+    const VkDynamicState builtin_dynamic_states[2] = {
+        VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT,
+        VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT,
+    };
+    const VkPipelineDynamicStateCreateInfo builtin_dynamic = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .dynamicStateCount = 2U,
+        .pDynamicStates = builtin_dynamic_states,
+    };
+    const VkGraphicsPipelineCreateInfo builtin_pipeline_info = {
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext = &builtin_rendering,
+        .stageCount = 2U,
+        .pStages = builtin_stages,
+        .pVertexInputState = &builtin_vertex_input,
+        .pInputAssemblyState = &builtin_input_assembly,
+        .pViewportState = &builtin_viewport,
+        .pRasterizationState = &builtin_rasterization,
+        .pMultisampleState = &builtin_multisample,
+        .pColorBlendState = &builtin_blend,
+        .pDynamicState = &builtin_dynamic,
+        .layout = pipeline_layout,
+        .basePipelineIndex = -1,
+    };
+    VkPipeline builtin_pipeline = VK_NULL_HANDLE;
+    CHECK(create_graphics_pipelines(
+              device, VK_NULL_HANDLE, 1U, &builtin_pipeline_info, NULL,
+              &builtin_pipeline) == VK_SUCCESS);
+    uint64_t builtin_pipeline_id = 0U;
+    memcpy(&builtin_pipeline_id, &builtin_pipeline, sizeof(builtin_pipeline));
+    CHECK(bvb_handle_type(builtin_pipeline_id) == BVB_OBJECT_PIPELINE);
+    CHECK(builtin_pipeline_id != graphics_pipeline_id);
+    destroy_pipeline(device, builtin_pipeline, NULL);
     destroy_pipeline_layout(device, pipeline_layout, NULL);
     destroy_descriptor_set_layout(device, empty_layout, NULL);
     destroy_sampler(device, sampler, NULL);

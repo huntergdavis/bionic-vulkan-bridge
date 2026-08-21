@@ -1667,6 +1667,45 @@ static int answer_vulkan_resource_create(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_builtin_graphics_pipeline_create(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    int received_fd, struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL || received_fd < 0 ||
+        request->header.payload_length !=
+            BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_builtin_graphics_pipeline_create_request decoded;
+    int result =
+        bvb_protocol_decode_vulkan_builtin_graphics_pipeline_create_request(
+            request->payload, &decoded);
+    struct bvb_vulkan_object_create_response created = {0};
+    char diagnostic[512] = {0};
+    if (result == 0) {
+        result = bvb_vulkan_global_context_create_builtin_graphics_pipeline(
+            context, &decoded, received_fd, &created, diagnostic,
+            sizeof(diagnostic));
+    }
+    if (result != 0) {
+        fprintf(stderr, "bvb: built-in graphics create failed: %s\n",
+                diagnostic);
+        response.header.status = result;
+    } else {
+        result = bvb_protocol_encode_vulkan_object_create_response(
+            response.payload, &created, BVB_OBJECT_PIPELINE);
+        if (result == 0) {
+            response.header.payload_length =
+                BVB_VULKAN_OBJECT_CREATE_RESPONSE_SIZE;
+        } else {
+            response.header.status = result;
+        }
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_resource_destroy(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context) {
@@ -3131,7 +3170,9 @@ static int serve_connection(int client_fd, const char *loader_path,
              request.header.opcode !=
                  BVB_OPCODE_VULKAN_COMMAND_STREAM_SETUP &&
              request.header.opcode !=
-                 BVB_OPCODE_VULKAN_MEMORY_MIRROR_SETUP)) {
+                 BVB_OPCODE_VULKAN_MEMORY_MIRROR_SETUP &&
+             request.header.opcode !=
+                 BVB_OPCODE_VULKAN_BUILTIN_GRAPHICS_PIPELINE_CREATE)) {
             if (received_fd >= 0) {
                 (void)close(received_fd);
             }
@@ -3313,6 +3354,11 @@ static int serve_connection(int client_fd, const char *loader_path,
                        BVB_OPCODE_VULKAN_IMAGE_VIEW_CREATE) {
             result = answer_vulkan_resource_create(
                 client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_BUILTIN_GRAPHICS_PIPELINE_CREATE) {
+            result = answer_vulkan_builtin_graphics_pipeline_create(
+                client_fd, &request, negotiated, received_fd,
+                global_context);
         } else if (request.header.opcode == BVB_OPCODE_VULKAN_BUFFER_DESTROY ||
                    request.header.opcode == BVB_OPCODE_VULKAN_MEMORY_FREE ||
                    request.header.opcode == BVB_OPCODE_VULKAN_FENCE_DESTROY ||

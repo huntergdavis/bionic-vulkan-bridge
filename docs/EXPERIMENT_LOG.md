@@ -3854,3 +3854,32 @@ failure was traced to the parent launcher omitting E074's explicit installed
 native-library path and is corrected in steamclienttermux `081278d`; it is not
 the Vulkan rejection. No Tomb Raider pixel reached the Activity, and the
 retained screenshot remains the bridge triangle.
+
+## E098 — DXVK built-in swapchain graphics pipeline (2026-08-21)
+
+Status: host implementation complete; tablet runtime pending. An opt-in trace of
+the exact E097 successor call captured DXVK's built-in swapchain-blit pipeline,
+not merely a resolver name: one dynamic-rendering RGBA8 pipeline, embedded
+1,252-byte vertex and 15,656-byte fragment SPIR-V modules, eight fragment
+specialization entries backed by 32 data bytes, triangle-list fixed state, and
+dynamic viewport/scissor counts.
+
+The existing opcode-74 path remains the bounded DXVK null-fragment pipeline.
+E098 adds opcode 111 for only the measured two-stage shape. The glibc ICD
+validates every pointer-bearing application struct and writes the shader and
+specialization payload into one 17,132-byte memfd. It seals size and contents,
+then passes the descriptor once with a 32-byte pointer-free request. The Bionic
+service requires exact size and all seals, validates canonical offsets and
+specialization ranges plus typed same-device layout lineage, reconstructs all
+native Vulkan structs locally, and calls raw Turnip. No application pointer
+crosses the ABI, and this creation-time call adds no per-frame transport.
+
+The cross-process fake requires both complete shader byte counts, exact
+specialization entries/data, fixed state, a distinct typed pipeline result, and
+native destruction. Compact evidence is
+`docs/evidence/e098-dxvk-builtin-graphics-pipeline-host.json`. The required
+`deja "BVB vkCreateGraphicsPipelines VK_ERROR_FEATURE_NOT_PRESENT built-in
+graphics pipeline DXVK E098"` query returned no indexed implementation. E098
+reuses E064's Bionic-local embedded-module reconstruction, E075/E077's sealed
+memfd discipline, E097's real boundary, and E079a's actual-invocation proof.
+No tablet pipeline result, game frame, benchmark, or FPS is claimed yet.
