@@ -2708,3 +2708,38 @@ Canonical evidence is
 The required `deja` query returned no indexed implementation. This gate reuses
 E046 typed ownership, E056 bounded local pNext reconstruction, E063 image
 lineage and legacy binding, and E034/E064 resolver-policy generation.
+
+## E066 — DXVK device buffer requirements cross the native boundary (2026-08-21)
+
+Status: passed through the cross-process host fake driver; no Android, game
+frame, or FPS claim. The corrected E064 source audit identified
+`vkGetDeviceBufferMemoryRequirements` as an earlier DXVK device-constructor
+prerequisite. E066 now forwards that core entry through opcode 76. Pinned DXVK
+`a6764047e587178283fcde4073ae6e1410af594f` declares and calls only the core
+spelling, so the KHR alias deliberately remains null.
+
+The 64-byte request carries one typed device ID and the complete bounded core
+`VkBufferCreateInfo` shape: size, flags, usage, sharing mode, and at most eight
+unique queue-family indices. The 32-byte response carries the native size,
+alignment, memory-type mask, and both native dedicated-allocation booleans.
+All pointers and Vulkan structures are reconstructed in the Bionic service.
+The client accepts only null input chains and either a null output chain or one
+terminal `VkMemoryDedicatedRequirements`; rejected void calls leave
+deterministic zero output rather than inventing requirements.
+
+The fake native driver observes DXVK's first unconditional allocator query:
+65,536 bytes, no flags, exclusive sharing, and uniform-texel plus transfer-src
+and transfer-dst usage. It returns size 65,792, alignment 256, memory-type mask
+5, and a required but not preferred dedicated allocation. The generated policy
+promotes exactly the core name over E065's complete list, yielding 84
+executable, 356 required-unimplemented, and 302 probed-null entries.
+
+Canonical evidence is
+`docs/evidence/e066-dxvk-device-buffer-requirements-host.json`. The required
+`deja` search found no prior implementation; E066 reuses E046's fixed-width
+pointer-local RPC discipline and E063's native-device and canonical resource
+wire conventions. Because the observed real boundary reached this call, the
+sparse-binding-only device-image query was not taken, and every later
+source-guaranteed constructor call found in the audit is already bridged. The
+next exact unresolved call must therefore come from a new tablet trace after
+deployment rather than a source-order guess.

@@ -115,6 +115,8 @@ int main(void) {
                         strcmp(entry->name, "vkDestroyBuffer") == 0 ||
                         strcmp(entry->name,
                                "vkGetBufferMemoryRequirements") == 0 ||
+                        strcmp(entry->name,
+                               "vkGetDeviceBufferMemoryRequirements") == 0 ||
                         strcmp(entry->name, "vkAllocateMemory") == 0 ||
                         strcmp(entry->name, "vkFreeMemory") == 0 ||
                         strcmp(entry->name, "vkMapMemory") == 0 ||
@@ -188,8 +190,8 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 83U);
-    CHECK(required_count == 357U);
+    CHECK(executable_count == 84U);
+    CHECK(required_count == 356U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");

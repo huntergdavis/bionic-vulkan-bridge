@@ -202,6 +202,11 @@ int bvb_vulkan_global_context_get_buffer_requirements(
     const struct bvb_vulkan_global_context *context, uint64_t buffer_id,
     struct bvb_vulkan_buffer_requirements *requirements,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_get_device_buffer_requirements(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_device_buffer_requirements_request *request,
+    struct bvb_vulkan_device_buffer_requirements_response *response,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_allocate_memory(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_memory_allocate_request *request,

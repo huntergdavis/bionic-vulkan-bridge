@@ -648,6 +648,8 @@ int main(void) {
     PFN_vkCreateBuffer create_buffer = NULL;
     PFN_vkDestroyBuffer destroy_buffer = NULL;
     PFN_vkGetBufferMemoryRequirements get_buffer_memory_requirements = NULL;
+    PFN_vkGetDeviceBufferMemoryRequirements
+        get_device_buffer_memory_requirements = NULL;
     PFN_vkAllocateMemory allocate_memory = NULL;
     PFN_vkFreeMemory free_memory = NULL;
     PFN_vkBindBufferMemory bind_buffer_memory = NULL;
@@ -736,6 +738,13 @@ int main(void) {
     CHECK(erased != NULL);
     memcpy(&get_buffer_memory_requirements, &erased,
            sizeof(get_buffer_memory_requirements));
+    erased = vkGetDeviceProcAddr(
+        device, "vkGetDeviceBufferMemoryRequirements");
+    CHECK(erased != NULL);
+    memcpy(&get_device_buffer_memory_requirements, &erased,
+           sizeof(get_device_buffer_memory_requirements));
+    CHECK(vkGetDeviceProcAddr(
+              device, "vkGetDeviceBufferMemoryRequirementsKHR") == NULL);
     erased = vkGetDeviceProcAddr(device, "vkAllocateMemory");
     CHECK(erased != NULL);
     memcpy(&allocate_memory, &erased, sizeof(allocate_memory));
@@ -1236,6 +1245,49 @@ int main(void) {
         bvb_command_buffer_proxy_id(command_buffer);
     CHECK(bvb_handle_type(command_buffer_id) == BVB_OBJECT_COMMAND_BUFFER);
     CHECK(bvb_handle_serial(command_buffer_id) == 1U);
+    const VkBufferCreateInfo device_buffer_create_info = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .size = 65536U,
+        .usage = VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+                 VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+    };
+    const VkDeviceBufferMemoryRequirements device_buffer_info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_BUFFER_MEMORY_REQUIREMENTS,
+        .pCreateInfo = &device_buffer_create_info,
+    };
+    VkMemoryDedicatedRequirements device_buffer_dedicated_requirements = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS,
+    };
+    VkMemoryRequirements2 device_buffer_requirements = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,
+        .pNext = &device_buffer_dedicated_requirements,
+    };
+    get_device_buffer_memory_requirements(
+        device, &device_buffer_info, &device_buffer_requirements);
+    CHECK(device_buffer_requirements.memoryRequirements.size == 65792U);
+    CHECK(device_buffer_requirements.memoryRequirements.alignment == 256U);
+    CHECK(device_buffer_requirements.memoryRequirements.memoryTypeBits == 5U);
+    CHECK(device_buffer_dedicated_requirements.prefersDedicatedAllocation ==
+          VK_FALSE);
+    CHECK(device_buffer_dedicated_requirements.requiresDedicatedAllocation ==
+          VK_TRUE);
+    const uint32_t unsupported_marker = 0U;
+    VkDeviceBufferMemoryRequirements unsupported_device_buffer_info =
+        device_buffer_info;
+    unsupported_device_buffer_info.pNext = &unsupported_marker;
+    device_buffer_requirements.memoryRequirements.size = UINT64_MAX;
+    device_buffer_dedicated_requirements.prefersDedicatedAllocation = VK_TRUE;
+    device_buffer_dedicated_requirements.requiresDedicatedAllocation =
+        VK_TRUE;
+    get_device_buffer_memory_requirements(
+        device, &unsupported_device_buffer_info, &device_buffer_requirements);
+    CHECK(device_buffer_requirements.memoryRequirements.size == 0U);
+    CHECK(device_buffer_dedicated_requirements.prefersDedicatedAllocation ==
+          VK_FALSE);
+    CHECK(device_buffer_dedicated_requirements.requiresDedicatedAllocation ==
+          VK_FALSE);
     const VkBufferCreateInfo buffer_create_info = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = 4096U,

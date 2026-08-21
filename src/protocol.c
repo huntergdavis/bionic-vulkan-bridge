@@ -1671,6 +1671,7 @@ int bvb_protocol_encode_vulkan_buffer_create_request(
     uint8_t output[BVB_VULKAN_BUFFER_CREATE_REQUEST_SIZE],
     const struct bvb_vulkan_buffer_create_request *request) {
     if (output == NULL || request == NULL || request->size == 0U ||
+        request->usage == 0U ||
         !wire_id_is_type(request->device_id, 3U)) return -EINVAL;
     bvb_wire_put_u64(output, request->device_id);
     bvb_wire_put_u64(output + 8, request->size);
@@ -1768,6 +1769,106 @@ int bvb_protocol_decode_vulkan_buffer_requirements(
                    requirements->memory_type_bits != 0U &&
                    bvb_wire_get_u32(input + 20) == 0U
                ? 0 : -EPROTO;
+}
+
+static int device_buffer_sharing_is_valid(
+    uint32_t sharing_mode, uint32_t queue_family_index_count) {
+    if (sharing_mode == VK_SHARING_MODE_EXCLUSIVE)
+        return queue_family_index_count == 0U;
+    if (sharing_mode == VK_SHARING_MODE_CONCURRENT)
+        return queue_family_index_count >= 2U &&
+               queue_family_index_count <=
+                   BVB_VULKAN_DEVICE_BUFFER_MAX_QUEUE_FAMILIES;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_device_buffer_requirements_request(
+    uint8_t output[BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_REQUEST_SIZE],
+    const struct bvb_vulkan_device_buffer_requirements_request *request) {
+    if (output == NULL || request == NULL || request->size == 0U ||
+        !wire_id_is_type(request->device_id, 3U) ||
+        !device_buffer_sharing_is_valid(
+            request->sharing_mode, request->queue_family_index_count))
+        return -EINVAL;
+    memset(output, 0, BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_REQUEST_SIZE);
+    bvb_wire_put_u64(output, request->device_id);
+    bvb_wire_put_u64(output + 8, request->size);
+    bvb_wire_put_u32(output + 16, request->flags);
+    bvb_wire_put_u32(output + 20, request->usage);
+    bvb_wire_put_u32(output + 24, request->sharing_mode);
+    bvb_wire_put_u32(output + 28, request->queue_family_index_count);
+    for (uint32_t index = 0U; index < request->queue_family_index_count;
+         ++index)
+        bvb_wire_put_u32(output + 32U + index * sizeof(uint32_t),
+                         request->queue_family_indices[index]);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_device_buffer_requirements_request(
+    const uint8_t input[BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_REQUEST_SIZE],
+    struct bvb_vulkan_device_buffer_requirements_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    struct bvb_vulkan_device_buffer_requirements_request decoded = {
+        .device_id = bvb_wire_get_u64(input),
+        .size = bvb_wire_get_u64(input + 8),
+        .flags = bvb_wire_get_u32(input + 16),
+        .usage = bvb_wire_get_u32(input + 20),
+        .sharing_mode = bvb_wire_get_u32(input + 24),
+        .queue_family_index_count = bvb_wire_get_u32(input + 28),
+    };
+    if (!wire_id_is_type(decoded.device_id, 3U) || decoded.size == 0U ||
+        decoded.usage == 0U ||
+        !device_buffer_sharing_is_valid(
+            decoded.sharing_mode, decoded.queue_family_index_count))
+        return -EPROTO;
+    for (uint32_t index = 0U;
+         index < BVB_VULKAN_DEVICE_BUFFER_MAX_QUEUE_FAMILIES; ++index) {
+        decoded.queue_family_indices[index] =
+            bvb_wire_get_u32(input + 32U + index * sizeof(uint32_t));
+        if (index >= decoded.queue_family_index_count &&
+            decoded.queue_family_indices[index] != 0U)
+            return -EPROTO;
+        for (uint32_t earlier = 0U;
+             earlier < index && index < decoded.queue_family_index_count;
+             ++earlier)
+            if (decoded.queue_family_indices[earlier] ==
+                decoded.queue_family_indices[index])
+                return -EPROTO;
+    }
+    *request = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_device_buffer_requirements_response(
+    uint8_t output[BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_RESPONSE_SIZE],
+    const struct bvb_vulkan_device_buffer_requirements_response *response) {
+    if (output == NULL || response == NULL ||
+        response->prefers_dedicated_allocation > 1U ||
+        response->requires_dedicated_allocation > 1U)
+        return -EINVAL;
+    if (bvb_protocol_encode_vulkan_buffer_requirements(
+            output, &response->memory) != 0)
+        return -EINVAL;
+    bvb_wire_put_u32(output + 24, response->prefers_dedicated_allocation);
+    bvb_wire_put_u32(output + 28, response->requires_dedicated_allocation);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_device_buffer_requirements_response(
+    const uint8_t input[BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_RESPONSE_SIZE],
+    struct bvb_vulkan_device_buffer_requirements_response *response) {
+    if (input == NULL || response == NULL) return -EINVAL;
+    struct bvb_vulkan_device_buffer_requirements_response decoded = {0};
+    if (bvb_protocol_decode_vulkan_buffer_requirements(
+            input, &decoded.memory) != 0)
+        return -EPROTO;
+    decoded.prefers_dedicated_allocation = bvb_wire_get_u32(input + 24);
+    decoded.requires_dedicated_allocation = bvb_wire_get_u32(input + 28);
+    if (decoded.prefers_dedicated_allocation > 1U ||
+        decoded.requires_dedicated_allocation > 1U)
+        return -EPROTO;
+    *response = decoded;
+    return 0;
 }
 
 int bvb_protocol_encode_vulkan_memory_allocate_request(

@@ -3306,6 +3306,67 @@ int bvb_vulkan_global_context_get_buffer_requirements(
                ? 0 : -EPROTO;
 }
 
+int bvb_vulkan_global_context_get_device_buffer_requirements(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_device_buffer_requirements_request *request,
+    struct bvb_vulkan_device_buffer_requirements_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL)
+        return -EINVAL;
+    *response = (struct bvb_vulkan_device_buffer_requirements_response){0};
+    uint64_t device_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE, NULL,
+        &device_bits);
+    if (result != 0) return result;
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkGetDeviceBufferMemoryRequirements get_requirements =
+        (PFN_vkGetDeviceBufferMemoryRequirements)
+            context->get_device_proc_addr(
+                device, "vkGetDeviceBufferMemoryRequirements");
+    if (get_requirements == NULL) return -ENOSYS;
+    const VkBufferCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .flags = request->flags,
+        .size = request->size,
+        .usage = request->usage,
+        .sharingMode = (VkSharingMode)request->sharing_mode,
+        .queueFamilyIndexCount = request->queue_family_index_count,
+        .pQueueFamilyIndices = request->queue_family_index_count != 0U
+                                   ? request->queue_family_indices
+                                   : NULL,
+    };
+    const VkDeviceBufferMemoryRequirements info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_BUFFER_MEMORY_REQUIREMENTS,
+        .pCreateInfo = &create_info,
+    };
+    VkMemoryDedicatedRequirements dedicated = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS,
+    };
+    VkMemoryRequirements2 native = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,
+        .pNext = &dedicated,
+    };
+    get_requirements(device, &info, &native);
+    response->memory = (struct bvb_vulkan_buffer_requirements){
+        .size = native.memoryRequirements.size,
+        .alignment = native.memoryRequirements.alignment,
+        .memory_type_bits = native.memoryRequirements.memoryTypeBits,
+    };
+    response->prefers_dedicated_allocation =
+        dedicated.prefersDedicatedAllocation == VK_TRUE ? 1U : 0U;
+    response->requires_dedicated_allocation =
+        dedicated.requiresDedicatedAllocation == VK_TRUE ? 1U : 0U;
+    return response->memory.size != 0U && response->memory.alignment != 0U &&
+                   response->memory.memory_type_bits != 0U &&
+                   (dedicated.prefersDedicatedAllocation == VK_FALSE ||
+                    dedicated.prefersDedicatedAllocation == VK_TRUE) &&
+                   (dedicated.requiresDedicatedAllocation == VK_FALSE ||
+                    dedicated.requiresDedicatedAllocation == VK_TRUE)
+               ? 0 : -EPROTO;
+}
+
 int bvb_vulkan_global_context_allocate_memory_extended(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_memory_allocate_extended_request *request,

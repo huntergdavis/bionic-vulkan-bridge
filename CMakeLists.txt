@@ -274,14 +274,14 @@ add_custom_command(
     "${bvb_dxvk_dispatch_policy_include}"
     "${bvb_dxvk_dispatch_policy_json}"
     --additional-executable
-    "${CMAKE_CURRENT_SOURCE_DIR}/config/e065-image-allocation-dispatch.txt"
-    --gate E065
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e066-device-buffer-requirements-dispatch.txt"
+    --gate E066
   DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-dxvk-dispatch-policy.py"
     "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
     "${bvb_triangle_dispatch_include}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/config/e065-image-allocation-dispatch.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e066-device-buffer-requirements-dispatch.txt"
   VERBATIM
 )
 add_library(
@@ -510,6 +510,18 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
   )
+  add_test(
+    NAME device-buffer-requirements-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_device_buffer_requirements_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e066-dxvk-device-buffer-requirements-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/protocol.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/config/e066-device-buffer-requirements-dispatch.txt"
+  )
 
   add_library(bvb-fake-media-ndk SHARED tests/fake_media_ndk.c)
   set_target_properties(
@@ -589,7 +601,7 @@ if(BUILD_TESTING)
       "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
       "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
       "${bvb_triangle_dispatch_include}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/config/e065-image-allocation-dispatch.txt"
+      "${CMAKE_CURRENT_SOURCE_DIR}/config/e066-device-buffer-requirements-dispatch.txt"
       "${bvb_dxvk_dispatch_policy_json}"
   )
 

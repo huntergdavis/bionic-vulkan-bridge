@@ -91,6 +91,7 @@ enum {
     BVB_OPCODE_VULKAN_PIPELINE_LAYOUT_DESTROY = 73,
     BVB_OPCODE_VULKAN_GRAPHICS_PIPELINE_CREATE = 74,
     BVB_OPCODE_VULKAN_PIPELINE_DESTROY = 75,
+    BVB_OPCODE_VULKAN_DEVICE_BUFFER_REQUIREMENTS = 76,
     BVB_OPCODE_VULKAN_SEMAPHORE_CREATE = 80,
     BVB_OPCODE_VULKAN_SEMAPHORE_DESTROY = 81,
     BVB_OPCODE_VULKAN_SEMAPHORE_COUNTER = 82,
@@ -166,6 +167,9 @@ enum {
     BVB_VULKAN_OBJECT_CREATE_RESPONSE_SIZE = 16,
     BVB_VULKAN_OBJECT_ID_SIZE = 8,
     BVB_VULKAN_BUFFER_REQUIREMENTS_SIZE = 24,
+    BVB_VULKAN_DEVICE_BUFFER_MAX_QUEUE_FAMILIES = 8,
+    BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_REQUEST_SIZE = 64,
+    BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_RESPONSE_SIZE = 32,
     BVB_VULKAN_MEMORY_ALLOCATE_REQUEST_SIZE = 24,
     BVB_VULKAN_MEMORY_ALLOCATE_EXTENDED_REQUEST_SIZE = 40,
     BVB_VULKAN_MAX_MEMORY_ALLOCATION_SIZE = 256U * 1024U * 1024U,
@@ -639,6 +643,23 @@ struct bvb_vulkan_buffer_requirements {
     uint64_t size;
     uint64_t alignment;
     uint32_t memory_type_bits;
+};
+
+struct bvb_vulkan_device_buffer_requirements_request {
+    uint64_t device_id;
+    uint64_t size;
+    uint32_t flags;
+    uint32_t usage;
+    uint32_t sharing_mode;
+    uint32_t queue_family_index_count;
+    uint32_t queue_family_indices[
+        BVB_VULKAN_DEVICE_BUFFER_MAX_QUEUE_FAMILIES];
+};
+
+struct bvb_vulkan_device_buffer_requirements_response {
+    struct bvb_vulkan_buffer_requirements memory;
+    uint32_t prefers_dedicated_allocation;
+    uint32_t requires_dedicated_allocation;
 };
 
 struct bvb_vulkan_memory_allocate_request {
@@ -1194,6 +1215,18 @@ int bvb_protocol_encode_vulkan_buffer_requirements(
 int bvb_protocol_decode_vulkan_buffer_requirements(
     const uint8_t input[BVB_VULKAN_BUFFER_REQUIREMENTS_SIZE],
     struct bvb_vulkan_buffer_requirements *requirements);
+int bvb_protocol_encode_vulkan_device_buffer_requirements_request(
+    uint8_t output[BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_REQUEST_SIZE],
+    const struct bvb_vulkan_device_buffer_requirements_request *request);
+int bvb_protocol_decode_vulkan_device_buffer_requirements_request(
+    const uint8_t input[BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_REQUEST_SIZE],
+    struct bvb_vulkan_device_buffer_requirements_request *request);
+int bvb_protocol_encode_vulkan_device_buffer_requirements_response(
+    uint8_t output[BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_RESPONSE_SIZE],
+    const struct bvb_vulkan_device_buffer_requirements_response *response);
+int bvb_protocol_decode_vulkan_device_buffer_requirements_response(
+    const uint8_t input[BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_RESPONSE_SIZE],
+    struct bvb_vulkan_device_buffer_requirements_response *response);
 int bvb_protocol_encode_vulkan_memory_allocate_request(
     uint8_t output[BVB_VULKAN_MEMORY_ALLOCATE_REQUEST_SIZE],
     const struct bvb_vulkan_memory_allocate_request *request);

@@ -4393,6 +4393,120 @@ static VkResult encode_memory_allocate_pnext(
     return VK_SUCCESS;
 }
 
+static int device_buffer_create_info_supported(
+    const VkBufferCreateInfo *create_info) {
+    if (create_info == NULL ||
+        create_info->sType != VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO ||
+        create_info->pNext != NULL || create_info->size == 0U ||
+        create_info->usage == 0U)
+        return 0;
+    if (create_info->sharingMode == VK_SHARING_MODE_EXCLUSIVE)
+        return create_info->queueFamilyIndexCount == 0U;
+    if (create_info->sharingMode != VK_SHARING_MODE_CONCURRENT ||
+        create_info->queueFamilyIndexCount < 2U ||
+        create_info->queueFamilyIndexCount >
+            BVB_VULKAN_DEVICE_BUFFER_MAX_QUEUE_FAMILIES ||
+        create_info->pQueueFamilyIndices == NULL)
+        return 0;
+    for (uint32_t index = 0U; index < create_info->queueFamilyIndexCount;
+         ++index)
+        for (uint32_t earlier = 0U; earlier < index; ++earlier)
+            if (create_info->pQueueFamilyIndices[earlier] ==
+                create_info->pQueueFamilyIndices[index])
+                return 0;
+    return 1;
+}
+
+static int device_buffer_dedicated_output(
+    VkMemoryRequirements2 *requirements,
+    VkMemoryDedicatedRequirements **dedicated) {
+    *dedicated = NULL;
+    if (requirements->pNext == NULL) return 0;
+    VkMemoryDedicatedRequirements *candidate =
+        (VkMemoryDedicatedRequirements *)requirements->pNext;
+    if (candidate->sType !=
+            VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS ||
+        candidate->pNext != NULL)
+        return -1;
+    *dedicated = candidate;
+    return 0;
+}
+
+static void VKAPI_CALL bvb_bridge_vkGetDeviceBufferMemoryRequirements(
+    VkDevice device, const VkDeviceBufferMemoryRequirements *info,
+    VkMemoryRequirements2 *requirements) {
+    if (requirements == NULL) return;
+    requirements->memoryRequirements = (VkMemoryRequirements){0};
+    if (requirements->sType != VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2)
+        return;
+    VkMemoryDedicatedRequirements *dedicated = NULL;
+    if (device_buffer_dedicated_output(requirements, &dedicated) != 0)
+        return;
+    if (dedicated != NULL) {
+        dedicated->prefersDedicatedAllocation = VK_FALSE;
+        dedicated->requiresDedicatedAllocation = VK_FALSE;
+    }
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || info == NULL ||
+        info->sType != VK_STRUCTURE_TYPE_DEVICE_BUFFER_MEMORY_REQUIREMENTS ||
+        info->pNext != NULL ||
+        !device_buffer_create_info_supported(info->pCreateInfo))
+        return;
+    const VkBufferCreateInfo *create_info = info->pCreateInfo;
+    struct bvb_vulkan_device_buffer_requirements_request decoded = {
+        .device_id = device_state->wire_id,
+        .size = create_info->size,
+        .flags = create_info->flags,
+        .usage = create_info->usage,
+        .sharing_mode = create_info->sharingMode,
+        .queue_family_index_count = create_info->queueFamilyIndexCount,
+    };
+    for (uint32_t index = 0U; index < create_info->queueFamilyIndexCount;
+         ++index)
+        decoded.queue_family_indices[index] =
+            create_info->pQueueFamilyIndices[index];
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_DEVICE_BUFFER_REQUIREMENTS,
+        .payload_length =
+            BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_REQUEST_SIZE,
+    };
+    int result =
+        bvb_protocol_encode_vulkan_device_buffer_requirements_request(
+            request.payload, &decoded);
+    if (result != 0 || pthread_mutex_lock(&bvb_global_client.mutex) != 0)
+        return;
+    request.header.request_id = next_request_id_locked();
+    result = connect_locked();
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) result = exchange_locked(&request, &response);
+    if (result == 0 &&
+        (response.header.status != 0 ||
+         response.header.payload_length !=
+             BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_RESPONSE_SIZE))
+        result = -EPROTO;
+    struct bvb_vulkan_device_buffer_requirements_response native = {0};
+    if (result == 0)
+        result =
+            bvb_protocol_decode_vulkan_device_buffer_requirements_response(
+                response.payload, &native);
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result != 0) return;
+    requirements->memoryRequirements = (VkMemoryRequirements){
+        .size = native.memory.size,
+        .alignment = native.memory.alignment,
+        .memoryTypeBits = native.memory.memory_type_bits,
+    };
+    if (dedicated != NULL) {
+        dedicated->prefersDedicatedAllocation =
+            native.prefers_dedicated_allocation != 0U ? VK_TRUE : VK_FALSE;
+        dedicated->requiresDedicatedAllocation =
+            native.requires_dedicated_allocation != 0U ? VK_TRUE : VK_FALSE;
+    }
+}
+
 static VkResult VKAPI_CALL bvb_bridge_vkAllocateMemory(
     VkDevice device, const VkMemoryAllocateInfo *allocate_info,
     const VkAllocationCallbacks *allocator, VkDeviceMemory *memory) {
@@ -6284,6 +6398,8 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     BVB_DEVICE_MATCH("vkDestroyBuffer", bvb_bridge_vkDestroyBuffer)
     BVB_DEVICE_MATCH("vkGetBufferMemoryRequirements",
                      bvb_bridge_vkGetBufferMemoryRequirements)
+    BVB_DEVICE_MATCH("vkGetDeviceBufferMemoryRequirements",
+                     bvb_bridge_vkGetDeviceBufferMemoryRequirements)
     BVB_DEVICE_MATCH("vkAllocateMemory", bvb_bridge_vkAllocateMemory)
     BVB_DEVICE_MATCH("vkFreeMemory", bvb_bridge_vkFreeMemory)
     BVB_DEVICE_MATCH("vkBindBufferMemory", bvb_bridge_vkBindBufferMemory)

@@ -1,0 +1,100 @@
+{
+  "schema_version": 1,
+  "gate": "E066",
+  "result": "pass_host_contract",
+  "objective": "forward DXVK's source-audited device buffer memory-requirements query through the glibc-to-Bionic bridge without transmitting pointers or fabricating memory properties",
+  "source": {
+    "dxvk_commit": "a6764047e587178283fcde4073ae6e1410af594f",
+    "loader_path": "src/vulkan/vulkan_loader.h",
+    "loader_sha256": "f03087d3abcd32556b60b18ef4a8ade9ac48c4a67197942df964a8f8f4a5037b",
+    "call_path": "src/dxvk/dxvk_memory.cpp",
+    "call_path_sha256": "1c9eb57fc1a3b4bab76741569b9c8d5f93821cf39b8714e5a0e6e6ecb2f05b55",
+    "call_location": "DxvkMemoryAllocator::getBufferMemoryRequirements at line 2249",
+    "constructor_location": "DxvkMemoryAllocator::determineBufferUsageFlagsPerMemoryType at lines 2043-2138",
+    "resolved_and_called_name": "vkGetDeviceBufferMemoryRequirements",
+    "khr_alias_in_pinned_loader": false
+  },
+  "audited_first_unconditional_shape": {
+    "device_info": {
+      "sType": "VK_STRUCTURE_TYPE_DEVICE_BUFFER_MEMORY_REQUIREMENTS",
+      "pNext": null
+    },
+    "buffer_create_info": {
+      "sType": "VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO",
+      "pNext": null,
+      "flags": 0,
+      "size": 65536,
+      "usage": [
+        "VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT",
+        "VK_BUFFER_USAGE_TRANSFER_DST_BIT",
+        "VK_BUFFER_USAGE_TRANSFER_SRC_BIT"
+      ],
+      "sharing": "DXVK's sharing-mode helper; exclusive with no indices or concurrent with a bounded local index list"
+    },
+    "output": {
+      "sType": "VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2",
+      "pNext": null
+    }
+  },
+  "wire": {
+    "opcode": 76,
+    "request_bytes": 64,
+    "response_bytes": 32,
+    "maximum_queue_families": 8,
+    "representation": "fixed-width little-endian scalars and one typed device ID",
+    "pointers_crossed": false,
+    "native_reconstruction": "the Bionic service reconstructs local VkBufferCreateInfo, VkDeviceBufferMemoryRequirements, VkMemoryRequirements2, and VkMemoryDedicatedRequirements records"
+  },
+  "native_result": {
+    "memory_fields": [
+      "size",
+      "alignment",
+      "memoryTypeBits"
+    ],
+    "dedicated_fields": [
+      "prefersDedicatedAllocation",
+      "requiresDedicatedAllocation"
+    ],
+    "truth_source": "the selected native device's core vkGetDeviceBufferMemoryRequirements entry",
+    "fabricated_values": false
+  },
+  "supported_shape": {
+    "input_pnext": "null only",
+    "buffer_pnext": "null only",
+    "output_pnext": "null or one terminal VkMemoryDedicatedRequirements",
+    "sharing_modes": "exclusive with zero queue indices or concurrent with two through eight unique queue indices",
+    "return_on_rejected_void_call": "zero memory requirements and zero recognized dedicated booleans"
+  },
+  "fail_closed": [
+    "wrong structure types or non-null input pNext records",
+    "unknown, extended, or reordered output pNext records",
+    "zero size or usage",
+    "invalid sharing mode, missing queue array, duplicate queue families, or more than eight queue families",
+    "wrong-type or missing device ID",
+    "malformed lengths, nonzero unused queue slots, zero native requirements, or non-boolean native dedicated values"
+  ],
+  "dispatch_policy": {
+    "baseline": "E065's 83 executable names, including vkGetImageMemoryRequirements2",
+    "promotion": "core vkGetDeviceBufferMemoryRequirements only over the complete E065 list",
+    "khr_alias": "remains required_unimplemented because pinned DXVK a6764047 neither declares nor calls the KHR spelling",
+    "counts": {
+      "executable": 84,
+      "required_unimplemented": 356,
+      "probed_null": 302
+    }
+  },
+  "verification": {
+    "base_commit": "4a39a66",
+    "host_contracts": "32/32 passed after final rebase",
+    "canonical_codec": "round trips exclusive and concurrent shapes and rejects duplicate or nonzero unused queue-family slots and invalid dedicated booleans",
+    "cross_process_fake_driver": "observes the exact first unconditional DXVK query shape and returns size 65792, alignment 256, memoryTypeBits 5, prefersDedicatedAllocation false, and requiresDedicatedAllocation true",
+    "unsupported_chain_contract": "the client returns deterministic zero fields without issuing an RPC",
+    "hardware_or_game_claim": false
+  },
+  "next_runtime_boundary": {
+    "exact_eager_unimplemented_call": null,
+    "reason": "the observed buffer-requirements boundary proves the sparseBinding-only vkGetDeviceImageMemoryRequirements branch was not taken; all later source-guaranteed sampler, pipeline-layout, null-fragment-pipeline, semaphore, and Submit2 constructor calls are already bridged",
+    "next_gate": "deploy this host-proven entry and capture the first new real DXVK resolver/call boundary rather than guessing it"
+  },
+  "reuse": "The required deja search found no indexed implementation. E066 reuses E046's fixed-width pointer-local RPC discipline and E063's native device ownership and canonical resource-create wire conventions; no E063 object handle is created for this query-only command."
+}

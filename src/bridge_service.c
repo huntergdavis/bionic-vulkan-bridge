@@ -1836,6 +1836,43 @@ static int answer_vulkan_buffer_requirements(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_device_buffer_requirements(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_device_buffer_requirements_request decoded;
+    int result = bvb_protocol_decode_vulkan_device_buffer_requirements_request(
+        request->payload, &decoded);
+    const bool wire_decoded = result == 0;
+    struct bvb_vulkan_device_buffer_requirements_response requirements = {0};
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_get_device_buffer_requirements(
+            context, &decoded, &requirements, diagnostic,
+            sizeof(diagnostic));
+    if (result == 0)
+        result =
+            bvb_protocol_encode_vulkan_device_buffer_requirements_response(
+                response.payload, &requirements);
+    if (result == 0) {
+        response.header.payload_length =
+            BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_RESPONSE_SIZE;
+    } else {
+        fprintf(stderr,
+                "bvb: device buffer requirements failed: status=%d phase=%s %s\n",
+                result, wire_decoded ? "native" : "wire", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_buffer_bind(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context) {
@@ -2902,6 +2939,10 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_BUFFER_REQUIREMENTS) {
             result = answer_vulkan_buffer_requirements(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_DEVICE_BUFFER_REQUIREMENTS) {
+            result = answer_vulkan_device_buffer_requirements(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode == BVB_OPCODE_VULKAN_BUFFER_BIND) {
             result = answer_vulkan_buffer_bind(

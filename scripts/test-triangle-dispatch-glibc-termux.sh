@@ -7,8 +7,8 @@ out_dir="$project_dir/out/triangle-dispatch-glibc"
 generated_dir="$out_dir/generated"
 registry="$build_dir/_deps/vulkanheaders-src/registry/vk.xml"
 manifest="$project_dir/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
-additional_dispatch="$project_dir/config/e065-image-allocation-dispatch.txt"
-dispatch_gate=E065
+additional_dispatch="$project_dir/config/e066-device-buffer-requirements-dispatch.txt"
+dispatch_gate=E066
 
 for command_name in cmake cp grun gcc python readelf; do
     if ! command -v "$command_name" >/dev/null 2>&1; then

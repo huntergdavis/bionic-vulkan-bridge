@@ -1407,6 +1407,43 @@ static void VKAPI_CALL fake_get_buffer_memory_requirements(
     };
 }
 
+static void VKAPI_CALL fake_get_device_buffer_memory_requirements(
+    VkDevice device, const VkDeviceBufferMemoryRequirements *info,
+    VkMemoryRequirements2 *requirements) {
+    (void)device;
+    if (info == NULL || requirements == NULL ||
+        info->sType != VK_STRUCTURE_TYPE_DEVICE_BUFFER_MEMORY_REQUIREMENTS ||
+        info->pNext != NULL || info->pCreateInfo == NULL ||
+        info->pCreateInfo->sType != VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO ||
+        info->pCreateInfo->pNext != NULL ||
+        info->pCreateInfo->flags != 0U ||
+        info->pCreateInfo->size != 65536U ||
+        info->pCreateInfo->usage !=
+            (VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT |
+             VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+             VK_BUFFER_USAGE_TRANSFER_SRC_BIT) ||
+        info->pCreateInfo->sharingMode != VK_SHARING_MODE_EXCLUSIVE ||
+        info->pCreateInfo->queueFamilyIndexCount != 0U ||
+        info->pCreateInfo->pQueueFamilyIndices != NULL ||
+        requirements->sType != VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2 ||
+        requirements->pNext == NULL) {
+        return;
+    }
+    VkMemoryDedicatedRequirements *dedicated = requirements->pNext;
+    if (dedicated->sType !=
+            VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS ||
+        dedicated->pNext != NULL) {
+        return;
+    }
+    requirements->memoryRequirements = (VkMemoryRequirements){
+        .size = 65792U,
+        .alignment = 256U,
+        .memoryTypeBits = 5U,
+    };
+    dedicated->prefersDedicatedAllocation = VK_FALSE;
+    dedicated->requiresDedicatedAllocation = VK_TRUE;
+}
+
 static VkResult VKAPI_CALL fake_allocate_memory(
     VkDevice device,
     const VkMemoryAllocateInfo *allocate_info,
@@ -2121,6 +2158,8 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkDestroyBuffer", fake_destroy_buffer)
     BVB_DEVICE_MATCH("vkGetBufferMemoryRequirements",
                      fake_get_buffer_memory_requirements)
+    BVB_DEVICE_MATCH("vkGetDeviceBufferMemoryRequirements",
+                     fake_get_device_buffer_memory_requirements)
     BVB_DEVICE_MATCH("vkAllocateMemory", fake_allocate_memory)
     BVB_DEVICE_MATCH("vkFreeMemory", fake_free_memory)
     BVB_DEVICE_MATCH("vkBindBufferMemory", fake_bind_buffer_memory)

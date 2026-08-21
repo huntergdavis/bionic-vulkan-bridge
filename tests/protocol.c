@@ -1010,6 +1010,67 @@ int main(void) {
     CHECK(bvb_protocol_decode_vulkan_buffer_requirements(
               buffer_requirements_wire, &buffer_requirements_decoded) == 0);
     CHECK(buffer_requirements_decoded.alignment == 64U);
+    const struct bvb_vulkan_device_buffer_requirements_request
+        device_buffer_requirements_request = {
+            .device_id = buffer_create.device_id,
+            .size = 65536U,
+            .flags = VK_BUFFER_CREATE_SPARSE_BINDING_BIT,
+            .usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+                     VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            .sharing_mode = VK_SHARING_MODE_CONCURRENT,
+            .queue_family_index_count = 2U,
+            .queue_family_indices = {1U, 3U},
+        };
+    uint8_t device_buffer_requirements_request_wire[
+        BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_device_buffer_requirements_request(
+              device_buffer_requirements_request_wire,
+              &device_buffer_requirements_request) == 0);
+    struct bvb_vulkan_device_buffer_requirements_request
+        device_buffer_requirements_request_decoded;
+    CHECK(bvb_protocol_decode_vulkan_device_buffer_requirements_request(
+              device_buffer_requirements_request_wire,
+              &device_buffer_requirements_request_decoded) == 0);
+    CHECK(device_buffer_requirements_request_decoded.size == 65536U);
+    CHECK(device_buffer_requirements_request_decoded.queue_family_indices[1] ==
+          3U);
+    device_buffer_requirements_request_wire[40] = 1U;
+    CHECK(bvb_protocol_decode_vulkan_device_buffer_requirements_request(
+              device_buffer_requirements_request_wire,
+              &device_buffer_requirements_request_decoded) == -EPROTO);
+    device_buffer_requirements_request_wire[40] = 0U;
+    device_buffer_requirements_request_wire[36] = 1U;
+    CHECK(bvb_protocol_decode_vulkan_device_buffer_requirements_request(
+              device_buffer_requirements_request_wire,
+              &device_buffer_requirements_request_decoded) == -EPROTO);
+    device_buffer_requirements_request_wire[36] = 3U;
+    const struct bvb_vulkan_device_buffer_requirements_response
+        device_buffer_requirements_response = {
+            .memory = {
+                .size = 65792U,
+                .alignment = 256U,
+                .memory_type_bits = 5U,
+            },
+            .prefers_dedicated_allocation = 0U,
+            .requires_dedicated_allocation = 1U,
+        };
+    uint8_t device_buffer_requirements_response_wire[
+        BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_RESPONSE_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_device_buffer_requirements_response(
+              device_buffer_requirements_response_wire,
+              &device_buffer_requirements_response) == 0);
+    struct bvb_vulkan_device_buffer_requirements_response
+        device_buffer_requirements_response_decoded;
+    CHECK(bvb_protocol_decode_vulkan_device_buffer_requirements_response(
+              device_buffer_requirements_response_wire,
+              &device_buffer_requirements_response_decoded) == 0);
+    CHECK(device_buffer_requirements_response_decoded.memory.size == 65792U);
+    CHECK(device_buffer_requirements_response_decoded
+              .requires_dedicated_allocation == 1U);
+    device_buffer_requirements_response_wire[24] = 2U;
+    CHECK(bvb_protocol_decode_vulkan_device_buffer_requirements_response(
+              device_buffer_requirements_response_wire,
+              &device_buffer_requirements_response_decoded) == -EPROTO);
     const struct bvb_vulkan_memory_allocate_request memory_allocate = {
         .device_id = buffer_create.device_id,
         .allocation_size = 4096U,
