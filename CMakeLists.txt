@@ -658,6 +658,14 @@ if(BUILD_TESTING)
     PRIVATE bvb-vulkan-client-dispatch bvb-command-batch Vulkan::Headers
   )
   bvb_enable_warnings(bvb-first-rejection-test)
+  add_executable(
+    bvb-first-rejection-global-test tests/first_rejection_global.c
+  )
+  target_link_libraries(
+    bvb-first-rejection-global-test
+    PRIVATE bvb-vulkan-client-dispatch bvb-command-batch Vulkan::Headers
+  )
+  bvb_enable_warnings(bvb-first-rejection-global-test)
   add_test(
     NAME first-real-rejection-contract
     COMMAND
@@ -670,7 +678,7 @@ if(BUILD_TESTING)
     COMMAND
       "${Python3_EXECUTABLE}"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_first_rejection_architecture.py"
-      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e079-first-real-rejection-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e079a-first-rejection-corrective-host.json"
       "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-first-rejection-dispatch.py"
       "${bvb_first_rejection_dispatch_include}"
       "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
@@ -681,6 +689,10 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/triangle_dispatch.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-triangle-dispatch-glibc-termux.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/first_rejection.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_first_rejection.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/first_rejection_global.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
   )
   add_executable(
     bvb-device-extension-dependency-test
@@ -708,6 +720,26 @@ if(BUILD_TESTING)
       "$<TARGET_FILE:bvb-bridge-service>"
       "$<TARGET_FILE:bvb-global-dispatch-test>"
       "$<TARGET_FILE:bvb-fake-vulkan>"
+  )
+  add_test(
+    NAME first-real-rejection-command-poison-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+      "$<TARGET_FILE:bvb-bridge-service>"
+      "$<TARGET_FILE:bvb-first-rejection-global-test>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+      "first-rejection-command"
+  )
+  add_test(
+    NAME first-real-rejection-protected-wsi-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+      "$<TARGET_FILE:bvb-bridge-service>"
+      "$<TARGET_FILE:bvb-first-rejection-global-test>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+      "first-rejection-wsi"
   )
   add_test(
     NAME global-dispatch-hardware-mode-contract

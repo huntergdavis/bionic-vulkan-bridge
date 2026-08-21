@@ -1673,22 +1673,50 @@ static VkResult create_virtual_surface(
     return result;
 }
 
+static VkResult create_virtual_surface_diagnostic(
+    const char *entry, const char *shape, VkInstance instance,
+    const void *create_info, const VkAllocationCallbacks *allocator,
+    VkSurfaceKHR *surface) {
+    const VkResult result =
+        create_virtual_surface(instance, create_info, allocator, surface);
+    if (result < 0) {
+        const uint64_t pointer_mask =
+            (create_info != NULL ? UINT64_C(1) << 1 : 0U) |
+            (allocator != NULL ? UINT64_C(1) << 2 : 0U) |
+            (surface != NULL ? UINT64_C(1) << 3 : 0U);
+        bvb_first_rejection_record(
+            "implemented_rejection", entry, entry, "instance",
+            "negative_vkresult", result, 4U, pointer_mask, shape,
+            0U, 0U, false);
+    }
+    return result;
+}
+
 static VkResult VKAPI_CALL bvb_bridge_vkCreateXlibSurfaceKHR(
     VkInstance instance, const void *create_info,
     const VkAllocationCallbacks *allocator, VkSurfaceKHR *surface) {
-    return create_virtual_surface(instance, create_info, allocator, surface);
+    return create_virtual_surface_diagnostic(
+        "vkCreateXlibSurfaceKHR",
+        "VkInstance_value,VkXlibSurfaceCreateInfoKHR_ptr,VkAllocationCallbacks_ptr,VkSurfaceKHR_ptr",
+        instance, create_info, allocator, surface);
 }
 
 static VkResult VKAPI_CALL bvb_bridge_vkCreateXcbSurfaceKHR(
     VkInstance instance, const void *create_info,
     const VkAllocationCallbacks *allocator, VkSurfaceKHR *surface) {
-    return create_virtual_surface(instance, create_info, allocator, surface);
+    return create_virtual_surface_diagnostic(
+        "vkCreateXcbSurfaceKHR",
+        "VkInstance_value,VkXcbSurfaceCreateInfoKHR_ptr,VkAllocationCallbacks_ptr,VkSurfaceKHR_ptr",
+        instance, create_info, allocator, surface);
 }
 
 static VkResult VKAPI_CALL bvb_bridge_vkCreateWaylandSurfaceKHR(
     VkInstance instance, const void *create_info,
     const VkAllocationCallbacks *allocator, VkSurfaceKHR *surface) {
-    return create_virtual_surface(instance, create_info, allocator, surface);
+    return create_virtual_surface_diagnostic(
+        "vkCreateWaylandSurfaceKHR",
+        "VkInstance_value,VkWaylandSurfaceCreateInfoKHR_ptr,VkAllocationCallbacks_ptr,VkSurfaceKHR_ptr",
+        instance, create_info, allocator, surface);
 }
 
 static void VKAPI_CALL bvb_bridge_vkDestroySurfaceKHR(

@@ -3334,8 +3334,8 @@ proxies and diagnostic stubs for the 434 unprotected names actually resolved in
 the E011 trace. The generated source is derived from the pinned Vulkan registry,
 E011 manifest, triangle dispatch, and active E069 executable list. Of 86
 platform-protected registry names, the six resolved Xlib/Xcb/Wayland surface
-names are deliberately excluded and remain null; private and probed-null policy
-entries also remain null.
+names are deliberately excluded from generated wrapping and keep their existing
+executable pointers; private and probed-null policy entries remain null.
 
 A required-unimplemented stub records when it is invoked, not when it is
 resolved. An executable proxy records its first negative `VkResult`. Void
@@ -3369,3 +3369,38 @@ only into the final BVB Wine/DXVK process must supply the next entry and shape
 from the one diagnostic line. Resolver order is not evidence. This isolated
 commit makes no deployment, RGBW visibility, Tomb Raider invocation, benchmark,
 or FPS claim.
+
+## E079a — fail-closed atomic first-rejection correction (2026-08-21)
+
+Status: 57/57 host contracts pass; isolated host-only corrective candidate.
+The required E079a `deja` query returned no indexed implementation. This gate
+reuses E011's exact resolved-name inventory, E075a's command poison/End
+boundary, E077's exact default-off selector, and E078's per-command-buffer
+locking.
+E079a supersedes the E079 candidate for every future deployment. E079 must not
+be deployed: its non-command void stubs could return after an unsupported call,
+and its generated command stub could win the record before End supplied the
+real command-buffer poison context.
+
+Generated required `vkCmd*` void stubs now poison the actual command buffer and
+defer the only record until `vkEndCommandBuffer`; a service-backed test creates
+a non-null command buffer, invokes the `vkCmdDispatch` stub, requires End to
+fail, and verifies the sole line contains its typed ID and nonzero shared-stream
+sequence. Required non-command void stubs emit and terminate the opted-in
+diagnostic process with status 86 rather than returning as if successful.
+
+Winner ownership, counters, and the immutable output snapshot are linearized
+under one mutex. Output occurs after unlocking in exactly one non-retried
+`write(2)`, with a compile-time maximum no larger than `PIPE_BUF`; an actual
+`strace` contract checks that syscall boundary. Two simultaneous required stubs
+prove there is one complete winner. Once emitted, an atomic state skips later
+counter mutexes. Exact PFN erasure widths are statically checked.
+
+The three real protected Xlib/Xcb/Wayland surface-create paths now report a
+negative `VkResult`; a service-backed null-create-info test proves the Xlib
+case. Presentation-support booleans remain ordinary executable boolean queries
+and are never reclassified as failures. Default-off pointer identity, no
+output, private names, and probed-null policy remain unchanged. The standalone
+Termux glibc ICD builder still compiles the generator and diagnostic source.
+This is host-only diagnosis evidence: no deploy, Activity/APK, UI, Steam, X11,
+Tomb Raider, visible frame, benchmark, or FPS claim.

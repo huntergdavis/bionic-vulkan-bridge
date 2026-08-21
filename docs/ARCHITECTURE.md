@@ -237,16 +237,39 @@ returned to that process. Registry-generated exact-signature proxies count
 actual executable calls and report the first negative `VkResult`. Names that
 the E011 trace resolved but the active policy still classifies as required and
 unimplemented receive exact-signature diagnostic stubs; a stub reports only
-when the game actually invokes it, never when DXVK merely resolves it. Protected
-and private/probed-null names remain null.
+when the game actually invokes it, never when DXVK merely resolves it. Generated
+platform-protected names are skipped, so the six existing Xlib/Xcb/Wayland WSI
+entry points keep their real executable pointers; private and probed-null names
+remain null.
 
 Void command failures retain their first canonical entry, bounded shape, and
 reason on the command-buffer proxy. The diagnostic emits that record only when
 End observes the poisoned batch, including the typed command-buffer ID and
 shared-stream generation. One process emits at most one
-`BVB_FIRST_REJECTION` line; later events only advance bounded counters available
-through the host snapshot contract. With the selector absent or not exactly
+`BVB_FIRST_REJECTION` line; E079a freezes the winner snapshot and later events
+take the atomic emitted fast path. With the selector absent or not exactly
 `1`, resolvers return the original raw pointer or null and command recording
 keeps the established E075/E077 behavior. This is a diagnosis mechanism, not a
 new supported Vulkan gate: the next entry is determined only by a bounded real
 Tomb Raider invocation, not by resolver order.
+
+E079a makes that diagnostic fail closed and race-safe. A required `vkCmd*` void
+stub does not emit at the call site: it poisons the real command-buffer proxy,
+and `vkEndCommandBuffer` owns the process's sole record with the typed command
+ID, shared-stream sequence, and `end_poison=1`. A required non-command void stub
+cannot imply success by returning; after winning and emitting its record, the
+opt-in diagnostic process exits immediately with status 86. This exit applies
+only to exact-selector diagnostic runs.
+E079a therefore supersedes E079 for any deployment: the E079 candidate must not
+be deployed because a non-command void stub could return and a generated
+command stub could emit before its real command-buffer poison reached End.
+
+The first winner is selected and copied under one state mutex, then the mutex is
+released before one bounded `write(2)`. The record is capped below `PIPE_BUF`,
+is never retried, and all later calls take an atomic already-emitted fast path
+instead of the state mutex. Negative results from the three executable
+platform-surface create functions now enter the same diagnostic; their
+presentation-support `VkBool32` queries retain their real boolean meaning and
+are not treated as errors. Generated pointer erasure is guarded by an exact
+PFN-size static assertion. These changes add diagnosis only, not Vulkan support
+or a visible-frame claim.

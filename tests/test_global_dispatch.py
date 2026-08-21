@@ -22,7 +22,8 @@ def main() -> int:
             "shared-command-stream-concurrency|"
             "shared-command-stream-non-success|strict-mapped-memory|"
             "shared-mapped-memory|shared-noncoherent-memory|"
-            "shared-memory-unmap-lost-ack]"
+            "shared-memory-unmap-lost-ack|first-rejection-command|"
+            "first-rejection-wsi]"
         )
     service, client, loader = map(
         lambda value: str(pathlib.Path(value).resolve()), sys.argv[1:4]
@@ -34,6 +35,7 @@ def main() -> int:
         "shared-command-stream-non-success",
         "strict-mapped-memory", "shared-mapped-memory",
         "shared-noncoherent-memory", "shared-memory-unmap-lost-ack",
+        "first-rejection-command", "first-rejection-wsi",
     ):
         raise SystemExit(f"unsupported validation mode: {validation_mode}")
     with tempfile.TemporaryDirectory(prefix="bvb-e034-") as temporary:
@@ -50,7 +52,10 @@ def main() -> int:
         activity_frame_listener.settimeout(2.0)
         server_environment = os.environ.copy()
         server_environment["BVB_FAKE_HIDE_SWAPCHAIN"] = "1"
-        if validation_mode != "shared-command-stream-concurrency":
+        if validation_mode not in (
+            "shared-command-stream-concurrency", "first-rejection-command",
+            "first-rejection-wsi",
+        ):
             server_environment["BVB_FAKE_REQUIRE_INIT_IMAGE_COMMANDS"] = "1"
         if validation_mode == "shared-command-stream":
             server_environment["BVB_FAKE_REQUIRE_ANIMATED_WSI"] = "1"
@@ -141,7 +146,7 @@ def main() -> int:
                 environment.pop("BVB_GLOBAL_DISPATCH_HARDWARE", None)
             shared_command_stream = validation_mode.startswith(
                 "shared-command-stream"
-            )
+            ) or validation_mode == "first-rejection-command"
             if shared_command_stream:
                 environment["BVB_COMMAND_STREAM"] = "shared"
             else:
@@ -152,6 +157,8 @@ def main() -> int:
                 environment["BVB_TEST_ANIMATED_WSI"] = "1"
             if validation_mode == "shared-command-stream-concurrency":
                 environment["BVB_TEST_CONCURRENT_COMMAND_STREAMS"] = "1"
+            if validation_mode.startswith("first-rejection-"):
+                environment["BVB_FIRST_REJECTION_DIAGNOSTIC"] = "1"
 
             if validation_mode in (
                 "shared-mapped-memory", "shared-noncoherent-memory",
@@ -260,38 +267,113 @@ def main() -> int:
                     for descriptor in received_fds:
                         os.close(descriptor)
 
+            diagnostic_mode = validation_mode.startswith("first-rejection-")
+            diagnostic_wsi = validation_mode == "first-rejection-wsi"
             expected_frame_count = (
-                4 if validation_mode == "shared-command-stream" else 1
+                4 if validation_mode == "shared-command-stream" else
+                0 if validation_mode == "first-rejection-command" else 1
             )
-            sink_thread = threading.Thread(
-                target=consume_activity_frames,
-                args=(expected_frame_count,),
-                daemon=True,
-            )
-            sink_thread.start()
+            sink_thread = None
+            if not diagnostic_mode:
+                sink_thread = threading.Thread(
+                    target=consume_activity_frames,
+                    args=(expected_frame_count,),
+                    daemon=True,
+                )
+                sink_thread.start()
+            client_arguments = [client]
+            if validation_mode == "first-rejection-command":
+                client_arguments.append("command")
+            elif diagnostic_wsi:
+                client_arguments.append("wsi")
             completed = subprocess.run(
-                [client],
+                client_arguments,
                 check=False,
                 capture_output=True,
                 text=True,
                 timeout=5.0,
                 env=environment,
             )
-            sink_thread.join(timeout=5.0)
-            assert not sink_thread.is_alive()
+            if sink_thread is not None:
+                sink_thread.join(timeout=5.0)
+                assert not sink_thread.is_alive()
             if completed.returncode != 0:
                 _, service_stderr = server.communicate(timeout=5.0)
                 raise AssertionError(
                     f"{completed.stderr}service stderr: {service_stderr}"
                 )
-            if "error" in sink_result:
-                raise sink_result["error"]
-            assert len(sink_result["setup"]) == 128
-            assert sink_result["slots"] == (
-                [0, 1, 2, 0]
-                if validation_mode == "shared-command-stream"
-                else [0]
-            )
+            if sink_thread is not None:
+                if "error" in sink_result:
+                    raise sink_result["error"]
+                assert len(sink_result["setup"]) == 128
+                assert sink_result["slots"] == (
+                    [0, 1, 2, 0]
+                    if validation_mode == "shared-command-stream"
+                    else [] if validation_mode == "first-rejection-command"
+                    else [0]
+                )
+            if validation_mode.startswith("first-rejection-"):
+                records = [
+                    line for line in completed.stderr.splitlines()
+                    if line.startswith("BVB_FIRST_REJECTION ")
+                ]
+                assert len(records) == 1, completed.stderr
+                assert len(records[0].encode()) + 1 <= os.pathconf(
+                    ".", "PC_PIPE_BUF"
+                )
+                fields = dict(
+                    item.split("=", 1) for item in records[0].split()[1:]
+                )
+                assert fields["schema"] == "1"
+                if validation_mode == "first-rejection-command":
+                    assert completed.stdout.startswith(
+                        "PASS: E079a real command poison command_buffer="
+                    )
+                    assert fields["category"] == "command_poison"
+                    assert fields["entry"] == "vkCmdDispatch"
+                    assert fields["canonical"] == "vkCmdDispatch"
+                    assert fields["scope"] == "device"
+                    assert fields["reason"] == "diagnostic_stub_invoked"
+                    assert fields["result"] == str(-8)
+                    assert fields["command_poisons"] == "1"
+                    assert fields["command_end_failures"] == "1"
+                    assert int(fields["command_buffer"]) >> 56 == 11
+                    assert int(fields["command_sequence"]) > 0
+                    assert fields["end_poison"] == "1"
+                else:
+                    assert completed.stdout == (
+                        "PASS: E079a protected WSI negative VkResult recorded\n"
+                    )
+                    assert fields["category"] == "implemented_rejection"
+                    assert fields["entry"] == "vkCreateXlibSurfaceKHR"
+                    assert fields["canonical"] == "vkCreateXlibSurfaceKHR"
+                    assert fields["scope"] == "instance"
+                    assert fields["reason"] == "negative_vkresult"
+                    assert fields["result"] == str(-3)
+                    assert fields["argc"] == "4"
+                    assert fields["pointer_mask"] == "0x0000000000000008"
+                    assert fields["implemented_rejections"] == "1"
+                    assert fields["end_poison"] == "0"
+                server_stdout, server_stderr = server.communicate(timeout=5.0)
+                assert server.returncode == 0, server_stderr
+                assert server_stdout.splitlines() == [
+                    "bvb-bridge-service: activity_event=1 sequence=1 "
+                    "pid=12345 width=0 height=0",
+                    "bvb-bridge-service: activity_event=2 sequence=2 "
+                    "pid=12345 width=0 height=0",
+                    "bvb-bridge-service: activity_event=3 sequence=3 "
+                    "pid=12345 width=0 height=0",
+                    "bvb-bridge-service: activity_event=7 sequence=4 "
+                    "pid=12345 width=2800 height=1752",
+                    "bvb-bridge-service: activity_event=11 sequence=5 "
+                    "pid=12345 width=2800 height=1752",
+                    "bvb-bridge-service: activity_event=9 sequence=6 "
+                    "pid=12345 width=0 height=0",
+                ]
+                assert server_stderr == ""
+                assert not socket_path.exists()
+                print(f"PASS: E079a global validation mode={validation_mode}")
+                return 0
             assert completed.stderr == ""
             if validation_mode == "shared-memory-unmap-lost-ack":
                 assert completed.stdout == (

@@ -145,6 +145,20 @@ def target_missing_return(return_type: str) -> str:
     return f"return ({return_type})0;"
 
 
+def command_buffer_parameter(
+    name: str, return_type: str, parameters: list[dict[str, object]],
+) -> str | None:
+    if not name.startswith("vkCmd"):
+        return None
+    if (
+        return_type != "void"
+        or not parameters
+        or parameters[0]["type"] != "VkCommandBuffer"
+    ):
+        raise ValueError(f"unexpected command-buffer signature for {name}")
+    return str(parameters[0]["name"])
+
+
 def generate(
     registry: Path, manifest: Path, triangle_dispatch: Path,
     additional: Path,
@@ -207,6 +221,7 @@ def generate(
         arguments = ", ".join(str(parameter["name"]) for parameter in parameters)
         mask = pointer_mask(parameters)
         shape_value = shape(parameters)
+        command_buffer = command_buffer_parameter(name, return_type, parameters)
         lines.extend(
             [
                 f"static _Atomic(PFN_{name}) bvb_first_target_{name};",
@@ -215,17 +230,37 @@ def generate(
                 f"    PFN_{name} target = atomic_load(&bvb_first_target_{name});",
                 "    bvb_first_rejection_note_executable_invocation();",
                 "    if (target == NULL) {",
-                "        bvb_first_rejection_record(",
-                f"            \"executable_target_missing\", {c_string(name)},",
-                f"            {c_string(str(entry['canonical']))},",
-                f"            {c_string(str(entry['scope']))},",
-                "            \"diagnostic_proxy_target_missing\",",
-                "            VK_ERROR_INITIALIZATION_FAILED,",
-                f"            {len(parameters)}U, {mask}, {c_string(shape_value)},",
-                "            0U, 0U, false);",
-                f"        {target_missing_return(return_type)}",
-                "    }",
             ]
+        )
+        if return_type == "void" and command_buffer is not None:
+            lines.extend(
+                [
+                    "        bvb_global_diagnostic_poison_command(",
+                    f"            {command_buffer}, {c_string(name)},",
+                    '            "diagnostic_proxy_target_missing",',
+                    f"            {c_string(shape_value)},",
+                    "            VK_ERROR_INITIALIZATION_FAILED);",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    "        bvb_first_rejection_record(",
+                    f"            \"executable_target_missing\", {c_string(name)},",
+                    f"            {c_string(str(entry['canonical']))},",
+                    f"            {c_string(str(entry['scope']))},",
+                    "            \"diagnostic_proxy_target_missing\",",
+                    "            VK_ERROR_INITIALIZATION_FAILED,",
+                    f"            {len(parameters)}U, {mask}, {c_string(shape_value)},",
+                    "            0U, 0U, false);",
+                ]
+            )
+            if return_type == "void":
+                lines.append(
+                    "        _Exit(BVB_FIRST_REJECTION_VOID_EXIT_STATUS);"
+                )
+        lines.extend(
+            [f"        {target_missing_return(return_type)}", "    }"]
         )
         if return_type == "void":
             lines.extend([f"    target({arguments});", "}"])
@@ -257,21 +292,34 @@ def generate(
             )
             for parameter in parameters:
                 lines.append(f"    (void){parameter['name']};")
-            lines.extend(
-                [
-                    "    bvb_first_rejection_note_stub_invocation();",
-                    "    bvb_first_rejection_record(",
-                    f"        \"required_unimplemented\", {c_string(name)},",
-                    f"        {c_string(str(entry['canonical']))},",
-                    f"        {c_string(str(entry['scope']))},",
-                    "        \"diagnostic_stub_invoked\",",
-                    "        VK_ERROR_FEATURE_NOT_PRESENT,",
-                    f"        {len(parameters)}U, {mask}, {c_string(shape_value)},",
-                    "        0U, 0U, false);",
-                    f"    {zero_return(return_type)}",
-                    "}",
-                ]
-            )
+            if return_type == "void" and command_buffer is not None:
+                lines.extend(
+                    [
+                        "    bvb_global_diagnostic_poison_command(",
+                        f"        {command_buffer}, {c_string(name)},",
+                        '        "diagnostic_stub_invoked",',
+                        f"        {c_string(shape_value)},",
+                        "        VK_ERROR_FEATURE_NOT_PRESENT);",
+                        "    return;",
+                    ]
+                )
+            else:
+                lines.extend(
+                    [
+                        "    bvb_first_rejection_record_stub(",
+                        f"        {c_string(name)},",
+                        f"        {c_string(str(entry['canonical']))},",
+                        f"        {c_string(str(entry['scope']))},",
+                        f"        {len(parameters)}U, {mask}, {c_string(shape_value)});",
+                    ]
+                )
+                if return_type == "void":
+                    lines.append(
+                        "    _Exit(BVB_FIRST_REJECTION_VOID_EXIT_STATUS);"
+                    )
+                else:
+                    lines.append(f"    {zero_return(return_type)}")
+            lines.append("}")
 
     lines.append(
         "static PFN_vkVoidFunction bvb_first_generated_wrap("
@@ -285,6 +333,8 @@ def generate(
                 f"    if (scope == {SCOPES[str(entry['scope'])]} &&",
                 f"        strcmp(name, {c_string(name)}) == 0) {{",
                 f"        PFN_{name} typed = NULL;",
+                "        _Static_assert(sizeof(typed) == sizeof(raw),",
+                f"                       \"PFN erasure width mismatch: {name}\");",
                 "        memcpy(&typed, &raw, sizeof(typed));",
                 f"        atomic_store(&bvb_first_target_{name}, typed);",
                 f"        typed = bvb_first_proxy_{name};",
@@ -310,6 +360,8 @@ def generate(
                 f"        strcmp(name, {c_string(name)}) == 0) {{",
                 f"        PFN_{name} typed = bvb_first_stub_{name};",
                 "        PFN_vkVoidFunction erased = NULL;",
+                "        _Static_assert(sizeof(typed) == sizeof(erased),",
+                f"                       \"PFN erasure width mismatch: {name}\");",
                 "        memcpy(&erased, &typed, sizeof(erased));",
                 "        return erased;",
                 "    }",
