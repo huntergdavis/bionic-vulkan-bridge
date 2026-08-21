@@ -617,6 +617,18 @@ if(BUILD_TESTING)
       "$<TARGET_FILE:bvb-fake-vulkan>"
   )
   add_test(
+    NAME global-activity-harness-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_activity_harness.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/run-global-dispatch-activity-harness.py"
+      "$<TARGET_FILE:bvb-bridge-service>"
+      "$<TARGET_FILE:bvb-global-dispatch-test>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/synthetic-global-activity-harness-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-global-dispatch-glibc-termux.sh"
+  )
+  add_test(
     NAME dxvk-dispatch-policy-contract
     COMMAND
       "${Python3_EXECUTABLE}"

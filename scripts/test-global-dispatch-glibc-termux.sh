@@ -7,33 +7,22 @@ out_dir="$project_dir/out/triangle-dispatch-glibc"
 library="$out_dir/libvulkan-bvb-glibc.so"
 client="$out_dir/bvb-global-dispatch-test-glibc"
 service="$build_dir/bvb-bridge-service"
+harness="$project_dir/scripts/run-global-dispatch-activity-harness.py"
 policy_json="$out_dir/generated/bvb_dxvk_dispatch_policy.json"
 evidence="$project_dir/out/e069-current-global.json"
 vulkan_headers="$build_dir/_deps/vulkanheaders-src/include"
 runtime_parent=${TMPDIR:-$PREFIX/tmp}
-runtime_dir=
-service_pid=
 
-cleanup() {
-    if [ -n "$service_pid" ] && kill -0 "$service_pid" 2>/dev/null; then
-        kill "$service_pid" 2>/dev/null || true
-        wait "$service_pid" 2>/dev/null || true
-    fi
-    if [ -n "$runtime_dir" ] && [ -d "$runtime_dir" ] &&
-        [ ! -L "$runtime_dir" ]; then
-        case "$runtime_dir" in
-            "$runtime_parent"/bvb-e069-current-global.*) rmdir "$runtime_dir" 2>/dev/null || true ;;
-        esac
-    fi
-}
-trap cleanup EXIT HUP INT TERM
-
-for command_name in cmake file git grun gcc python readelf sha256sum; do
+for command_name in cmake file git grun gcc python3 readelf sha256sum; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         printf 'missing required command: %s\n' "$command_name" >&2
         exit 2
     fi
 done
+if [ ! -f "$harness" ] || [ ! -d "$runtime_parent" ]; then
+    printf 'global Activity harness or runtime parent is unavailable\n' >&2
+    exit 2
+fi
 
 "$project_dir/scripts/test-triangle-dispatch-glibc-termux.sh" >/dev/null
 cmake --build "$build_dir" --parallel --target bvb-bridge-service
@@ -55,45 +44,27 @@ if ! readelf -l "$service" | grep -Fq "$bionic_interpreter"; then
     exit 3
 fi
 
-runtime_dir=$(mktemp -d "$runtime_parent/bvb-e069-current-global.XXXXXX")
-case "$runtime_dir" in
-    "$runtime_parent"/bvb-e069-current-global.*) ;;
-    *) printf 'unexpected runtime directory: %s\n' "$runtime_dir" >&2; exit 3 ;;
-esac
-control_socket="$runtime_dir/bridge.sock"
 client_stdout="$out_dir/e069-current-global-client.stdout"
 client_stderr="$out_dir/e069-current-global-client.stderr"
 service_stdout="$out_dir/e069-current-global-service.stdout"
 service_stderr="$out_dir/e069-current-global-service.stderr"
+harness_result="$out_dir/e069-current-global-harness.json"
 
-"$service" --socket "$control_socket" --once \
-    >"$service_stdout" 2>"$service_stderr" &
-service_pid=$!
-ready=0
-for attempt in 1 2 3 4 5 6 7 8 9 10; do
-    if [ -S "$control_socket" ]; then
-        ready=1
-        break
-    fi
-    sleep 0.1
-done
-if [ "$ready" -ne 1 ]; then
-    printf 'bridge service did not create its control socket\n' >&2
-    exit 4
-fi
-
-BVB_BRIDGE_SOCKET="$control_socket" grun "$client" \
-    >"$client_stdout" 2>"$client_stderr"
-wait "$service_pid"
-service_pid=
-if [ -s "$client_stderr" ] || [ -s "$service_stderr" ]; then
-    printf 'E069 current-global gate emitted unexpected stderr\n' >&2
-    exit 5
-fi
+python3 "$harness" \
+    --service "$service" \
+    --runtime-parent "$runtime_parent" \
+    --width 2800 --height 1752 \
+    --service-stdout "$service_stdout" \
+    --service-stderr "$service_stderr" \
+    --client-stdout "$client_stdout" \
+    --client-stderr "$client_stderr" \
+    --result-json "$harness_result" \
+    -- grun "$client"
 
 source_commit=$(git -C "$project_dir" rev-parse HEAD)
-python - "$policy_json" "$library" "$client" "$service" \
-    "$client_stdout" "$service_stdout" "$source_commit" "$evidence" <<'PY'
+python3 - "$policy_json" "$library" "$client" "$service" \
+    "$client_stdout" "$service_stdout" "$harness_result" \
+    "$source_commit" "$evidence" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -108,11 +79,12 @@ import sys
     service_path,
     client_stdout_path,
     service_stdout_path,
+    harness_result_path,
     source_commit,
     evidence_path,
-) = [pathlib.Path(value) for value in sys.argv[1:7]] + [
-    sys.argv[7],
-    pathlib.Path(sys.argv[8]),
+) = [pathlib.Path(value) for value in sys.argv[1:8]] + [
+    sys.argv[8],
+    pathlib.Path(sys.argv[9]),
 ]
 
 
@@ -137,7 +109,7 @@ assert policy["summary"]["support_counts"] == {
 client_stdout = client_stdout_path.read_text().strip()
 match = re.fullmatch(
     r"PASS: global Vulkan discovery api=(\d+) "
-    r"exposed_extensions=0 exposed_layers=0 "
+    r"exposed_extensions=7 exposed_layers=0 "
     r"instance_one=(\d+) instance_two=(\d+) physical_device=(\d+) "
     r"device=(.*?) device_api=(\d+) driver=(\d+) vendor=(\d+) "
     r"device_id=(\d+) queues=(\d+) memory_types=(\d+) "
@@ -146,6 +118,8 @@ match = re.fullmatch(
     r"empty_submit=(-?\d+) queue_wait=(-?\d+) device_wait=(-?\d+) "
     r"command_pool=(\d+) command_buffer=(\d+) command_submit=(-?\d+) "
     r"pool_reset=(-?\d+) buffer=(\d+) memory=(\d+) memory_type=(\d+) "
+    r"image=(\d+) image_view=(\d+) image_bytes=(\d+) "
+    r"image_allocation_bytes=(\d+) image_dedicated=1,1 "
     r"mapped_bytes=(\d+) mapped_mismatches=(\d+) "
     r"fill_words=(\d+) mismatches=(\d+) fence=(\d+) fence_before=(-?\d+) "
     r"fenced_submit=(-?\d+) fence_after=(-?\d+) fence_wait=(-?\d+) "
@@ -180,6 +154,10 @@ assert match is not None, client_stdout
     buffer_text,
     memory_text,
     memory_type_text,
+    image_text,
+    image_view_text,
+    image_bytes_text,
+    image_allocation_bytes_text,
     mapped_bytes_text,
     mapped_mismatches_text,
     fill_words_text,
@@ -218,6 +196,10 @@ assert match is not None, client_stdout
     buffer,
     device_memory,
     memory_type_index,
+    image,
+    image_view,
+    image_bytes,
+    image_allocation_bytes,
     mapped_bytes,
     mapped_mismatches,
     fill_words,
@@ -255,6 +237,10 @@ assert match is not None, client_stdout
     buffer_text,
     memory_text,
     memory_type_text,
+    image_text,
+    image_view_text,
+    image_bytes_text,
+    image_allocation_bytes_text,
     mapped_bytes_text,
     mapped_mismatches_text,
     fill_words_text,
@@ -291,6 +277,10 @@ assert pool_reset_result == 0
 assert buffer == 0x1300000000000001
 assert device_memory == 0x0900000000000001
 assert 0 <= memory_type_index < memory_type_count
+assert image >> 56 == 7
+assert image_view >> 56 == 8
+assert image_bytes > 0
+assert image_allocation_bytes >= image_bytes
 assert mapped_bytes == 4096
 assert mapped_mismatches == 0
 assert fill_words == 1024
@@ -302,6 +292,21 @@ assert fence_after_result == 0
 assert fence_wait_result == 0
 assert fence_reset_result == 0
 assert fence_after_reset_result == 1
+
+harness_result = json.loads(harness_result_path.read_text())
+assert harness_result["result"] == "pass"
+assert harness_result["synthetic_activity"] is True
+assert harness_result["authenticated_activity_events"] == [1, 2, 3, 7, 11, 9]
+assert harness_result["authenticated_event_count"] == 6
+assert harness_result["requested_width"] == 2800
+assert harness_result["requested_height"] == 1752
+assert harness_result["activity_frame_setup"]["received"] is True
+assert harness_result["activity_frame_setup"]["image_count"] == 3
+assert harness_result["activity_frame_setup"]["descriptor_count"] == 4
+assert harness_result["activity_frame_setup"]["width"] == 2800
+assert harness_result["activity_frame_setup"]["height"] == 1752
+assert harness_result["visible_frame_claim"] is False
+assert harness_result["fps_claim"] is False
 
 symbols = subprocess.run(
     ["readelf", "--wide", "--dyn-syms", str(library_path)],
@@ -343,7 +348,7 @@ document = {
     "physical_device_discovery": {
         "loader_api_version": api_version,
         "loader_api_version_text": "1.4.0",
-        "exposed_extension_count": 0,
+        "exposed_extension_count": 7,
         "exposed_layer_count": 0,
         "instance_ids": [instance_one, instance_two],
         "instance_type": 1,
@@ -390,6 +395,14 @@ document = {
         "memory_type": 9,
         "memory_serial": 1,
         "selected_memory_type_index": memory_type_index,
+        "image_id": image,
+        "image_type": 7,
+        "image_view_id": image_view,
+        "image_view_type": 8,
+        "image_requirement_bytes": image_bytes,
+        "image_allocation_bytes": image_allocation_bytes,
+        "image_prefers_dedicated_allocation": True,
+        "image_requires_dedicated_allocation": True,
         "mapped_bytes": mapped_bytes,
         "mapped_mismatches": mapped_mismatches,
         "fill_word": "0xa5c3f00d",
@@ -415,12 +428,25 @@ document = {
         "service_stderr_bytes": 0,
         "service_ready": "ready socket=" in service_stdout_path.read_text(),
     },
+    "standalone_activity_harness": harness_result,
+    "virtual_wsi_client_contract": {
+        "surface_created": True,
+        "swapchain_created": True,
+        "swapchain_image_count": 3,
+        "acquire_next_image_succeeded": True,
+        "queue_present_succeeded": True,
+        "activity_received_one_time_fd_bundle": True,
+        "activity_imported_images": False,
+        "visible_frame_claim": False,
+        "fps_claim": False,
+    },
     "dynamic_exports": sorted(expected_exports),
     "artifacts": {
         "policy_summary": artifact(policy_path),
         "glibc_library": artifact(library_path),
         "glibc_client": artifact(client_path),
         "bionic_service": artifact(service_path),
+        "activity_harness_result": artifact(harness_result_path),
     },
 }
 assert document["physical_device_discovery"]["service_ready"] is True

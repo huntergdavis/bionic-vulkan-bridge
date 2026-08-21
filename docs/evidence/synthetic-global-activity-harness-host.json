@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "gate": "synthetic-global-activity-harness-host",
+  "result": "pass",
+  "service": "real bridge service with fake native Vulkan loader",
+  "client": "real global-dispatch Vulkan client",
+  "activity": "synthetic authenticated lifecycle and frame FD sink",
+  "activity_event_sequence": [1, 2, 3, 7, 11, 9],
+  "one_time_frame_setup_received": true,
+  "received_frame_fd_count": 4,
+  "activity_imported_images": false,
+  "visible_frame_claim": false,
+  "fps_claim": false
+}
