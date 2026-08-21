@@ -806,6 +806,22 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateInstance(
             return VK_ERROR_EXTENSION_NOT_PRESENT;
         }
     }
+    const char *unique_extensions[BVB_VULKAN_MAX_ENABLED_EXTENSIONS] = {0};
+    uint32_t unique_extension_count = 0U;
+    for (uint32_t index = 0U;
+         index < create_info->enabledExtensionCount; ++index) {
+        const char *name = create_info->ppEnabledExtensionNames[index];
+        bool duplicate = false;
+        for (uint32_t prior = 0U; prior < unique_extension_count; ++prior) {
+            if (strcmp(name, unique_extensions[prior]) == 0) {
+                duplicate = true;
+                break;
+            }
+        }
+        if (!duplicate) {
+            unique_extensions[unique_extension_count++] = name;
+        }
+    }
     if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
         for (uint32_t index = 0U;
              index < create_info->enabledExtensionCount; ++index) {
@@ -813,6 +829,9 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateInstance(
                     "BVB_ICD_CREATE_INSTANCE_EXTENSION index=%u name=%s\n",
                     index, create_info->ppEnabledExtensionNames[index]);
         }
+        fprintf(stderr,
+                "BVB_ICD_CREATE_INSTANCE_NORMALIZED original=%u unique=%u\n",
+                create_info->enabledExtensionCount, unique_extension_count);
     }
     struct bvb_instance_proxy *proxy = calloc(1, sizeof(*proxy));
     if (proxy == NULL) {
@@ -824,7 +843,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateInstance(
                            : create_info->pApplicationInfo->apiVersion,
         .flags = create_info->flags,
         .enabled_layer_count = create_info->enabledLayerCount,
-        .enabled_extension_count = create_info->enabledExtensionCount,
+        .enabled_extension_count = unique_extension_count,
     };
     int lock_result = pthread_mutex_lock(&bvb_global_client.mutex);
     if (lock_result != 0) {
@@ -836,13 +855,13 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateInstance(
     request.header = (struct bvb_protocol_header){
         .version = BVB_PROTOCOL_VERSION,
         .kind = BVB_PROTOCOL_REQUEST,
-        .opcode = create_info->enabledExtensionCount == 0U
+        .opcode = unique_extension_count == 0U
                       ? BVB_OPCODE_VULKAN_INSTANCE_CREATE
                       : BVB_OPCODE_VULKAN_INSTANCE_CREATE_EXTENDED,
         .request_id = next_request_id_locked(),
     };
     if (result == 0) {
-        if (create_info->enabledExtensionCount == 0U) {
+        if (unique_extension_count == 0U) {
             request.header.payload_length =
                 BVB_VULKAN_INSTANCE_CREATE_REQUEST_SIZE;
             result = bvb_protocol_encode_vulkan_instance_create_request(
@@ -851,10 +870,9 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateInstance(
             struct bvb_vulkan_instance_create_extended_request extended = {
                 .base = create_request,
             };
-            for (uint32_t index = 0U;
-                 index < create_info->enabledExtensionCount; ++index) {
-                const char *name =
-                    create_info->ppEnabledExtensionNames[index];
+            for (uint32_t index = 0U; index < unique_extension_count;
+                 ++index) {
+                const char *name = unique_extensions[index];
                 const char *terminator = memchr(
                     name, '\0', BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE);
                 const size_t length = (size_t)(terminator - name) + 1U;

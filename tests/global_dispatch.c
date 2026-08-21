@@ -131,12 +131,13 @@ int main(void) {
           VK_ERROR_EXTENSION_NOT_PRESENT);
     CHECK(instance_one == VK_NULL_HANDLE);
 
-    const char *enabled_instance_extensions[3] = {
+    const char *enabled_instance_extensions[4] = {
         extensions[0].extensionName,
         extensions[1].extensionName,
         extensions[2].extensionName,
+        extensions[0].extensionName,
     };
-    create_info.enabledExtensionCount = 3U;
+    create_info.enabledExtensionCount = 4U;
     create_info.ppEnabledExtensionNames = enabled_instance_extensions;
     const uint32_t loader_private_chain_marker = UINT32_C(0x7ffffffe);
     create_info.pNext = &loader_private_chain_marker;
