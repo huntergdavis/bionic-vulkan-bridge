@@ -65,6 +65,24 @@ int main(int argc, char **argv) {
               context, &device_request, extensions, &device,
               error, sizeof(error)) == 0);
     CHECK(device.vulkan_result == VK_SUCCESS);
+    const struct bvb_vulkan_device_queue_request queue_request = {
+        .device_id = device.device_id,
+        .queue_family_index = 0U,
+    };
+    uint64_t queue_id = 0U;
+    CHECK(bvb_vulkan_global_context_get_device_queue(
+              context, &queue_request, &queue_id,
+              error, sizeof(error)) == 0);
+    CHECK(bvb_handle_type(queue_id) == BVB_OBJECT_QUEUE);
+    const struct bvb_vulkan_semaphore_create_request semaphore_request = {
+        .device_id = device.device_id,
+        .semaphore_type = VK_SEMAPHORE_TYPE_BINARY,
+    };
+    struct bvb_vulkan_object_create_response semaphore = {0};
+    CHECK(bvb_vulkan_global_context_create_semaphore(
+              context, &semaphore_request, &semaphore,
+              error, sizeof(error)) == 0);
+    CHECK(semaphore.vulkan_result == VK_SUCCESS);
 
     const struct bvb_vulkan_swapchain_prepare_request request = {
         .device_id = device.device_id,
@@ -103,15 +121,35 @@ int main(int argc, char **argv) {
         MAP_SHARED, descriptors[response.image_count], 0U);
     CHECK(ring != MAP_FAILED);
     CHECK(bvb_wsi_frame_ring_validate(ring, request.generation) == 0);
-    uint32_t slot = UINT32_MAX;
-    uint32_t sequence = 0U;
-    CHECK(bvb_wsi_frame_ring_acquire(ring, 0U, &slot) == 0);
-    CHECK(bvb_wsi_frame_ring_present(ring, slot, &sequence) == 0);
+    const struct bvb_vulkan_swapchain_acquire_request acquire_request = {
+        .device_id = device.device_id,
+        .swapchain_id = response.swapchain_id,
+        .timeout_ns = UINT64_MAX,
+        .semaphore_id = semaphore.object_id,
+    };
+    struct bvb_vulkan_swapchain_acquire_response acquired = {0};
+    CHECK(bvb_vulkan_global_context_acquire_swapchain_image(
+              context, &acquire_request, &acquired,
+              error, sizeof(error)) == 0);
+    CHECK(acquired.vulkan_result == VK_SUCCESS);
+    const struct bvb_vulkan_swapchain_present_request present_request = {
+        .queue_id = queue_id,
+        .swapchain_id = response.swapchain_id,
+        .image_index = acquired.image_index,
+        .wait_semaphore_count = 1U,
+        .wait_semaphore_ids = {semaphore.object_id},
+    };
+    struct bvb_vulkan_swapchain_present_response presented = {0};
+    CHECK(bvb_vulkan_global_context_present_swapchain_image(
+              context, &present_request, &presented,
+              error, sizeof(error)) == 0);
+    CHECK(presented.vulkan_result == VK_SUCCESS);
     uint32_t activity_slot = UINT32_MAX;
     uint32_t activity_sequence = 0U;
     CHECK(bvb_wsi_frame_ring_wait_present(
               ring, 0U, 100U, &activity_slot, &activity_sequence) == 0);
-    CHECK(activity_slot == slot && activity_sequence == sequence);
+    CHECK(activity_slot == acquired.image_index &&
+          activity_sequence == presented.sequence);
     CHECK(bvb_wsi_frame_ring_release(
               ring, activity_slot, activity_sequence) == 0);
     CHECK(munmap(ring, BVB_WSI_FRAME_RING_REGION_BYTES) == 0);
@@ -124,6 +162,8 @@ int main(int argc, char **argv) {
     CHECK(bvb_vulkan_global_context_destroy_swapchain(
               context, response.swapchain_id, error, sizeof(error)) ==
           -ENOENT);
+    CHECK(bvb_vulkan_global_context_destroy_semaphore(
+              context, semaphore.object_id, error, sizeof(error)) == 0);
     CHECK(bvb_vulkan_global_context_destroy_device(
               context, device.device_id) == 0);
     CHECK(bvb_vulkan_global_context_destroy_instance(

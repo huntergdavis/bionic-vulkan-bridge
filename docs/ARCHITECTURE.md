@@ -127,6 +127,8 @@ page after authenticated Activity readiness. The service can relay that bundle
 once to a same-UID helper, whose authenticated Binder reply installs it in the
 Activity. The native lifecycle-gated consumer imports every image, copies or
 blits presented slots into the Android swapchain, and releases a slot only after
-its local GPU fence. The public swapchain still fails closed until game-facing
-acquire/present supplies the matching producer ownership transitions and a
-tablet run proves a visually changing frame.
+its local GPU fence. E060 adds the matching game-facing three-image swapchain,
+service-side acquire signaling, and synchronous producer ownership release
+before ring publication. Public create still fails closed without the Activity
+setup socket and exact live extent. Host contracts pass; tablet-visible changing
+pixels remain unproven.

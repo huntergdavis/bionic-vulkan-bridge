@@ -300,8 +300,8 @@ target_include_directories(
 )
 target_link_libraries(
   bvb-vulkan-client-dispatch
-  PRIVATE bvb-command-batch bvb-vulkan-discovery bvb-wire Threads::Threads
-          Vulkan::Headers
+  PRIVATE bvb-command-batch bvb-vulkan-discovery bvb-wire
+          bvb-wsi-frame-ring Threads::Threads Vulkan::Headers
 )
 target_link_options(
   bvb-vulkan-client-dispatch PRIVATE "-Wl,-Bsymbolic-functions"
@@ -496,6 +496,18 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/android/visible-host/native_main.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
+  )
+  add_test(
+    NAME virtual-swapchain-producer-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_virtual_swapchain_producer_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e060-virtual-swapchain-producer-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/decisions/0005-persistent-game-frame-ring.md"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/protocol.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
   )
 
   add_library(bvb-fake-media-ndk SHARED tests/fake_media_ndk.c)

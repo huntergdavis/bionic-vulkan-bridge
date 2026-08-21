@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import array
 import pathlib
 import socket
 import struct
@@ -24,6 +25,12 @@ def main() -> int:
             "00112233445566778899aabbccddeeff"
             "fedcba98765432100123456789abcdef"
         )
+        activity_frame_name = f"bvb-e060-global-{os.getpid()}"
+        activity_frame_listener = socket.socket(socket.AF_UNIX,
+                                                socket.SOCK_STREAM)
+        activity_frame_listener.bind("\0" + activity_frame_name)
+        activity_frame_listener.listen(1)
+        activity_frame_listener.settimeout(2.0)
         server_environment = os.environ.copy()
         server_environment["BVB_FAKE_HIDE_SWAPCHAIN"] = "1"
         server = subprocess.Popen(
@@ -37,6 +44,8 @@ def main() -> int:
                 "0",
                 "--activity-token",
                 token.hex(),
+                "--activity-frame-socket",
+                activity_frame_name,
                 "--once",
             ],
             stdout=subprocess.PIPE,
@@ -127,6 +136,21 @@ def main() -> int:
             assert f"fence={0x1200000000000001}" in completed.stdout
             assert "fence_before=1 fenced_submit=0 fence_after=0" in completed.stdout
             assert "fence_wait=0 fence_reset=0 fence_after_reset=1" in completed.stdout
+            frame_connection, _ = activity_frame_listener.accept()
+            with frame_connection:
+                setup, ancillary, _, _ = frame_connection.recvmsg(
+                    128, socket.CMSG_SPACE(4 * struct.calcsize("i"))
+                )
+            assert len(setup) == 128
+            received_fds = array.array("i")
+            for level, kind, value in ancillary:
+                if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                    received_fds.frombytes(
+                        value[: len(value) - len(value) % received_fds.itemsize]
+                    )
+            assert len(received_fds) == 4
+            for descriptor in received_fds:
+                os.close(descriptor)
             server_stdout, server_stderr = server.communicate(timeout=5.0)
             assert server.returncode == 0, server_stderr
             assert server_stdout.splitlines() == [
@@ -146,6 +170,7 @@ def main() -> int:
             assert server_stderr == ""
             assert not socket_path.exists()
         finally:
+            activity_frame_listener.close()
             if server.poll() is None:
                 server.terminate()
                 server.wait(timeout=5.0)

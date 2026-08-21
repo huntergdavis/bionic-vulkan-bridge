@@ -503,7 +503,8 @@ static VkResult VKAPI_CALL fake_get_image_format_properties2(
     VkImageFormatProperties2 *properties) {
     (void)device;
     if (info == NULL || properties == NULL ||
-        info->format != VK_FORMAT_R8G8B8A8_UNORM ||
+        (info->format != VK_FORMAT_R8G8B8A8_UNORM &&
+         info->format != VK_FORMAT_B8G8R8A8_UNORM) ||
         info->type != VK_IMAGE_TYPE_2D ||
         info->tiling != VK_IMAGE_TILING_OPTIMAL || info->usage == 0U) {
         return VK_ERROR_FORMAT_NOT_SUPPORTED;
@@ -1389,9 +1390,12 @@ static VkResult VKAPI_CALL fake_create_image(
     (void)device;
     (void)allocator;
     if (create_info == NULL || image == NULL ||
-        create_info->format != VK_FORMAT_R8G8B8A8_UNORM ||
-        create_info->extent.width != 64U ||
-        create_info->extent.height != 64U) {
+        (create_info->format != VK_FORMAT_R8G8B8A8_UNORM &&
+         create_info->format != VK_FORMAT_B8G8R8A8_UNORM) ||
+        create_info->extent.width == 0U ||
+        create_info->extent.width > 4096U ||
+        create_info->extent.height == 0U ||
+        create_info->extent.height > 4096U) {
         return VK_ERROR_FORMAT_NOT_SUPPORTED;
     }
     *image = (VkImage)(uintptr_t)UINT64_C(0xa000);
@@ -1452,8 +1456,13 @@ static VkResult VKAPI_CALL fake_allocate_command_buffers(
     const VkCommandBufferAllocateInfo *allocate_info,
     VkCommandBuffer *command_buffers) {
     (void)device;
-    (void)allocate_info;
-    command_buffers[0] = (VkCommandBuffer)(uintptr_t)0x5100U;
+    if (allocate_info == NULL || command_buffers == NULL ||
+        allocate_info->commandBufferCount == 0U)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    for (uint32_t index = 0U; index < allocate_info->commandBufferCount;
+         ++index)
+        command_buffers[index] =
+            (VkCommandBuffer)(uintptr_t)(0x5100U + index);
     return VK_SUCCESS;
 }
 
@@ -1671,6 +1680,12 @@ static VkResult VKAPI_CALL fake_reset_command_pool(
     return VK_SUCCESS;
 }
 
+static VkResult VKAPI_CALL fake_reset_command_buffer(
+    VkCommandBuffer command_buffer, VkCommandBufferResetFlags flags) {
+    (void)command_buffer;
+    return flags == 0U ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED;
+}
+
 static VkResult VKAPI_CALL fake_device_wait_idle(VkDevice device) {
     (void)device;
     if (fake_descriptor_step != 0U && fake_descriptor_step != 12U) {
@@ -1835,6 +1850,7 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkCreateCommandPool", fake_create_command_pool)
     BVB_DEVICE_MATCH("vkDestroyCommandPool", fake_destroy_command_pool)
     BVB_DEVICE_MATCH("vkResetCommandPool", fake_reset_command_pool)
+    BVB_DEVICE_MATCH("vkResetCommandBuffer", fake_reset_command_buffer)
     BVB_DEVICE_MATCH("vkAllocateCommandBuffers", fake_allocate_command_buffers)
     BVB_DEVICE_MATCH("vkFreeCommandBuffers", fake_free_command_buffers)
     BVB_DEVICE_MATCH("vkBeginCommandBuffer", fake_begin_command_buffer)

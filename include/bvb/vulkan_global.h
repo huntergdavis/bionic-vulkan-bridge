@@ -276,6 +276,16 @@ int bvb_vulkan_global_context_prepare_swapchain(
     struct bvb_vulkan_swapchain_prepare_response *response,
     int descriptors[BVB_WSI_FRAME_RING_MAX_SLOTS + 1U],
     size_t *descriptor_count, char *error, size_t error_size);
+int bvb_vulkan_global_context_acquire_swapchain_image(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_swapchain_acquire_request *request,
+    struct bvb_vulkan_swapchain_acquire_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_present_swapchain_image(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_swapchain_present_request *request,
+    struct bvb_vulkan_swapchain_present_response *response,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_destroy_swapchain(
     struct bvb_vulkan_global_context *context, uint64_t swapchain_id,
     char *error, size_t error_size);

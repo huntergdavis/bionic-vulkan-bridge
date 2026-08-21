@@ -65,11 +65,9 @@ def main() -> int:
 
     global_source = global_path.read_text()
     assert "bvb_wsi_frame_ring_fail_producer" in vulkan_global_path.read_text()
-    create_start = global_source.index("bvb_bridge_vkCreateSwapchainKHR")
-    create_end = global_source.index("bvb_bridge_vkDestroySwapchainKHR", create_start)
-    create = global_source[create_start:create_end]
-    assert "return VK_ERROR_FEATURE_NOT_PRESENT" in create
-    print("PASS: Activity frame import/consumer architecture remains fail-closed")
+    assert "BVB_OPCODE_VULKAN_SWAPCHAIN_ACQUIRE" in global_source
+    assert "BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT" in global_source
+    print("PASS: E057 Activity frame import/consumer architecture preserved")
     return 0
 
 

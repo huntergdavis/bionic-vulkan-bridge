@@ -1,71 +1,93 @@
 # Decision 0005: prepare a persistent game-to-Activity external-image ring
 
-Status: service allocation plus Activity import/copy/present implementation
-complete in source and host contracts; tablet runtime proof pending.
+Status: service allocation, Activity import/copy/present, and game-facing
+producer implementation complete in source and host contracts; tablet runtime
+proof pending.
 
 ## Context
 
-Decision 0004 exposes `VK_KHR_swapchain` as a bridge-owned extension but keeps
-`vkCreateSwapchainKHR` at `VK_ERROR_FEATURE_NOT_PRESENT` because no game frame
-can reach the installed Activity. E042 already proved a persistent external
-image plus shared futex control page, but its Activity-to-Termux direction and
-single serialized image are the reverse of game presentation.
+Decision 0004 exposed `VK_KHR_swapchain` as a bridge-owned extension but kept
+`vkCreateSwapchainKHR` unavailable until a game frame had an honest path to the
+installed Activity. E042 proved the persistent external-image/futex primitive;
+E057 implemented the Activity-side import/copy/present consumer. E060 closes
+the host-side producer path without claiming tablet-visible output.
 
 ## Decision
 
-- Allocate two to four optimal-tiling images on the game-facing native Vulkan
-  device with dedicated opaque-FD-exportable memory. These are real registered
-  `BVB_OBJECT_IMAGE` handles, not dummy swapchain handles.
+- Allocate real optimal-tiling images on the game-facing native Vulkan device
+  with dedicated opaque-FD-exportable memory. They have stable registered
+  `BVB_OBJECT_IMAGE` IDs; no dummy swapchain or image handles are allowed.
 - Add transfer-source usage internally so the Activity can copy or blit each
-  completed image into its Android swapchain without changing the game's
-  requested render usage.
+  completed image without changing the game's requested render usage.
 - Export all image-memory FDs plus one 4 KiB control-region FD in one setup
-  response. The response is available only after the service has an
-  authenticated Activity snapshot with a live window, resumed lifecycle, and
-  renderer-ready state at the requested extent.
+  response. The response is available only with an authenticated Activity
+  snapshot containing a live, resumed, renderer-ready window at the exact
+  requested extent.
 - Use a fixed-width cross-libc ring with per-slot
-  `AVAILABLE -> ACQUIRED -> PRESENTED -> AVAILABLE` ownership. Producer and
-  consumer sequences are release/acquire atomics with process-shared futex
-  wakeups. No Java, Binder, socket, or FD transfer belongs in the frame loop.
+  `AVAILABLE -> ACQUIRED -> PRESENTED -> AVAILABLE` ownership and process-shared
+  futex wakeups. No Java, Binder, socket, or FD transfer belongs in the frame
+  loop.
 - Require producer-local GPU completion before publishing `PRESENTED`, and
   Activity-local GPU completion after copy/present before releasing
   `AVAILABLE`. Shared CPU atomics never substitute for GPU synchronization.
-- Keep `vkCreateSwapchainKHR` unavailable until the installed Activity imports
-  every setup FD once and demonstrates a changing game-to-window frame. A
-  successful but invisible swapchain remains forbidden.
+- Refuse public swapchain creation unless the service was launched with the
+  authenticated Activity frame socket. Treat host success as transport
+  evidence only; do not claim visibility until a changing game frame is
+  observed on the tablet.
 
 ## Implemented boundary
 
-The service owns the native image allocations, dedicated memory, stable wire
-image IDs, ring mapping, generation, descriptor bundle, and deterministic
-teardown. The allocation bundle now has a fixed 128-byte setup envelope. A
-same-UID native socket gives it once to an `app_process` helper; the existing
-authenticated callback returns the image/control FDs through Binder to the
-Activity. Native Activity code validates the generation, maps the ring,
-recreates and imports all opaque-FD images, intersects each FD's consumer-side
-memory-type bits instead of assuming private-Turnip indices match the Android
-loader, and owns a dedicated command pool, semaphores, and fence.
+The service owns the native allocations, dedicated memory, stable wire IDs,
+ring mapping, generation, descriptor bundle, and deterministic teardown. A
+same-UID native socket gives the fixed 128-byte setup envelope and descriptors
+once to an `app_process` helper; the authenticated callback returns them
+through Binder to the Activity. Native Activity code validates the generation,
+imports every opaque-FD image, intersects consumer-side memory-type bits, and
+owns dedicated local copy/present synchronization.
 
-The consumer sleeps on the native ring, acquires an Android swapchain image,
+The E057 consumer sleeps on the ring, acquires an Android swapchain image,
 copies or blits the presented game image, submits and presents locally, waits
-for its local copy fence, and only then releases the game slot. Pause stops new
-claims; resume wakes the consumer; window/device teardown fails the ring and
-destroys every imported object. Java, Binder, socket calls, and FD transfer
-remain setup-only.
+for its local fence, and only then releases the game slot. Lifecycle teardown
+fails the ring and destroys every imported object. Java, Binder, socket calls,
+and FD transfer remain setup-only.
+
+E060 gives the game a real three-image virtual swapchain. Create returns the
+service's stable image IDs and maps the shared control page; get-images uses
+normal Vulkan enumeration semantics. Acquire uses opcode 100 to claim a slot
+and submits the external-to-game ownership reacquire before signaling the
+game's binary semaphore or fence. Present uses opcode 101, waits the game's
+binary semaphores, submits the `PRESENT_SRC_KHR -> GENERAL` and
+game-queue-to-`VK_QUEUE_FAMILY_EXTERNAL` release barrier, waits a private
+producer fence, and only then publishes `PRESENTED`. Any uncertain GPU state
+fails the ring.
+
+Supported shapes deliberately remain narrow: three backing images, RGBA8 or
+BGRA8 UNORM, one layer, exclusive sharing, opaque composite alpha, identity
+transform, FIFO present, and the exact Activity extent. Other shapes, timeline
+acquire/present semaphores, multiple swapchains per present, and foreign queues
+fail closed.
+
+## Launch wiring requirement
+
+Start the installed Activity and wait for resumed/window/renderer-ready state.
+Start `FrameTransportClient TOKEN RESULT_JSON SETUP_SOCKET` before the bridge
+service, then pass the identical abstract socket name to the service as
+`--activity-frame-socket SETUP_SOCKET`. The game-facing process must use that
+service's filesystem socket through `BVB_BRIDGE_SOCKET`. The helper, Binder
+callback, sockets, and FD transfer are setup-only; no Java/Binder call is
+allowed in acquire or present.
 
 ## Next gate
 
-Connect the game-facing virtual `vkCreateSwapchainKHR`, acquire, and present
-calls to this prepared transport. Producer present must complete its local GPU
-work, transition/release the image to `VK_IMAGE_LAYOUT_GENERAL` and
-`VK_QUEUE_FAMILY_EXTERNAL`, then publish `PRESENTED`. A tablet run must prove a
-deterministic changing frame reaches the Activity before the public swapchain
-is allowed to return success.
+Build and deploy the combined E057/E060 path with that launch wiring. A tablet
+run must prove an animated game-facing producer reaches the Activity and
+capture import/present logs plus visible evidence. Until then, the host
+contract must not be described as visible Tomb Raider output.
 
 ## Provenance
 
-The required recall query—`E042`—found the earlier four-slot shared-ring work
-and its explicit acquire/release ordering. This implementation reuses E035's
-opaque-FD allocation/import rules, E038's authenticated Activity broker,
-E041's allocation-time producer completion, E042's fixed-width shared futex
-control, and decision 0004's exact no-fake-success boundary.
+The required exact E060 recall query found no indexed implementation. A
+targeted recall recovered E035 opaque-FD allocation/import, E038 authenticated
+Activity ingress, E041 producer-local GPU completion, E042 fixed-width shared
+futex ownership, and E057 Activity-native copy/present/release. E060 reuses
+those constraints and adds no fake image or swapchain handles.

@@ -2575,6 +2575,166 @@ int bvb_protocol_decode_vulkan_swapchain_prepare_response(
     return 0;
 }
 
+int bvb_protocol_encode_vulkan_swapchain_acquire_request(
+    uint8_t output[BVB_VULKAN_SWAPCHAIN_ACQUIRE_REQUEST_SIZE],
+    const struct bvb_vulkan_swapchain_acquire_request *request) {
+    if (output == NULL || request == NULL ||
+        !wire_id_is_type(request->device_id, BVB_OBJECT_DEVICE) ||
+        !wire_id_is_type(request->swapchain_id, BVB_OBJECT_SWAPCHAIN) ||
+        (request->semaphore_id == 0U && request->fence_id == 0U) ||
+        (request->semaphore_id != 0U &&
+         !wire_id_is_type(request->semaphore_id, BVB_OBJECT_SEMAPHORE)) ||
+        (request->fence_id != 0U &&
+         !wire_id_is_type(request->fence_id, BVB_OBJECT_FENCE))) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_SWAPCHAIN_ACQUIRE_REQUEST_SIZE);
+    bvb_wire_put_u64(output, request->device_id);
+    bvb_wire_put_u64(output + 8, request->swapchain_id);
+    bvb_wire_put_u64(output + 16, request->timeout_ns);
+    bvb_wire_put_u64(output + 24, request->semaphore_id);
+    bvb_wire_put_u64(output + 32, request->fence_id);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_swapchain_acquire_request(
+    const uint8_t input[BVB_VULKAN_SWAPCHAIN_ACQUIRE_REQUEST_SIZE],
+    struct bvb_vulkan_swapchain_acquire_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    const struct bvb_vulkan_swapchain_acquire_request decoded = {
+        .device_id = bvb_wire_get_u64(input),
+        .swapchain_id = bvb_wire_get_u64(input + 8),
+        .timeout_ns = bvb_wire_get_u64(input + 16),
+        .semaphore_id = bvb_wire_get_u64(input + 24),
+        .fence_id = bvb_wire_get_u64(input + 32),
+    };
+    uint8_t validation[BVB_VULKAN_SWAPCHAIN_ACQUIRE_REQUEST_SIZE];
+    if (bvb_protocol_encode_vulkan_swapchain_acquire_request(
+            validation, &decoded) != 0) return -EPROTO;
+    *request = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_swapchain_acquire_response(
+    uint8_t output[BVB_VULKAN_SWAPCHAIN_ACQUIRE_RESPONSE_SIZE],
+    const struct bvb_vulkan_swapchain_acquire_response *response) {
+    if (output == NULL || response == NULL ||
+        (response->vulkan_result == 0 &&
+         response->image_index >= BVB_WSI_FRAME_RING_MAX_SLOTS) ||
+        (response->vulkan_result != 0 &&
+         response->image_index != 0U)) return -EINVAL;
+    bvb_wire_put_i32(output, response->vulkan_result);
+    bvb_wire_put_u32(output + 4, response->image_index);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_swapchain_acquire_response(
+    const uint8_t input[BVB_VULKAN_SWAPCHAIN_ACQUIRE_RESPONSE_SIZE],
+    struct bvb_vulkan_swapchain_acquire_response *response) {
+    if (input == NULL || response == NULL) return -EINVAL;
+    const struct bvb_vulkan_swapchain_acquire_response decoded = {
+        .vulkan_result = bvb_wire_get_i32(input),
+        .image_index = bvb_wire_get_u32(input + 4),
+    };
+    uint8_t validation[BVB_VULKAN_SWAPCHAIN_ACQUIRE_RESPONSE_SIZE];
+    if (bvb_protocol_encode_vulkan_swapchain_acquire_response(
+            validation, &decoded) != 0) return -EPROTO;
+    *response = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_swapchain_present_request(
+    uint8_t output[BVB_VULKAN_SWAPCHAIN_PRESENT_MAX_SIZE],
+    const struct bvb_vulkan_swapchain_present_request *request,
+    uint32_t *output_length) {
+    if (output == NULL || request == NULL || output_length == NULL ||
+        !wire_id_is_type(request->queue_id, BVB_OBJECT_QUEUE) ||
+        !wire_id_is_type(request->swapchain_id, BVB_OBJECT_SWAPCHAIN) ||
+        request->image_index >= BVB_WSI_FRAME_RING_MAX_SLOTS ||
+        request->wait_semaphore_count >
+            BVB_VULKAN_MAX_PRESENT_WAIT_SEMAPHORES ||
+        request->flags != 0U) return -EINVAL;
+    for (uint32_t index = 0U; index < request->wait_semaphore_count; ++index) {
+        if (!wire_id_is_type(request->wait_semaphore_ids[index],
+                             BVB_OBJECT_SEMAPHORE)) return -EINVAL;
+    }
+    const uint32_t length = BVB_VULKAN_SWAPCHAIN_PRESENT_PREFIX_SIZE +
+        request->wait_semaphore_count * sizeof(uint64_t);
+    memset(output, 0, length);
+    bvb_wire_put_u64(output, request->queue_id);
+    bvb_wire_put_u64(output + 8, request->swapchain_id);
+    bvb_wire_put_u32(output + 16, request->image_index);
+    bvb_wire_put_u32(output + 20, request->wait_semaphore_count);
+    bvb_wire_put_u32(output + 24, request->flags);
+    for (uint32_t index = 0U; index < request->wait_semaphore_count; ++index) {
+        bvb_wire_put_u64(output + BVB_VULKAN_SWAPCHAIN_PRESENT_PREFIX_SIZE +
+                             index * sizeof(uint64_t),
+                         request->wait_semaphore_ids[index]);
+    }
+    *output_length = length;
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_swapchain_present_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_swapchain_present_request *request) {
+    if (input == NULL || request == NULL ||
+        input_length < BVB_VULKAN_SWAPCHAIN_PRESENT_PREFIX_SIZE ||
+        bvb_wire_get_u32(input + 28) != 0U) return -EINVAL;
+    struct bvb_vulkan_swapchain_present_request decoded = {
+        .queue_id = bvb_wire_get_u64(input),
+        .swapchain_id = bvb_wire_get_u64(input + 8),
+        .image_index = bvb_wire_get_u32(input + 16),
+        .wait_semaphore_count = bvb_wire_get_u32(input + 20),
+        .flags = bvb_wire_get_u32(input + 24),
+    };
+    if (decoded.wait_semaphore_count >
+            BVB_VULKAN_MAX_PRESENT_WAIT_SEMAPHORES ||
+        input_length != BVB_VULKAN_SWAPCHAIN_PRESENT_PREFIX_SIZE +
+                            decoded.wait_semaphore_count * sizeof(uint64_t)) {
+        return -EPROTO;
+    }
+    for (uint32_t index = 0U; index < decoded.wait_semaphore_count; ++index) {
+        decoded.wait_semaphore_ids[index] = bvb_wire_get_u64(
+            input + BVB_VULKAN_SWAPCHAIN_PRESENT_PREFIX_SIZE +
+            index * sizeof(uint64_t));
+    }
+    uint8_t validation[BVB_VULKAN_SWAPCHAIN_PRESENT_MAX_SIZE];
+    uint32_t validation_length = 0U;
+    if (bvb_protocol_encode_vulkan_swapchain_present_request(
+            validation, &decoded, &validation_length) != 0 ||
+        validation_length != input_length) return -EPROTO;
+    *request = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_swapchain_present_response(
+    uint8_t output[BVB_VULKAN_SWAPCHAIN_PRESENT_RESPONSE_SIZE],
+    const struct bvb_vulkan_swapchain_present_response *response) {
+    if (output == NULL || response == NULL ||
+        (response->vulkan_result == 0 && response->sequence == 0U) ||
+        (response->vulkan_result != 0 && response->sequence != 0U))
+        return -EINVAL;
+    bvb_wire_put_i32(output, response->vulkan_result);
+    bvb_wire_put_u32(output + 4, response->sequence);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_swapchain_present_response(
+    const uint8_t input[BVB_VULKAN_SWAPCHAIN_PRESENT_RESPONSE_SIZE],
+    struct bvb_vulkan_swapchain_present_response *response) {
+    if (input == NULL || response == NULL) return -EINVAL;
+    const struct bvb_vulkan_swapchain_present_response decoded = {
+        .vulkan_result = bvb_wire_get_i32(input),
+        .sequence = bvb_wire_get_u32(input + 4),
+    };
+    uint8_t validation[BVB_VULKAN_SWAPCHAIN_PRESENT_RESPONSE_SIZE];
+    if (bvb_protocol_encode_vulkan_swapchain_present_response(
+            validation, &decoded) != 0) return -EPROTO;
+    *response = decoded;
+    return 0;
+}
+
 static int validate_memory_io_request(
     const struct bvb_vulkan_memory_io_request *request) {
     return request != NULL && wire_id_is_type(request->memory_id, 9U) &&

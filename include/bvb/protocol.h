@@ -95,7 +95,9 @@ enum {
     BVB_OPCODE_VULKAN_SEMAPHORE_WAIT = 83,
     BVB_OPCODE_VULKAN_SEMAPHORE_SIGNAL = 84,
     BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2 = 85,
-    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2,
+    BVB_OPCODE_VULKAN_SWAPCHAIN_ACQUIRE = 100,
+    BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT = 101,
+    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -191,6 +193,14 @@ enum {
     BVB_VULKAN_SWAPCHAIN_PREPARE_RESPONSE_SIZE =
         32 + BVB_WSI_FRAME_RING_MAX_SLOTS *
                  BVB_VULKAN_SWAPCHAIN_IMAGE_RECORD_SIZE,
+    BVB_VULKAN_SWAPCHAIN_ACQUIRE_REQUEST_SIZE = 40,
+    BVB_VULKAN_SWAPCHAIN_ACQUIRE_RESPONSE_SIZE = 8,
+    BVB_VULKAN_SWAPCHAIN_PRESENT_PREFIX_SIZE = 32,
+    BVB_VULKAN_MAX_PRESENT_WAIT_SEMAPHORES = 16,
+    BVB_VULKAN_SWAPCHAIN_PRESENT_MAX_SIZE =
+        BVB_VULKAN_SWAPCHAIN_PRESENT_PREFIX_SIZE +
+        BVB_VULKAN_MAX_PRESENT_WAIT_SEMAPHORES * sizeof(uint64_t),
+    BVB_VULKAN_SWAPCHAIN_PRESENT_RESPONSE_SIZE = 8,
     BVB_VULKAN_MEMORY_IO_MAX_BYTES =
         BVB_PROTOCOL_MAX_PAYLOAD - BVB_VULKAN_MEMORY_IO_PREFIX_SIZE,
     BVB_VULKAN_PHYSICAL_DEVICES_PREFIX_SIZE = 8,
@@ -296,6 +306,33 @@ struct bvb_vulkan_swapchain_prepare_response {
     uint32_t control_region_bytes;
     struct bvb_vulkan_swapchain_image_record
         images[BVB_WSI_FRAME_RING_MAX_SLOTS];
+};
+
+struct bvb_vulkan_swapchain_acquire_request {
+    uint64_t device_id;
+    uint64_t swapchain_id;
+    uint64_t timeout_ns;
+    uint64_t semaphore_id;
+    uint64_t fence_id;
+};
+
+struct bvb_vulkan_swapchain_acquire_response {
+    int32_t vulkan_result;
+    uint32_t image_index;
+};
+
+struct bvb_vulkan_swapchain_present_request {
+    uint64_t queue_id;
+    uint64_t swapchain_id;
+    uint32_t image_index;
+    uint32_t wait_semaphore_count;
+    uint32_t flags;
+    uint64_t wait_semaphore_ids[BVB_VULKAN_MAX_PRESENT_WAIT_SEMAPHORES];
+};
+
+struct bvb_vulkan_swapchain_present_response {
+    int32_t vulkan_result;
+    uint32_t sequence;
 };
 
 struct bvb_shared_batch_setup {
@@ -731,6 +768,31 @@ int bvb_protocol_encode_vulkan_swapchain_prepare_response(
 int bvb_protocol_decode_vulkan_swapchain_prepare_response(
     const uint8_t input[BVB_VULKAN_SWAPCHAIN_PREPARE_RESPONSE_SIZE],
     struct bvb_vulkan_swapchain_prepare_response *response);
+int bvb_protocol_encode_vulkan_swapchain_acquire_request(
+    uint8_t output[BVB_VULKAN_SWAPCHAIN_ACQUIRE_REQUEST_SIZE],
+    const struct bvb_vulkan_swapchain_acquire_request *request);
+int bvb_protocol_decode_vulkan_swapchain_acquire_request(
+    const uint8_t input[BVB_VULKAN_SWAPCHAIN_ACQUIRE_REQUEST_SIZE],
+    struct bvb_vulkan_swapchain_acquire_request *request);
+int bvb_protocol_encode_vulkan_swapchain_acquire_response(
+    uint8_t output[BVB_VULKAN_SWAPCHAIN_ACQUIRE_RESPONSE_SIZE],
+    const struct bvb_vulkan_swapchain_acquire_response *response);
+int bvb_protocol_decode_vulkan_swapchain_acquire_response(
+    const uint8_t input[BVB_VULKAN_SWAPCHAIN_ACQUIRE_RESPONSE_SIZE],
+    struct bvb_vulkan_swapchain_acquire_response *response);
+int bvb_protocol_encode_vulkan_swapchain_present_request(
+    uint8_t output[BVB_VULKAN_SWAPCHAIN_PRESENT_MAX_SIZE],
+    const struct bvb_vulkan_swapchain_present_request *request,
+    uint32_t *output_length);
+int bvb_protocol_decode_vulkan_swapchain_present_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_swapchain_present_request *request);
+int bvb_protocol_encode_vulkan_swapchain_present_response(
+    uint8_t output[BVB_VULKAN_SWAPCHAIN_PRESENT_RESPONSE_SIZE],
+    const struct bvb_vulkan_swapchain_present_response *response);
+int bvb_protocol_decode_vulkan_swapchain_present_response(
+    const uint8_t input[BVB_VULKAN_SWAPCHAIN_PRESENT_RESPONSE_SIZE],
+    struct bvb_vulkan_swapchain_present_response *response);
 int bvb_protocol_encode_vulkan_caps(
     uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
     const struct bvb_vulkan_caps *caps,

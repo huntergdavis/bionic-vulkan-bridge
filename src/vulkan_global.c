@@ -47,6 +47,11 @@ struct bvb_memory_metadata {
     uint32_t property_flags;
 };
 
+struct bvb_semaphore_metadata {
+    uint64_t semaphore_id;
+    VkSemaphoreType type;
+};
+
 struct bvb_swapchain_metadata {
     uint64_t swapchain_id;
     uint64_t device_id;
@@ -58,6 +63,13 @@ struct bvb_swapchain_metadata {
     VkDeviceMemory memories[BVB_WSI_FRAME_RING_MAX_SLOTS];
     uint64_t allocation_sizes[BVB_WSI_FRAME_RING_MAX_SLOTS];
     uint32_t memory_type_indices[BVB_WSI_FRAME_RING_MAX_SLOTS];
+    uint32_t queue_family_index;
+    VkQueue producer_queue;
+    VkCommandPool producer_command_pool;
+    VkCommandBuffer acquire_commands[BVB_WSI_FRAME_RING_MAX_SLOTS];
+    VkCommandBuffer present_commands[BVB_WSI_FRAME_RING_MAX_SLOTS];
+    VkFence present_completion;
+    bool presented_once[BVB_WSI_FRAME_RING_MAX_SLOTS];
     int control_fd;
     struct bvb_wsi_frame_ring *control;
 };
@@ -92,6 +104,8 @@ struct bvb_vulkan_global_context {
     uint64_t next_pipeline_layout_serial;
     struct bvb_device_metadata device_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_memory_metadata memory_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
+    struct bvb_semaphore_metadata
+        semaphore_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_swapchain_metadata
         swapchain_metadata[BVB_WSI_FRAME_RING_MAX_SLOTS];
 };
@@ -524,7 +538,7 @@ int bvb_vulkan_global_context_create_instance(
     VkResult result = context->create_instance(&create_info, NULL, &instance);
     if (result != VK_SUCCESS) {
         response->vulkan_result = result;
-        return 0;
+        return -EIO;
     }
     if (context->destroy_instance == NULL) {
         context->destroy_instance =
@@ -661,7 +675,7 @@ int bvb_vulkan_global_context_enumerate_physical_devices(
     VkResult result = enumerate_devices(instance, &count, NULL);
     if (result != VK_SUCCESS) {
         devices->vulkan_result = result;
-        return 0;
+        return -EIO;
     }
     if (count > BVB_VULKAN_MAX_PHYSICAL_DEVICES) {
         set_error(error, error_size,
@@ -3545,6 +3559,19 @@ int bvb_vulkan_global_context_reset_fence(
     return 0;
 }
 
+static struct bvb_semaphore_metadata *semaphore_metadata_slot(
+    struct bvb_vulkan_global_context *context, uint64_t semaphore_id) {
+    struct bvb_semaphore_metadata *empty = NULL;
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        struct bvb_semaphore_metadata *metadata =
+            &context->semaphore_metadata[index];
+        if (metadata->semaphore_id == semaphore_id && semaphore_id != 0U)
+            return metadata;
+        if (metadata->semaphore_id == 0U && empty == NULL) empty = metadata;
+    }
+    return empty;
+}
+
 int bvb_vulkan_global_context_create_semaphore(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_semaphore_create_request *request,
@@ -3559,6 +3586,12 @@ int bvb_vulkan_global_context_create_semaphore(
         (request->semaphore_type == VK_SEMAPHORE_TYPE_BINARY &&
          request->initial_value != 0U)) {
         response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    struct bvb_semaphore_metadata *metadata =
+        semaphore_metadata_slot(context, 0U);
+    if (metadata == NULL) {
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
         return 0;
     }
     uint64_t device_bits = 0U;
@@ -3598,6 +3631,10 @@ int bvb_vulkan_global_context_create_semaphore(
         response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
         return 0;
     }
+    *metadata = (struct bvb_semaphore_metadata){
+        .semaphore_id = wire_id,
+        .type = (VkSemaphoreType)request->semaphore_type,
+    };
     response->object_id = wire_id;
     return 0;
 }
@@ -3618,8 +3655,13 @@ int bvb_vulkan_global_context_destroy_semaphore(
     if (destroy == NULL) return -ENOSYS;
     result = bvb_handle_table_remove(
         &context->objects, semaphore_id, BVB_OBJECT_SEMAPHORE, NULL);
-    if (result == 0)
+    if (result == 0) {
         destroy(device, semaphore_from_bits(semaphore_bits), NULL);
+        struct bvb_semaphore_metadata *metadata =
+            semaphore_metadata_slot(context, semaphore_id);
+        if (metadata != NULL && metadata->semaphore_id == semaphore_id)
+            *metadata = (struct bvb_semaphore_metadata){0};
+    }
     return result;
 }
 
@@ -3909,18 +3951,41 @@ static int destroy_swapchain_metadata(
     if (context == NULL || metadata == NULL) return -EINVAL;
     PFN_vkDestroyImage destroy_image = NULL;
     PFN_vkFreeMemory free_memory = NULL;
+    PFN_vkDeviceWaitIdle wait_idle = NULL;
+    PFN_vkDestroyFence destroy_fence = NULL;
+    PFN_vkDestroyCommandPool destroy_command_pool = NULL;
     if (metadata->device != VK_NULL_HANDLE &&
         context->get_device_proc_addr != NULL) {
         destroy_image = (PFN_vkDestroyImage)context->get_device_proc_addr(
             metadata->device, "vkDestroyImage");
         free_memory = (PFN_vkFreeMemory)context->get_device_proc_addr(
             metadata->device, "vkFreeMemory");
+        wait_idle = (PFN_vkDeviceWaitIdle)context->get_device_proc_addr(
+            metadata->device, "vkDeviceWaitIdle");
+        destroy_fence = (PFN_vkDestroyFence)context->get_device_proc_addr(
+            metadata->device, "vkDestroyFence");
+        destroy_command_pool =
+            (PFN_vkDestroyCommandPool)context->get_device_proc_addr(
+                metadata->device, "vkDestroyCommandPool");
     }
     int status = 0;
     if (metadata->control != NULL && metadata->control != MAP_FAILED) {
         const int failed =
             bvb_wsi_frame_ring_fail_producer(metadata->control, -EPIPE);
         if (failed != 0 && status == 0) status = failed;
+    }
+    if (wait_idle != NULL) {
+        const VkResult waited = wait_idle(metadata->device);
+        if (waited != VK_SUCCESS && status == 0) status = -EIO;
+    }
+    if (metadata->present_completion != VK_NULL_HANDLE &&
+        destroy_fence != NULL) {
+        destroy_fence(metadata->device, metadata->present_completion, NULL);
+    }
+    if (metadata->producer_command_pool != VK_NULL_HANDLE &&
+        destroy_command_pool != NULL) {
+        destroy_command_pool(metadata->device,
+                             metadata->producer_command_pool, NULL);
     }
     for (uint32_t index = 0U; index < metadata->image_count; ++index) {
         if (metadata->image_ids[index] != 0U) {
@@ -3991,6 +4056,88 @@ static int choose_swapchain_memory_type(
         }
     }
     return found ? 0 : -ENODEV;
+}
+
+static int create_swapchain_producer_resources(
+    struct bvb_vulkan_global_context *context,
+    struct bvb_swapchain_metadata *metadata, char *error,
+    size_t error_size) {
+    struct bvb_device_metadata *device_metadata =
+        device_metadata_slot(context, metadata->device_id);
+    if (device_metadata == NULL ||
+        device_metadata->device_id != metadata->device_id ||
+        device_metadata->queue_create_info_count == 0U ||
+        device_metadata->queue_create_infos[0].queue_count == 0U) {
+        set_error(error, error_size, "swapchain device has no producer queue");
+        return -ENODEV;
+    }
+    metadata->queue_family_index =
+        device_metadata->queue_create_infos[0].queue_family_index;
+    PFN_vkGetDeviceQueue get_queue =
+        (PFN_vkGetDeviceQueue)context->get_device_proc_addr(
+            metadata->device, "vkGetDeviceQueue");
+    PFN_vkCreateCommandPool create_pool =
+        (PFN_vkCreateCommandPool)context->get_device_proc_addr(
+            metadata->device, "vkCreateCommandPool");
+    PFN_vkAllocateCommandBuffers allocate_commands =
+        (PFN_vkAllocateCommandBuffers)context->get_device_proc_addr(
+            metadata->device, "vkAllocateCommandBuffers");
+    PFN_vkCreateFence create_fence =
+        (PFN_vkCreateFence)context->get_device_proc_addr(
+            metadata->device, "vkCreateFence");
+    if (get_queue == NULL || create_pool == NULL ||
+        allocate_commands == NULL || create_fence == NULL) {
+        set_error(error, error_size,
+                  "device lacks producer synchronization entry points");
+        return -ENOSYS;
+    }
+    get_queue(metadata->device, metadata->queue_family_index, 0U,
+              &metadata->producer_queue);
+    if (metadata->producer_queue == VK_NULL_HANDLE) {
+        set_error(error, error_size, "producer queue resolution failed");
+        return -ENODEV;
+    }
+    const VkCommandPoolCreateInfo pool_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT |
+                 VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+        .queueFamilyIndex = metadata->queue_family_index,
+    };
+    VkResult result = create_pool(metadata->device, &pool_info, NULL,
+                                  &metadata->producer_command_pool);
+    if (result != VK_SUCCESS) {
+        set_error(error, error_size, "producer command-pool create: %d",
+                  (int)result);
+        return 0;
+    }
+    VkCommandBuffer commands[2U * BVB_WSI_FRAME_RING_MAX_SLOTS] = {0};
+    const VkCommandBufferAllocateInfo allocation_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = metadata->producer_command_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 2U * metadata->image_count,
+    };
+    result = allocate_commands(metadata->device, &allocation_info, commands);
+    if (result == VK_SUCCESS) {
+        for (uint32_t index = 0U; index < metadata->image_count; ++index) {
+            metadata->acquire_commands[index] = commands[index];
+            metadata->present_commands[index] =
+                commands[metadata->image_count + index];
+        }
+    }
+    const VkFenceCreateInfo fence_info = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+    };
+    if (result == VK_SUCCESS) {
+        result = create_fence(metadata->device, &fence_info, NULL,
+                              &metadata->present_completion);
+    }
+    if (result != VK_SUCCESS) {
+        set_error(error, error_size, "producer synchronization create: %d",
+                  (int)result);
+        return 0;
+    }
+    return 0;
 }
 
 int bvb_vulkan_global_context_prepare_swapchain(
@@ -4140,6 +4287,12 @@ int bvb_vulkan_global_context_prepare_swapchain(
         (void)destroy_swapchain_metadata(context, metadata);
         return status;
     }
+    status = create_swapchain_producer_resources(
+        context, metadata, error, error_size);
+    if (status != 0) {
+        (void)destroy_swapchain_metadata(context, metadata);
+        return status;
+    }
     const VkExternalMemoryImageCreateInfo external_image_info = {
         .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
         .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
@@ -4261,6 +4414,285 @@ int bvb_vulkan_global_context_prepare_swapchain(
         };
     }
     *descriptor_count = (size_t)metadata->image_count + 1U;
+    return 0;
+}
+
+static int resolve_binary_semaphore(
+    struct bvb_vulkan_global_context *context, uint64_t semaphore_id,
+    uint64_t device_id, VkSemaphore *semaphore) {
+    if (semaphore == NULL || semaphore_id == 0U) return -EINVAL;
+    struct bvb_semaphore_metadata *metadata =
+        semaphore_metadata_slot(context, semaphore_id);
+    if (metadata == NULL || metadata->semaphore_id != semaphore_id ||
+        metadata->type != VK_SEMAPHORE_TYPE_BINARY) return -ENOTSUP;
+    uint64_t parent_id = 0U;
+    uint64_t native_bits = 0U;
+    const int status = bvb_handle_table_lookup(
+        &context->objects, semaphore_id, BVB_OBJECT_SEMAPHORE,
+        &parent_id, &native_bits);
+    if (status != 0 || parent_id != device_id)
+        return status != 0 ? status : -EPROTO;
+    *semaphore = semaphore_from_bits(native_bits);
+    return 0;
+}
+
+static int resolve_fence(
+    struct bvb_vulkan_global_context *context, uint64_t fence_id,
+    uint64_t device_id, VkFence *fence) {
+    if (fence == NULL || fence_id == 0U) return -EINVAL;
+    uint64_t parent_id = 0U;
+    uint64_t native_bits = 0U;
+    const int status = bvb_handle_table_lookup(
+        &context->objects, fence_id, BVB_OBJECT_FENCE,
+        &parent_id, &native_bits);
+    if (status != 0 || parent_id != device_id)
+        return status != 0 ? status : -EPROTO;
+    *fence = fence_from_bits(native_bits);
+    return 0;
+}
+
+static VkResult ring_acquire_result(int status) {
+    if (status == 0) return VK_SUCCESS;
+    if (status == -EAGAIN) return VK_NOT_READY;
+    if (status == -ETIMEDOUT) return VK_TIMEOUT;
+    return VK_ERROR_SURFACE_LOST_KHR;
+}
+
+static int acquire_ring_slot(struct bvb_wsi_frame_ring *ring,
+                             uint64_t timeout_ns, uint32_t *slot) {
+    if (timeout_ns == 0U)
+        return bvb_wsi_frame_ring_acquire(ring, 0U, slot);
+    if (timeout_ns == UINT64_MAX) {
+        int status = 0;
+        do {
+            status = bvb_wsi_frame_ring_acquire(ring, UINT32_MAX, slot);
+        } while (status == -ETIMEDOUT);
+        return status;
+    }
+    uint64_t timeout_ms = timeout_ns / UINT64_C(1000000);
+    if (timeout_ns % UINT64_C(1000000) != 0U) ++timeout_ms;
+    if (timeout_ms == 0U) timeout_ms = 1U;
+    if (timeout_ms > UINT32_MAX) timeout_ms = UINT32_MAX;
+    return bvb_wsi_frame_ring_acquire(ring, (uint32_t)timeout_ms, slot);
+}
+
+static VkResult record_swapchain_barrier(
+    struct bvb_vulkan_global_context *context,
+    struct bvb_swapchain_metadata *metadata, uint32_t image_index,
+    bool acquire_from_external) {
+    PFN_vkResetCommandBuffer reset =
+        (PFN_vkResetCommandBuffer)context->get_device_proc_addr(
+            metadata->device, "vkResetCommandBuffer");
+    PFN_vkBeginCommandBuffer begin =
+        (PFN_vkBeginCommandBuffer)context->get_device_proc_addr(
+            metadata->device, "vkBeginCommandBuffer");
+    PFN_vkEndCommandBuffer end =
+        (PFN_vkEndCommandBuffer)context->get_device_proc_addr(
+            metadata->device, "vkEndCommandBuffer");
+    PFN_vkCmdPipelineBarrier barrier =
+        (PFN_vkCmdPipelineBarrier)context->get_device_proc_addr(
+            metadata->device, "vkCmdPipelineBarrier");
+    if (reset == NULL || begin == NULL || end == NULL || barrier == NULL)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    VkCommandBuffer command = acquire_from_external
+        ? metadata->acquire_commands[image_index]
+        : metadata->present_commands[image_index];
+    VkResult result = reset(command, 0U);
+    const VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    if (result == VK_SUCCESS) result = begin(command, &begin_info);
+    const bool needs_barrier =
+        !acquire_from_external || metadata->presented_once[image_index];
+    if (result == VK_SUCCESS && needs_barrier) {
+        const VkImageMemoryBarrier image_barrier = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = acquire_from_external
+                ? VK_ACCESS_MEMORY_READ_BIT : VK_ACCESS_MEMORY_WRITE_BIT,
+            .dstAccessMask = acquire_from_external
+                ? VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT : 0U,
+            .oldLayout = acquire_from_external
+                ? VK_IMAGE_LAYOUT_GENERAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            .newLayout = acquire_from_external
+                ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR : VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex = acquire_from_external
+                ? VK_QUEUE_FAMILY_EXTERNAL : metadata->queue_family_index,
+            .dstQueueFamilyIndex = acquire_from_external
+                ? metadata->queue_family_index : VK_QUEUE_FAMILY_EXTERNAL,
+            .image = metadata->images[image_index],
+            .subresourceRange = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0U,
+                .levelCount = 1U,
+                .baseArrayLayer = 0U,
+                .layerCount = 1U,
+            },
+        };
+        barrier(command,
+                acquire_from_external ? VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
+                                      : VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                acquire_from_external ? VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
+                                      : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                0U, 0U, NULL, 0U, NULL, 1U, &image_barrier);
+    }
+    if (result == VK_SUCCESS) result = end(command);
+    return result;
+}
+
+int bvb_vulkan_global_context_acquire_swapchain_image(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_swapchain_acquire_request *request,
+    struct bvb_vulkan_swapchain_acquire_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL) return -EINVAL;
+    *response = (struct bvb_vulkan_swapchain_acquire_response){
+        .vulkan_result = VK_ERROR_INITIALIZATION_FAILED,
+    };
+    struct bvb_swapchain_metadata *metadata =
+        swapchain_metadata_slot(context, request->swapchain_id);
+    if (metadata == NULL || metadata->swapchain_id != request->swapchain_id ||
+        metadata->device_id != request->device_id) return -ENOENT;
+    VkSemaphore semaphore = VK_NULL_HANDLE;
+    VkFence fence = VK_NULL_HANDLE;
+    int status = request->semaphore_id == 0U ? 0 :
+        resolve_binary_semaphore(context, request->semaphore_id,
+                                 request->device_id, &semaphore);
+    if (status == 0 && request->fence_id != 0U)
+        status = resolve_fence(context, request->fence_id,
+                               request->device_id, &fence);
+    if (status != 0) {
+        response->vulkan_result = status == -ENOTSUP
+            ? VK_ERROR_FEATURE_NOT_PRESENT : VK_ERROR_INITIALIZATION_FAILED;
+        return 0;
+    }
+    uint32_t image_index = 0U;
+    status = acquire_ring_slot(metadata->control, request->timeout_ns,
+                               &image_index);
+    response->vulkan_result = ring_acquire_result(status);
+    if (status != 0) return 0;
+    VkResult result = record_swapchain_barrier(
+        context, metadata, image_index, true);
+    PFN_vkQueueSubmit submit =
+        (PFN_vkQueueSubmit)context->get_device_proc_addr(
+            metadata->device, "vkQueueSubmit");
+    if (result == VK_SUCCESS && submit == NULL)
+        result = VK_ERROR_FEATURE_NOT_PRESENT;
+    const VkSubmitInfo submit_info = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1U,
+        .pCommandBuffers = &metadata->acquire_commands[image_index],
+        .signalSemaphoreCount = semaphore == VK_NULL_HANDLE ? 0U : 1U,
+        .pSignalSemaphores = semaphore == VK_NULL_HANDLE ? NULL : &semaphore,
+    };
+    if (result == VK_SUCCESS)
+        result = submit(metadata->producer_queue, 1U, &submit_info, fence);
+    if (result != VK_SUCCESS) {
+        (void)bvb_wsi_frame_ring_fail_producer(metadata->control, -EIO);
+        set_error(error, error_size, "swapchain acquire submit failed: %d",
+                  (int)result);
+        response->vulkan_result = result;
+        return 0;
+    }
+    response->vulkan_result = VK_SUCCESS;
+    response->image_index = image_index;
+    return 0;
+}
+
+int bvb_vulkan_global_context_present_swapchain_image(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_swapchain_present_request *request,
+    struct bvb_vulkan_swapchain_present_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL) return -EINVAL;
+    *response = (struct bvb_vulkan_swapchain_present_response){
+        .vulkan_result = VK_ERROR_INITIALIZATION_FAILED,
+    };
+    struct bvb_swapchain_metadata *metadata =
+        swapchain_metadata_slot(context, request->swapchain_id);
+    if (metadata == NULL || metadata->swapchain_id != request->swapchain_id ||
+        request->image_index >= metadata->image_count || request->flags != 0U)
+        return -ENOENT;
+    VkDevice queue_device = VK_NULL_HANDLE;
+    VkQueue queue = VK_NULL_HANDLE;
+    int status = resolve_queue(context, request->queue_id, &queue_device,
+                               &queue);
+    uint64_t queue_device_id = 0U;
+    uint64_t queue_bits = 0U;
+    if (status == 0)
+        status = bvb_handle_table_lookup(
+            &context->objects, request->queue_id, BVB_OBJECT_QUEUE,
+            &queue_device_id, &queue_bits);
+    if (status != 0 || queue_device_id != metadata->device_id ||
+        queue_device != metadata->device || queue != metadata->producer_queue) {
+        response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    VkSemaphore waits[BVB_VULKAN_MAX_PRESENT_WAIT_SEMAPHORES];
+    VkPipelineStageFlags wait_stages[
+        BVB_VULKAN_MAX_PRESENT_WAIT_SEMAPHORES];
+    for (uint32_t index = 0U; index < request->wait_semaphore_count; ++index) {
+        status = resolve_binary_semaphore(
+            context, request->wait_semaphore_ids[index],
+            metadata->device_id, &waits[index]);
+        if (status != 0) {
+            response->vulkan_result = status == -ENOTSUP
+                ? VK_ERROR_FEATURE_NOT_PRESENT
+                : VK_ERROR_INITIALIZATION_FAILED;
+            return 0;
+        }
+        wait_stages[index] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    }
+    VkResult result = record_swapchain_barrier(
+        context, metadata, request->image_index, false);
+    PFN_vkResetFences reset =
+        (PFN_vkResetFences)context->get_device_proc_addr(
+            metadata->device, "vkResetFences");
+    PFN_vkQueueSubmit submit =
+        (PFN_vkQueueSubmit)context->get_device_proc_addr(
+            metadata->device, "vkQueueSubmit");
+    PFN_vkWaitForFences wait =
+        (PFN_vkWaitForFences)context->get_device_proc_addr(
+            metadata->device, "vkWaitForFences");
+    if (reset == NULL || submit == NULL || wait == NULL)
+        result = VK_ERROR_FEATURE_NOT_PRESENT;
+    if (result == VK_SUCCESS)
+        result = reset(metadata->device, 1U,
+                       &metadata->present_completion);
+    const VkSubmitInfo submit_info = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .waitSemaphoreCount = request->wait_semaphore_count,
+        .pWaitSemaphores = request->wait_semaphore_count == 0U
+            ? NULL : waits,
+        .pWaitDstStageMask = request->wait_semaphore_count == 0U
+            ? NULL : wait_stages,
+        .commandBufferCount = 1U,
+        .pCommandBuffers = &metadata->present_commands[request->image_index],
+    };
+    if (result == VK_SUCCESS)
+        result = submit(queue, 1U, &submit_info,
+                        metadata->present_completion);
+    if (result == VK_SUCCESS)
+        result = wait(metadata->device, 1U, &metadata->present_completion,
+                      VK_TRUE, UINT64_MAX);
+    uint32_t sequence = 0U;
+    if (result == VK_SUCCESS) {
+        status = bvb_wsi_frame_ring_present(
+            metadata->control, request->image_index, &sequence);
+        if (status != 0) result = VK_ERROR_SURFACE_LOST_KHR;
+    }
+    if (result != VK_SUCCESS) {
+        (void)bvb_wsi_frame_ring_fail_producer(metadata->control, -EIO);
+        set_error(error, error_size, "swapchain present failed: %d",
+                  (int)result);
+        response->vulkan_result = result;
+        return 0;
+    }
+    metadata->presented_once[request->image_index] = true;
+    response->vulkan_result = VK_SUCCESS;
+    response->sequence = sequence;
     return 0;
 }
 

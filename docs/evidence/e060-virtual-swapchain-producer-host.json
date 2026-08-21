@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "gate": "E060-virtual-swapchain-producer-host",
+  "result": "pass",
+  "scope": "host wire, native service, ICD integration, ownership, and architecture contracts; no tablet-visible frame is claimed",
+  "reused_evidence": [
+    "E035 opaque-FD allocation/import validation",
+    "E038 authenticated Activity ingress",
+    "E041 producer-local GPU completion before handoff",
+    "E042 fixed-width shared futex ring ownership",
+    "E057 Activity-native import/copy/present/release"
+  ],
+  "public_swapchain_host_contract": true,
+  "tablet_runtime_proof": false,
+  "visible_output": false,
+  "transport": {
+    "backing_images": 3,
+    "real_registered_image_ids": true,
+    "dummy_image_handles": false,
+    "dummy_swapchain_handles": false,
+    "setup_descriptor_message_count": 1,
+    "activity_frame_socket_required": true,
+    "acquire_opcode": 100,
+    "present_opcode": 101,
+    "reserved_opcode_range_72_95_untouched": true
+  },
+  "producer_synchronization": {
+    "acquire_claims_ring_slot": true,
+    "acquire_signals_binary_semaphore_or_fence_on_native_queue": true,
+    "reacquire_from_queue_family_external": true,
+    "present_waits_binary_semaphores": true,
+    "present_layout_release": "PRESENT_SRC_KHR to GENERAL",
+    "present_queue_release": "game queue family to VK_QUEUE_FAMILY_EXTERNAL",
+    "private_completion_fence": true,
+    "presented_publication_after_fence": true,
+    "uncertain_gpu_state_fails_ring": true
+  },
+  "supported_shape": {
+    "formats": ["VK_FORMAT_R8G8B8A8_UNORM", "VK_FORMAT_B8G8R8A8_UNORM"],
+    "image_layers": 1,
+    "sharing": "exclusive",
+    "present_mode": "FIFO",
+    "composite_alpha": "opaque",
+    "transform": "identity",
+    "extent": "exact authenticated Activity extent"
+  },
+  "hot_path": {
+    "java_calls": 0,
+    "binder_calls": 0,
+    "fd_transfers": 0,
+    "socket_round_trips_per_acquire": 1,
+    "socket_round_trips_per_present": 1,
+    "present_is_synchronous": true
+  },
+  "host_contracts": [
+    "fixed-width opcode 100/101 wire round trips",
+    "native acquire/present with shared-ring consumer release",
+    "ICD create/get-images/acquire/present/destroy through bridge service",
+    "authenticated one-time Activity setup descriptor receiver",
+    "source architecture and launch-wiring assertions"
+  ],
+  "next_gate": "build and deploy combined E057/E060 wiring, prove Activity import plus changing visible frames on tablet, then measure and remove synchronous/per-frame socket costs"
+}

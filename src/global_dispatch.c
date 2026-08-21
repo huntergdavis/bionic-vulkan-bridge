@@ -20,6 +20,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static const uint64_t BVB_INSTANCE_PROXY_MAGIC =
@@ -92,6 +94,7 @@ struct bvb_resource_proxy {
     uint64_t mapped_offset;
     uint64_t mapped_size;
     uint8_t *mapped_bytes;
+    uint32_t subtype;
     enum bvb_object_type type;
     struct bvb_resource_proxy *next;
 };
@@ -100,6 +103,17 @@ struct bvb_surface_proxy {
     uint64_t wire_id;
     uint64_t parent_id;
     struct bvb_surface_proxy *next;
+};
+
+struct bvb_swapchain_proxy {
+    uint64_t wire_id;
+    uint64_t parent_id;
+    uint64_t generation;
+    uint32_t image_count;
+    uint64_t image_ids[BVB_WSI_FRAME_RING_MAX_SLOTS];
+    int control_fd;
+    struct bvb_wsi_frame_ring *control;
+    struct bvb_swapchain_proxy *next;
 };
 
 struct bvb_global_client_state {
@@ -116,7 +130,9 @@ struct bvb_global_client_state {
     struct bvb_command_buffer_proxy *command_buffers;
     struct bvb_resource_proxy *resources;
     struct bvb_surface_proxy *surfaces;
+    struct bvb_swapchain_proxy *swapchains;
     uint64_t next_surface_serial;
+    uint64_t next_swapchain_generation;
 };
 
 static const uint64_t bvb_dispatch_anchor = UINT64_C(0x4256424449535030);
@@ -126,6 +142,7 @@ static struct bvb_global_client_state bvb_global_client = {
     .socket_fd = -1,
     .next_request_id = UINT32_C(0x42565000),
     .next_surface_serial = 1U,
+    .next_swapchain_generation = 1U,
 };
 
 static const void *initial_dispatch_word(void) {
@@ -168,6 +185,23 @@ static int exchange_locked(const struct bvb_protocol_packet *request,
         response->header.request_id != request->header.request_id) {
         return -EPROTO;
     }
+    return 0;
+}
+
+static int exchange_fds_locked(
+    const struct bvb_protocol_packet *request,
+    struct bvb_protocol_packet *response, int *received_fds,
+    size_t fd_capacity, size_t *received_fd_count) {
+    int result = bvb_transport_send(bvb_global_client.socket_fd, request);
+    if (result == 0)
+        result = bvb_transport_receive_fds(
+            bvb_global_client.socket_fd, response, received_fds,
+            fd_capacity, received_fd_count);
+    if (result != 0) return result;
+    if (response->header.kind != BVB_PROTOCOL_RESPONSE ||
+        response->header.opcode != request->header.opcode ||
+        response->header.request_id != request->header.request_id)
+        return -EPROTO;
     return 0;
 }
 
@@ -479,6 +513,69 @@ static void remove_surfaces_for_instance_locked(uint64_t parent_id) {
         if (proxy->parent_id == parent_id) {
             *cursor = proxy->next;
             free(proxy);
+        } else {
+            cursor = &proxy->next;
+        }
+    }
+}
+
+static VkSwapchainKHR swapchain_from_wire_id(uint64_t wire_id) {
+    VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+    _Static_assert(sizeof(swapchain) <= sizeof(wire_id),
+                   "VkSwapchainKHR exceeds bridge handle width");
+    memcpy(&swapchain, &wire_id, sizeof(swapchain));
+    return swapchain;
+}
+
+static VkImage image_from_wire_id(uint64_t wire_id) {
+    VkImage image = VK_NULL_HANDLE;
+    _Static_assert(sizeof(image) <= sizeof(wire_id),
+                   "VkImage exceeds bridge handle width");
+    memcpy(&image, &wire_id, sizeof(image));
+    return image;
+}
+
+static struct bvb_swapchain_proxy *swapchain_proxy_locked(
+    VkSwapchainKHR swapchain) {
+    const uint64_t wire_id = non_dispatchable_wire_id(
+        &swapchain, sizeof(swapchain));
+    if (bvb_handle_expect(wire_id, BVB_OBJECT_SWAPCHAIN) != 0) return NULL;
+    for (struct bvb_swapchain_proxy *proxy = bvb_global_client.swapchains;
+         proxy != NULL; proxy = proxy->next) {
+        if (proxy->wire_id == wire_id) return proxy;
+    }
+    return NULL;
+}
+
+static void release_swapchain_proxy(struct bvb_swapchain_proxy *proxy) {
+    if (proxy == NULL) return;
+    if (proxy->control != NULL && proxy->control != MAP_FAILED)
+        (void)munmap(proxy->control, BVB_WSI_FRAME_RING_REGION_BYTES);
+    if (proxy->control_fd >= 0) (void)close(proxy->control_fd);
+    free(proxy);
+}
+
+static void remove_swapchain_proxy_locked(
+    struct bvb_swapchain_proxy *target) {
+    struct bvb_swapchain_proxy **cursor = &bvb_global_client.swapchains;
+    while (*cursor != NULL) {
+        struct bvb_swapchain_proxy *proxy = *cursor;
+        if (proxy == target) {
+            *cursor = proxy->next;
+            release_swapchain_proxy(proxy);
+            return;
+        }
+        cursor = &proxy->next;
+    }
+}
+
+static void remove_swapchains_for_device_locked(uint64_t parent_id) {
+    struct bvb_swapchain_proxy **cursor = &bvb_global_client.swapchains;
+    while (*cursor != NULL) {
+        struct bvb_swapchain_proxy *proxy = *cursor;
+        if (proxy->parent_id == parent_id) {
+            *cursor = proxy->next;
+            release_swapchain_proxy(proxy);
         } else {
             cursor = &proxy->next;
         }
@@ -2921,6 +3018,7 @@ static void VKAPI_CALL bvb_bridge_vkDestroyDevice(
         result = -EPROTO;
     }
     if (result == 0) {
+        remove_swapchains_for_device_locked(proxy->wire_id);
         remove_device_proxy_locked(proxy);
     }
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
@@ -4527,6 +4625,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateSemaphore(
     }
     struct bvb_resource_proxy *state = calloc(1, sizeof(*state));
     if (state == NULL) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    state->subtype = (uint32_t)semaphore_type;
     const struct bvb_vulkan_semaphore_create_request decoded = {
         .device_id = device_state->wire_id,
         .initial_value = initial_value,
@@ -5048,10 +5147,31 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateSwapchainKHR(
     struct bvb_device_proxy *device_state = device_proxy(device);
     if (device_state == NULL || !device_state->virtual_swapchain_enabled ||
         create_info == NULL || swapchain == NULL || allocator != NULL ||
-        create_info->sType != VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR) {
+        create_info->sType != VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR ||
+        create_info->pNext != NULL || create_info->flags != 0U ||
+        create_info->minImageCount < 2U ||
+        create_info->minImageCount > 3U ||
+        (create_info->imageFormat != VK_FORMAT_R8G8B8A8_UNORM &&
+         create_info->imageFormat != VK_FORMAT_B8G8R8A8_UNORM) ||
+        create_info->imageColorSpace != VK_COLOR_SPACE_SRGB_NONLINEAR_KHR ||
+        create_info->imageExtent.width == 0U ||
+        create_info->imageExtent.height == 0U ||
+        create_info->imageArrayLayers != 1U ||
+        create_info->imageUsage == 0U ||
+        create_info->imageSharingMode != VK_SHARING_MODE_EXCLUSIVE ||
+        create_info->queueFamilyIndexCount != 0U ||
+        create_info->preTransform != VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR ||
+        create_info->compositeAlpha != VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR ||
+        create_info->presentMode != VK_PRESENT_MODE_FIFO_KHR ||
+        create_info->oldSwapchain != VK_NULL_HANDLE) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
+    struct bvb_swapchain_proxy *proxy = calloc(1, sizeof(*proxy));
+    if (proxy == NULL) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    proxy->control_fd = -1;
+    proxy->control = MAP_FAILED;
     if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        free(proxy);
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     struct bvb_surface_proxy *surface_state =
@@ -5066,69 +5186,292 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateSwapchainKHR(
          create_info->imageExtent.height != activity.height)) {
         result = -ERANGE;
     }
+    uint64_t generation = 0U;
+    if (result == 0) {
+        if (bvb_global_client.next_swapchain_generation == 0U ||
+            bvb_global_client.next_swapchain_generation >
+                UINT64_C(0x0000ffffffffffff)) {
+            result = -EOVERFLOW;
+        } else {
+            generation = UINT64_C(0xe060000000000000) |
+                bvb_global_client.next_swapchain_generation++;
+        }
+    }
+    const struct bvb_vulkan_swapchain_prepare_request decoded_request = {
+        .device_id = device_state->wire_id,
+        .width = create_info->imageExtent.width,
+        .height = create_info->imageExtent.height,
+        .format = create_info->imageFormat,
+        .image_usage = create_info->imageUsage,
+        .min_image_count = 3U,
+        .generation = generation,
+    };
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_SWAPCHAIN_PREPARE,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_SWAPCHAIN_PREPARE_REQUEST_SIZE,
+    };
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_swapchain_prepare_request(
+            request.payload, &decoded_request);
+    int descriptors[BVB_WSI_FRAME_RING_MAX_SLOTS + 1U];
+    for (size_t index = 0U;
+         index < BVB_WSI_FRAME_RING_MAX_SLOTS + 1U; ++index)
+        descriptors[index] = -1;
+    size_t descriptor_count = 0U;
+    struct bvb_protocol_packet response = {0};
+    if (result == 0)
+        result = exchange_fds_locked(
+            &request, &response, descriptors,
+            BVB_WSI_FRAME_RING_MAX_SLOTS + 1U, &descriptor_count);
+    if (result == 0 && response.header.status != 0)
+        result = response.header.status;
+    if (result == 0 && response.header.payload_length !=
+                           BVB_VULKAN_SWAPCHAIN_PREPARE_RESPONSE_SIZE)
+        result = -EPROTO;
+    struct bvb_vulkan_swapchain_prepare_response prepared = {0};
+    if (result == 0)
+        result = bvb_protocol_decode_vulkan_swapchain_prepare_response(
+            response.payload, &prepared);
+    if (result == 0 && prepared.vulkan_result == VK_SUCCESS &&
+        descriptor_count != (size_t)prepared.image_count + 1U)
+        result = -EPROTO;
+    if (result == 0 && prepared.vulkan_result != VK_SUCCESS &&
+        descriptor_count != 0U)
+        result = -EPROTO;
+    if (result == 0 && prepared.vulkan_result == VK_SUCCESS) {
+        for (uint32_t index = 0U; index < prepared.image_count; ++index) {
+            struct stat descriptor_status;
+            if (fstat(descriptors[index], &descriptor_status) != 0 ||
+                descriptor_status.st_size <= 0 ||
+                (uint64_t)descriptor_status.st_size !=
+                    prepared.images[index].allocation_size) {
+                result = -EPROTO;
+                break;
+            }
+            (void)close(descriptors[index]);
+            descriptors[index] = -1;
+        }
+    }
+    if (result == 0 && prepared.vulkan_result == VK_SUCCESS) {
+        const uint32_t control_index = prepared.image_count;
+        struct stat control_status;
+        if (fstat(descriptors[control_index], &control_status) != 0 ||
+            control_status.st_size != BVB_WSI_FRAME_RING_REGION_BYTES) {
+            result = -EPROTO;
+        } else {
+            proxy->control = mmap(
+                NULL, BVB_WSI_FRAME_RING_REGION_BYTES,
+                PROT_READ | PROT_WRITE, MAP_SHARED,
+                descriptors[control_index], 0U);
+            if (proxy->control == MAP_FAILED) {
+                result = -errno;
+            } else {
+                proxy->control_fd = descriptors[control_index];
+                descriptors[control_index] = -1;
+                result = bvb_wsi_frame_ring_validate(
+                    proxy->control, prepared.generation);
+            }
+        }
+    }
+    if (result == 0 && prepared.vulkan_result == VK_SUCCESS) {
+        proxy->wire_id = prepared.swapchain_id;
+        proxy->parent_id = device_state->wire_id;
+        proxy->generation = prepared.generation;
+        proxy->image_count = prepared.image_count;
+        for (uint32_t index = 0U; index < prepared.image_count; ++index)
+            proxy->image_ids[index] = prepared.images[index].image_id;
+        proxy->next = bvb_global_client.swapchains;
+        bvb_global_client.swapchains = proxy;
+        *swapchain = swapchain_from_wire_id(proxy->wire_id);
+    }
+    if (result != 0 && prepared.vulkan_result == VK_SUCCESS &&
+        bvb_handle_expect(prepared.swapchain_id,
+                          BVB_OBJECT_SWAPCHAIN) == 0) {
+        struct bvb_protocol_packet destroy_request = {0};
+        destroy_request.header = (struct bvb_protocol_header){
+            .version = BVB_PROTOCOL_VERSION,
+            .kind = BVB_PROTOCOL_REQUEST,
+            .opcode = BVB_OPCODE_VULKAN_SWAPCHAIN_DESTROY,
+            .request_id = next_request_id_locked(),
+            .payload_length = BVB_VULKAN_OBJECT_ID_SIZE,
+        };
+        if (bvb_protocol_encode_vulkan_object_id(
+                destroy_request.payload, prepared.swapchain_id,
+                BVB_OBJECT_SWAPCHAIN) == 0) {
+            struct bvb_protocol_packet destroy_response = {0};
+            (void)exchange_locked(&destroy_request, &destroy_response);
+        }
+    }
     if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
         fprintf(stderr,
                 "BVB_ICD_VIRTUAL_SWAPCHAIN_CREATE surface=%llu "
                 "extent=%ux%u activity=%ux%u backing=activity "
-                "frame_transport=unavailable status=%d\n",
+                "frame_transport=e060 status=%d vulkan=%d images=%u\n",
                 (unsigned long long)non_dispatchable_wire_id(
                     &create_info->surface, sizeof(create_info->surface)),
                 create_info->imageExtent.width,
                 create_info->imageExtent.height, activity.width,
-                activity.height, result);
+                activity.height, result, prepared.vulkan_result,
+                prepared.image_count);
     }
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
-    if (result != 0) return VK_ERROR_SURFACE_LOST_KHR;
-
-    /*
-     * The Activity owns the real Android swapchain. Its external-image frame
-     * transport is not connected to game-owned images yet, so creating a
-     * usable proxy here would advertise pixels that cannot be presented.
-     */
-    return VK_ERROR_FEATURE_NOT_PRESENT;
+    for (size_t index = 0U;
+         index < BVB_WSI_FRAME_RING_MAX_SLOTS + 1U; ++index)
+        if (descriptors[index] >= 0) (void)close(descriptors[index]);
+    if (result != 0) {
+        release_swapchain_proxy(proxy);
+        return result == -ERANGE || result == -ENODEV || result == -EAGAIN ||
+                       result == -ENOTCONN
+                   ? VK_ERROR_SURFACE_LOST_KHR
+                   : VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (prepared.vulkan_result != VK_SUCCESS) {
+        release_swapchain_proxy(proxy);
+        return (VkResult)prepared.vulkan_result;
+    }
+    return VK_SUCCESS;
 }
 
 static void VKAPI_CALL bvb_bridge_vkDestroySwapchainKHR(
     VkDevice device, VkSwapchainKHR swapchain,
     const VkAllocationCallbacks *allocator) {
-    (void)swapchain;
-    (void)allocator;
-    (void)device_proxy(device);
+    if (swapchain == VK_NULL_HANDLE) return;
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || allocator != NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) return;
+    struct bvb_swapchain_proxy *proxy = swapchain_proxy_locked(swapchain);
+    int result = proxy != NULL && proxy->parent_id == device_state->wire_id
+        ? connect_locked() : -EINVAL;
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_SWAPCHAIN_DESTROY,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_OBJECT_ID_SIZE,
+    };
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_object_id(
+            request.payload, proxy->wire_id, BVB_OBJECT_SWAPCHAIN);
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) result = exchange_locked(&request, &response);
+    if (result == 0 &&
+        (response.header.status != 0 || response.header.payload_length != 0U))
+        result = -EPROTO;
+    if (result == 0) remove_swapchain_proxy_locked(proxy);
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
 }
 
 static VkResult VKAPI_CALL bvb_bridge_vkGetSwapchainImagesKHR(
     VkDevice device, VkSwapchainKHR swapchain, uint32_t *image_count,
     VkImage *images) {
-    (void)swapchain;
-    (void)images;
     struct bvb_device_proxy *device_state = device_proxy(device);
-    if (image_count != NULL) *image_count = 0U;
-    return device_state != NULL && device_state->virtual_swapchain_enabled &&
-                   image_count != NULL
-               ? VK_ERROR_FEATURE_NOT_PRESENT
-               : VK_ERROR_INITIALIZATION_FAILED;
+    if (device_state == NULL || !device_state->virtual_swapchain_enabled ||
+        image_count == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    struct bvb_swapchain_proxy *proxy = swapchain_proxy_locked(swapchain);
+    if (proxy == NULL || proxy->parent_id != device_state->wire_id) {
+        *image_count = 0U;
+        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (images == NULL) {
+        *image_count = proxy->image_count;
+        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+        return VK_SUCCESS;
+    }
+    const uint32_t capacity = *image_count;
+    const uint32_t returned = capacity < proxy->image_count
+        ? capacity : proxy->image_count;
+    for (uint32_t index = 0U; index < returned; ++index)
+        images[index] = image_from_wire_id(proxy->image_ids[index]);
+    *image_count = returned;
+    const VkResult result = returned < proxy->image_count
+        ? VK_INCOMPLETE : VK_SUCCESS;
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return result;
 }
 
 static VkResult VKAPI_CALL bvb_bridge_vkAcquireNextImageKHR(
     VkDevice device, VkSwapchainKHR swapchain, uint64_t timeout,
     VkSemaphore semaphore, VkFence fence, uint32_t *image_index) {
-    (void)swapchain;
-    (void)timeout;
-    (void)semaphore;
-    (void)fence;
     struct bvb_device_proxy *device_state = device_proxy(device);
     if (image_index != NULL) *image_index = 0U;
-    return device_state != NULL && device_state->virtual_swapchain_enabled &&
-                   image_index != NULL
-               ? VK_ERROR_FEATURE_NOT_PRESENT
-               : VK_ERROR_INITIALIZATION_FAILED;
+    if (device_state == NULL || !device_state->virtual_swapchain_enabled ||
+        image_index == NULL ||
+        (semaphore == VK_NULL_HANDLE && fence == VK_NULL_HANDLE) ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    struct bvb_swapchain_proxy *proxy = swapchain_proxy_locked(swapchain);
+    const uint64_t semaphore_id = non_dispatchable_wire_id(
+        &semaphore, sizeof(semaphore));
+    const uint64_t fence_id = non_dispatchable_wire_id(&fence, sizeof(fence));
+    struct bvb_resource_proxy *semaphore_state = semaphore == VK_NULL_HANDLE
+        ? NULL : resource_proxy_locked(semaphore_id, BVB_OBJECT_SEMAPHORE);
+    struct bvb_resource_proxy *fence_state = fence == VK_NULL_HANDLE
+        ? NULL : resource_proxy_locked(fence_id, BVB_OBJECT_FENCE);
+    int result = proxy != NULL && proxy->parent_id == device_state->wire_id &&
+                         bvb_wsi_frame_ring_validate(
+                             proxy->control, proxy->generation) == 0 &&
+                         (semaphore == VK_NULL_HANDLE ||
+                          (semaphore_state != NULL &&
+                           semaphore_state->parent_id == device_state->wire_id &&
+                           semaphore_state->subtype ==
+                               VK_SEMAPHORE_TYPE_BINARY)) &&
+                         (fence == VK_NULL_HANDLE ||
+                          (fence_state != NULL &&
+                           fence_state->parent_id == device_state->wire_id))
+                     ? connect_locked() : -EINVAL;
+    const struct bvb_vulkan_swapchain_acquire_request decoded = {
+        .device_id = device_state->wire_id,
+        .swapchain_id = proxy == NULL ? 0U : proxy->wire_id,
+        .timeout_ns = timeout,
+        .semaphore_id = semaphore_id,
+        .fence_id = fence_id,
+    };
+    uint8_t payload[BVB_VULKAN_SWAPCHAIN_ACQUIRE_REQUEST_SIZE];
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_swapchain_acquire_request(
+            payload, &decoded);
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_SWAPCHAIN_ACQUIRE,
+        .request_id = next_request_id_locked(),
+        .payload_length = sizeof(payload),
+    };
+    if (result == 0) memcpy(request.payload, payload, sizeof(payload));
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) result = exchange_locked(&request, &response);
+    if (result == 0 &&
+        (response.header.status != 0 ||
+         response.header.payload_length !=
+             BVB_VULKAN_SWAPCHAIN_ACQUIRE_RESPONSE_SIZE))
+        result = response.header.status != 0 ? response.header.status : -EPROTO;
+    struct bvb_vulkan_swapchain_acquire_response acquired = {0};
+    if (result == 0)
+        result = bvb_protocol_decode_vulkan_swapchain_acquire_response(
+            response.payload, &acquired);
+    if (result == 0 && acquired.vulkan_result == VK_SUCCESS &&
+        acquired.image_index >= proxy->image_count) result = -EPROTO;
+    if (result == 0) *image_index = acquired.image_index;
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return result == 0 ? (VkResult)acquired.vulkan_result
+                       : VK_ERROR_INITIALIZATION_FAILED;
 }
 
 static VkResult VKAPI_CALL bvb_bridge_vkAcquireNextImage2KHR(
     VkDevice device, const VkAcquireNextImageInfoKHR *acquire_info,
     uint32_t *image_index) {
     if (acquire_info == NULL ||
-        acquire_info->sType != VK_STRUCTURE_TYPE_ACQUIRE_NEXT_IMAGE_INFO_KHR) {
+        acquire_info->sType != VK_STRUCTURE_TYPE_ACQUIRE_NEXT_IMAGE_INFO_KHR ||
+        acquire_info->pNext != NULL || acquire_info->deviceMask != 1U) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     return bvb_bridge_vkAcquireNextImageKHR(
@@ -5140,23 +5483,86 @@ static VkResult VKAPI_CALL bvb_bridge_vkQueuePresentKHR(
     VkQueue queue, const VkPresentInfoKHR *present_info) {
     struct bvb_queue_proxy *queue_state = queue_proxy(queue);
     if (queue_state == NULL || present_info == NULL ||
-        present_info->sType != VK_STRUCTURE_TYPE_PRESENT_INFO_KHR) {
+        present_info->sType != VK_STRUCTURE_TYPE_PRESENT_INFO_KHR ||
+        present_info->pNext != NULL || present_info->swapchainCount != 1U ||
+        present_info->pSwapchains == NULL ||
+        present_info->pImageIndices == NULL ||
+        present_info->waitSemaphoreCount >
+            BVB_VULKAN_MAX_PRESENT_WAIT_SEMAPHORES ||
+        (present_info->waitSemaphoreCount != 0U &&
+         present_info->pWaitSemaphores == NULL)) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    bool enabled = false;
+    struct bvb_device_proxy *device_state = NULL;
     for (struct bvb_device_proxy *device = bvb_global_client.devices;
          device != NULL; device = device->next) {
         if (device->wire_id == queue_state->parent_id) {
-            enabled = device->virtual_swapchain_enabled;
+            device_state = device;
             break;
         }
     }
+    struct bvb_swapchain_proxy *proxy = swapchain_proxy_locked(
+        present_info->pSwapchains[0]);
+    int result = device_state != NULL &&
+                         device_state->virtual_swapchain_enabled &&
+                         proxy != NULL &&
+                         proxy->parent_id == queue_state->parent_id &&
+                         present_info->pImageIndices[0] < proxy->image_count &&
+                         bvb_wsi_frame_ring_validate(
+                             proxy->control, proxy->generation) == 0
+                     ? connect_locked() : -EINVAL;
+    struct bvb_vulkan_swapchain_present_request decoded = {
+        .queue_id = queue_state->wire_id,
+        .swapchain_id = proxy == NULL ? 0U : proxy->wire_id,
+        .image_index = present_info->pImageIndices[0],
+        .wait_semaphore_count = present_info->waitSemaphoreCount,
+    };
+    for (uint32_t index = 0U; result == 0 &&
+         index < present_info->waitSemaphoreCount; ++index) {
+        const uint64_t semaphore_id = non_dispatchable_wire_id(
+            &present_info->pWaitSemaphores[index], sizeof(VkSemaphore));
+        struct bvb_resource_proxy *state = resource_proxy_locked(
+            semaphore_id, BVB_OBJECT_SEMAPHORE);
+        if (state == NULL || state->parent_id != queue_state->parent_id ||
+            state->subtype != VK_SEMAPHORE_TYPE_BINARY) {
+            result = -EINVAL;
+            break;
+        }
+        decoded.wait_semaphore_ids[index] = semaphore_id;
+    }
+    uint8_t payload[BVB_VULKAN_SWAPCHAIN_PRESENT_MAX_SIZE];
+    uint32_t payload_length = 0U;
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_swapchain_present_request(
+            payload, &decoded, &payload_length);
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT,
+        .request_id = next_request_id_locked(),
+        .payload_length = payload_length,
+    };
+    if (result == 0) memcpy(request.payload, payload, payload_length);
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) result = exchange_locked(&request, &response);
+    if (result == 0 &&
+        (response.header.status != 0 ||
+         response.header.payload_length !=
+             BVB_VULKAN_SWAPCHAIN_PRESENT_RESPONSE_SIZE))
+        result = response.header.status != 0 ? response.header.status : -EPROTO;
+    struct bvb_vulkan_swapchain_present_response presented = {0};
+    if (result == 0)
+        result = bvb_protocol_decode_vulkan_swapchain_present_response(
+            response.payload, &presented);
+    const VkResult vulkan_result = result == 0
+        ? (VkResult)presented.vulkan_result : VK_ERROR_INITIALIZATION_FAILED;
+    if (present_info->pResults != NULL) present_info->pResults[0] = vulkan_result;
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
-    return enabled ? VK_ERROR_FEATURE_NOT_PRESENT
-                   : VK_ERROR_INITIALIZATION_FAILED;
+    return vulkan_result;
 }
 
 static VkResult VKAPI_CALL

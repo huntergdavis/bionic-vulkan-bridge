@@ -110,8 +110,10 @@
   fixed-width futex ownership ring
 - [x] Relay that setup bundle once into the authenticated Activity and implement
   the lifecycle-gated native import/copy-or-blit/present consumer
-- [ ] Connect public virtual swapchain acquire/present to the producer ownership
-  handoff and visually prove a changing game frame before returning success
+- [x] Connect the three-image public virtual swapchain acquire/present path to
+  native producer ownership release and publish only after GPU completion
+- [ ] Deploy the combined E057/E060 launch wiring and visually prove a changing
+  game-facing frame in the installed Activity
 - [ ] Reach a DXVK sample
 - [ ] Run the fixed native-resolution Tomb Raider 2013 benchmark
 - [ ] Compare FPS, frame pacing, startup time, peak RSS, and thermals against the

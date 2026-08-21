@@ -823,28 +823,44 @@ int main(void) {
         .presentMode = VK_PRESENT_MODE_FIFO_KHR,
         .clipped = VK_TRUE,
     };
-    VkSwapchainKHR unavailable_swapchain = VK_NULL_HANDLE;
+    VkSwapchainKHR virtual_swapchain = VK_NULL_HANDLE;
     CHECK(create_swapchain(device, &swapchain_create_info, NULL,
-                           &unavailable_swapchain) ==
-          VK_ERROR_FEATURE_NOT_PRESENT);
-    CHECK(unavailable_swapchain == VK_NULL_HANDLE);
-    uint32_t unavailable_image_count = UINT32_MAX;
-    CHECK(get_swapchain_images(device, VK_NULL_HANDLE,
-                               &unavailable_image_count, NULL) ==
-          VK_ERROR_FEATURE_NOT_PRESENT);
-    CHECK(unavailable_image_count == 0U);
-    uint32_t unavailable_image_index = UINT32_MAX;
-    CHECK(acquire_next_image(device, VK_NULL_HANDLE, 0U, VK_NULL_HANDLE,
-                             VK_NULL_HANDLE, &unavailable_image_index) ==
-          VK_ERROR_FEATURE_NOT_PRESENT);
-    CHECK(unavailable_image_index == 0U);
-    const VkAcquireNextImageInfoKHR acquire_info = {
-        .sType = VK_STRUCTURE_TYPE_ACQUIRE_NEXT_IMAGE_INFO_KHR,
+                           &virtual_swapchain) == VK_SUCCESS);
+    CHECK(virtual_swapchain != VK_NULL_HANDLE);
+    CHECK(bvb_handle_type((uint64_t)virtual_swapchain) ==
+          BVB_OBJECT_SWAPCHAIN);
+    uint32_t virtual_image_count = 0U;
+    CHECK(get_swapchain_images(device, virtual_swapchain,
+                               &virtual_image_count, NULL) == VK_SUCCESS);
+    CHECK(virtual_image_count == 3U);
+    VkImage virtual_images[3] = {0};
+    CHECK(get_swapchain_images(device, virtual_swapchain,
+                               &virtual_image_count, virtual_images) ==
+          VK_SUCCESS);
+    CHECK(virtual_image_count == 3U);
+    for (uint32_t index = 0U; index < virtual_image_count; ++index)
+        CHECK(bvb_handle_type((uint64_t)virtual_images[index]) ==
+              BVB_OBJECT_IMAGE);
+    const VkSemaphoreCreateInfo binary_semaphore_info = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
     };
-    CHECK(acquire_next_image2(device, &acquire_info,
-                              &unavailable_image_index) ==
-          VK_ERROR_FEATURE_NOT_PRESENT);
-    destroy_swapchain(device, VK_NULL_HANDLE, NULL);
+    VkSemaphore acquire_semaphore = VK_NULL_HANDLE;
+    CHECK(create_semaphore(device, &binary_semaphore_info, NULL,
+                           &acquire_semaphore) == VK_SUCCESS);
+    uint32_t virtual_image_index = UINT32_MAX;
+    CHECK(acquire_next_image(device, virtual_swapchain, UINT64_MAX,
+                             acquire_semaphore, VK_NULL_HANDLE,
+                             &virtual_image_index) == VK_SUCCESS);
+    CHECK(virtual_image_index < virtual_image_count);
+    const VkAcquireNextImageInfoKHR unsupported_acquire_info = {
+        .sType = VK_STRUCTURE_TYPE_ACQUIRE_NEXT_IMAGE_INFO_KHR,
+        .swapchain = virtual_swapchain,
+        .semaphore = acquire_semaphore,
+        .deviceMask = 0U,
+    };
+    CHECK(acquire_next_image2(device, &unsupported_acquire_info,
+                              &virtual_image_index) ==
+          VK_ERROR_INITIALIZATION_FAILED);
     VkQueue queue = VK_NULL_HANDLE;
     get_device_queue(device, queue_family_index, 0U, &queue);
     CHECK(queue != VK_NULL_HANDLE);
@@ -854,11 +870,20 @@ int main(void) {
     VkQueue repeated_queue = VK_NULL_HANDLE;
     get_device_queue(device, queue_family_index, 0U, &repeated_queue);
     CHECK(repeated_queue == queue);
-    const VkPresentInfoKHR unavailable_present = {
+    VkResult per_swapchain_result = VK_ERROR_UNKNOWN;
+    const VkPresentInfoKHR virtual_present = {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .waitSemaphoreCount = 1U,
+        .pWaitSemaphores = &acquire_semaphore,
+        .swapchainCount = 1U,
+        .pSwapchains = &virtual_swapchain,
+        .pImageIndices = &virtual_image_index,
+        .pResults = &per_swapchain_result,
     };
-    CHECK(queue_present(queue, &unavailable_present) ==
-          VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(queue_present(queue, &virtual_present) == VK_SUCCESS);
+    CHECK(per_swapchain_result == VK_SUCCESS);
+    destroy_swapchain(device, virtual_swapchain, NULL);
+    destroy_semaphore(device, acquire_semaphore, NULL);
     CHECK(queue_submit(queue, 0U, NULL, VK_NULL_HANDLE) == VK_SUCCESS);
     const VkSubmitInfo unsupported_submit = {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -1190,7 +1215,7 @@ int main(void) {
     uint64_t timeline_id = 0U;
     memcpy(&timeline_id, &timeline, sizeof(timeline));
     CHECK(bvb_handle_type(timeline_id) == BVB_OBJECT_SEMAPHORE);
-    CHECK(bvb_handle_serial(timeline_id) == 1U);
+    CHECK(bvb_handle_serial(timeline_id) == 2U);
     uint64_t timeline_value = 0U;
     CHECK(get_semaphore_counter(device, timeline, &timeline_value) ==
           VK_SUCCESS);

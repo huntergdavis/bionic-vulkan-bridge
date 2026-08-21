@@ -25,8 +25,9 @@ def main() -> int:
 
     decision = decision_path.read_text()
     normalized_decision = " ".join(decision.split())
-    assert "Activity import/copy/present implementation complete" in normalized_decision
-    assert "successful but invisible swapchain remains forbidden" in normalized_decision
+    assert "Activity import/copy/present" in normalized_decision
+    assert "game-facing producer implementation complete" in normalized_decision
+    assert "Treat host success as transport evidence only" in normalized_decision
     assert "producer-local GPU completion" in normalized_decision
     assert "Activity-local GPU completion" in normalized_decision
 

@@ -2169,6 +2169,10 @@ static int answer_vulkan_swapchain_prepare(
         response.header.status = -EPROTO;
         return bvb_transport_send(client_fd, &response);
     }
+    if (activity_frame_socket == NULL) {
+        response.header.status = -ENOTCONN;
+        return bvb_transport_send(client_fd, &response);
+    }
     if (activity_status == NULL ||
         activity_status->ingress_configured == 0U ||
         (activity_status->state_flags & required_activity) !=
@@ -2206,8 +2210,7 @@ static int answer_vulkan_swapchain_prepare(
                 diagnostic);
         response.header.status = result;
     }
-    if (result == 0 && prepared.vulkan_result == VK_SUCCESS &&
-        activity_frame_socket != NULL) {
+    if (result == 0 && prepared.vulkan_result == VK_SUCCESS) {
         struct bvb_activity_frame_setup setup = {
             .magic = BVB_ACTIVITY_FRAME_SETUP_MAGIC,
             .version = BVB_ACTIVITY_FRAME_SETUP_VERSION,
@@ -2276,6 +2279,72 @@ static int answer_vulkan_swapchain_destroy(
     }
     if (result != 0) {
         fprintf(stderr, "bvb: swapchain destroy failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_swapchain_acquire(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_SWAPCHAIN_ACQUIRE_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_swapchain_acquire_request decoded;
+    int result = bvb_protocol_decode_vulkan_swapchain_acquire_request(
+        request->payload, &decoded);
+    struct bvb_vulkan_swapchain_acquire_response acquired = {0};
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_acquire_swapchain_image(
+            context, &decoded, &acquired, diagnostic, sizeof(diagnostic));
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_swapchain_acquire_response(
+            response.payload, &acquired);
+    if (result == 0)
+        response.header.payload_length =
+            BVB_VULKAN_SWAPCHAIN_ACQUIRE_RESPONSE_SIZE;
+    else {
+        fprintf(stderr, "bvb: swapchain acquire failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_swapchain_present(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length <
+            BVB_VULKAN_SWAPCHAIN_PRESENT_PREFIX_SIZE ||
+        request->header.payload_length >
+            BVB_VULKAN_SWAPCHAIN_PRESENT_MAX_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_swapchain_present_request decoded;
+    int result = bvb_protocol_decode_vulkan_swapchain_present_request(
+        request->payload, request->header.payload_length, &decoded);
+    struct bvb_vulkan_swapchain_present_response presented = {0};
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_present_swapchain_image(
+            context, &decoded, &presented, diagnostic, sizeof(diagnostic));
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_swapchain_present_response(
+            response.payload, &presented);
+    if (result == 0)
+        response.header.payload_length =
+            BVB_VULKAN_SWAPCHAIN_PRESENT_RESPONSE_SIZE;
+    else {
+        fprintf(stderr, "bvb: swapchain present failed: %s\n", diagnostic);
         response.header.status = result;
     }
     return bvb_transport_send(client_fd, &response);
@@ -2723,6 +2792,14 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_SWAPCHAIN_DESTROY) {
             result = answer_vulkan_swapchain_destroy(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_SWAPCHAIN_ACQUIRE) {
+            result = answer_vulkan_swapchain_acquire(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT) {
+            result = answer_vulkan_swapchain_present(
                 client_fd, &request, negotiated, global_context);
         } else {
             result = -EPROTO;
