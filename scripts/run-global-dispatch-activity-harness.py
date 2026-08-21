@@ -332,9 +332,15 @@ def run(arguments: argparse.Namespace) -> int:
         else None
     )
     runtime_directory = pathlib.Path(
-        tempfile.mkdtemp(prefix="bvb-global-activity-", dir=runtime_parent)
+        tempfile.mkdtemp(prefix="b.", dir=runtime_parent)
     )
-    control_socket = runtime_directory / "bridge.sock"
+    control_socket = runtime_directory / "s"
+    if len(os.fsencode(control_socket)) >= 108:
+        runtime_directory.rmdir()
+        raise HarnessFailure(
+            "control socket path exceeds the Unix-domain sun_path limit: "
+            f"{control_socket}"
+        )
     token = secrets.token_bytes(32)
     frame_socket_name = f"bvb-global-frame-{os.getpid()}-{secrets.token_hex(8)}"
     frame_sink = FrameSetupSink(frame_socket_name, arguments.timeout)
