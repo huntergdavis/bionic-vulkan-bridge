@@ -557,9 +557,12 @@ int main(void) {
     CHECK((external_buffer_properties.externalMemoryProperties
                .compatibleHandleTypes &
            VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT) != 0U);
+    const VkExternalSemaphoreHandleTypeFlagBits external_semaphore_handle_type =
+        hardware_mode ? VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT
+                      : VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT;
     const VkPhysicalDeviceExternalSemaphoreInfo external_semaphore_info = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO,
-        .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
+        .handleType = external_semaphore_handle_type,
     };
     VkExternalSemaphoreProperties external_semaphore_properties = {
         .sType = VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES,
@@ -572,7 +575,7 @@ int main(void) {
     CHECK((external_semaphore_properties.externalSemaphoreFeatures &
            VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT) != 0U);
     CHECK((external_semaphore_properties.compatibleHandleTypes &
-           VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT) != 0U);
+           external_semaphore_handle_type) != 0U);
     const VkPhysicalDeviceSparseImageFormatInfo2 sparse_info2 = {
         .sType =
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SPARSE_IMAGE_FORMAT_INFO_2,

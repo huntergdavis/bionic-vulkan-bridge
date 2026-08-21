@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "gate": "E071",
+  "result": "measured_boundary",
+  "target": "Galaxy Tab S8+ Android Bionic private Turnip from Termux glibc",
+  "objective": "make the authenticated global-dispatch hardware gate select the same private Vulkan driver and external-semaphore handle type as the game path",
+  "source_base_commit": "0b44ec7e0a0ca3911278f2feb7cf6446e84f9f5b",
+  "driver": {
+    "path": "/data/data/com.termux/files/home/steam-arm64/bvb/driver/libvulkan_freedreno.so",
+    "sha256": "8ac6ef78c3c92998aa46c59fd0081edcba82756f5bad561d1b24a57684874a45",
+    "selected_explicitly": true,
+    "service_ready_loader_path_matched": true
+  },
+  "corrections": {
+    "service_loader": "private Turnip instead of the harness default /system/lib64/libvulkan.so",
+    "external_memory_handle_type": "VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT",
+    "external_semaphore_handle_type": "VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT",
+    "strict_fake_mode_changed": false
+  },
+  "progression": [
+    {
+      "configuration": "private Turnip with the old OPAQUE_FD semaphore query",
+      "cleared_previous_boundary": "VkPhysicalDeviceVulkan13Features.computeFullSubgroups",
+      "next_boundary": "OPAQUE_FD external semaphore exportability",
+      "client_stderr": {
+        "bytes": 215,
+        "sha256": "6012239e60cf6df33f3625d7b4e3ce9d0dd207ab08e3c68e8d69d53bf090d74c"
+      },
+      "service_stdout": {
+        "bytes": 651,
+        "sha256": "4b8b356fe977c5be4b4913ddf363feb114ba5fc00e82ab3038bdd24a4482c6a3"
+      }
+    },
+    {
+      "configuration": "private Turnip with the truthful SYNC_FD semaphore query",
+      "cleared_previous_boundary": "external semaphore export/import capabilities",
+      "next_boundary": "vkCreateSwapchainKHR external-image ring entry-point dependency",
+      "client_error": "create_swapchain(device, &swapchain_create_info, NULL, &virtual_swapchain) == VK_SUCCESS",
+      "service_error": "bvb: swapchain preparation failed: device lacks external-image ring entry points",
+      "client_stderr": {
+        "bytes": 194,
+        "sha256": "686a5c24ed160b5fca9cdb8a077ad317c0c8959408c3a76c27a3099b4260a1b3"
+      },
+      "service_stdout": {
+        "bytes": 651,
+        "sha256": "d5d29ebbefd3265beb5ce7afb9159262d2715095c5ccfe2159a098c177416c31"
+      },
+      "service_stderr": {
+        "bytes": 81,
+        "sha256": "fd60a321e835b096243cf8f6cb3b851f71cd82d8f2d7e3dc0315f1e005f6bae2"
+      },
+      "harness_result": {
+        "bytes": 584,
+        "sha256": "9228bb81976d9e125387d6a5165a286a2ffb29d26f76e84b43937ddee684fc95"
+      }
+    }
+  ],
+  "authenticated_activity_events": [1, 2, 3, 7, 11, 9],
+  "requested_extent": [2800, 1752],
+  "host_contracts": {
+    "focused": "3/3 passed",
+    "strict_fake_values_preserved": true,
+    "hardware_mode_uses_sync_fd": true
+  },
+  "tablet_state": {
+    "steam_pid_5973_alive": true,
+    "termux_x11_pid_27923_alive": true,
+    "visible_host_version_code": 39,
+    "visible_frame_claim": false,
+    "fps_claim": false
+  },
+  "next_exact_gate": "enable the real VK_KHR_external_memory_fd implementation dependency inside a virtual VK_KHR_swapchain native device, then identify or clear the exact external-image entry point",
+  "reuse": "The required deja query returned no indexed implementation. E071 reuses E052's authoritative private-Turnip feature path, E035's measured OPAQUE_FD memory and SYNC_FD semaphore split, and E070's explicit hardware-validation mode.",
+  "scope": "Private-driver and capability-route correction plus an exact swapchain boundary; no Activity image import, visible game frame, benchmark, or FPS claim"
+}

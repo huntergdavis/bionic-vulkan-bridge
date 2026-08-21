@@ -2866,3 +2866,40 @@ query returned no indexed implementation. E070 reuses the repository's exact
 global-dispatch fake contract and authenticated synthetic Activity harness as
 the strict baseline. Real Adreno execution, image import/display, and game
 performance remain separate gates.
+
+## E071 — private-Turnip hardware route reaches virtual swapchain (2026-08-21)
+
+Status: passed as a truthful driver-selection and capability-route gate, with
+an exact swapchain-creation boundary; no imported Activity image, visible game
+frame, benchmark, or FPS claim. The first E070 tablet attempt authenticated all
+six Activity lifecycle records but used the harness default
+`/system/lib64/libvulkan.so`, whose driver returned
+`computeFullSubgroups=false`. Mesa 26.2.0 Turnip sets that Vulkan 1.3 feature
+true unconditionally, and selecting the installed private driver by its
+verified SHA-256 immediately cleared the feature boundary.
+
+The next attempt showed a second route mismatch: Android exports external
+memory through `OPAQUE_FD` but external semaphores through `SYNC_FD`. Hardware
+mode now queries that measured split; strict-fake mode keeps its original exact
+`OPAQUE_FD` semaphore fixture. The Termux gate passes the absolute private ICD
+path to the Bionic service, refuses missing or symlinked loaders, and records
+the selected artifact in successful evidence. Both corrections preserve all
+typed ownership, Vulkan return-code, and DXVK 256-byte push-constant checks.
+
+With private Turnip plus `SYNC_FD`, the real 2800x1752 run cleared feature and
+capability discovery, logical-device creation, queue and command operations,
+memory/resource checks, and reached `vkCreateSwapchainKHR`. The service then
+failed precisely with `device lacks external-image ring entry points`. The
+test device enabled only virtual `VK_KHR_swapchain`; the current transport
+requires native `vkGetMemoryFdKHR`, whose `VK_KHR_external_memory_fd`
+dependency must be enabled internally rather than imposed on the application.
+That is E072's exact implementation gate.
+
+Canonical evidence is
+`docs/evidence/e071-private-turnip-swapchain-boundary.json`, 3,635 bytes,
+SHA-256
+`e58120281203246336060c97b6ec14cd5779967ae8be5de1d607836e6c2cf023`.
+The required `deja` queries found no indexed implementation. E071 reuses E052's
+authoritative private-Turnip route, E035's measured `OPAQUE_FD` memory and
+`SYNC_FD` semaphore split, and E070's dual strict/hardware validation design.
+Steam PID 5973 and Termux:X11 PID 27923 survived both bounded probes.

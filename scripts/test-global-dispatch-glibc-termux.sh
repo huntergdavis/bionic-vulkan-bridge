@@ -9,9 +9,10 @@ client="$out_dir/bvb-global-dispatch-test-glibc"
 service="$build_dir/bvb-bridge-service"
 harness="$project_dir/scripts/run-global-dispatch-activity-harness.py"
 policy_json="$out_dir/generated/bvb_dxvk_dispatch_policy.json"
-evidence="$project_dir/out/e070-current-global.json"
+evidence="$project_dir/out/e071-current-global.json"
 vulkan_headers="$build_dir/_deps/vulkanheaders-src/include"
 runtime_parent=${TMPDIR:-$PREFIX/tmp}
+service_loader=${BVB_VULKAN_SERVICE_LOADER:-$HOME/steam-arm64/bvb/driver/libvulkan_freedreno.so}
 
 for command_name in cmake file git grun gcc python3 readelf sha256sum; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -21,6 +22,11 @@ for command_name in cmake file git grun gcc python3 readelf sha256sum; do
 done
 if [ ! -f "$harness" ] || [ ! -d "$runtime_parent" ]; then
     printf 'global Activity harness or runtime parent is unavailable\n' >&2
+    exit 2
+fi
+if [ ! -f "$service_loader" ] || [ -L "$service_loader" ]; then
+    printf 'private Vulkan service loader is unavailable or symlinked: %s\n' \
+        "$service_loader" >&2
     exit 2
 fi
 
@@ -44,14 +50,15 @@ if ! readelf -l "$service" | grep -Fq "$bionic_interpreter"; then
     exit 3
 fi
 
-client_stdout="$out_dir/e070-current-global-client.stdout"
-client_stderr="$out_dir/e070-current-global-client.stderr"
-service_stdout="$out_dir/e070-current-global-service.stdout"
-service_stderr="$out_dir/e070-current-global-service.stderr"
-harness_result="$out_dir/e070-current-global-harness.json"
+client_stdout="$out_dir/e071-current-global-client.stdout"
+client_stderr="$out_dir/e071-current-global-client.stderr"
+service_stdout="$out_dir/e071-current-global-service.stdout"
+service_stderr="$out_dir/e071-current-global-service.stderr"
+harness_result="$out_dir/e071-current-global-harness.json"
 
 python3 "$harness" \
     --service "$service" \
+    --service-loader "$service_loader" \
     --runtime-parent "$runtime_parent" \
     --hardware-validation \
     --width 2800 --height 1752 \
@@ -65,7 +72,7 @@ python3 "$harness" \
 source_commit=$(git -C "$project_dir" rev-parse HEAD)
 python3 - "$policy_json" "$library" "$client" "$service" \
     "$client_stdout" "$service_stdout" "$harness_result" \
-    "$source_commit" "$evidence" <<'PY'
+    "$source_commit" "$evidence" "$service_loader" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -87,6 +94,7 @@ import sys
     sys.argv[8],
     pathlib.Path(sys.argv[9]),
 ]
+service_loader_path = pathlib.Path(sys.argv[10])
 
 
 def artifact(path):
@@ -382,14 +390,14 @@ assert expected_exports <= symbol_names
 
 document = {
     "schema_version": 1,
-    "gate": "E070-current-global",
+    "gate": "E071-current-global",
     "result": "pass",
     "source_commit": source_commit,
     "target": "Galaxy Tab S8+ Termux ARM64 glibc to Android Bionic",
     "glibc_interpreter":
         "/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1",
     "bionic_interpreter": "/system/bin/linker64",
-    "vulkan_loader": "/system/lib64/libvulkan.so",
+    "vulkan_loader": artifact(service_loader_path),
     "policy": policy,
     "physical_device_discovery": {
         "validation_mode": validation_mode,
@@ -519,7 +527,7 @@ document = {
 assert document["physical_device_discovery"]["service_ready"] is True
 evidence_path.write_text(json.dumps(document, indent=2) + "\n")
 print(json.dumps(document, indent=2))
-print("e070_current_global=PASS")
+print("e071_current_global=PASS")
 PY
 
 printf 'evidence=%s\n' "$evidence"

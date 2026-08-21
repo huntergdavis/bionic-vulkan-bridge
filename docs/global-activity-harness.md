@@ -16,7 +16,12 @@ client remains the existing global-dispatch contract, including its
 surface, swapchain, get-images, acquire, and present assertions. Per-frame
 Binder or Java is not introduced.
 
-For a real Vulkan driver, pass `--hardware-validation`. The harness sets
+For a real Vulkan driver, pass `--hardware-validation` and an absolute
+`--service-loader` path. The Termux gate defaults that path to the installed
+private Turnip ICD and accepts `BVB_VULKAN_SERVICE_LOADER` as an explicit
+override; it refuses a missing or symlinked file. This prevents a hardware run
+from silently testing Android's system driver instead of the game-path driver.
+The harness sets
 `BVB_GLOBAL_DISPATCH_HARDWARE=1` only in the client child and records
 `client_validation_mode: hardware` in its JSON. This preserves exact fake
 fixtures by default while making the tablet client accept native sizes,
@@ -24,6 +29,11 @@ alignments, dedicated-allocation preferences, and proxy serials only when they
 satisfy the corresponding Vulkan, typed-ownership, repeatability, and target
 2800x1752 capability invariants. DXVK's 256-byte push-constant adapter floor
 remains mandatory.
+
+Hardware mode queries exportable memory with `OPAQUE_FD` and exportable
+semaphores with `SYNC_FD`, matching the measured Android/Turnip capability
+split. Strict-fake mode retains its original exact `OPAQUE_FD` semaphore
+fixture.
 
 This is a transport gate, not a visibility gate. The synthetic sink does not
 import an external image into an Activity Vulkan device, consume the frame-ring
