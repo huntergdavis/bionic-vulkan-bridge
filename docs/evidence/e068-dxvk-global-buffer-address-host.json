@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "gate": "E068",
+  "result": "pass_host_contract",
+  "objective": "complete pinned DXVK's ordinary D3D9/global buffer allocation chain with native core requirements2 and device-address queries while preserving typed ownership and a pointer-free wire",
+  "source": {
+    "dxvk_commit": "a6764047e587178283fcde4073ae6e1410af594f",
+    "loader_path": "src/vulkan/vulkan_loader.h",
+    "loader_sha256": "f03087d3abcd32556b60b18ef4a8ade9ac48c4a67197942df964a8f8f4a5037b",
+    "call_path": "src/dxvk/dxvk_memory.cpp",
+    "call_path_sha256": "1c9eb57fc1a3b4bab76741569b9c8d5f93821cf39b8714e5a0e6e6ecb2f05b55",
+    "dedicated_resource_sequence": "lines 1014-1030 create a buffer then issue core vkGetBufferMemoryRequirements2; lines 1083-1098 legacy-bind it and issue core vkGetBufferDeviceAddress only after a successful bind",
+    "global_allocation_sequence": "lines 1397-1423 create the global buffer, issue core vkGetBufferMemoryRequirements2, legacy-bind memory, then conditionally issue core vkGetBufferDeviceAddress",
+    "device_address_helper": "lines 2304-2310 build a VkBufferDeviceAddressInfo with an implicit null pNext and call core vkGetBufferDeviceAddress"
+  },
+  "audited_shapes": {
+    "requirements_input": {
+      "sType": "VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2",
+      "pNext": null,
+      "buffer": "existing buffer returned by vkCreateBuffer on the same device"
+    },
+    "requirements_output": {
+      "sType": "VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2",
+      "pNext_in_pinned_calls": null,
+      "bounded_additional_shape": "null or one terminal VkMemoryDedicatedRequirements"
+    },
+    "address_input": {
+      "sType": "VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO",
+      "pNext": null,
+      "buffer": "same typed buffer, after successful memory binding"
+    },
+    "call_order": [
+      "vkCreateBuffer",
+      "vkGetBufferMemoryRequirements2",
+      "vkAllocateMemory or reuse allocation",
+      "vkBindBufferMemory",
+      "vkGetBufferDeviceAddress when shader-device-address usage is present"
+    ],
+    "bind2_required_for_this_path": false
+  },
+  "wire": {
+    "opcodes": {
+      "vkGetBufferMemoryRequirements2": 78,
+      "vkGetBufferDeviceAddress": 79
+    },
+    "reserved_opcode_77_untouched": true,
+    "producer_opcodes_100_101_untouched": true,
+    "requirements_request_bytes": 16,
+    "requirements_response_bytes": 32,
+    "address_request_bytes": 8,
+    "address_response_bytes": 8,
+    "maximum_buffer_bytes": 268435456,
+    "representation": "fixed-width little-endian typed buffer ID, bounded pNext flags, scalar requirements, booleans, and device address",
+    "pointers_crossed": false,
+    "native_reconstruction": "the Bionic service resolves the buffer's owning device and native handle, then reconstructs all Vulkan records in local memory"
+  },
+  "fail_closed": [
+    "wrong structure types, wrong-type or missing buffer IDs, or cross-device buffer ownership",
+    "any input pNext, any output pNext except one terminal VkMemoryDedicatedRequirements, or any address-info pNext",
+    "unknown pNext bits, nonzero reserved wire bytes, noncanonical booleans, zero requirements, or a zero native address",
+    "truncated, oversized, or incorrectly typed request and response payloads"
+  ],
+  "dispatch_policy": {
+    "baseline": "E066's 84 executable names",
+    "promotion": "core vkGetBufferMemoryRequirements2 and core vkGetBufferDeviceAddress only",
+    "aliases": "vkGetBufferMemoryRequirements2KHR and vkGetBufferDeviceAddressKHR remain required_unimplemented; vkGetBufferDeviceAddressEXT remains probed_null. Pinned DXVK invokes core spellings and this gate does not claim separate native alias support.",
+    "counts": {
+      "executable": 86,
+      "required_unimplemented": 354,
+      "probed_null": 302
+    }
+  },
+  "verification": {
+    "base_commit": "16cba32",
+    "host_contracts": "33/33 passed after final rebase",
+    "canonical_codec": "round trips both fixed-width commands and rejects unknown pNext flags, nonzero reserved bytes, invalid booleans, and zero addresses",
+    "cross_process_fake_driver": "verifies the exact core structures and native fake buffer, returns size 4096/alignment 256/type bit 1 and optional preferred-not-required dedicated booleans, requires memory binding before returning address 0x123456780000",
+    "unsupported_chain_contract": "the client leaves deterministic zero requirements or returns address zero without issuing an RPC",
+    "hardware_or_game_claim": false
+  },
+  "remaining_risks": [
+    "real Turnip requirements2 and buffer device-address execution remain unproven until a tablet deployment",
+    "the logical device must enable bufferDeviceAddress before DXVK uses the address call; the pinned feature-create chain is covered elsewhere but this host fake does not emulate feature gating",
+    "dedicated buffer allocation through VkMemoryDedicatedAllocateInfo.buffer remains unsupported by the current bounded allocation wire",
+    "a runtime trace may expose another required command after this mapped allocation chain"
+  ],
+  "next_runtime_boundary": "For DXVK global buffers up to its own 256 MiB MaxChunkSize, the audited ordinary create/requirements/allocate/legacy-bind/address sequence is complete; deploy and capture the first new resolver or native-call failure rather than speculating beyond the pinned path.",
+  "reuse": "The required deja search found no indexed implementation. E068 reuses E046 typed same-device ownership, E056 and E063 bounded local pNext reconstruction, E066 requirements-response validation, and the existing E034/E066 generated dispatch-policy mechanism."
+}

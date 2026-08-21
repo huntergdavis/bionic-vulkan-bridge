@@ -207,6 +207,16 @@ int bvb_vulkan_global_context_get_device_buffer_requirements(
     const struct bvb_vulkan_device_buffer_requirements_request *request,
     struct bvb_vulkan_device_buffer_requirements_response *response,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_get_buffer_requirements_2(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_buffer_requirements_2_request *request,
+    struct bvb_vulkan_buffer_requirements_2_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_get_buffer_device_address(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_buffer_device_address_request *request,
+    struct bvb_vulkan_buffer_device_address_response *response,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_allocate_memory(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_memory_allocate_request *request,
@@ -221,7 +231,7 @@ int bvb_vulkan_global_context_free_memory(
     struct bvb_vulkan_global_context *context, uint64_t memory_id,
     char *error, size_t error_size);
 int bvb_vulkan_global_context_bind_buffer_memory(
-    const struct bvb_vulkan_global_context *context,
+    struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_buffer_bind_request *request,
     int32_t *vulkan_result, char *error, size_t error_size);
 int bvb_vulkan_global_context_create_image(

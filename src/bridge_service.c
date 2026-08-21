@@ -1873,6 +1873,77 @@ static int answer_vulkan_device_buffer_requirements(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_buffer_requirements_2(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_BUFFER_REQUIREMENTS_2_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_buffer_requirements_2_request decoded;
+    int result = bvb_protocol_decode_vulkan_buffer_requirements_2_request(
+        request->payload, &decoded);
+    const bool wire_decoded = result == 0;
+    struct bvb_vulkan_buffer_requirements_2_response requirements = {0};
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_get_buffer_requirements_2(
+            context, &decoded, &requirements, diagnostic,
+            sizeof(diagnostic));
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_buffer_requirements_2_response(
+            response.payload, &requirements);
+    if (result == 0) {
+        response.header.payload_length =
+            BVB_VULKAN_BUFFER_REQUIREMENTS_2_RESPONSE_SIZE;
+    } else {
+        fprintf(stderr,
+                "bvb: buffer requirements2 failed: status=%d phase=%s %s\n",
+                result, wire_decoded ? "native" : "wire", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_buffer_device_address(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_BUFFER_DEVICE_ADDRESS_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_buffer_device_address_request decoded;
+    int result = bvb_protocol_decode_vulkan_buffer_device_address_request(
+        request->payload, &decoded);
+    const bool wire_decoded = result == 0;
+    struct bvb_vulkan_buffer_device_address_response address = {0};
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_get_buffer_device_address(
+            context, &decoded, &address, diagnostic, sizeof(diagnostic));
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_buffer_device_address_response(
+            response.payload, &address);
+    if (result == 0) {
+        response.header.payload_length =
+            BVB_VULKAN_BUFFER_DEVICE_ADDRESS_RESPONSE_SIZE;
+    } else {
+        fprintf(stderr,
+                "bvb: buffer device address failed: status=%d phase=%s %s\n",
+                result, wire_decoded ? "native" : "wire", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_buffer_bind(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context) {
@@ -2943,6 +3014,14 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_DEVICE_BUFFER_REQUIREMENTS) {
             result = answer_vulkan_device_buffer_requirements(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_BUFFER_REQUIREMENTS_2) {
+            result = answer_vulkan_buffer_requirements_2(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_BUFFER_DEVICE_ADDRESS) {
+            result = answer_vulkan_buffer_device_address(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode == BVB_OPCODE_VULKAN_BUFFER_BIND) {
             result = answer_vulkan_buffer_bind(

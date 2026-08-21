@@ -1380,6 +1380,19 @@ static VkResult VKAPI_CALL fake_create_buffer(
     if (create_info == NULL || create_info->size == 0U) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
+    if ((create_info->usage &
+         VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) != 0U &&
+        (create_info->sType != VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO ||
+         create_info->pNext != NULL || create_info->flags != 0U ||
+         create_info->sharingMode != VK_SHARING_MODE_EXCLUSIVE ||
+         create_info->queueFamilyIndexCount != 0U ||
+         create_info->pQueueFamilyIndices != NULL ||
+         create_info->usage !=
+             (VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+              VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+              VK_BUFFER_USAGE_TRANSFER_SRC_BIT))) {
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
     fake_buffer_size = create_info->size;
     *buffer = (VkBuffer)(uintptr_t)0x4000U;
     return VK_SUCCESS;
@@ -1405,6 +1418,35 @@ static void VKAPI_CALL fake_get_buffer_memory_requirements(
         .alignment = 4,
         .memoryTypeBits = 1,
     };
+}
+
+static void VKAPI_CALL fake_get_buffer_memory_requirements_2(
+    VkDevice device, const VkBufferMemoryRequirementsInfo2 *info,
+    VkMemoryRequirements2 *requirements) {
+    (void)device;
+    if (info == NULL || requirements == NULL ||
+        info->sType != VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2 ||
+        info->pNext != NULL ||
+        info->buffer != (VkBuffer)(uintptr_t)UINT64_C(0x4000) ||
+        requirements->sType != VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2) {
+        abort();
+    }
+    VkMemoryDedicatedRequirements *dedicated = requirements->pNext;
+    if (dedicated != NULL &&
+        (dedicated->sType !=
+             VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS ||
+         dedicated->pNext != NULL)) {
+        abort();
+    }
+    requirements->memoryRequirements = (VkMemoryRequirements){
+        .size = fake_buffer_size,
+        .alignment = 256U,
+        .memoryTypeBits = 1U,
+    };
+    if (dedicated != NULL) {
+        dedicated->prefersDedicatedAllocation = VK_TRUE;
+        dedicated->requiresDedicatedAllocation = VK_FALSE;
+    }
 }
 
 static void VKAPI_CALL fake_get_device_buffer_memory_requirements(
@@ -1586,6 +1628,19 @@ static VkResult VKAPI_CALL fake_bind_buffer_memory(
     (void)offset;
     fake_bound_memory = memory;
     return VK_SUCCESS;
+}
+
+static VkDeviceAddress VKAPI_CALL fake_get_buffer_device_address(
+    VkDevice device, const VkBufferDeviceAddressInfo *info) {
+    (void)device;
+    if (info == NULL ||
+        info->sType != VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO ||
+        info->pNext != NULL ||
+        info->buffer != (VkBuffer)(uintptr_t)UINT64_C(0x4000) ||
+        fake_bound_memory == VK_NULL_HANDLE) {
+        abort();
+    }
+    return UINT64_C(0x123456780000);
 }
 
 static VkResult VKAPI_CALL fake_create_image(
@@ -2158,8 +2213,12 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkDestroyBuffer", fake_destroy_buffer)
     BVB_DEVICE_MATCH("vkGetBufferMemoryRequirements",
                      fake_get_buffer_memory_requirements)
+    BVB_DEVICE_MATCH("vkGetBufferMemoryRequirements2",
+                     fake_get_buffer_memory_requirements_2)
     BVB_DEVICE_MATCH("vkGetDeviceBufferMemoryRequirements",
                      fake_get_device_buffer_memory_requirements)
+    BVB_DEVICE_MATCH("vkGetBufferDeviceAddress",
+                     fake_get_buffer_device_address)
     BVB_DEVICE_MATCH("vkAllocateMemory", fake_allocate_memory)
     BVB_DEVICE_MATCH("vkFreeMemory", fake_free_memory)
     BVB_DEVICE_MATCH("vkBindBufferMemory", fake_bind_buffer_memory)

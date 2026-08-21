@@ -47,6 +47,13 @@ struct bvb_memory_metadata {
     uint32_t property_flags;
 };
 
+struct bvb_buffer_metadata {
+    uint64_t buffer_id;
+    uint64_t device_id;
+    uint32_t usage;
+    bool memory_bound;
+};
+
 struct bvb_semaphore_metadata {
     uint64_t semaphore_id;
     VkSemaphoreType type;
@@ -116,6 +123,7 @@ struct bvb_vulkan_global_context {
     uint64_t next_pipeline_serial;
     struct bvb_device_metadata device_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_memory_metadata memory_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
+    struct bvb_buffer_metadata buffer_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_semaphore_metadata
         semaphore_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_image_metadata image_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
@@ -3207,6 +3215,30 @@ static struct bvb_image_metadata *image_metadata_slot(
     return empty;
 }
 
+static struct bvb_buffer_metadata *buffer_metadata_slot(
+    struct bvb_vulkan_global_context *context, uint64_t buffer_id) {
+    struct bvb_buffer_metadata *empty = NULL;
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        struct bvb_buffer_metadata *metadata =
+            &context->buffer_metadata[index];
+        if (metadata->buffer_id == buffer_id && buffer_id != 0U)
+            return metadata;
+        if (metadata->buffer_id == 0U && empty == NULL) empty = metadata;
+    }
+    return empty;
+}
+
+static const struct bvb_buffer_metadata *buffer_metadata_find(
+    const struct bvb_vulkan_global_context *context, uint64_t buffer_id) {
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_buffer_metadata *metadata =
+            &context->buffer_metadata[index];
+        if (metadata->buffer_id == buffer_id && buffer_id != 0U)
+            return metadata;
+    }
+    return NULL;
+}
+
 int bvb_vulkan_global_context_create_buffer(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_buffer_create_request *request,
@@ -3215,9 +3247,31 @@ int bvb_vulkan_global_context_create_buffer(
     if (error != NULL && error_size != 0U) error[0] = '\0';
     if (context == NULL || request == NULL || response == NULL) return -EINVAL;
     *response = (struct bvb_vulkan_object_create_response){0};
-    if (request->size == 0U || request->size > 16U * 1024U * 1024U ||
+    if (request->size == 0U ||
+        request->size > BVB_VULKAN_MAX_MEMORY_ALLOCATION_SIZE ||
         request->flags != 0U ||
-        request->usage != VK_BUFFER_USAGE_TRANSFER_DST_BIT) {
+        (request->usage != VK_BUFFER_USAGE_TRANSFER_DST_BIT &&
+         (((request->usage &
+            (VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+             VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+             VK_BUFFER_USAGE_TRANSFER_SRC_BIT)) !=
+           (VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+            VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+            VK_BUFFER_USAGE_TRANSFER_SRC_BIT)) ||
+          (request->usage &
+           ~(VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT |
+             VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+             VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
+             VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
+             VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT |
+             VK_BUFFER_USAGE_STORAGE_TEXEL_BUFFER_BIT |
+             VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
+             VK_BUFFER_USAGE_TRANSFER_DST_BIT |
+             VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+             VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_BUFFER_BIT_EXT |
+             VK_BUFFER_USAGE_TRANSFORM_FEEDBACK_COUNTER_BUFFER_BIT_EXT)) !=
+              0U))) {
         response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
         return 0;
     }
@@ -3244,6 +3298,12 @@ int bvb_vulkan_global_context_create_buffer(
     response->vulkan_result = create_buffer(
         device, &create_info, NULL, &buffer);
     if (response->vulkan_result != VK_SUCCESS) return 0;
+    struct bvb_buffer_metadata *metadata = buffer_metadata_slot(context, 0U);
+    if (metadata == NULL) {
+        destroy_buffer(device, buffer, NULL);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
     const uint64_t wire_id = bvb_handle_id(
         BVB_OBJECT_BUFFER, context->next_buffer_serial++);
     result = bvb_handle_table_insert(
@@ -3254,6 +3314,11 @@ int bvb_vulkan_global_context_create_buffer(
         response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
         return 0;
     }
+    *metadata = (struct bvb_buffer_metadata){
+        .buffer_id = wire_id,
+        .device_id = request->device_id,
+        .usage = request->usage,
+    };
     response->object_id = wire_id;
     return 0;
 }
@@ -3274,7 +3339,13 @@ int bvb_vulkan_global_context_destroy_buffer(
     if (destroy_buffer == NULL) return -ENOSYS;
     result = bvb_handle_table_remove(
         &context->objects, buffer_id, BVB_OBJECT_BUFFER, NULL);
-    if (result == 0) destroy_buffer(device, buffer_from_bits(buffer_bits), NULL);
+    if (result == 0) {
+        struct bvb_buffer_metadata *metadata =
+            buffer_metadata_slot(context, buffer_id);
+        if (metadata != NULL && metadata->buffer_id == buffer_id)
+            *metadata = (struct bvb_buffer_metadata){0};
+        destroy_buffer(device, buffer_from_bits(buffer_bits), NULL);
+    }
     return result;
 }
 
@@ -3365,6 +3436,105 @@ int bvb_vulkan_global_context_get_device_buffer_requirements(
                    (dedicated.requiresDedicatedAllocation == VK_FALSE ||
                     dedicated.requiresDedicatedAllocation == VK_TRUE)
                ? 0 : -EPROTO;
+}
+
+int bvb_vulkan_global_context_get_buffer_requirements_2(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_buffer_requirements_2_request *request,
+    struct bvb_vulkan_buffer_requirements_2_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL)
+        return -EINVAL;
+    *response = (struct bvb_vulkan_buffer_requirements_2_response){0};
+    uint8_t validation[BVB_VULKAN_BUFFER_REQUIREMENTS_2_REQUEST_SIZE];
+    if (bvb_protocol_encode_vulkan_buffer_requirements_2_request(
+            validation, request) != 0) {
+        return -EINVAL;
+    }
+    uint64_t device_id = 0U;
+    uint64_t buffer_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, request->buffer_id, BVB_OBJECT_BUFFER, &device_id, &device,
+        &buffer_bits);
+    if (result != 0) return result;
+    PFN_vkGetBufferMemoryRequirements2 get_requirements =
+        (PFN_vkGetBufferMemoryRequirements2)context->get_device_proc_addr(
+            device, "vkGetBufferMemoryRequirements2");
+    if (get_requirements == NULL) return -ENOSYS;
+    const VkBufferMemoryRequirementsInfo2 info = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2,
+        .buffer = buffer_from_bits(buffer_bits),
+    };
+    VkMemoryDedicatedRequirements dedicated = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS,
+    };
+    VkMemoryRequirements2 native = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,
+        .pNext = (request->pnext_flags &
+                  BVB_VULKAN_BUFFER_REQUIREMENTS_2_PNEXT_DEDICATED) != 0U
+            ? &dedicated : NULL,
+    };
+    get_requirements(device, &info, &native);
+    if (native.memoryRequirements.size == 0U ||
+        native.memoryRequirements.alignment == 0U ||
+        native.memoryRequirements.memoryTypeBits == 0U ||
+        dedicated.prefersDedicatedAllocation > VK_TRUE ||
+        dedicated.requiresDedicatedAllocation > VK_TRUE) {
+        return -EPROTO;
+    }
+    *response = (struct bvb_vulkan_buffer_requirements_2_response){
+        .size = native.memoryRequirements.size,
+        .alignment = native.memoryRequirements.alignment,
+        .memory_type_bits = native.memoryRequirements.memoryTypeBits,
+        .pnext_flags = request->pnext_flags,
+        .prefers_dedicated =
+            (uint32_t)dedicated.prefersDedicatedAllocation,
+        .requires_dedicated =
+            (uint32_t)dedicated.requiresDedicatedAllocation,
+    };
+    return 0;
+}
+
+int bvb_vulkan_global_context_get_buffer_device_address(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_buffer_device_address_request *request,
+    struct bvb_vulkan_buffer_device_address_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL)
+        return -EINVAL;
+    *response = (struct bvb_vulkan_buffer_device_address_response){0};
+    uint8_t validation[BVB_VULKAN_BUFFER_DEVICE_ADDRESS_REQUEST_SIZE];
+    if (bvb_protocol_encode_vulkan_buffer_device_address_request(
+            validation, request) != 0) {
+        return -EINVAL;
+    }
+    uint64_t device_id = 0U;
+    uint64_t buffer_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, request->buffer_id, BVB_OBJECT_BUFFER, &device_id, &device,
+        &buffer_bits);
+    if (result != 0) return result;
+    const struct bvb_buffer_metadata *metadata = buffer_metadata_find(
+        context, request->buffer_id);
+    if (metadata == NULL || metadata->device_id != device_id ||
+        !metadata->memory_bound ||
+        (metadata->usage & VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) == 0U) {
+        return -EINVAL;
+    }
+    PFN_vkGetBufferDeviceAddress get_address =
+        (PFN_vkGetBufferDeviceAddress)context->get_device_proc_addr(
+            device, "vkGetBufferDeviceAddress");
+    if (get_address == NULL) return -ENOSYS;
+    const VkBufferDeviceAddressInfo info = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
+        .buffer = buffer_from_bits(buffer_bits),
+    };
+    response->device_address = (uint64_t)get_address(device, &info);
+    return response->device_address != 0U ? 0 : -EPROTO;
 }
 
 int bvb_vulkan_global_context_allocate_memory_extended(
@@ -3511,7 +3681,7 @@ int bvb_vulkan_global_context_free_memory(
 }
 
 int bvb_vulkan_global_context_bind_buffer_memory(
-    const struct bvb_vulkan_global_context *context,
+    struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_buffer_bind_request *request,
     int32_t *vulkan_result, char *error, size_t error_size) {
     if (error != NULL && error_size != 0U) error[0] = '\0';
@@ -3535,6 +3705,13 @@ int bvb_vulkan_global_context_bind_buffer_memory(
     *vulkan_result = bind(
         buffer_device, buffer_from_bits(buffer_bits),
         memory_from_bits(memory_bits), request->offset);
+    if (*vulkan_result == VK_SUCCESS) {
+        struct bvb_buffer_metadata *metadata = buffer_metadata_slot(
+            context, request->buffer_id);
+        if (metadata == NULL || metadata->device_id != buffer_device_id)
+            return -EPROTO;
+        metadata->memory_bound = true;
+    }
     return 0;
 }
 

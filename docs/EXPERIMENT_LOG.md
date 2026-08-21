@@ -2743,3 +2743,47 @@ sparse-binding-only device-image query was not taken, and every later
 source-guaranteed constructor call found in the audit is already bridged. The
 next exact unresolved call must therefore come from a new tablet trace after
 deployment rather than a source-order guess.
+
+## E068 — DXVK global buffer requirements and device address (2026-08-21)
+
+Status: passed through the cross-process host fake driver; no Android, game
+frame, or FPS claim. Pinned DXVK commit
+`a6764047e587178283fcde4073ae6e1410af594f` uses the same exact core sequence
+for ordinary dedicated and global buffers: create, core
+`vkGetBufferMemoryRequirements2`, allocate or reuse memory, legacy bind, then
+core `vkGetBufferDeviceAddress` when shader-device-address usage is present.
+E068 forwards those two missing queries through opcodes 78 and 79, leaving
+reserved opcode 77 and producer opcodes 100–101 untouched.
+
+The fixed-width wire carries only a typed buffer ID, one optional dedicated
+requirements bit, native scalar requirements, and the device address. The
+client and service both enforce same-device buffer ownership and reconstruct
+all Vulkan structures locally. Requirements2 accepts only null input `pNext`
+and either null output `pNext` or one terminal
+`VkMemoryDedicatedRequirements`; the address info accepts only null `pNext`.
+Malformed shapes deterministically return zero output without inventing a
+result.
+
+The existing buffer-create ceiling now matches pinned DXVK's bounded 256 MiB
+`MaxChunkSize`, and the accepted global-buffer usage mask is restricted to the
+source-audited allocator flags with mandatory transfer-src, transfer-dst, and
+shader-device-address bits. Address queries additionally require that exact
+usage capability and a successful memory bind on both sides of the bridge.
+
+The fake driver verifies size 4,096, alignment 256, memory-type bit 1,
+preferred-but-not-required dedicated booleans, and address
+`0x123456780000`; it aborts if the address query arrives before legacy memory
+binding. Policy promotes only the two core names, yielding 86 executable, 354
+required-unimplemented, and 302 probed-null entries. KHR aliases stay null and
+the EXT address spelling stays probed-null because pinned DXVK calls core and
+this gate has no separate native-alias proof.
+
+Canonical evidence is
+`docs/evidence/e068-dxvk-global-buffer-address-host.json`, 5,647 bytes,
+SHA-256
+`b9c20ae5d0514d251bcacda888627bd3bd5f44fd4489bc0c6912bc1c9742a9bc`.
+The required `deja` search found no indexed implementation; this gate reuses
+E046 typed ownership, E056/E063 bounded local `pNext` reconstruction, E066
+requirements validation, and the existing generated policy mechanism. Real
+Turnip execution, feature gating, Tomb Raider progress, dedicated buffer
+allocation, and the next runtime boundary remain unproven pending deployment.

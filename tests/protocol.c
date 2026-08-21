@@ -89,6 +89,9 @@ int main(void) {
     CHECK(BVB_OPCODE_VULKAN_IMAGE_VIEW_DESTROY == 95);
     CHECK(BVB_OPCODE_VULKAN_IMAGE_REQUIREMENTS_2 == 96);
     CHECK(BVB_OPCODE_VULKAN_MEMORY_ALLOCATE_EXTENDED == 97);
+    CHECK(BVB_OPCODE_VULKAN_DEVICE_BUFFER_REQUIREMENTS == 76);
+    CHECK(BVB_OPCODE_VULKAN_BUFFER_REQUIREMENTS_2 == 78);
+    CHECK(BVB_OPCODE_VULKAN_BUFFER_DEVICE_ADDRESS == 79);
     CHECK(BVB_OPCODE_VULKAN_SWAPCHAIN_ACQUIRE == 100);
     CHECK(BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT == 101);
     CHECK(decoded.opcode == BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT);
@@ -1071,6 +1074,99 @@ int main(void) {
     CHECK(bvb_protocol_decode_vulkan_device_buffer_requirements_response(
               device_buffer_requirements_response_wire,
               &device_buffer_requirements_response_decoded) == -EPROTO);
+    const struct bvb_vulkan_buffer_requirements_2_request
+        buffer_requirements_2_request = {
+            .buffer_id = buffer_created.object_id,
+            .pnext_flags =
+                BVB_VULKAN_BUFFER_REQUIREMENTS_2_PNEXT_DEDICATED,
+        };
+    uint8_t buffer_requirements_2_request_wire[
+        BVB_VULKAN_BUFFER_REQUIREMENTS_2_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_buffer_requirements_2_request(
+              buffer_requirements_2_request_wire,
+              &buffer_requirements_2_request) == 0);
+    struct bvb_vulkan_buffer_requirements_2_request
+        buffer_requirements_2_request_decoded;
+    CHECK(bvb_protocol_decode_vulkan_buffer_requirements_2_request(
+              buffer_requirements_2_request_wire,
+              &buffer_requirements_2_request_decoded) == 0);
+    CHECK(buffer_requirements_2_request_decoded.buffer_id ==
+          buffer_created.object_id);
+    buffer_requirements_2_request_wire[12] = 1U;
+    CHECK(bvb_protocol_decode_vulkan_buffer_requirements_2_request(
+              buffer_requirements_2_request_wire,
+              &buffer_requirements_2_request_decoded) == -EPROTO);
+    buffer_requirements_2_request_wire[12] = 0U;
+    bvb_wire_put_u32(buffer_requirements_2_request_wire + 8,
+                     UINT32_C(0x80000000));
+    CHECK(bvb_protocol_decode_vulkan_buffer_requirements_2_request(
+              buffer_requirements_2_request_wire,
+              &buffer_requirements_2_request_decoded) == -EPROTO);
+    const struct bvb_vulkan_buffer_requirements_2_response
+        buffer_requirements_2_response = {
+            .size = 4096U,
+            .alignment = 256U,
+            .memory_type_bits = 1U,
+            .pnext_flags =
+                BVB_VULKAN_BUFFER_REQUIREMENTS_2_PNEXT_DEDICATED,
+            .prefers_dedicated = 1U,
+        };
+    uint8_t buffer_requirements_2_response_wire[
+        BVB_VULKAN_BUFFER_REQUIREMENTS_2_RESPONSE_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_buffer_requirements_2_response(
+              buffer_requirements_2_response_wire,
+              &buffer_requirements_2_response) == 0);
+    struct bvb_vulkan_buffer_requirements_2_response
+        buffer_requirements_2_response_decoded;
+    CHECK(bvb_protocol_decode_vulkan_buffer_requirements_2_response(
+              buffer_requirements_2_response_wire,
+              &buffer_requirements_2_response_decoded) == 0);
+    CHECK(buffer_requirements_2_response_decoded.prefers_dedicated == 1U);
+    bvb_wire_put_u32(buffer_requirements_2_response_wire + 24, 2U);
+    CHECK(bvb_protocol_decode_vulkan_buffer_requirements_2_response(
+              buffer_requirements_2_response_wire,
+              &buffer_requirements_2_response_decoded) == -EPROTO);
+    CHECK(bvb_protocol_encode_vulkan_buffer_requirements_2_response(
+              buffer_requirements_2_response_wire,
+              &buffer_requirements_2_response) == 0);
+    bvb_wire_put_u32(buffer_requirements_2_response_wire + 20, 0U);
+    CHECK(bvb_protocol_decode_vulkan_buffer_requirements_2_response(
+              buffer_requirements_2_response_wire,
+              &buffer_requirements_2_response_decoded) == -EPROTO);
+    bvb_wire_put_u32(buffer_requirements_2_response_wire + 20,
+                     UINT32_C(0x80000000));
+    bvb_wire_put_u32(buffer_requirements_2_response_wire + 24, 0U);
+    CHECK(bvb_protocol_decode_vulkan_buffer_requirements_2_response(
+              buffer_requirements_2_response_wire,
+              &buffer_requirements_2_response_decoded) == -EPROTO);
+    const struct bvb_vulkan_buffer_device_address_request address_request = {
+        .buffer_id = buffer_created.object_id,
+    };
+    uint8_t address_request_wire[
+        BVB_VULKAN_BUFFER_DEVICE_ADDRESS_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_buffer_device_address_request(
+              address_request_wire, &address_request) == 0);
+    struct bvb_vulkan_buffer_device_address_request address_request_decoded;
+    CHECK(bvb_protocol_decode_vulkan_buffer_device_address_request(
+              address_request_wire, &address_request_decoded) == 0);
+    CHECK(address_request_decoded.buffer_id == buffer_created.object_id);
+    bvb_wire_put_u64(address_request_wire, buffer_create.device_id);
+    CHECK(bvb_protocol_decode_vulkan_buffer_device_address_request(
+              address_request_wire, &address_request_decoded) == -EPROTO);
+    const struct bvb_vulkan_buffer_device_address_response address_response = {
+        .device_address = UINT64_C(0x123456780000),
+    };
+    uint8_t address_response_wire[
+        BVB_VULKAN_BUFFER_DEVICE_ADDRESS_RESPONSE_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_buffer_device_address_response(
+              address_response_wire, &address_response) == 0);
+    struct bvb_vulkan_buffer_device_address_response address_decoded;
+    CHECK(bvb_protocol_decode_vulkan_buffer_device_address_response(
+              address_response_wire, &address_decoded) == 0);
+    CHECK(address_decoded.device_address == UINT64_C(0x123456780000));
+    memset(address_response_wire, 0, sizeof(address_response_wire));
+    CHECK(bvb_protocol_decode_vulkan_buffer_device_address_response(
+              address_response_wire, &address_decoded) == -EPROTO);
     const struct bvb_vulkan_memory_allocate_request memory_allocate = {
         .device_id = buffer_create.device_id,
         .allocation_size = 4096U,

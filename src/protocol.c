@@ -1871,6 +1871,133 @@ int bvb_protocol_decode_vulkan_device_buffer_requirements_response(
     return 0;
 }
 
+static bool buffer_requirements_2_pnext_valid(uint32_t pnext_flags) {
+    return (pnext_flags &
+            ~BVB_VULKAN_BUFFER_REQUIREMENTS_2_PNEXT_MASK) == 0U;
+}
+
+int bvb_protocol_encode_vulkan_buffer_requirements_2_request(
+    uint8_t output[BVB_VULKAN_BUFFER_REQUIREMENTS_2_REQUEST_SIZE],
+    const struct bvb_vulkan_buffer_requirements_2_request *request) {
+    if (output == NULL || request == NULL ||
+        !wire_id_is_type(request->buffer_id, BVB_OBJECT_BUFFER) ||
+        !buffer_requirements_2_pnext_valid(request->pnext_flags)) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_BUFFER_REQUIREMENTS_2_REQUEST_SIZE);
+    bvb_wire_put_u64(output, request->buffer_id);
+    bvb_wire_put_u32(output + 8, request->pnext_flags);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_buffer_requirements_2_request(
+    const uint8_t input[BVB_VULKAN_BUFFER_REQUIREMENTS_2_REQUEST_SIZE],
+    struct bvb_vulkan_buffer_requirements_2_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    const struct bvb_vulkan_buffer_requirements_2_request decoded = {
+        .buffer_id = bvb_wire_get_u64(input),
+        .pnext_flags = bvb_wire_get_u32(input + 8),
+    };
+    if (!wire_id_is_type(decoded.buffer_id, BVB_OBJECT_BUFFER) ||
+        !buffer_requirements_2_pnext_valid(decoded.pnext_flags) ||
+        bvb_wire_get_u32(input + 12) != 0U) {
+        return -EPROTO;
+    }
+    *request = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_buffer_requirements_2_response(
+    uint8_t output[BVB_VULKAN_BUFFER_REQUIREMENTS_2_RESPONSE_SIZE],
+    const struct bvb_vulkan_buffer_requirements_2_response *response) {
+    if (output == NULL || response == NULL || response->size == 0U ||
+        response->alignment == 0U || response->memory_type_bits == 0U ||
+        !buffer_requirements_2_pnext_valid(response->pnext_flags) ||
+        response->prefers_dedicated > 1U ||
+        response->requires_dedicated > 1U ||
+        ((response->pnext_flags &
+          BVB_VULKAN_BUFFER_REQUIREMENTS_2_PNEXT_DEDICATED) == 0U &&
+         (response->prefers_dedicated != 0U ||
+          response->requires_dedicated != 0U))) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u64(output, response->size);
+    bvb_wire_put_u64(output + 8, response->alignment);
+    bvb_wire_put_u32(output + 16, response->memory_type_bits);
+    bvb_wire_put_u32(output + 20, response->pnext_flags);
+    bvb_wire_put_u32(output + 24, response->prefers_dedicated);
+    bvb_wire_put_u32(output + 28, response->requires_dedicated);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_buffer_requirements_2_response(
+    const uint8_t input[BVB_VULKAN_BUFFER_REQUIREMENTS_2_RESPONSE_SIZE],
+    struct bvb_vulkan_buffer_requirements_2_response *response) {
+    if (input == NULL || response == NULL) return -EINVAL;
+    const struct bvb_vulkan_buffer_requirements_2_response decoded = {
+        .size = bvb_wire_get_u64(input),
+        .alignment = bvb_wire_get_u64(input + 8),
+        .memory_type_bits = bvb_wire_get_u32(input + 16),
+        .pnext_flags = bvb_wire_get_u32(input + 20),
+        .prefers_dedicated = bvb_wire_get_u32(input + 24),
+        .requires_dedicated = bvb_wire_get_u32(input + 28),
+    };
+    uint8_t canonical[BVB_VULKAN_BUFFER_REQUIREMENTS_2_RESPONSE_SIZE];
+    if (bvb_protocol_encode_vulkan_buffer_requirements_2_response(
+            canonical, &decoded) != 0) {
+        return -EPROTO;
+    }
+    *response = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_buffer_device_address_request(
+    uint8_t output[BVB_VULKAN_BUFFER_DEVICE_ADDRESS_REQUEST_SIZE],
+    const struct bvb_vulkan_buffer_device_address_request *request) {
+    if (output == NULL || request == NULL ||
+        !wire_id_is_type(request->buffer_id, BVB_OBJECT_BUFFER)) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u64(output, request->buffer_id);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_buffer_device_address_request(
+    const uint8_t input[BVB_VULKAN_BUFFER_DEVICE_ADDRESS_REQUEST_SIZE],
+    struct bvb_vulkan_buffer_device_address_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    const struct bvb_vulkan_buffer_device_address_request decoded = {
+        .buffer_id = bvb_wire_get_u64(input),
+    };
+    if (!wire_id_is_type(decoded.buffer_id, BVB_OBJECT_BUFFER))
+        return -EPROTO;
+    *request = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_buffer_device_address_response(
+    uint8_t output[BVB_VULKAN_BUFFER_DEVICE_ADDRESS_RESPONSE_SIZE],
+    const struct bvb_vulkan_buffer_device_address_response *response) {
+    if (output == NULL || response == NULL ||
+        response->device_address == 0U) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u64(output, response->device_address);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_buffer_device_address_response(
+    const uint8_t input[BVB_VULKAN_BUFFER_DEVICE_ADDRESS_RESPONSE_SIZE],
+    struct bvb_vulkan_buffer_device_address_response *response) {
+    if (input == NULL || response == NULL) return -EINVAL;
+    const struct bvb_vulkan_buffer_device_address_response decoded = {
+        .device_address = bvb_wire_get_u64(input),
+    };
+    if (decoded.device_address == 0U) return -EPROTO;
+    *response = decoded;
+    return 0;
+}
+
 int bvb_protocol_encode_vulkan_memory_allocate_request(
     uint8_t output[BVB_VULKAN_MEMORY_ALLOCATE_REQUEST_SIZE],
     const struct bvb_vulkan_memory_allocate_request *request) {

@@ -132,6 +132,8 @@ def main() -> int:
             assert "command_submit=0 pool_reset=0" in completed.stdout
             assert f"buffer={0x1300000000000001}" in completed.stdout
             assert f"memory={0x0900000000000001}" in completed.stdout
+            assert "buffer_requirements2=4096,256,1" in completed.stdout
+            assert f"buffer_address={0x123456780000}" in completed.stdout
             image_match = re.search(r"\bimage=(\d+)\b", completed.stdout)
             assert image_match is not None
             assert int(image_match.group(1)) >> 56 == 7
