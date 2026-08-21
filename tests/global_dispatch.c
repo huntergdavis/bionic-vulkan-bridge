@@ -37,6 +37,23 @@ typedef VkBool32(VKAPI_PTR *bvb_xlib_presentation_support_fn)(
 static const uint64_t test_loader_dispatch =
     UINT64_C(0x4256424c4f414445);
 static uint32_t test_loader_data_calls;
+static const uint32_t test_dxvk_dummy_frag[] = {
+    UINT32_C(0x07230203), UINT32_C(0x00010600), UINT32_C(0x0008000b),
+    UINT32_C(0x00000006), UINT32_C(0x00000000), UINT32_C(0x00020011),
+    UINT32_C(0x00000001), UINT32_C(0x0006000b), UINT32_C(0x00000001),
+    UINT32_C(0x4c534c47), UINT32_C(0x6474732e), UINT32_C(0x3035342e),
+    UINT32_C(0x00000000), UINT32_C(0x0003000e), UINT32_C(0x00000000),
+    UINT32_C(0x00000001), UINT32_C(0x0005000f), UINT32_C(0x00000004),
+    UINT32_C(0x00000004), UINT32_C(0x6e69616d), UINT32_C(0x00000000),
+    UINT32_C(0x00030010), UINT32_C(0x00000004), UINT32_C(0x00000007),
+    UINT32_C(0x00030003), UINT32_C(0x00000002), UINT32_C(0x000001c2),
+    UINT32_C(0x00040005), UINT32_C(0x00000004), UINT32_C(0x6e69616d),
+    UINT32_C(0x00000000), UINT32_C(0x00020013), UINT32_C(0x00000002),
+    UINT32_C(0x00030021), UINT32_C(0x00000003), UINT32_C(0x00000002),
+    UINT32_C(0x00050036), UINT32_C(0x00000002), UINT32_C(0x00000004),
+    UINT32_C(0x00000000), UINT32_C(0x00000003), UINT32_C(0x000200f8),
+    UINT32_C(0x00000005), UINT32_C(0x000100fd), UINT32_C(0x00010038),
+};
 
 static VkResult VKAPI_CALL test_set_device_loader_data(
     VkDevice device, void *object) {
@@ -664,6 +681,8 @@ int main(void) {
     PFN_vkUpdateDescriptorSets update_descriptor_sets = NULL;
     PFN_vkCreatePipelineLayout create_pipeline_layout = NULL;
     PFN_vkDestroyPipelineLayout destroy_pipeline_layout = NULL;
+    PFN_vkCreateGraphicsPipelines create_graphics_pipelines = NULL;
+    PFN_vkDestroyPipeline destroy_pipeline = NULL;
     erased = vkGetDeviceProcAddr(device, "vkGetDeviceQueue");
     CHECK(erased != NULL);
     memcpy(&get_device_queue, &erased, sizeof(get_device_queue));
@@ -812,6 +831,8 @@ int main(void) {
     RESOLVE_DESCRIPTOR(vkUpdateDescriptorSets, update_descriptor_sets);
     RESOLVE_DESCRIPTOR(vkCreatePipelineLayout, create_pipeline_layout);
     RESOLVE_DESCRIPTOR(vkDestroyPipelineLayout, destroy_pipeline_layout);
+    RESOLVE_DESCRIPTOR(vkCreateGraphicsPipelines, create_graphics_pipelines);
+    RESOLVE_DESCRIPTOR(vkDestroyPipeline, destroy_pipeline);
 #undef RESOLVE_DESCRIPTOR
     CHECK(vkGetDeviceProcAddr(device, "vkCmdDraw") != NULL);
     PFN_vkCreateSwapchainKHR create_swapchain = NULL;
@@ -1089,6 +1110,92 @@ int main(void) {
     uint64_t pipeline_layout_id = 0U;
     memcpy(&pipeline_layout_id, &pipeline_layout, sizeof(pipeline_layout));
     CHECK(bvb_handle_type(pipeline_layout_id) == BVB_OBJECT_PIPELINE_LAYOUT);
+
+    const VkDynamicState null_fragment_dynamic_states[] = {
+        VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
+        VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+        VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
+        VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
+        VK_DYNAMIC_STATE_STENCIL_WRITE_MASK,
+        VK_DYNAMIC_STATE_STENCIL_REFERENCE,
+        VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
+        VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
+        VK_DYNAMIC_STATE_STENCIL_OP,
+    };
+    const VkPipelineRenderingCreateInfo rendering_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+    };
+    const VkPipelineCreateFlags2CreateInfo pipeline_flags_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO,
+        .pNext = &rendering_info,
+        .flags = VK_PIPELINE_CREATE_2_LIBRARY_BIT_KHR,
+    };
+    const VkGraphicsPipelineLibraryCreateInfoEXT pipeline_library_info = {
+        .sType =
+            VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT,
+        .pNext = &pipeline_flags_info,
+        .flags = VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT,
+    };
+    const VkShaderModuleCreateInfo embedded_module_info = {
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .codeSize = sizeof(test_dxvk_dummy_frag),
+        .pCode = test_dxvk_dummy_frag,
+    };
+    const VkPipelineShaderStageCreateInfo fragment_stage_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = &embedded_module_info,
+        .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+        .pName = "main",
+    };
+    const VkPipelineDepthStencilStateCreateInfo depth_stencil_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+    };
+    VkPipelineDynamicStateCreateInfo dynamic_state_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .dynamicStateCount =
+            (uint32_t)(sizeof(null_fragment_dynamic_states) /
+                       sizeof(null_fragment_dynamic_states[0])),
+        .pDynamicStates = null_fragment_dynamic_states,
+    };
+    VkGraphicsPipelineCreateInfo graphics_pipeline_info = {
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext = &pipeline_library_info,
+        .stageCount = 1U,
+        .pStages = &fragment_stage_info,
+        .pDepthStencilState = &depth_stencil_info,
+        .pDynamicState = &dynamic_state_info,
+        .layout = pipeline_layout,
+        .basePipelineIndex = -1,
+    };
+    VkPipeline graphics_pipeline = VK_NULL_HANDLE;
+    CHECK(create_graphics_pipelines(
+              device, VK_NULL_HANDLE, 1U, &graphics_pipeline_info,
+              &unsupported_allocator,
+              &graphics_pipeline) == VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(graphics_pipeline == VK_NULL_HANDLE);
+    const VkBaseInStructure unknown_graphics_chain = {
+        .sType = (VkStructureType)UINT32_C(0x7ffffffc),
+    };
+    graphics_pipeline_info.pNext = &unknown_graphics_chain;
+    CHECK(create_graphics_pipelines(
+              device, VK_NULL_HANDLE, 1U, &graphics_pipeline_info, NULL,
+              &graphics_pipeline) == VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(graphics_pipeline == VK_NULL_HANDLE);
+    graphics_pipeline_info.pNext = &pipeline_library_info;
+    --dynamic_state_info.dynamicStateCount;
+    CHECK(create_graphics_pipelines(
+              device, VK_NULL_HANDLE, 1U, &graphics_pipeline_info, NULL,
+              &graphics_pipeline) == VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(graphics_pipeline == VK_NULL_HANDLE);
+    ++dynamic_state_info.dynamicStateCount;
+    CHECK(create_graphics_pipelines(
+              device, VK_NULL_HANDLE, 1U, &graphics_pipeline_info, NULL,
+              &graphics_pipeline) == VK_SUCCESS);
+    uint64_t graphics_pipeline_id = 0U;
+    memcpy(&graphics_pipeline_id, &graphics_pipeline,
+           sizeof(graphics_pipeline));
+    CHECK(bvb_handle_type(graphics_pipeline_id) == BVB_OBJECT_PIPELINE);
+    destroy_pipeline(device, graphics_pipeline, NULL);
     destroy_pipeline_layout(device, pipeline_layout, NULL);
     destroy_descriptor_set_layout(device, empty_layout, NULL);
     destroy_sampler(device, sampler, NULL);

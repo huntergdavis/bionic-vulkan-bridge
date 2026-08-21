@@ -136,6 +136,14 @@ int bvb_vulkan_global_context_create_pipeline_layout(
 int bvb_vulkan_global_context_destroy_pipeline_layout(
     struct bvb_vulkan_global_context *context, uint64_t pipeline_layout_id,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_create_graphics_pipeline(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_graphics_pipeline_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_destroy_pipeline(
+    struct bvb_vulkan_global_context *context, uint64_t pipeline_id,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_get_device_queue(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_device_queue_request *request,

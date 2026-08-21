@@ -54,6 +54,25 @@ static const VkDescriptorSetLayout fake_empty_descriptor_layout =
     (VkDescriptorSetLayout)(uintptr_t)UINT64_C(0xa500);
 static const VkPipelineLayout fake_pipeline_layout =
     (VkPipelineLayout)(uintptr_t)UINT64_C(0xa600);
+static const VkPipeline fake_graphics_pipeline =
+    (VkPipeline)(uintptr_t)UINT64_C(0xa700);
+static const uint32_t fake_dxvk_dummy_frag[] = {
+    UINT32_C(0x07230203), UINT32_C(0x00010600), UINT32_C(0x0008000b),
+    UINT32_C(0x00000006), UINT32_C(0x00000000), UINT32_C(0x00020011),
+    UINT32_C(0x00000001), UINT32_C(0x0006000b), UINT32_C(0x00000001),
+    UINT32_C(0x4c534c47), UINT32_C(0x6474732e), UINT32_C(0x3035342e),
+    UINT32_C(0x00000000), UINT32_C(0x0003000e), UINT32_C(0x00000000),
+    UINT32_C(0x00000001), UINT32_C(0x0005000f), UINT32_C(0x00000004),
+    UINT32_C(0x00000004), UINT32_C(0x6e69616d), UINT32_C(0x00000000),
+    UINT32_C(0x00030010), UINT32_C(0x00000004), UINT32_C(0x00000007),
+    UINT32_C(0x00030003), UINT32_C(0x00000002), UINT32_C(0x000001c2),
+    UINT32_C(0x00040005), UINT32_C(0x00000004), UINT32_C(0x6e69616d),
+    UINT32_C(0x00000000), UINT32_C(0x00020013), UINT32_C(0x00000002),
+    UINT32_C(0x00030021), UINT32_C(0x00000003), UINT32_C(0x00000002),
+    UINT32_C(0x00050036), UINT32_C(0x00000002), UINT32_C(0x00000004),
+    UINT32_C(0x00000000), UINT32_C(0x00000003), UINT32_C(0x000200f8),
+    UINT32_C(0x00000005), UINT32_C(0x000100fd), UINT32_C(0x00010038),
+};
 static const VkFence fake_fence_handle =
     (VkFence)(uintptr_t)UINT64_C(0x9000);
 
@@ -934,13 +953,130 @@ static VkResult VKAPI_CALL fake_create_pipeline_layout(
     return VK_SUCCESS;
 }
 
+static bool fake_stencil_state_is_zero(const VkStencilOpState *state) {
+    return state->failOp == VK_STENCIL_OP_KEEP &&
+        state->passOp == VK_STENCIL_OP_KEEP &&
+        state->depthFailOp == VK_STENCIL_OP_KEEP &&
+        state->compareOp == VK_COMPARE_OP_NEVER && state->compareMask == 0U &&
+        state->writeMask == 0U && state->reference == 0U;
+}
+
+static VkResult VKAPI_CALL fake_create_graphics_pipelines(
+    VkDevice device, VkPipelineCache pipeline_cache,
+    uint32_t create_info_count,
+    const VkGraphicsPipelineCreateInfo *create_infos,
+    const VkAllocationCallbacks *allocator, VkPipeline *pipelines) {
+    (void)device;
+    static const VkDynamicState expected_dynamic[] = {
+        VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
+        VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+        VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
+        VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
+        VK_DYNAMIC_STATE_STENCIL_WRITE_MASK,
+        VK_DYNAMIC_STATE_STENCIL_REFERENCE,
+        VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
+        VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
+        VK_DYNAMIC_STATE_STENCIL_OP,
+    };
+    if (fake_descriptor_step != 7U || pipeline_cache != VK_NULL_HANDLE ||
+        create_info_count != 1U || create_infos == NULL ||
+        allocator != NULL || pipelines == NULL) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    const VkGraphicsPipelineCreateInfo *info = &create_infos[0];
+    const VkGraphicsPipelineLibraryCreateInfoEXT *library = info->pNext;
+    const VkPipelineCreateFlags2CreateInfo *flags = library == NULL
+        ? NULL : library->pNext;
+    const VkPipelineRenderingCreateInfo *rendering = flags == NULL
+        ? NULL : flags->pNext;
+    const VkPipelineShaderStageCreateInfo *stage = info->pStages;
+    const VkShaderModuleCreateInfo *module = stage == NULL
+        ? NULL : stage->pNext;
+    const VkPipelineDepthStencilStateCreateInfo *depth =
+        info->pDepthStencilState;
+    const VkPipelineDynamicStateCreateInfo *dynamic = info->pDynamicState;
+    if (info->sType != VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO ||
+        info->flags != 0U || library == NULL ||
+        library->sType !=
+            VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT ||
+        library->flags !=
+            VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT ||
+        flags == NULL ||
+        flags->sType !=
+            VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO ||
+        flags->flags != VK_PIPELINE_CREATE_2_LIBRARY_BIT_KHR ||
+        rendering == NULL ||
+        rendering->sType != VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO ||
+        rendering->pNext != NULL || rendering->viewMask != 0U ||
+        rendering->colorAttachmentCount != 0U ||
+        rendering->pColorAttachmentFormats != NULL ||
+        rendering->depthAttachmentFormat != VK_FORMAT_UNDEFINED ||
+        rendering->stencilAttachmentFormat != VK_FORMAT_UNDEFINED ||
+        info->stageCount != 1U || stage == NULL ||
+        stage->sType != VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO ||
+        stage->flags != 0U || stage->stage != VK_SHADER_STAGE_FRAGMENT_BIT ||
+        stage->module != VK_NULL_HANDLE || stage->pName == NULL ||
+        strcmp(stage->pName, "main") != 0 ||
+        stage->pSpecializationInfo != NULL || module == NULL ||
+        module->sType != VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO ||
+        module->pNext != NULL || module->flags != 0U ||
+        module->codeSize != sizeof(fake_dxvk_dummy_frag) ||
+        module->pCode == NULL ||
+        memcmp(module->pCode, fake_dxvk_dummy_frag,
+               sizeof(fake_dxvk_dummy_frag)) != 0 ||
+        info->pVertexInputState != NULL ||
+        info->pInputAssemblyState != NULL ||
+        info->pTessellationState != NULL || info->pViewportState != NULL ||
+        info->pRasterizationState != NULL ||
+        info->pMultisampleState != NULL || depth == NULL ||
+        depth->sType !=
+            VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO ||
+        depth->pNext != NULL || depth->flags != 0U ||
+        depth->depthTestEnable != VK_FALSE ||
+        depth->depthWriteEnable != VK_FALSE ||
+        depth->depthCompareOp != VK_COMPARE_OP_NEVER ||
+        depth->depthBoundsTestEnable != VK_FALSE ||
+        depth->stencilTestEnable != VK_FALSE ||
+        !fake_stencil_state_is_zero(&depth->front) ||
+        !fake_stencil_state_is_zero(&depth->back) ||
+        depth->minDepthBounds != 0.0F || depth->maxDepthBounds != 0.0F ||
+        info->pColorBlendState != NULL || dynamic == NULL ||
+        dynamic->sType != VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO ||
+        dynamic->pNext != NULL || dynamic->flags != 0U ||
+        dynamic->dynamicStateCount !=
+            (uint32_t)(sizeof(expected_dynamic) /
+                       sizeof(expected_dynamic[0])) ||
+        dynamic->pDynamicStates == NULL ||
+        memcmp(dynamic->pDynamicStates, expected_dynamic,
+               sizeof(expected_dynamic)) != 0 ||
+        info->layout != fake_pipeline_layout ||
+        info->renderPass != VK_NULL_HANDLE || info->subpass != 0U ||
+        info->basePipelineHandle != VK_NULL_HANDLE ||
+        info->basePipelineIndex != -1) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    pipelines[0] = fake_graphics_pipeline;
+    fake_descriptor_step = 8U;
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL fake_destroy_pipeline(
+    VkDevice device, VkPipeline pipeline,
+    const VkAllocationCallbacks *allocator) {
+    (void)device;
+    if (fake_descriptor_step == 8U && pipeline == fake_graphics_pipeline &&
+        allocator == NULL) {
+        fake_descriptor_step = 9U;
+    }
+}
+
 static void VKAPI_CALL fake_destroy_pipeline_layout(
     VkDevice device, VkPipelineLayout pipeline_layout,
     const VkAllocationCallbacks *allocator) {
     (void)device;
-    if (fake_descriptor_step == 7U &&
+    if (fake_descriptor_step == 9U &&
         pipeline_layout == fake_pipeline_layout && allocator == NULL) {
-        fake_descriptor_step = 8U;
+        fake_descriptor_step = 10U;
     }
 }
 
@@ -948,9 +1084,9 @@ static void VKAPI_CALL fake_destroy_sampler(
     VkDevice device, VkSampler sampler,
     const VkAllocationCallbacks *allocator) {
     (void)device;
-    if (fake_descriptor_step == 9U && sampler == fake_sampler &&
+    if (fake_descriptor_step == 11U && sampler == fake_sampler &&
         allocator == NULL) {
-        fake_descriptor_step = 10U;
+        fake_descriptor_step = 12U;
     }
 }
 
@@ -958,9 +1094,9 @@ static void VKAPI_CALL fake_destroy_descriptor_pool(
     VkDevice device, VkDescriptorPool pool,
     const VkAllocationCallbacks *allocator) {
     (void)device;
-    if (fake_descriptor_step == 10U && pool == fake_descriptor_pool &&
+    if (fake_descriptor_step == 12U && pool == fake_descriptor_pool &&
         allocator == NULL) {
-        fake_descriptor_step = 11U;
+        fake_descriptor_step = 13U;
     }
 }
 
@@ -969,12 +1105,12 @@ static void VKAPI_CALL fake_destroy_descriptor_set_layout(
     const VkAllocationCallbacks *allocator) {
     (void)device;
     if (allocator != NULL) return;
-    if (fake_descriptor_step == 8U &&
+    if (fake_descriptor_step == 10U &&
         set_layout == fake_empty_descriptor_layout) {
-        fake_descriptor_step = 9U;
-    } else if (fake_descriptor_step == 11U &&
+        fake_descriptor_step = 11U;
+    } else if (fake_descriptor_step == 13U &&
                set_layout == fake_descriptor_layout) {
-        fake_descriptor_step = 12U;
+        fake_descriptor_step = 14U;
     }
 }
 
@@ -1775,7 +1911,7 @@ static VkResult VKAPI_CALL fake_reset_command_buffer(
 
 static VkResult VKAPI_CALL fake_device_wait_idle(VkDevice device) {
     (void)device;
-    if (fake_descriptor_step != 0U && fake_descriptor_step != 12U) {
+    if (fake_descriptor_step != 0U && fake_descriptor_step != 14U) {
         fprintf(stderr, "fake Vulkan descriptor sequence stopped at step %u\n",
                 fake_descriptor_step);
         return VK_ERROR_INITIALIZATION_FAILED;
@@ -1922,6 +2058,8 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkUpdateDescriptorSets", fake_update_descriptor_sets)
     BVB_DEVICE_MATCH("vkCreatePipelineLayout", fake_create_pipeline_layout)
     BVB_DEVICE_MATCH("vkDestroyPipelineLayout", fake_destroy_pipeline_layout)
+    BVB_DEVICE_MATCH("vkCreateGraphicsPipelines", fake_create_graphics_pipelines)
+    BVB_DEVICE_MATCH("vkDestroyPipeline", fake_destroy_pipeline)
     BVB_DEVICE_MATCH("vkCreateBuffer", fake_create_buffer)
     BVB_DEVICE_MATCH("vkDestroyBuffer", fake_destroy_buffer)
     BVB_DEVICE_MATCH("vkGetBufferMemoryRequirements",

@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "gate": "E064",
+  "result": "pass_host_contract",
+  "objective": "forward the exact eager DXVK null-fragment graphics-pipeline-library create and matching destroy boundary through the glibc-to-Bionic bridge with native ownership and no pointer transport",
+  "source": {
+    "dxvk_commit": "a6764047e587178283fcde4073ae6e1410af594f",
+    "constructor": "DxvkPipelineManager::DxvkPipelineManager",
+    "observed_call": "createNullFsPipelineLibrary()->compilePipeline()",
+    "create_location": "src/dxvk/dxvk_shader.cpp:535",
+    "source_paths": [
+      "src/dxvk/dxvk_pipemanager.cpp",
+      "src/dxvk/dxvk_shader.cpp",
+      "src/dxvk/dxvk_shader.h",
+      "src/dxvk/shaders/dxvk_dummy_frag.frag"
+    ],
+    "separate_shader_module_call_required": false,
+    "reason": "maintenance5 embeds VkShaderModuleCreateInfo in VkPipelineShaderStageCreateInfo.pNext while module is VK_NULL_HANDLE"
+  },
+  "wire": {
+    "opcodes": {
+      "74": "graphics pipeline create",
+      "75": "pipeline destroy"
+    },
+    "reserved_opcodes_left_free": [76, 77, 78, 79],
+    "producer_opcodes_preserved": {
+      "100": "swapchain acquire",
+      "101": "swapchain present"
+    },
+    "representation": "canonical little-endian device and pipeline-layout IDs, flags, bounded dynamic-state enums, and bounded SPIR-V words",
+    "fixed_prefix_bytes": 48,
+    "maximum_dynamic_states": 16,
+    "maximum_shader_words": 256,
+    "maximum_request_bytes": 1136,
+    "pointers_crossed": false,
+    "reserved_bytes_canonical_zero": 8,
+    "native_reconstruction": "the Bionic service resolves the same-device native pipeline layout and reconstructs every pNext node, stage, embedded shader module, depth/stencil state, dynamic-state array, and graphics create-info locally"
+  },
+  "exact_eager_dxvk_shape": {
+    "pipeline_cache": "VK_NULL_HANDLE",
+    "create_count": 1,
+    "allocator": null,
+    "base_flags": 0,
+    "pnext_chain": [
+      "VkGraphicsPipelineLibraryCreateInfoEXT: VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT",
+      "VkPipelineCreateFlags2CreateInfo: VK_PIPELINE_CREATE_2_LIBRARY_BIT_KHR",
+      "zero VkPipelineRenderingCreateInfo"
+    ],
+    "shader_stage": {
+      "stage": "VK_SHADER_STAGE_FRAGMENT_BIT",
+      "module": "VK_NULL_HANDLE",
+      "entry_point": "main",
+      "specialization": null,
+      "pnext": "VkShaderModuleCreateInfo containing the dummy fragment SPIR-V",
+      "shader_bytes_in_host_fixture": 180,
+      "shader_words_in_host_fixture": 45
+    },
+    "omitted_state": [
+      "vertex input",
+      "input assembly",
+      "tessellation",
+      "viewport",
+      "rasterization",
+      "multisample",
+      "color blend"
+    ],
+    "depth_stencil": "present and entirely zero-initialized except sType",
+    "dynamic_states": [
+      "VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE",
+      "VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE",
+      "VK_DYNAMIC_STATE_DEPTH_COMPARE_OP",
+      "VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK",
+      "VK_DYNAMIC_STATE_STENCIL_WRITE_MASK",
+      "VK_DYNAMIC_STATE_STENCIL_REFERENCE",
+      "VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE",
+      "VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE",
+      "VK_DYNAMIC_STATE_STENCIL_OP"
+    ],
+    "render_pass": "VK_NULL_HANDLE",
+    "subpass": 0,
+    "base_pipeline_handle": "VK_NULL_HANDLE",
+    "base_pipeline_index": -1
+  },
+  "fail_closed": [
+    "non-null allocation callbacks",
+    "non-null pipeline cache or create count other than one",
+    "unknown, missing, reordered, or extended pNext records",
+    "unsupported flags, library parts, stage, entry point, specialization, or explicit shader-module handle",
+    "unexpected fixed-function state or any nonzero depth/stencil field",
+    "dynamic-state count, order, value, or duplicate mismatch",
+    "invalid SPIR-V magic, non-word-aligned code, or code beyond 256 words",
+    "wrong-type, missing, or cross-device pipeline-layout IDs",
+    "malformed lengths or nonzero reserved wire bytes"
+  ],
+  "ownership": {
+    "returned_handle": "typed BVB_OBJECT_PIPELINE ID backed by the real native VkPipeline",
+    "explicit_destroy": "vkDestroyPipeline removes the typed object and forwards its native handle",
+    "device_teardown": "remaining pipelines are destroyed before their pipeline layouts and descriptor dependencies"
+  },
+  "dispatch_policy": {
+    "manifest": "the immutable E011 DXVK manifest records both commands at device scope with seven lookups each",
+    "promotion": "vkCreateGraphicsPipelines and vkDestroyPipeline move from required_unimplemented to executable",
+    "counts": {
+      "executable": 82,
+      "required_unimplemented": 358,
+      "probed_null": 302
+    }
+  },
+  "verification": {
+    "base_commit": "909e2cca908365104bf4cd0062bd4447c2218ceb",
+    "host_contracts": "31/31 passed",
+    "build": "clean with project warnings treated as errors",
+    "canonical_codec": "round trips a variable-length request and rejects reserved-byte and wrong-handle-type corruption",
+    "cross_process_fake_driver": "observed the exact three-node top-level pNext chain, embedded maintenance5 module, 180-byte dummy shader, duplicate dynamic state, null fixed-function topology, native layout handle, real returned pipeline handle, and dependency-safe destruction order",
+    "hardware_or_game_claim": false
+  },
+  "corrected_remaining_prerequisite": {
+    "command": "vkGetDeviceBufferMemoryRequirements",
+    "status": "required_unimplemented",
+    "derivation": "a complete pinned-source constructor audit found that DxvkMemoryAllocator::determineBufferUsageFlagsPerMemoryType calls getBufferMemoryRequirements, which directly invokes vkGetDeviceBufferMemoryRequirements before the sampler and pipeline-manager members are constructed",
+    "source_location": "src/dxvk/dxvk_memory.cpp:2249",
+    "ordering_correction": "this is earlier than E064, so it corrects the prior E058 claim that vkCreateGraphicsPipelines was the first remaining eager null entry; a real boundary trace is still required after integration"
+  },
+  "reuse": "The required deja search found no indexed graphics-pipeline implementation. Reused E045's loader-private/local-pointer filtering rule, E046/E056's canonical typed-object ownership and Bionic reconstruction pattern, and E058's same-device pipeline-layout lineage pattern.",
+  "scope": "Host transport and native fake-driver proof only; no Android deployment, Turnip pipeline creation, DXVK adapter acceptance, Tomb Raider frame, or FPS claim"
+}

@@ -2631,3 +2631,42 @@ fixed-width typed ownership, E056 local `pNext` reconstruction, and the
 existing buffer/device-memory lifecycle pattern. Real Turnip execution,
 requirements2, large allocations, rendering, presentation, a Tomb Raider
 frame, and FPS remain unproven.
+
+## E064 — DXVK null-fragment graphics pipeline (2026-08-21)
+
+Status: passed through the cross-process host fake driver; no Android, game
+frame, or FPS claim. Against exact DXVK commit
+`a6764047e587178283fcde4073ae6e1410af594f`, the bridge now forwards the
+null-fragment-library `vkCreateGraphicsPipelines` call and matching
+`vkDestroyPipeline` through opcodes 74 and 75. Opcodes 76–79 remain free, and
+the E060 producer path remains on opcodes 100–101.
+
+The exact accepted topology is one fragment-library create with the
+graphics-library, flags2-library, and zero dynamic-rendering pNext chain. It
+preserves maintenance5's embedded `VkShaderModuleCreateInfo`, so there is no
+invented `vkCreateShaderModule` prerequisite. The bridge also preserves the
+zero depth/stencil block, all null irrelevant fixed-function state, and DXVK's
+exact nine-state dynamic list—including its repeated stencil-test-enable
+entry. The canonical wire contains only little-endian scalars, typed IDs,
+bounded dynamic enums, and at most 256 SPIR-V words. The service reconstructs
+all pointers locally, owns the real native pipeline, validates pipeline-layout
+lineage, and destroys pipelines before their layouts.
+
+All 31 current host contracts pass after rebasing on E063 commit `909e2cc`.
+The fake native driver verifies the full three-node pNext topology,
+the 180-byte dummy fragment module, exact dynamic-state order, real native
+layout and pipeline handles, and dependency-safe destruction. Dispatch policy
+promotion yields 82 executable, 358 required-unimplemented, and 302
+probed-null names. This reuses E045's loader-private/local-pointer rule,
+E046/E056's canonical typed-object ownership pattern, and E058's layout
+lineage validation. The required `deja` query found no indexed implementation.
+
+A fuller pinned-source audit corrects the prior E058 ordering claim:
+`DxvkMemoryAllocator::determineBufferUsageFlagsPerMemoryType` directly reaches
+the still-unimplemented `vkGetDeviceBufferMemoryRequirements` before the
+sampler and pipeline-manager members are constructed. That maintenance4 query
+is therefore an earlier missing prerequisite, not a later post-E064 call; the
+integrated runtime trace must confirm the real boundary. Canonical evidence is
+`docs/evidence/e064-dxvk-null-fragment-pipeline-host.json`, 6,447 bytes,
+SHA-256
+`f9aade59ae46739ed1ef2cfb3ff7e485d64b0b41e56bf998360674c3d45cd92f`.

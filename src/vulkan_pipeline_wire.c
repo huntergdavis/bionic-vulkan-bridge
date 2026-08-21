@@ -106,3 +106,97 @@ int bvb_protocol_decode_vulkan_pipeline_layout_create_request(
     *request = decoded;
     return 0;
 }
+
+int bvb_protocol_encode_vulkan_graphics_pipeline_create_request(
+    uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
+    const struct bvb_vulkan_graphics_pipeline_create_request *request,
+    uint32_t *output_length) {
+    if (output == NULL || request == NULL || output_length == NULL ||
+        !wire_id_is(request->device_id, BVB_OBJECT_DEVICE) ||
+        !wire_id_is(request->pipeline_layout_id,
+                    BVB_OBJECT_PIPELINE_LAYOUT) ||
+        request->dynamic_state_count == 0U ||
+        request->dynamic_state_count >
+            BVB_VULKAN_MAX_GRAPHICS_PIPELINE_DYNAMIC_STATES ||
+        request->shader_word_count == 0U ||
+        request->shader_word_count >
+            BVB_VULKAN_MAX_GRAPHICS_PIPELINE_SHADER_WORDS ||
+        request->shader_words[0] != UINT32_C(0x07230203)) {
+        return -EINVAL;
+    }
+    const uint32_t length =
+        BVB_VULKAN_GRAPHICS_PIPELINE_CREATE_PREFIX_SIZE +
+        (request->dynamic_state_count + request->shader_word_count) *
+            sizeof(uint32_t);
+    memset(output, 0, length);
+    bvb_wire_put_u64(output, request->device_id);
+    bvb_wire_put_u64(output + 8U, request->pipeline_layout_id);
+    bvb_wire_put_u64(output + 16U, request->flags_2);
+    bvb_wire_put_u32(output + 24U, request->library_flags);
+    bvb_wire_put_u32(output + 28U, request->shader_stage);
+    bvb_wire_put_u32(output + 32U, request->dynamic_state_count);
+    bvb_wire_put_u32(output + 36U, request->shader_word_count);
+    uint32_t cursor = BVB_VULKAN_GRAPHICS_PIPELINE_CREATE_PREFIX_SIZE;
+    for (uint32_t index = 0U; index < request->dynamic_state_count; ++index) {
+        bvb_wire_put_u32(output + cursor, request->dynamic_states[index]);
+        cursor += sizeof(uint32_t);
+    }
+    for (uint32_t index = 0U; index < request->shader_word_count; ++index) {
+        bvb_wire_put_u32(output + cursor, request->shader_words[index]);
+        cursor += sizeof(uint32_t);
+    }
+    *output_length = length;
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_graphics_pipeline_create_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_graphics_pipeline_create_request *request) {
+    if (input == NULL || request == NULL ||
+        input_length < BVB_VULKAN_GRAPHICS_PIPELINE_CREATE_PREFIX_SIZE) {
+        return -EINVAL;
+    }
+    if (bvb_wire_get_u32(input + 40U) != 0U ||
+        bvb_wire_get_u32(input + 44U) != 0U) {
+        return -EPROTO;
+    }
+    struct bvb_vulkan_graphics_pipeline_create_request decoded = {
+        .device_id = bvb_wire_get_u64(input),
+        .pipeline_layout_id = bvb_wire_get_u64(input + 8U),
+        .flags_2 = bvb_wire_get_u64(input + 16U),
+        .library_flags = bvb_wire_get_u32(input + 24U),
+        .shader_stage = bvb_wire_get_u32(input + 28U),
+        .dynamic_state_count = bvb_wire_get_u32(input + 32U),
+        .shader_word_count = bvb_wire_get_u32(input + 36U),
+    };
+    if (decoded.dynamic_state_count == 0U ||
+        decoded.dynamic_state_count >
+            BVB_VULKAN_MAX_GRAPHICS_PIPELINE_DYNAMIC_STATES ||
+        decoded.shader_word_count == 0U ||
+        decoded.shader_word_count >
+            BVB_VULKAN_MAX_GRAPHICS_PIPELINE_SHADER_WORDS ||
+        input_length != BVB_VULKAN_GRAPHICS_PIPELINE_CREATE_PREFIX_SIZE +
+            (decoded.dynamic_state_count + decoded.shader_word_count) *
+                sizeof(uint32_t)) {
+        return -EPROTO;
+    }
+    uint32_t cursor = BVB_VULKAN_GRAPHICS_PIPELINE_CREATE_PREFIX_SIZE;
+    for (uint32_t index = 0U; index < decoded.dynamic_state_count; ++index) {
+        decoded.dynamic_states[index] = bvb_wire_get_u32(input + cursor);
+        cursor += sizeof(uint32_t);
+    }
+    for (uint32_t index = 0U; index < decoded.shader_word_count; ++index) {
+        decoded.shader_words[index] = bvb_wire_get_u32(input + cursor);
+        cursor += sizeof(uint32_t);
+    }
+    uint8_t validation[BVB_PROTOCOL_MAX_PAYLOAD];
+    uint32_t validation_length = 0U;
+    if (bvb_protocol_encode_vulkan_graphics_pipeline_create_request(
+            validation, &decoded, &validation_length) != 0 ||
+        validation_length != input_length ||
+        memcmp(validation, input, input_length) != 0) {
+        return -EPROTO;
+    }
+    *request = decoded;
+    return 0;
+}

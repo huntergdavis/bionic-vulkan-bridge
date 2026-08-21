@@ -1595,6 +1595,16 @@ static int answer_vulkan_resource_create(
                 context, &decoded, &created, diagnostic, sizeof(diagnostic));
         }
         expected_type = BVB_OBJECT_PIPELINE_LAYOUT;
+    } else if (request->header.opcode ==
+               BVB_OPCODE_VULKAN_GRAPHICS_PIPELINE_CREATE) {
+        struct bvb_vulkan_graphics_pipeline_create_request decoded;
+        result = bvb_protocol_decode_vulkan_graphics_pipeline_create_request(
+            request->payload, request->header.payload_length, &decoded);
+        if (result == 0) {
+            result = bvb_vulkan_global_context_create_graphics_pipeline(
+                context, &decoded, &created, diagnostic, sizeof(diagnostic));
+        }
+        expected_type = BVB_OBJECT_PIPELINE;
     } else if (request->header.opcode == BVB_OPCODE_VULKAN_IMAGE_CREATE &&
                request->header.payload_length ==
                    BVB_VULKAN_IMAGE_CREATE_REQUEST_SIZE) {
@@ -1648,6 +1658,8 @@ static int answer_vulkan_resource_destroy(
         request->header.opcode == BVB_OPCODE_VULKAN_SEMAPHORE_DESTROY;
     const bool pipeline_layout = request->header.opcode ==
         BVB_OPCODE_VULKAN_PIPELINE_LAYOUT_DESTROY;
+    const bool pipeline = request->header.opcode ==
+        BVB_OPCODE_VULKAN_PIPELINE_DESTROY;
     const bool descriptor_object = request->header.opcode ==
         BVB_OPCODE_VULKAN_DESCRIPTOR_OBJECT_DESTROY;
     const enum bvb_object_type descriptor_type = descriptor_object
@@ -1664,7 +1676,7 @@ static int answer_vulkan_resource_destroy(
         request->header.opcode == BVB_OPCODE_VULKAN_IMAGE_VIEW_DESTROY;
     uint64_t object_id = 0U;
     int result = buffer || memory || fence || semaphore || pipeline_layout ||
-                         image || image_view ||
+                         pipeline || image || image_view ||
                          descriptor_layout || descriptor_pool || sampler
                      ? bvb_protocol_decode_vulkan_object_id(
                            request->payload, &object_id,
@@ -1673,6 +1685,7 @@ static int answer_vulkan_resource_destroy(
                            fence ? BVB_OBJECT_FENCE :
                            semaphore ? BVB_OBJECT_SEMAPHORE :
                            pipeline_layout ? BVB_OBJECT_PIPELINE_LAYOUT :
+                           pipeline ? BVB_OBJECT_PIPELINE :
                            image ? BVB_OBJECT_IMAGE :
                            image_view ? BVB_OBJECT_IMAGE_VIEW :
                            descriptor_layout
@@ -1697,6 +1710,9 @@ static int answer_vulkan_resource_destroy(
                 context, object_id, diagnostic, sizeof(diagnostic));
         } else if (pipeline_layout) {
             result = bvb_vulkan_global_context_destroy_pipeline_layout(
+                context, object_id, diagnostic, sizeof(diagnostic));
+        } else if (pipeline) {
+            result = bvb_vulkan_global_context_destroy_pipeline(
                 context, object_id, diagnostic, sizeof(diagnostic));
         } else if (image) {
             result = bvb_vulkan_global_context_destroy_image(
@@ -2807,6 +2823,8 @@ static int serve_connection(int client_fd, const char *loader_path,
                        BVB_OPCODE_VULKAN_SAMPLER_CREATE ||
                    request.header.opcode ==
                        BVB_OPCODE_VULKAN_PIPELINE_LAYOUT_CREATE ||
+                   request.header.opcode ==
+                       BVB_OPCODE_VULKAN_GRAPHICS_PIPELINE_CREATE ||
                    request.header.opcode == BVB_OPCODE_VULKAN_IMAGE_CREATE ||
                    request.header.opcode ==
                        BVB_OPCODE_VULKAN_IMAGE_VIEW_CREATE) {
@@ -2821,6 +2839,8 @@ static int serve_connection(int client_fd, const char *loader_path,
                        BVB_OPCODE_VULKAN_DESCRIPTOR_OBJECT_DESTROY ||
                    request.header.opcode ==
                        BVB_OPCODE_VULKAN_PIPELINE_LAYOUT_DESTROY ||
+                   request.header.opcode ==
+                       BVB_OPCODE_VULKAN_PIPELINE_DESTROY ||
                    request.header.opcode == BVB_OPCODE_VULKAN_IMAGE_DESTROY ||
                    request.header.opcode ==
                        BVB_OPCODE_VULKAN_IMAGE_VIEW_DESTROY) {

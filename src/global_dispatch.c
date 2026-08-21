@@ -4053,6 +4053,182 @@ static void VKAPI_CALL bvb_bridge_vkDestroyPipelineLayout(
         BVB_OPCODE_VULKAN_PIPELINE_LAYOUT_DESTROY, allocator);
 }
 
+static bool stencil_op_state_is_zero(const VkStencilOpState *state) {
+    return state->failOp == VK_STENCIL_OP_KEEP &&
+        state->passOp == VK_STENCIL_OP_KEEP &&
+        state->depthFailOp == VK_STENCIL_OP_KEEP &&
+        state->compareOp == VK_COMPARE_OP_NEVER && state->compareMask == 0U &&
+        state->writeMask == 0U && state->reference == 0U;
+}
+
+static bool depth_stencil_state_is_dxvk_null_fragment(
+    const VkPipelineDepthStencilStateCreateInfo *state) {
+    return state != NULL &&
+        state->sType ==
+            VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO &&
+        state->pNext == NULL && state->flags == 0U &&
+        state->depthTestEnable == VK_FALSE &&
+        state->depthWriteEnable == VK_FALSE &&
+        state->depthCompareOp == VK_COMPARE_OP_NEVER &&
+        state->depthBoundsTestEnable == VK_FALSE &&
+        state->stencilTestEnable == VK_FALSE &&
+        stencil_op_state_is_zero(&state->front) &&
+        stencil_op_state_is_zero(&state->back) &&
+        state->minDepthBounds == 0.0F && state->maxDepthBounds == 0.0F;
+}
+
+static bool dynamic_state_is_dxvk_null_fragment(
+    const VkPipelineDynamicStateCreateInfo *state) {
+    static const VkDynamicState expected[] = {
+        VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
+        VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+        VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
+        VK_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
+        VK_DYNAMIC_STATE_STENCIL_WRITE_MASK,
+        VK_DYNAMIC_STATE_STENCIL_REFERENCE,
+        VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
+        VK_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
+        VK_DYNAMIC_STATE_STENCIL_OP,
+    };
+    return state != NULL &&
+        state->sType == VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO &&
+        state->pNext == NULL && state->flags == 0U &&
+        state->dynamicStateCount ==
+            (uint32_t)(sizeof(expected) / sizeof(expected[0])) &&
+        state->pDynamicStates != NULL &&
+        memcmp(state->pDynamicStates, expected, sizeof(expected)) == 0;
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkCreateGraphicsPipelines(
+    VkDevice device, VkPipelineCache pipeline_cache,
+    uint32_t create_info_count,
+    const VkGraphicsPipelineCreateInfo *create_infos,
+    const VkAllocationCallbacks *allocator, VkPipeline *pipelines) {
+    if (pipelines != NULL && create_info_count != 0U)
+        pipelines[0] = VK_NULL_HANDLE;
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || pipeline_cache != VK_NULL_HANDLE ||
+        create_info_count != 1U || create_infos == NULL ||
+        allocator != NULL || pipelines == NULL) {
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    const VkGraphicsPipelineCreateInfo *create_info = &create_infos[0];
+    const VkGraphicsPipelineLibraryCreateInfoEXT *library_info =
+        create_info->pNext;
+    const VkPipelineCreateFlags2CreateInfo *flags_info = library_info == NULL
+        ? NULL : library_info->pNext;
+    const VkPipelineRenderingCreateInfo *rendering_info = flags_info == NULL
+        ? NULL : flags_info->pNext;
+    if (create_info->sType != VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO ||
+        create_info->flags != 0U || library_info == NULL ||
+        library_info->sType !=
+            VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT ||
+        library_info->flags !=
+            VK_GRAPHICS_PIPELINE_LIBRARY_FRAGMENT_SHADER_BIT_EXT ||
+        flags_info == NULL ||
+        flags_info->sType !=
+            VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO ||
+        flags_info->flags != VK_PIPELINE_CREATE_2_LIBRARY_BIT_KHR ||
+        rendering_info == NULL ||
+        rendering_info->sType !=
+            VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO ||
+        rendering_info->pNext != NULL || rendering_info->viewMask != 0U ||
+        rendering_info->colorAttachmentCount != 0U ||
+        rendering_info->pColorAttachmentFormats != NULL ||
+        rendering_info->depthAttachmentFormat != VK_FORMAT_UNDEFINED ||
+        rendering_info->stencilAttachmentFormat != VK_FORMAT_UNDEFINED ||
+        create_info->stageCount != 1U || create_info->pStages == NULL ||
+        create_info->pVertexInputState != NULL ||
+        create_info->pInputAssemblyState != NULL ||
+        create_info->pTessellationState != NULL ||
+        create_info->pViewportState != NULL ||
+        create_info->pRasterizationState != NULL ||
+        create_info->pMultisampleState != NULL ||
+        !depth_stencil_state_is_dxvk_null_fragment(
+            create_info->pDepthStencilState) ||
+        create_info->pColorBlendState != NULL ||
+        !dynamic_state_is_dxvk_null_fragment(create_info->pDynamicState) ||
+        create_info->layout == VK_NULL_HANDLE ||
+        create_info->renderPass != VK_NULL_HANDLE ||
+        create_info->subpass != 0U ||
+        create_info->basePipelineHandle != VK_NULL_HANDLE ||
+        create_info->basePipelineIndex != -1) {
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    const VkPipelineShaderStageCreateInfo *stage_info = &create_info->pStages[0];
+    const VkShaderModuleCreateInfo *module_info = stage_info->pNext;
+    if (stage_info->sType !=
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO ||
+        stage_info->flags != 0U ||
+        stage_info->stage != VK_SHADER_STAGE_FRAGMENT_BIT ||
+        stage_info->module != VK_NULL_HANDLE || stage_info->pName == NULL ||
+        strcmp(stage_info->pName, "main") != 0 ||
+        stage_info->pSpecializationInfo != NULL || module_info == NULL ||
+        module_info->sType != VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO ||
+        module_info->pNext != NULL || module_info->flags != 0U ||
+        module_info->codeSize < 5U * sizeof(uint32_t) ||
+        module_info->codeSize % sizeof(uint32_t) != 0U ||
+        module_info->codeSize >
+            BVB_VULKAN_MAX_GRAPHICS_PIPELINE_SHADER_WORDS * sizeof(uint32_t) ||
+        module_info->pCode == NULL ||
+        module_info->pCode[0] != UINT32_C(0x07230203)) {
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    struct bvb_vulkan_graphics_pipeline_create_request decoded = {
+        .device_id = device_state->wire_id,
+        .pipeline_layout_id = non_dispatchable_wire_id(
+            &create_info->layout, sizeof(create_info->layout)),
+        .flags_2 = flags_info->flags,
+        .library_flags = library_info->flags,
+        .shader_stage = stage_info->stage,
+        .dynamic_state_count = create_info->pDynamicState->dynamicStateCount,
+        .shader_word_count =
+            (uint32_t)(module_info->codeSize / sizeof(uint32_t)),
+    };
+    for (uint32_t index = 0U; index < decoded.dynamic_state_count; ++index) {
+        decoded.dynamic_states[index] =
+            create_info->pDynamicState->pDynamicStates[index];
+    }
+    memcpy(decoded.shader_words, module_info->pCode, module_info->codeSize);
+    uint8_t payload[BVB_PROTOCOL_MAX_PAYLOAD];
+    uint32_t payload_length = 0U;
+    int result = bvb_protocol_encode_vulkan_graphics_pipeline_create_request(
+        payload, &decoded, &payload_length);
+    struct bvb_resource_proxy *state = calloc(1, sizeof(*state));
+    if (state == NULL) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    if (result != 0 || pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        free(state);
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    struct bvb_resource_proxy *layout_state = resource_proxy_locked(
+        decoded.pipeline_layout_id, BVB_OBJECT_PIPELINE_LAYOUT);
+    if (layout_state == NULL ||
+        layout_state->parent_id != device_state->wire_id) result = -EINVAL;
+    uint64_t wire_id = 0U;
+    VkResult vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+    if (result == 0) {
+        vulkan_result = create_resource_locked(
+            BVB_OPCODE_VULKAN_GRAPHICS_PIPELINE_CREATE, payload,
+            payload_length, BVB_OBJECT_PIPELINE, device_state->wire_id,
+            state, &wire_id);
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (vulkan_result != VK_SUCCESS) {
+        free(state);
+        return vulkan_result;
+    }
+    memcpy(&pipelines[0], &wire_id, sizeof(pipelines[0]));
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL bvb_bridge_vkDestroyPipeline(
+    VkDevice device, VkPipeline pipeline,
+    const VkAllocationCallbacks *allocator) {
+    destroy_resource(
+        device, non_dispatchable_wire_id(&pipeline, sizeof(pipeline)),
+        BVB_OBJECT_PIPELINE, BVB_OPCODE_VULKAN_PIPELINE_DESTROY, allocator);
+}
+
 static VkResult VKAPI_CALL bvb_bridge_vkCreateBuffer(
     VkDevice device, const VkBufferCreateInfo *create_info,
     const VkAllocationCallbacks *allocator, VkBuffer *buffer) {
@@ -5959,6 +6135,9 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
                      bvb_bridge_vkCreatePipelineLayout)
     BVB_DEVICE_MATCH("vkDestroyPipelineLayout",
                      bvb_bridge_vkDestroyPipelineLayout)
+    BVB_DEVICE_MATCH("vkCreateGraphicsPipelines",
+                     bvb_bridge_vkCreateGraphicsPipelines)
+    BVB_DEVICE_MATCH("vkDestroyPipeline", bvb_bridge_vkDestroyPipeline)
     BVB_DEVICE_MATCH("vkCreateBuffer", bvb_bridge_vkCreateBuffer)
     BVB_DEVICE_MATCH("vkDestroyBuffer", bvb_bridge_vkDestroyBuffer)
     BVB_DEVICE_MATCH("vkGetBufferMemoryRequirements",

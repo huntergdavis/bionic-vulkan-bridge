@@ -11,6 +11,7 @@ vkCreateDescriptorPool
 vkCreateDescriptorSetLayout
 vkCreateDevice
 vkCreateFence
+vkCreateGraphicsPipelines
 vkCreateImage
 vkCreateImageView
 vkCreateInstance
@@ -26,6 +27,7 @@ vkDestroyFence
 vkDestroyImage
 vkDestroyImageView
 vkDestroyInstance
+vkDestroyPipeline
 vkDestroyPipelineLayout
 vkDestroySampler
 vkDestroySemaphore
