@@ -3,7 +3,7 @@
   "gate": "E097",
   "date": "2026-08-21",
   "source_base_commit": "e7c8433946ebdd68cb71e4ea91ffb7a51ac2cc58",
-  "status": "host_pass_tablet_pending",
+  "status": "host_and_tablet_runtime_pass",
   "trigger": {
     "runtime_gate": "E096",
     "sequence": ["vkAcquireNextImageKHR", "vkCreateImageView", "VK_ERROR_INITIALIZATION_FAILED"],
@@ -32,6 +32,28 @@
     "bridge_service_sha256": "cda5170c66c3af2618727e10e199864162ad4306a179b6442f380c857e2b7298",
     "host_icd_sha256": "75f721325f79365e2ad312aa0b9482f57a1bbc1c9b3310bbabe1cb3e2fb7bfcd"
   },
+  "tablet_runtime": {
+    "device": "Samsung Galaxy Tab S8+",
+    "extent": "2800x1752",
+    "source_commit": "cea8817",
+    "android_suite": "56/56",
+    "installed_icd_sha256": "857f9f0b019b9d4730b42f1c4c2911e146db288ea127196624cde3db55ca3e1b",
+    "installed_service_sha256": "dbdf48bb86a35d07f1715cb5101b4b32ba8c4faa05526dbab30105ff1ec1eaea",
+    "rollback": "install-pre-yDAv3Cz5",
+    "image_view_result": "VK_SUCCESS",
+    "next_sequence": [
+      "vkAcquireNextImageKHR",
+      "vkCreateImageView",
+      "vkCreateGraphicsPipelines",
+      "VK_ERROR_FEATURE_NOT_PRESENT"
+    ],
+    "dxvk_error": "Failed to create built-in graphics pipeline: VK_ERROR_FEATURE_NOT_PRESENT",
+    "master_log": {"bytes": 1112, "sha256": "f5ad579bcd2b9075ae965159e06de4578643daeb02937731991d27c521d64122"},
+    "wine_log": {"bytes": 2962218, "sha256": "1d71b48d1be5512b1caf65680474b19b03938f3e2337fc55397da58807acaad8"},
+    "service_log": {"bytes": 871, "sha256": "f9e87c9437c2ae8e2c0a19c330571740d2342931c23e73e8574f659d8df22728"},
+    "activity_screenshot": {"bytes": 144622, "sha256": "28b7305067678da2bc88ffcb75bf49b49141cf49c27c59d79df332dcee89e9f8", "content": "bridge triangle, not a game frame"},
+    "frame_helper_failure": "independent missing BVB_VISIBLE_HOST_NATIVE_LIBRARY handoff; fixed in steamclienttermux 081278d"
+  },
   "reuse": [
     "E076 same-device ordinary-or-swapchain command image ownership predicate",
     "E060 typed virtual swapchain image registration and native ownership",
@@ -39,7 +61,7 @@
   ],
   "recall": "deja query 'BVB vkCreateImageView virtual swapchain image ownership E097' returned no indexed match",
   "claims": {
-    "tablet_runtime": false,
+    "tablet_runtime": true,
     "tomb_raider_frame": false,
     "benchmark": false,
     "fps": false

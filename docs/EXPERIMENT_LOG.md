@@ -3817,8 +3817,8 @@ ownership helper. The next gate reuses that helper for image views and reruns.
 
 ## E097 — Virtual-swapchain image-view ownership (2026-08-21)
 
-Status: 58/58 host contracts pass; Android build, deployment, and Tomb Raider
-rerun pending. E096 successfully created DXVK's three descriptor update
+Status: 58/58 host and 56/56 Android contracts pass; tablet runtime gate
+passed. E096 successfully created DXVK's three descriptor update
 templates, then the real run reached `vkAcquireNextImageKHR` and stopped when
 `vkCreateImageView` returned `VK_ERROR_INITIALIZATION_FAILED`. The absence of a
 service error and the exact client source identified a pre-RPC rejection: the
@@ -3842,3 +3842,15 @@ command-image predicate, E060's typed virtual image ownership, and E096's exact
 runtime trace. Compact host evidence is
 `docs/evidence/e097-virtual-swapchain-image-view-host.json`. No tablet game
 frame, benchmark, or FPS result is claimed yet.
+
+The exact E097 client and service were then built, transactionally deployed,
+and exercised at native `2800x1752`. The previous `vkCreateImageView` rejection
+is gone: DXVK acquired a virtual swapchain image, created its view, and
+continued into `vkCreateGraphicsPipelines`. The next exact rejection is the
+implemented graphics-pipeline path returning `VK_ERROR_FEATURE_NOT_PRESENT`;
+DXVK reports `Failed to create built-in graphics pipeline`. E079a confirms an
+actual negative call result, not resolver order. A separate frame-helper
+failure was traced to the parent launcher omitting E074's explicit installed
+native-library path and is corrected in steamclienttermux `081278d`; it is not
+the Vulkan rejection. No Tomb Raider pixel reached the Activity, and the
+retained screenshot remains the bridge triangle.

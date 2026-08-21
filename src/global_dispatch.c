@@ -4970,6 +4970,171 @@ static bool dynamic_state_is_dxvk_null_fragment(
         memcmp(state->pDynamicStates, expected, sizeof(expected)) == 0;
 }
 
+static void diagnose_graphics_pipeline_call(
+    VkPipelineCache pipeline_cache, uint32_t create_info_count,
+    const VkGraphicsPipelineCreateInfo *create_infos,
+    const VkAllocationCallbacks *allocator) {
+    if (getenv("BVB_ICD_DIAGNOSTICS") == NULL) return;
+    fprintf(stderr,
+            "BVB_ICD_GRAPHICS_PIPELINE count=%u cache=%#llx allocator=%u "
+            "infos=%u\n",
+            create_info_count, (unsigned long long)(uintptr_t)pipeline_cache,
+            allocator != NULL, create_infos != NULL);
+    if (create_infos == NULL || create_info_count == 0U) return;
+    const VkGraphicsPipelineCreateInfo *info = &create_infos[0];
+    fprintf(stderr,
+            "BVB_ICD_GRAPHICS_ROOT stype=%u flags=%u stages=%u layout=%#llx "
+            "render_pass=%#llx subpass=%u base=%#llx base_index=%d "
+            "vi=%u ia=%u tess=%u viewport=%u raster=%u ms=%u depth=%u "
+            "blend=%u dynamic=%u\n",
+            (unsigned)info->sType, (unsigned)info->flags, info->stageCount,
+            (unsigned long long)(uintptr_t)info->layout,
+            (unsigned long long)(uintptr_t)info->renderPass, info->subpass,
+            (unsigned long long)(uintptr_t)info->basePipelineHandle,
+            info->basePipelineIndex, info->pVertexInputState != NULL,
+            info->pInputAssemblyState != NULL,
+            info->pTessellationState != NULL,
+            info->pViewportState != NULL,
+            info->pRasterizationState != NULL,
+            info->pMultisampleState != NULL,
+            info->pDepthStencilState != NULL,
+            info->pColorBlendState != NULL,
+            info->pDynamicState != NULL);
+    const VkBaseInStructure *next = info->pNext;
+    for (uint32_t index = 0U; next != NULL && index < 8U; ++index) {
+        fprintf(stderr, "BVB_ICD_GRAPHICS_PNEXT index=%u stype=%u\n",
+                index, (unsigned)next->sType);
+        if (next->sType == VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO) {
+            const VkPipelineRenderingCreateInfo *rendering =
+                (const VkPipelineRenderingCreateInfo *)next;
+            fprintf(stderr,
+                    "BVB_ICD_GRAPHICS_RENDERING view_mask=%u colors=%u "
+                    "color0=%u depth=%u stencil=%u\n",
+                    rendering->viewMask, rendering->colorAttachmentCount,
+                    rendering->colorAttachmentCount != 0U &&
+                            rendering->pColorAttachmentFormats != NULL
+                        ? (unsigned)rendering->pColorAttachmentFormats[0]
+                        : 0U,
+                    (unsigned)rendering->depthAttachmentFormat,
+                    (unsigned)rendering->stencilAttachmentFormat);
+        } else if (next->sType ==
+                   VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO) {
+            const VkPipelineCreateFlags2CreateInfo *flags =
+                (const VkPipelineCreateFlags2CreateInfo *)next;
+            fprintf(stderr, "BVB_ICD_GRAPHICS_FLAGS2 flags=%#llx\n",
+                    (unsigned long long)flags->flags);
+        } else if (next->sType ==
+                   VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_LIBRARY_CREATE_INFO_EXT) {
+            const VkGraphicsPipelineLibraryCreateInfoEXT *library =
+                (const VkGraphicsPipelineLibraryCreateInfoEXT *)next;
+            fprintf(stderr, "BVB_ICD_GRAPHICS_LIBRARY flags=%u\n",
+                    (unsigned)library->flags);
+        }
+        next = next->pNext;
+    }
+    if (info->pStages != NULL) {
+        const uint32_t count = info->stageCount > 8U ? 8U : info->stageCount;
+        for (uint32_t index = 0U; index < count; ++index) {
+            const VkPipelineShaderStageCreateInfo *stage =
+                &info->pStages[index];
+            const VkBaseInStructure *stage_next = stage->pNext;
+            size_t code_size = 0U;
+            if (stage_next != NULL && stage_next->sType ==
+                    VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO) {
+                const VkShaderModuleCreateInfo *module =
+                    (const VkShaderModuleCreateInfo *)stage_next;
+                code_size = module->codeSize;
+            }
+            fprintf(stderr,
+                    "BVB_ICD_GRAPHICS_STAGE index=%u stype=%u flags=%u "
+                    "stage=%u module=%#llx name=%s pnext=%u code_bytes=%zu "
+                    "spec_entries=%u spec_bytes=%zu\n",
+                    index, (unsigned)stage->sType, (unsigned)stage->flags,
+                    (unsigned)stage->stage,
+                    (unsigned long long)(uintptr_t)stage->module,
+                    stage->pName != NULL ? stage->pName : "(null)",
+                    stage_next != NULL ? (unsigned)stage_next->sType : 0U,
+                    code_size,
+                    stage->pSpecializationInfo != NULL
+                        ? stage->pSpecializationInfo->mapEntryCount : 0U,
+                    stage->pSpecializationInfo != NULL
+                        ? stage->pSpecializationInfo->dataSize : 0U);
+        }
+    }
+    if (info->pVertexInputState != NULL)
+        fprintf(stderr, "BVB_ICD_GRAPHICS_VI bindings=%u attributes=%u\n",
+                info->pVertexInputState->vertexBindingDescriptionCount,
+                info->pVertexInputState->vertexAttributeDescriptionCount);
+    if (info->pInputAssemblyState != NULL)
+        fprintf(stderr, "BVB_ICD_GRAPHICS_IA topology=%u restart=%u\n",
+                (unsigned)info->pInputAssemblyState->topology,
+                info->pInputAssemblyState->primitiveRestartEnable);
+    if (info->pViewportState != NULL)
+        fprintf(stderr, "BVB_ICD_GRAPHICS_VIEWPORT viewports=%u scissors=%u\n",
+                info->pViewportState->viewportCount,
+                info->pViewportState->scissorCount);
+    if (info->pRasterizationState != NULL)
+        fprintf(stderr,
+                "BVB_ICD_GRAPHICS_RASTER depth_clamp=%u discard=%u "
+                "polygon=%u cull=%u front=%u depth_bias=%u line_width=%a\n",
+                info->pRasterizationState->depthClampEnable,
+                info->pRasterizationState->rasterizerDiscardEnable,
+                (unsigned)info->pRasterizationState->polygonMode,
+                (unsigned)info->pRasterizationState->cullMode,
+                (unsigned)info->pRasterizationState->frontFace,
+                info->pRasterizationState->depthBiasEnable,
+                (double)info->pRasterizationState->lineWidth);
+    if (info->pMultisampleState != NULL)
+        fprintf(stderr,
+                "BVB_ICD_GRAPHICS_MS samples=%u shading=%u min=%a mask0=%#x "
+                "alpha_coverage=%u alpha_one=%u\n",
+                (unsigned)info->pMultisampleState->rasterizationSamples,
+                info->pMultisampleState->sampleShadingEnable,
+                (double)info->pMultisampleState->minSampleShading,
+                info->pMultisampleState->pSampleMask != NULL
+                    ? info->pMultisampleState->pSampleMask[0] : 0U,
+                info->pMultisampleState->alphaToCoverageEnable,
+                info->pMultisampleState->alphaToOneEnable);
+    if (info->pColorBlendState != NULL) {
+        const VkPipelineColorBlendStateCreateInfo *blend =
+            info->pColorBlendState;
+        fprintf(stderr,
+                "BVB_ICD_GRAPHICS_BLEND logic=%u op=%u attachments=%u\n",
+                blend->logicOpEnable, (unsigned)blend->logicOp,
+                blend->attachmentCount);
+        if (blend->attachmentCount != 0U && blend->pAttachments != NULL) {
+            const VkPipelineColorBlendAttachmentState *attachment =
+                &blend->pAttachments[0];
+            fprintf(stderr,
+                    "BVB_ICD_GRAPHICS_BLEND0 enable=%u src_color=%u "
+                    "dst_color=%u color_op=%u src_alpha=%u dst_alpha=%u "
+                    "alpha_op=%u mask=%u\n",
+                    attachment->blendEnable,
+                    (unsigned)attachment->srcColorBlendFactor,
+                    (unsigned)attachment->dstColorBlendFactor,
+                    (unsigned)attachment->colorBlendOp,
+                    (unsigned)attachment->srcAlphaBlendFactor,
+                    (unsigned)attachment->dstAlphaBlendFactor,
+                    (unsigned)attachment->alphaBlendOp,
+                    (unsigned)attachment->colorWriteMask);
+        }
+    }
+    if (info->pDynamicState != NULL) {
+        const VkPipelineDynamicStateCreateInfo *dynamic =
+            info->pDynamicState;
+        fprintf(stderr, "BVB_ICD_GRAPHICS_DYNAMIC count=%u\n",
+                dynamic->dynamicStateCount);
+        if (dynamic->pDynamicStates != NULL) {
+            const uint32_t count = dynamic->dynamicStateCount > 32U
+                ? 32U : dynamic->dynamicStateCount;
+            for (uint32_t index = 0U; index < count; ++index)
+                fprintf(stderr,
+                        "BVB_ICD_GRAPHICS_DYNAMIC_STATE index=%u state=%u\n",
+                        index, (unsigned)dynamic->pDynamicStates[index]);
+        }
+    }
+}
+
 static VkResult VKAPI_CALL bvb_bridge_vkCreateGraphicsPipelines(
     VkDevice device, VkPipelineCache pipeline_cache,
     uint32_t create_info_count,
@@ -4977,6 +5142,8 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateGraphicsPipelines(
     const VkAllocationCallbacks *allocator, VkPipeline *pipelines) {
     if (pipelines != NULL && create_info_count != 0U)
         pipelines[0] = VK_NULL_HANDLE;
+    diagnose_graphics_pipeline_call(
+        pipeline_cache, create_info_count, create_infos, allocator);
     struct bvb_device_proxy *device_state = device_proxy(device);
     if (device_state == NULL || pipeline_cache != VK_NULL_HANDLE ||
         create_info_count != 1U || create_infos == NULL ||
