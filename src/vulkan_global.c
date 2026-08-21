@@ -28,8 +28,9 @@ static const char *const bvb_instance_extension_allowlist[
 
 struct bvb_device_metadata {
     uint64_t device_id;
-    uint32_t queue_family_index;
-    uint32_t queue_count;
+    uint32_t queue_create_info_count;
+    struct bvb_vulkan_device_queue_create_info
+        queue_create_infos[BVB_VULKAN_MAX_DEVICE_QUEUE_CREATE_INFOS];
 };
 
 struct bvb_memory_metadata {
@@ -1189,9 +1190,9 @@ static struct bvb_device_metadata *device_metadata_slot(
     return empty;
 }
 
-int bvb_vulkan_global_context_create_device(
+int bvb_vulkan_global_context_create_device_packed(
     struct bvb_vulkan_global_context *context,
-    const struct bvb_vulkan_device_create_request *request,
+    const struct bvb_vulkan_device_create_packed_request *request,
     const char *const *enabled_extensions,
     struct bvb_vulkan_device_create_response *response,
     char *error, size_t error_size) {
@@ -1202,18 +1203,29 @@ int bvb_vulkan_global_context_create_device(
         return -EINVAL;
     }
     *response = (struct bvb_vulkan_device_create_response){0};
-    float queue_priority = 0.0F;
-    memcpy(&queue_priority, &request->queue_priority_bits,
-           sizeof(queue_priority));
-    if (request->flags != 0U || request->queue_count != 1U ||
+    if (request->flags != 0U || request->queue_create_info_count == 0U ||
+        request->queue_create_info_count >
+            BVB_VULKAN_MAX_DEVICE_QUEUE_CREATE_INFOS ||
+        request->queue_priority_count == 0U ||
+        request->queue_priority_count >
+            BVB_VULKAN_MAX_DEVICE_QUEUE_PRIORITIES ||
         request->enabled_layer_count != 0U ||
         (request->enabled_extension_count != 0U &&
          enabled_extensions == NULL) ||
         request->enabled_extension_count >
-            BVB_VULKAN_MAX_ENABLED_EXTENSIONS ||
-        !(queue_priority >= 0.0F && queue_priority <= 1.0F)) {
+            BVB_VULKAN_MAX_DEVICE_CREATE_EXTENSIONS) {
         response->vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
         return 0;
+    }
+    float queue_priorities[BVB_VULKAN_MAX_DEVICE_QUEUE_PRIORITIES] = {0};
+    for (uint32_t index = 0U; index < request->queue_priority_count; ++index) {
+        memcpy(&queue_priorities[index], &request->queue_priority_bits[index],
+               sizeof(queue_priorities[index]));
+        if (!(queue_priorities[index] >= 0.0F &&
+              queue_priorities[index] <= 1.0F)) {
+            response->vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+            return 0;
+        }
     }
     if (context->objects.count == context->objects.capacity) {
         response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
@@ -1234,11 +1246,37 @@ int bvb_vulkan_global_context_create_device(
     if (status != 0) {
         return status;
     }
-    if (request->queue_family_index >= queue_family_count ||
-        queue_properties[request->queue_family_index].queueCount <
-            request->queue_count) {
-        response->vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
-        return 0;
+    VkDeviceQueueCreateInfo
+        queue_infos[BVB_VULKAN_MAX_DEVICE_QUEUE_CREATE_INFOS] = {0};
+    for (uint32_t index = 0U;
+         index < request->queue_create_info_count; ++index) {
+        const struct bvb_vulkan_device_queue_create_info *wire_info =
+            &request->queue_create_infos[index];
+        if (wire_info->flags != 0U || wire_info->queue_count == 0U ||
+            wire_info->queue_family_index >= queue_family_count ||
+            queue_properties[wire_info->queue_family_index].queueCount <
+                wire_info->queue_count ||
+            wire_info->first_priority >= request->queue_priority_count ||
+            wire_info->queue_count >
+                request->queue_priority_count - wire_info->first_priority) {
+            response->vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+            return 0;
+        }
+        for (uint32_t prior = 0U; prior < index; ++prior) {
+            if (request->queue_create_infos[prior].queue_family_index ==
+                wire_info->queue_family_index) {
+                response->vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+                return 0;
+            }
+        }
+        queue_infos[index] = (VkDeviceQueueCreateInfo){
+            .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .flags = wire_info->flags,
+            .queueFamilyIndex = wire_info->queue_family_index,
+            .queueCount = wire_info->queue_count,
+            .pQueuePriorities =
+                &queue_priorities[wire_info->first_priority],
+        };
     }
     PFN_vkCreateDevice create_device =
         (PFN_vkCreateDevice)context->get_instance_proc_addr(
@@ -1247,16 +1285,10 @@ int bvb_vulkan_global_context_create_device(
         set_error(error, error_size, "instance has no vkCreateDevice");
         return -ENOSYS;
     }
-    const VkDeviceQueueCreateInfo queue_info = {
-        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-        .queueFamilyIndex = request->queue_family_index,
-        .queueCount = 1U,
-        .pQueuePriorities = &queue_priority,
-    };
     const VkDeviceCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .queueCreateInfoCount = 1U,
-        .pQueueCreateInfos = &queue_info,
+        .queueCreateInfoCount = request->queue_create_info_count,
+        .pQueueCreateInfos = queue_infos,
         .enabledExtensionCount = request->enabled_extension_count,
         .ppEnabledExtensionNames = enabled_extensions,
     };
@@ -1293,11 +1325,39 @@ int bvb_vulkan_global_context_create_device(
     }
     *metadata = (struct bvb_device_metadata){
         .device_id = wire_id,
-        .queue_family_index = request->queue_family_index,
-        .queue_count = request->queue_count,
+        .queue_create_info_count = request->queue_create_info_count,
     };
+    memcpy(metadata->queue_create_infos, request->queue_create_infos,
+           request->queue_create_info_count *
+               sizeof(metadata->queue_create_infos[0]));
     response->device_id = wire_id;
     return 0;
+}
+
+int bvb_vulkan_global_context_create_device(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_device_create_request *request,
+    const char *const *enabled_extensions,
+    struct bvb_vulkan_device_create_response *response,
+    char *error, size_t error_size) {
+    if (request == NULL) {
+        return -EINVAL;
+    }
+    const struct bvb_vulkan_device_create_packed_request packed = {
+        .physical_device_id = request->physical_device_id,
+        .flags = request->flags,
+        .queue_create_info_count = 1U,
+        .queue_priority_count = 1U,
+        .enabled_layer_count = request->enabled_layer_count,
+        .enabled_extension_count = request->enabled_extension_count,
+        .queue_create_infos = {{
+            .queue_family_index = request->queue_family_index,
+            .queue_count = request->queue_count,
+        }},
+        .queue_priority_bits = {request->queue_priority_bits},
+    };
+    return bvb_vulkan_global_context_create_device_packed(
+        context, &packed, enabled_extensions, response, error, error_size);
 }
 
 int bvb_vulkan_global_context_destroy_device(
@@ -1394,6 +1454,21 @@ static uint64_t existing_queue_id(
     return 0U;
 }
 
+static uint32_t device_metadata_queue_count(
+    const struct bvb_device_metadata *metadata, uint32_t queue_family_index) {
+    if (metadata == NULL) {
+        return 0U;
+    }
+    for (uint32_t index = 0U;
+         index < metadata->queue_create_info_count; ++index) {
+        if (metadata->queue_create_infos[index].queue_family_index ==
+            queue_family_index) {
+            return metadata->queue_create_infos[index].queue_count;
+        }
+    }
+    return 0U;
+}
+
 int bvb_vulkan_global_context_get_device_queue(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_device_queue_request *request,
@@ -1416,8 +1491,10 @@ int bvb_vulkan_global_context_get_device_queue(
         set_error(error, error_size, "unknown device handle");
         return status != 0 ? status : -ENOENT;
     }
-    if (request->queue_family_index != metadata->queue_family_index ||
-        request->queue_index >= metadata->queue_count) {
+    const uint32_t created_queue_count = device_metadata_queue_count(
+        metadata, request->queue_family_index);
+    if (created_queue_count == 0U ||
+        request->queue_index >= created_queue_count) {
         set_error(error, error_size, "queue index was not created");
         return -ERANGE;
     }
@@ -1637,7 +1714,8 @@ int bvb_vulkan_global_context_create_command_pool(
         set_error(error, error_size, "unknown device handle");
         return result != 0 ? result : -ENOENT;
     }
-    if (request->queue_family_index != metadata->queue_family_index) {
+    if (device_metadata_queue_count(
+            metadata, request->queue_family_index) == 0U) {
         response->vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
         return 0;
     }

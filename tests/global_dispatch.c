@@ -852,6 +852,54 @@ int main(void) {
     free_memory(device, device_memory, NULL);
     destroy_fence(device, fence, NULL);
     destroy_device(device, NULL);
+
+    const float scaled_queue_priorities[2] = {0.75F, 0.25F};
+    const VkDeviceQueueCreateInfo scaled_queue_infos[2] = {
+        {
+            .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueFamilyIndex = 0U,
+            .queueCount = 1U,
+            .pQueuePriorities = &scaled_queue_priorities[0],
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .queueFamilyIndex = 1U,
+            .queueCount = 1U,
+            .pQueuePriorities = &scaled_queue_priorities[1],
+        },
+    };
+    char scaled_extension_names[58][64];
+    const char *scaled_extensions[58];
+    for (uint32_t index = 0U; index < 58U; ++index) {
+        CHECK(snprintf(scaled_extension_names[index],
+                       sizeof(scaled_extension_names[index]),
+                       "VK_BVB_scale_extension_%02u", index) > 0);
+        scaled_extensions[index] = scaled_extension_names[index];
+    }
+    VkDeviceCreateInfo scaled_create_info = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .queueCreateInfoCount = 2U,
+        .pQueueCreateInfos = scaled_queue_infos,
+        .enabledExtensionCount = 58U,
+        .ppEnabledExtensionNames = scaled_extensions,
+    };
+    VkDevice scaled_device = VK_NULL_HANDLE;
+    const VkPhysicalDeviceVulkan12Features unsupported_scaled_features = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .timelineSemaphore = VK_TRUE,
+    };
+    scaled_create_info.pNext = &unsupported_scaled_features;
+    CHECK(create_device(physical_device, &scaled_create_info, NULL,
+                        &scaled_device) == VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(scaled_device == VK_NULL_HANDLE);
+    scaled_create_info.pNext = NULL;
+    CHECK(create_device(physical_device, &scaled_create_info, NULL,
+                        &scaled_device) == VK_SUCCESS);
+    CHECK(scaled_device != VK_NULL_HANDLE);
+    VkQueue scaled_transfer_queue = VK_NULL_HANDLE;
+    get_device_queue(scaled_device, 1U, 0U, &scaled_transfer_queue);
+    CHECK(scaled_transfer_queue != VK_NULL_HANDLE);
+    destroy_device(scaled_device, NULL);
     destroy_surface(instance_one, surface, NULL);
 
     VkInstance instance_two = VK_NULL_HANDLE;

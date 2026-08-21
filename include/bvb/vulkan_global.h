@@ -85,6 +85,12 @@ int bvb_vulkan_global_context_create_device(
     const char *const *enabled_extensions,
     struct bvb_vulkan_device_create_response *response,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_create_device_packed(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_device_create_packed_request *request,
+    const char *const *enabled_extensions,
+    struct bvb_vulkan_device_create_response *response,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_destroy_device(
     struct bvb_vulkan_global_context *context, uint64_t device_id);
 int bvb_vulkan_global_context_get_device_queue(

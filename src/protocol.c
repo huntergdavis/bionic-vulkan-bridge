@@ -916,6 +916,173 @@ int bvb_protocol_decode_vulkan_device_create_extended_request(
     return 0;
 }
 
+static int validate_packed_device_create_counts(
+    const struct bvb_vulkan_device_create_packed_request *request) {
+    if (!wire_id_is_type(request->physical_device_id, 2U) ||
+        request->queue_create_info_count == 0U ||
+        request->queue_create_info_count >
+            BVB_VULKAN_MAX_DEVICE_QUEUE_CREATE_INFOS ||
+        request->queue_priority_count == 0U ||
+        request->queue_priority_count >
+            BVB_VULKAN_MAX_DEVICE_QUEUE_PRIORITIES ||
+        request->enabled_extension_count >
+            BVB_VULKAN_MAX_DEVICE_CREATE_EXTENSIONS) {
+        return -EPROTO;
+    }
+    for (uint32_t index = 0U;
+         index < request->queue_create_info_count; ++index) {
+        const struct bvb_vulkan_device_queue_create_info *info =
+            &request->queue_create_infos[index];
+        if (info->queue_count == 0U ||
+            info->first_priority >= request->queue_priority_count ||
+            info->queue_count >
+                request->queue_priority_count - info->first_priority) {
+            return -EPROTO;
+        }
+    }
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_device_create_packed_request(
+    uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
+    const struct bvb_vulkan_device_create_packed_request *request,
+    uint32_t *output_length) {
+    if (output == NULL || request == NULL || output_length == NULL ||
+        validate_packed_device_create_counts(request) != 0) {
+        return -EINVAL;
+    }
+    uint32_t length = BVB_VULKAN_DEVICE_CREATE_PACKED_PREFIX_SIZE +
+        request->queue_create_info_count *
+            BVB_VULKAN_DEVICE_QUEUE_CREATE_INFO_SIZE +
+        request->queue_priority_count * sizeof(uint32_t);
+    size_t extension_lengths[BVB_VULKAN_MAX_DEVICE_CREATE_EXTENSIONS] = {0};
+    for (uint32_t index = 0U;
+         index < request->enabled_extension_count; ++index) {
+        const char *name = request->enabled_extensions[index];
+        const char *terminator = memchr(
+            name, '\0', BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE);
+        if (name[0] == '\0' || terminator == NULL) {
+            return -EINVAL;
+        }
+        extension_lengths[index] = (size_t)(terminator - name) + 1U;
+        if (extension_lengths[index] > BVB_PROTOCOL_MAX_PAYLOAD - length) {
+            return -EMSGSIZE;
+        }
+        length += (uint32_t)extension_lengths[index];
+    }
+    memset(output, 0, length);
+    bvb_wire_put_u64(output, request->physical_device_id);
+    bvb_wire_put_u32(output + 8, request->flags);
+    bvb_wire_put_u32(output + 12, request->queue_create_info_count);
+    bvb_wire_put_u32(output + 16, request->queue_priority_count);
+    bvb_wire_put_u32(output + 20, request->enabled_layer_count);
+    bvb_wire_put_u32(output + 24, request->enabled_extension_count);
+    uint32_t cursor = BVB_VULKAN_DEVICE_CREATE_PACKED_PREFIX_SIZE;
+    for (uint32_t index = 0U;
+         index < request->queue_create_info_count; ++index) {
+        const struct bvb_vulkan_device_queue_create_info *info =
+            &request->queue_create_infos[index];
+        bvb_wire_put_u32(output + cursor, info->flags);
+        bvb_wire_put_u32(output + cursor + 4, info->queue_family_index);
+        bvb_wire_put_u32(output + cursor + 8, info->queue_count);
+        bvb_wire_put_u32(output + cursor + 12, info->first_priority);
+        cursor += BVB_VULKAN_DEVICE_QUEUE_CREATE_INFO_SIZE;
+    }
+    for (uint32_t index = 0U;
+         index < request->queue_priority_count; ++index) {
+        bvb_wire_put_u32(output + cursor, request->queue_priority_bits[index]);
+        cursor += sizeof(uint32_t);
+    }
+    for (uint32_t index = 0U;
+         index < request->enabled_extension_count; ++index) {
+        memcpy(output + cursor, request->enabled_extensions[index],
+               extension_lengths[index]);
+        cursor += (uint32_t)extension_lengths[index];
+    }
+    *output_length = cursor;
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_device_create_packed_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_device_create_packed_request *request) {
+    if (input == NULL || request == NULL ||
+        input_length < BVB_VULKAN_DEVICE_CREATE_PACKED_PREFIX_SIZE ||
+        input_length > BVB_PROTOCOL_MAX_PAYLOAD ||
+        bvb_wire_get_u32(input + 28) != 0U) {
+        return -EINVAL;
+    }
+    struct bvb_vulkan_device_create_packed_request decoded = {
+        .physical_device_id = bvb_wire_get_u64(input),
+        .flags = bvb_wire_get_u32(input + 8),
+        .queue_create_info_count = bvb_wire_get_u32(input + 12),
+        .queue_priority_count = bvb_wire_get_u32(input + 16),
+        .enabled_layer_count = bvb_wire_get_u32(input + 20),
+        .enabled_extension_count = bvb_wire_get_u32(input + 24),
+    };
+    if (!wire_id_is_type(decoded.physical_device_id, 2U) ||
+        decoded.queue_create_info_count == 0U ||
+        decoded.queue_create_info_count >
+            BVB_VULKAN_MAX_DEVICE_QUEUE_CREATE_INFOS ||
+        decoded.queue_priority_count == 0U ||
+        decoded.queue_priority_count >
+            BVB_VULKAN_MAX_DEVICE_QUEUE_PRIORITIES ||
+        decoded.enabled_extension_count >
+            BVB_VULKAN_MAX_DEVICE_CREATE_EXTENSIONS) {
+        return -EPROTO;
+    }
+    uint32_t cursor = BVB_VULKAN_DEVICE_CREATE_PACKED_PREFIX_SIZE;
+    const uint32_t fixed_tail =
+        decoded.queue_create_info_count *
+            BVB_VULKAN_DEVICE_QUEUE_CREATE_INFO_SIZE +
+        decoded.queue_priority_count * sizeof(uint32_t);
+    if (fixed_tail > input_length - cursor) {
+        return -EPROTO;
+    }
+    for (uint32_t index = 0U;
+         index < decoded.queue_create_info_count; ++index) {
+        decoded.queue_create_infos[index] =
+            (struct bvb_vulkan_device_queue_create_info){
+                .flags = bvb_wire_get_u32(input + cursor),
+                .queue_family_index = bvb_wire_get_u32(input + cursor + 4),
+                .queue_count = bvb_wire_get_u32(input + cursor + 8),
+                .first_priority = bvb_wire_get_u32(input + cursor + 12),
+            };
+        cursor += BVB_VULKAN_DEVICE_QUEUE_CREATE_INFO_SIZE;
+    }
+    for (uint32_t index = 0U;
+         index < decoded.queue_priority_count; ++index) {
+        decoded.queue_priority_bits[index] = bvb_wire_get_u32(input + cursor);
+        cursor += sizeof(uint32_t);
+    }
+    if (validate_packed_device_create_counts(&decoded) != 0) {
+        return -EPROTO;
+    }
+    for (uint32_t index = 0U;
+         index < decoded.enabled_extension_count; ++index) {
+        if (cursor == input_length) {
+            return -EPROTO;
+        }
+        uint32_t available = input_length - cursor;
+        if (available > BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE) {
+            available = BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE;
+        }
+        const uint8_t *terminator = memchr(input + cursor, '\0', available);
+        if (input[cursor] == '\0' || terminator == NULL) {
+            return -EPROTO;
+        }
+        const size_t name_length =
+            (size_t)(terminator - (input + cursor)) + 1U;
+        memcpy(decoded.enabled_extensions[index], input + cursor, name_length);
+        cursor += (uint32_t)name_length;
+    }
+    if (cursor != input_length) {
+        return -EPROTO;
+    }
+    *request = decoded;
+    return 0;
+}
+
 int bvb_protocol_encode_vulkan_device_create_response(
     uint8_t output[BVB_VULKAN_DEVICE_CREATE_RESPONSE_SIZE],
     const struct bvb_vulkan_device_create_response *response) {

@@ -556,6 +556,33 @@ static VkResult VKAPI_CALL fake_create_device(
     (void)physical_device;
     (void)allocator;
     fake_swapchain_enabled = 0;
+    if (create_info == NULL || device == NULL) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (create_info->enabledExtensionCount == 58U) {
+        if (create_info->queueCreateInfoCount != 2U ||
+            create_info->pQueueCreateInfos == NULL ||
+            create_info->pQueueCreateInfos[0].queueFamilyIndex != 0U ||
+            create_info->pQueueCreateInfos[0].queueCount != 1U ||
+            create_info->pQueueCreateInfos[1].queueFamilyIndex != 1U ||
+            create_info->pQueueCreateInfos[1].queueCount != 1U ||
+            create_info->pQueueCreateInfos[0].pQueuePriorities == NULL ||
+            create_info->pQueueCreateInfos[1].pQueuePriorities == NULL ||
+            create_info->pQueueCreateInfos[0].pQueuePriorities[0] != 0.75F ||
+            create_info->pQueueCreateInfos[1].pQueuePriorities[0] != 0.25F) {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        for (uint32_t index = 0U; index < 58U; ++index) {
+            char expected[64];
+            (void)snprintf(expected, sizeof(expected),
+                           "VK_BVB_scale_extension_%02u", index);
+            if (create_info->ppEnabledExtensionNames == NULL ||
+                strcmp(create_info->ppEnabledExtensionNames[index],
+                       expected) != 0) {
+                return VK_ERROR_EXTENSION_NOT_PRESENT;
+            }
+        }
+    }
     if (create_info != NULL) {
         for (uint32_t index = 0;
              index < create_info->enabledExtensionCount; ++index) {

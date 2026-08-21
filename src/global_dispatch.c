@@ -2177,7 +2177,9 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
         allocator != NULL ||
         create_info->sType != VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO ||
         create_info->flags != 0U ||
-        create_info->queueCreateInfoCount != 1U ||
+        create_info->queueCreateInfoCount == 0U ||
+        create_info->queueCreateInfoCount >
+            BVB_VULKAN_MAX_DEVICE_QUEUE_CREATE_INFOS ||
         create_info->pQueueCreateInfos == NULL) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
@@ -2185,7 +2187,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
         return VK_ERROR_LAYER_NOT_PRESENT;
     }
     if (create_info->enabledExtensionCount >
-            BVB_VULKAN_MAX_ENABLED_EXTENSIONS ||
+            BVB_VULKAN_MAX_DEVICE_CREATE_EXTENSIONS ||
         (create_info->enabledExtensionCount != 0U &&
          create_info->ppEnabledExtensionNames == NULL)) {
         return VK_ERROR_INITIALIZATION_FAILED;
@@ -2210,27 +2212,84 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
     if (create_info->pEnabledFeatures != NULL) {
         return VK_ERROR_FEATURE_NOT_PRESENT;
     }
-    const VkDeviceQueueCreateInfo *queue_info = create_info->pQueueCreateInfos;
-    if (queue_info->sType != VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO ||
-        queue_info->pNext != NULL || queue_info->flags != 0U ||
-        queue_info->queueCount != 1U || queue_info->pQueuePriorities == NULL ||
-        !(queue_info->pQueuePriorities[0] >= 0.0F &&
-          queue_info->pQueuePriorities[0] <= 1.0F)) {
-        return VK_ERROR_INITIALIZATION_FAILED;
+    struct bvb_vulkan_device_create_packed_request packed = {
+        .physical_device_id = physical->wire_id,
+        .flags = create_info->flags,
+        .queue_create_info_count = create_info->queueCreateInfoCount,
+        .enabled_layer_count = create_info->enabledLayerCount,
+        .enabled_extension_count = create_info->enabledExtensionCount,
+    };
+    for (uint32_t index = 0U;
+         index < create_info->queueCreateInfoCount; ++index) {
+        const VkDeviceQueueCreateInfo *queue_info =
+            &create_info->pQueueCreateInfos[index];
+        if (queue_info->sType !=
+                VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO ||
+            queue_info->pNext != NULL || queue_info->flags != 0U ||
+            queue_info->queueCount == 0U ||
+            queue_info->pQueuePriorities == NULL ||
+            queue_info->queueCount >
+                BVB_VULKAN_MAX_DEVICE_QUEUE_PRIORITIES -
+                    packed.queue_priority_count) {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+        for (uint32_t prior = 0U; prior < index; ++prior) {
+            if (create_info->pQueueCreateInfos[prior].queueFamilyIndex ==
+                queue_info->queueFamilyIndex) {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+        }
+        packed.queue_create_infos[index] =
+            (struct bvb_vulkan_device_queue_create_info){
+                .flags = queue_info->flags,
+                .queue_family_index = queue_info->queueFamilyIndex,
+                .queue_count = queue_info->queueCount,
+                .first_priority = packed.queue_priority_count,
+            };
+        for (uint32_t priority = 0U;
+             priority < queue_info->queueCount; ++priority) {
+            const float value = queue_info->pQueuePriorities[priority];
+            if (!(value >= 0.0F && value <= 1.0F)) {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            memcpy(&packed.queue_priority_bits[packed.queue_priority_count],
+                   &value, sizeof(value));
+            ++packed.queue_priority_count;
+        }
+        if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+            fprintf(stderr,
+                    "BVB_ICD_CREATE_DEVICE_QUEUE index=%u family=%u "
+                    "count=%u flags=%u\n",
+                    index, queue_info->queueFamilyIndex,
+                    queue_info->queueCount, (unsigned int)queue_info->flags);
+        }
+    }
+    for (uint32_t index = 0U;
+         index < create_info->enabledExtensionCount; ++index) {
+        const char *name = create_info->ppEnabledExtensionNames[index];
+        const char *terminator = memchr(
+            name, '\0', BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE);
+        const size_t length = (size_t)(terminator - name) + 1U;
+        memcpy(packed.enabled_extensions[index], name, length);
+    }
+    const bool use_packed = create_info->queueCreateInfoCount != 1U ||
+        create_info->pQueueCreateInfos[0].queueCount != 1U ||
+        create_info->enabledExtensionCount >
+            BVB_VULKAN_MAX_ENABLED_EXTENSIONS;
+    if (use_packed && create_info->pNext != NULL) {
+        return VK_ERROR_FEATURE_NOT_PRESENT;
     }
     struct bvb_device_proxy *proxy = calloc(1, sizeof(*proxy));
     if (proxy == NULL) {
         return VK_ERROR_OUT_OF_HOST_MEMORY;
     }
-    uint32_t priority_bits = 0U;
-    memcpy(&priority_bits, &queue_info->pQueuePriorities[0],
-           sizeof(priority_bits));
+    const VkDeviceQueueCreateInfo *queue_info = create_info->pQueueCreateInfos;
     const struct bvb_vulkan_device_create_request create_request = {
         .physical_device_id = physical->wire_id,
         .flags = create_info->flags,
         .queue_family_index = queue_info->queueFamilyIndex,
         .queue_count = queue_info->queueCount,
-        .queue_priority_bits = priority_bits,
+        .queue_priority_bits = packed.queue_priority_bits[0],
         .enabled_layer_count = create_info->enabledLayerCount,
         .enabled_extension_count = create_info->enabledExtensionCount,
     };
@@ -2243,13 +2302,18 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
     request.header = (struct bvb_protocol_header){
         .version = BVB_PROTOCOL_VERSION,
         .kind = BVB_PROTOCOL_REQUEST,
-        .opcode = create_info->enabledExtensionCount == 0U
-                      ? BVB_OPCODE_VULKAN_DEVICE_CREATE
-                      : BVB_OPCODE_VULKAN_DEVICE_CREATE_EXTENDED,
+        .opcode = use_packed
+                      ? BVB_OPCODE_VULKAN_DEVICE_CREATE_PACKED
+                      : (create_info->enabledExtensionCount == 0U
+                             ? BVB_OPCODE_VULKAN_DEVICE_CREATE
+                             : BVB_OPCODE_VULKAN_DEVICE_CREATE_EXTENDED),
         .request_id = next_request_id_locked(),
     };
     if (result == 0) {
-        if (create_info->enabledExtensionCount == 0U) {
+        if (use_packed) {
+            result = bvb_protocol_encode_vulkan_device_create_packed_request(
+                request.payload, &packed, &request.header.payload_length);
+        } else if (create_info->enabledExtensionCount == 0U) {
             request.header.payload_length =
                 BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE;
             result = bvb_protocol_encode_vulkan_device_create_request(

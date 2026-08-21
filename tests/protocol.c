@@ -81,7 +81,7 @@ int main(void) {
     };
     CHECK(bvb_protocol_encode_header(wire, &last_opcode_header) == 0);
     CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
-    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_CORE_FEATURES);
+    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_DEVICE_CREATE_PACKED);
 
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
@@ -571,6 +571,56 @@ int main(void) {
     CHECK(bvb_protocol_decode_vulkan_device_create_extended_request(
               extended_create_wire, extended_create_length,
               &extended_decoded) == -EPROTO);
+
+    struct bvb_vulkan_device_create_packed_request packed_create = {
+        .physical_device_id = physical_devices.ids[0],
+        .queue_create_info_count = 2U,
+        .queue_priority_count = 2U,
+        .enabled_extension_count = 58U,
+        .queue_create_infos = {
+            {.queue_family_index = 0U, .queue_count = 1U,
+             .first_priority = 0U},
+            {.queue_family_index = 1U, .queue_count = 1U,
+             .first_priority = 1U},
+        },
+        .queue_priority_bits = {
+            UINT32_C(0x3f400000), UINT32_C(0x3e800000),
+        },
+    };
+    for (uint32_t index = 0U;
+         index < packed_create.enabled_extension_count; ++index) {
+        CHECK(snprintf(packed_create.enabled_extensions[index],
+                       BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE,
+                       "VK_BVB_scale_extension_%02u", index) > 0);
+    }
+    uint8_t packed_create_wire[BVB_PROTOCOL_MAX_PAYLOAD];
+    uint32_t packed_create_length = 0U;
+    CHECK(bvb_protocol_encode_vulkan_device_create_packed_request(
+              packed_create_wire, &packed_create,
+              &packed_create_length) == 0);
+    CHECK(packed_create_length < BVB_PROTOCOL_MAX_PAYLOAD);
+    struct bvb_vulkan_device_create_packed_request packed_decoded;
+    CHECK(bvb_protocol_decode_vulkan_device_create_packed_request(
+              packed_create_wire, packed_create_length,
+              &packed_decoded) == 0);
+    CHECK(packed_decoded.queue_create_info_count == 2U);
+    CHECK(packed_decoded.queue_priority_count == 2U);
+    CHECK(packed_decoded.enabled_extension_count == 58U);
+    CHECK(packed_decoded.queue_create_infos[1].queue_family_index == 1U);
+    CHECK(packed_decoded.queue_create_infos[1].first_priority == 1U);
+    CHECK(packed_decoded.queue_priority_bits[1] == UINT32_C(0x3e800000));
+    CHECK(strcmp(packed_decoded.enabled_extensions[57],
+                 "VK_BVB_scale_extension_57") == 0);
+    CHECK(bvb_protocol_decode_vulkan_device_create_packed_request(
+              packed_create_wire, packed_create_length - 1U,
+              &packed_decoded) == -EPROTO);
+    bvb_wire_put_u32(
+        packed_create_wire + BVB_VULKAN_DEVICE_CREATE_PACKED_PREFIX_SIZE +
+            BVB_VULKAN_DEVICE_QUEUE_CREATE_INFO_SIZE + 12U,
+        2U);
+    CHECK(bvb_protocol_decode_vulkan_device_create_packed_request(
+              packed_create_wire, packed_create_length,
+              &packed_decoded) == -EPROTO);
 
     const struct bvb_vulkan_device_create_response device_create_response = {
         .vulkan_result = 0,
