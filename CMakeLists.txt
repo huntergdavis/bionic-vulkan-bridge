@@ -184,6 +184,7 @@ target_include_directories(
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<INSTALL_INTERFACE:include>"
 )
+target_link_libraries(bvb-wire PRIVATE Vulkan::Headers)
 bvb_enable_warnings(bvb-wire)
 
 add_library(bvb-frame-sync STATIC src/frame_sync.c)
@@ -273,14 +274,14 @@ add_custom_command(
     "${bvb_dxvk_dispatch_policy_include}"
     "${bvb_dxvk_dispatch_policy_json}"
     --additional-executable
-    "${CMAKE_CURRENT_SOURCE_DIR}/config/e034-mapped-memory-dispatch.txt"
-    --gate E034
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e063-native-image-dispatch.txt"
+    --gate E063
   DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-dxvk-dispatch-policy.py"
     "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
     "${bvb_triangle_dispatch_include}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/config/e034-mapped-memory-dispatch.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e063-native-image-dispatch.txt"
   VERBATIM
 )
 add_library(
@@ -520,7 +521,7 @@ if(BUILD_TESTING)
   bvb_enable_warnings(bvb-fake-media-ndk)
 
   add_executable(bvb-protocol-test tests/protocol.c)
-  target_link_libraries(bvb-protocol-test PRIVATE bvb-wire)
+  target_link_libraries(bvb-protocol-test PRIVATE bvb-wire Vulkan::Headers)
   bvb_enable_warnings(bvb-protocol-test)
 
   add_test(NAME protocol-contract COMMAND bvb-protocol-test)
@@ -588,7 +589,7 @@ if(BUILD_TESTING)
       "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
       "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
       "${bvb_triangle_dispatch_include}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/config/e034-mapped-memory-dispatch.txt"
+      "${CMAKE_CURRENT_SOURCE_DIR}/config/e063-native-image-dispatch.txt"
       "${bvb_dxvk_dispatch_policy_json}"
   )
 

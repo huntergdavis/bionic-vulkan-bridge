@@ -156,7 +156,14 @@ int main(void) {
                                "vkUpdateDescriptorSets") == 0 ||
                         strcmp(entry->name, "vkCreatePipelineLayout") == 0 ||
                         strcmp(entry->name,
-                               "vkDestroyPipelineLayout") == 0)) {
+                               "vkDestroyPipelineLayout") == 0 ||
+                        strcmp(entry->name, "vkCreateImage") == 0 ||
+                        strcmp(entry->name, "vkDestroyImage") == 0 ||
+                        strcmp(entry->name,
+                               "vkGetImageMemoryRequirements") == 0 ||
+                        strcmp(entry->name, "vkBindImageMemory") == 0 ||
+                        strcmp(entry->name, "vkCreateImageView") == 0 ||
+                        strcmp(entry->name, "vkDestroyImageView") == 0)) {
                 CHECK(resolved == NULL);
             } else {
                 CHECK(resolved != NULL);
@@ -176,8 +183,8 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 74U);
-    CHECK(required_count == 366U);
+    CHECK(executable_count == 80U);
+    CHECK(required_count == 360U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");

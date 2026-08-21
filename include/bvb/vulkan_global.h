@@ -206,6 +206,30 @@ int bvb_vulkan_global_context_bind_buffer_memory(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_buffer_bind_request *request,
     int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_create_image(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_image_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_destroy_image(
+    struct bvb_vulkan_global_context *context, uint64_t image_id,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_get_image_requirements(
+    const struct bvb_vulkan_global_context *context, uint64_t image_id,
+    struct bvb_vulkan_image_requirements *requirements,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_bind_image_memory(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_image_bind_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_create_image_view(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_image_view_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_destroy_image_view(
+    struct bvb_vulkan_global_context *context, uint64_t image_view_id,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_command_buffer_fill(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_command_buffer_fill_request *request,

@@ -47,7 +47,7 @@ def main() -> int:
                 "--additional-executable",
                 str(additional),
                 "--gate",
-                "E034",
+                "E063",
             ],
             check=True,
         )
@@ -58,11 +58,11 @@ def main() -> int:
         assert summary == {
             "command_count": 742,
             "resolved_name_count": 440,
-            "executable_name_count": 74,
+            "executable_name_count": 80,
             "support_counts": {
                 "probed_null": 302,
-                "required_unimplemented": 366,
-                "executable": 74,
+                "required_unimplemented": 360,
+                "executable": 80,
             },
             "dispatch_scope_counts": {
                 "global": 4,

@@ -52,6 +52,16 @@ struct bvb_semaphore_metadata {
     VkSemaphoreType type;
 };
 
+struct bvb_image_metadata {
+    uint64_t image_id;
+    uint64_t device_id;
+    uint32_t flags;
+    uint32_t image_type;
+    uint32_t format;
+    uint32_t mip_levels;
+    uint32_t array_layers;
+};
+
 struct bvb_swapchain_metadata {
     uint64_t swapchain_id;
     uint64_t device_id;
@@ -102,10 +112,12 @@ struct bvb_vulkan_global_context {
     uint64_t next_descriptor_set_serial;
     uint64_t next_sampler_serial;
     uint64_t next_pipeline_layout_serial;
+    uint64_t next_image_view_serial;
     struct bvb_device_metadata device_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_memory_metadata memory_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_semaphore_metadata
         semaphore_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
+    struct bvb_image_metadata image_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_swapchain_metadata
         swapchain_metadata[BVB_WSI_FRAME_RING_MAX_SLOTS];
 };
@@ -187,6 +199,22 @@ static VkBuffer buffer_from_bits(uint64_t bits) {
                    "VkBuffer exceeds bridge handle width");
     memcpy(&buffer, &bits, sizeof(buffer));
     return buffer;
+}
+
+static VkImage image_from_bits(uint64_t bits) {
+    VkImage image = VK_NULL_HANDLE;
+    _Static_assert(sizeof(image) <= sizeof(bits),
+                   "VkImage exceeds bridge handle width");
+    memcpy(&image, &bits, sizeof(image));
+    return image;
+}
+
+static VkImageView image_view_from_bits(uint64_t bits) {
+    VkImageView image_view = VK_NULL_HANDLE;
+    _Static_assert(sizeof(image_view) <= sizeof(bits),
+                   "VkImageView exceeds bridge handle width");
+    memcpy(&image_view, &bits, sizeof(image_view));
+    return image_view;
 }
 
 static VkDeviceMemory memory_from_bits(uint64_t bits) {
@@ -394,6 +422,7 @@ int bvb_vulkan_global_context_create(
     context->next_descriptor_set_serial = 1U;
     context->next_sampler_serial = 1U;
     context->next_pipeline_layout_serial = 1U;
+    context->next_image_view_serial = 1U;
     *output = context;
     return 0;
 }
@@ -1657,6 +1686,30 @@ int bvb_vulkan_global_context_destroy_device(
             if (result != 0) {
                 return result;
             }
+        }
+    }
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_IMAGE_VIEW) {
+            uint64_t image_device_id = 0U;
+            uint64_t image_bits = 0U;
+            const int owner_result = bvb_handle_table_lookup(
+                &context->objects, entry->parent_id, BVB_OBJECT_IMAGE,
+                &image_device_id, &image_bits);
+            if (owner_result == 0 && image_device_id == device_id) {
+                result = bvb_vulkan_global_context_destroy_image_view(
+                    context, entry->wire_id, NULL, 0U);
+                if (result != 0) return result;
+            }
+        }
+    }
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_IMAGE &&
+            entry->parent_id == device_id) {
+            result = bvb_vulkan_global_context_destroy_image(
+                context, entry->wire_id, NULL, 0U);
+            if (result != 0) return result;
         }
     }
     for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
@@ -2987,6 +3040,17 @@ int bvb_vulkan_global_context_destroy_pipeline_layout(
     return result;
 }
 
+static struct bvb_image_metadata *image_metadata_slot(
+    struct bvb_vulkan_global_context *context, uint64_t image_id) {
+    struct bvb_image_metadata *empty = NULL;
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        struct bvb_image_metadata *metadata = &context->image_metadata[index];
+        if (metadata->image_id == image_id && image_id != 0U) return metadata;
+        if (metadata->image_id == 0U && empty == NULL) empty = metadata;
+    }
+    return empty;
+}
+
 int bvb_vulkan_global_context_create_buffer(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_buffer_create_request *request,
@@ -3205,6 +3269,360 @@ int bvb_vulkan_global_context_bind_buffer_memory(
         buffer_device, buffer_from_bits(buffer_bits),
         memory_from_bits(memory_bits), request->offset);
     return 0;
+}
+
+int bvb_vulkan_global_context_create_image(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_image_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL) return -EINVAL;
+    *response = (struct bvb_vulkan_object_create_response){0};
+    uint8_t validation[BVB_VULKAN_IMAGE_CREATE_REQUEST_SIZE];
+    if (bvb_protocol_encode_vulkan_image_create_request(
+            validation, request) != 0) {
+        response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    uint64_t device_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE, NULL,
+        &device_bits);
+    if (result != 0) return result;
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkCreateImage create_image =
+        (PFN_vkCreateImage)context->get_device_proc_addr(device,
+                                                         "vkCreateImage");
+    PFN_vkDestroyImage destroy_image =
+        (PFN_vkDestroyImage)context->get_device_proc_addr(device,
+                                                          "vkDestroyImage");
+    if (create_image == NULL || destroy_image == NULL) return -ENOSYS;
+
+    VkImageStencilUsageCreateInfo stencil_usage = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_STENCIL_USAGE_CREATE_INFO,
+        .stencilUsage = request->stencil_usage,
+    };
+    VkFormat view_formats[BVB_VULKAN_IMAGE_MAX_VIEW_FORMATS] = {0};
+    for (uint32_t index = 0U; index < request->view_format_count; ++index) {
+        view_formats[index] = (VkFormat)request->view_formats[index];
+    }
+    VkImageFormatListCreateInfo format_list = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO,
+        .viewFormatCount = request->view_format_count,
+        .pViewFormats = view_formats,
+    };
+    const void *pnext = NULL;
+    if ((request->pnext_flags &
+         BVB_VULKAN_IMAGE_CREATE_PNEXT_STENCIL_USAGE) != 0U) {
+        stencil_usage.pNext = pnext;
+        pnext = &stencil_usage;
+    }
+    if ((request->pnext_flags &
+         BVB_VULKAN_IMAGE_CREATE_PNEXT_FORMAT_LIST) != 0U) {
+        format_list.pNext = pnext;
+        pnext = &format_list;
+    }
+    const VkImageCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .pNext = pnext,
+        .flags = request->flags,
+        .imageType = (VkImageType)request->image_type,
+        .format = (VkFormat)request->format,
+        .extent = {
+            request->extent_width,
+            request->extent_height,
+            request->extent_depth,
+        },
+        .mipLevels = request->mip_levels,
+        .arrayLayers = request->array_layers,
+        .samples = (VkSampleCountFlagBits)request->samples,
+        .tiling = (VkImageTiling)request->tiling,
+        .usage = request->usage,
+        .sharingMode = (VkSharingMode)request->sharing_mode,
+        .queueFamilyIndexCount = request->queue_family_index_count,
+        .pQueueFamilyIndices = request->queue_family_index_count == 0U
+            ? NULL : request->queue_family_indices,
+        .initialLayout = (VkImageLayout)request->initial_layout,
+    };
+    VkImage image = VK_NULL_HANDLE;
+    response->vulkan_result = create_image(device, &create_info, NULL, &image);
+    if (response->vulkan_result != VK_SUCCESS) return 0;
+    struct bvb_image_metadata *metadata = image_metadata_slot(context, 0U);
+    if (metadata == NULL) {
+        destroy_image(device, image, NULL);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    const uint64_t wire_id = bvb_handle_id(
+        BVB_OBJECT_IMAGE, context->next_image_serial++);
+    result = bvb_handle_table_insert(
+        &context->objects, wire_id, request->device_id,
+        handle_bits(&image, sizeof(image)));
+    if (result != 0) {
+        destroy_image(device, image, NULL);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    *metadata = (struct bvb_image_metadata){
+        .image_id = wire_id,
+        .device_id = request->device_id,
+        .flags = request->flags,
+        .image_type = request->image_type,
+        .format = request->format,
+        .mip_levels = request->mip_levels,
+        .array_layers = request->array_layers,
+    };
+    response->object_id = wire_id;
+    return 0;
+}
+
+int bvb_vulkan_global_context_destroy_image(
+    struct bvb_vulkan_global_context *context, uint64_t image_id,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    uint64_t device_id = 0U;
+    uint64_t image_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, image_id, BVB_OBJECT_IMAGE, &device_id, &device,
+        &image_bits);
+    if (result != 0) return result;
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_IMAGE_VIEW &&
+            entry->parent_id == image_id) {
+            set_error(error, error_size, "image still owns an image view");
+            return -EBUSY;
+        }
+    }
+    PFN_vkDestroyImage destroy_image =
+        (PFN_vkDestroyImage)context->get_device_proc_addr(device,
+                                                          "vkDestroyImage");
+    if (destroy_image == NULL) return -ENOSYS;
+    result = bvb_handle_table_remove(
+        &context->objects, image_id, BVB_OBJECT_IMAGE, NULL);
+    if (result != 0) return result;
+    struct bvb_image_metadata *metadata = image_metadata_slot(context, image_id);
+    if (metadata != NULL && metadata->image_id == image_id) {
+        *metadata = (struct bvb_image_metadata){0};
+    }
+    destroy_image(device, image_from_bits(image_bits), NULL);
+    return 0;
+}
+
+int bvb_vulkan_global_context_get_image_requirements(
+    const struct bvb_vulkan_global_context *context, uint64_t image_id,
+    struct bvb_vulkan_image_requirements *requirements,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (requirements == NULL) return -EINVAL;
+    uint64_t device_id = 0U;
+    uint64_t image_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, image_id, BVB_OBJECT_IMAGE, &device_id, &device,
+        &image_bits);
+    if (result != 0) return result;
+    PFN_vkGetImageMemoryRequirements get_requirements =
+        (PFN_vkGetImageMemoryRequirements)context->get_device_proc_addr(
+            device, "vkGetImageMemoryRequirements");
+    if (get_requirements == NULL) return -ENOSYS;
+    VkMemoryRequirements native = {0};
+    get_requirements(device, image_from_bits(image_bits), &native);
+    *requirements = (struct bvb_vulkan_image_requirements){
+        .size = native.size,
+        .alignment = native.alignment,
+        .memory_type_bits = native.memoryTypeBits,
+    };
+    return native.size != 0U && native.alignment != 0U &&
+                   native.memoryTypeBits != 0U
+               ? 0 : -EPROTO;
+}
+
+int bvb_vulkan_global_context_bind_image_memory(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_image_bind_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (request == NULL || vulkan_result == NULL) return -EINVAL;
+    uint64_t image_device_id = 0U;
+    uint64_t memory_device_id = 0U;
+    uint64_t image_bits = 0U;
+    uint64_t memory_bits = 0U;
+    VkDevice image_device = VK_NULL_HANDLE;
+    VkDevice memory_device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, request->image_id, BVB_OBJECT_IMAGE, &image_device_id,
+        &image_device, &image_bits);
+    if (result == 0) {
+        result = resolve_device_child(
+            context, request->memory_id, BVB_OBJECT_DEVICE_MEMORY,
+            &memory_device_id, &memory_device, &memory_bits);
+    }
+    if (result != 0 || image_device_id != memory_device_id ||
+        image_device != memory_device) {
+        return result != 0 ? result : -EPROTO;
+    }
+    PFN_vkBindImageMemory bind =
+        (PFN_vkBindImageMemory)context->get_device_proc_addr(
+            image_device, "vkBindImageMemory");
+    if (bind == NULL) return -ENOSYS;
+    *vulkan_result = bind(
+        image_device, image_from_bits(image_bits),
+        memory_from_bits(memory_bits), request->offset);
+    return 0;
+}
+
+static bool image_view_range_supported(
+    const struct bvb_image_metadata *image,
+    const struct bvb_vulkan_image_view_create_request *request) {
+    if (image == NULL || request->base_mip_level >= image->mip_levels ||
+        (request->level_count != VK_REMAINING_MIP_LEVELS &&
+         request->level_count > image->mip_levels - request->base_mip_level) ||
+        request->base_array_layer >= image->array_layers ||
+        (request->layer_count != VK_REMAINING_ARRAY_LAYERS &&
+         request->layer_count > image->array_layers -
+             request->base_array_layer) ||
+        (request->format != image->format &&
+         (image->flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT) == 0U)) {
+        return false;
+    }
+    if (image->image_type == VK_IMAGE_TYPE_1D) {
+        return request->view_type == VK_IMAGE_VIEW_TYPE_1D ||
+               request->view_type == VK_IMAGE_VIEW_TYPE_1D_ARRAY;
+    }
+    if (image->image_type == VK_IMAGE_TYPE_2D) {
+        if (request->view_type == VK_IMAGE_VIEW_TYPE_2D ||
+            request->view_type == VK_IMAGE_VIEW_TYPE_2D_ARRAY) return true;
+        if (request->view_type == VK_IMAGE_VIEW_TYPE_CUBE ||
+            request->view_type == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY) {
+            return (image->flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) != 0U;
+        }
+        return false;
+    }
+    return request->view_type == VK_IMAGE_VIEW_TYPE_3D ||
+           (((image->flags & VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT) != 0U) &&
+            (request->view_type == VK_IMAGE_VIEW_TYPE_2D ||
+             request->view_type == VK_IMAGE_VIEW_TYPE_2D_ARRAY));
+}
+
+int bvb_vulkan_global_context_create_image_view(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_image_view_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL) return -EINVAL;
+    *response = (struct bvb_vulkan_object_create_response){0};
+    uint8_t validation[BVB_VULKAN_IMAGE_VIEW_CREATE_REQUEST_SIZE];
+    if (bvb_protocol_encode_vulkan_image_view_create_request(
+            validation, request) != 0) {
+        response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    uint64_t image_device_id = 0U;
+    uint64_t image_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, request->image_id, BVB_OBJECT_IMAGE, &image_device_id,
+        &device, &image_bits);
+    if (result != 0) return result;
+    if (image_device_id != request->device_id) return -EPROTO;
+    struct bvb_image_metadata *image = image_metadata_slot(
+        context, request->image_id);
+    if (image == NULL || image->image_id != request->image_id ||
+        !image_view_range_supported(image, request)) {
+        response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    PFN_vkCreateImageView create_image_view =
+        (PFN_vkCreateImageView)context->get_device_proc_addr(
+            device, "vkCreateImageView");
+    PFN_vkDestroyImageView destroy_image_view =
+        (PFN_vkDestroyImageView)context->get_device_proc_addr(
+            device, "vkDestroyImageView");
+    if (create_image_view == NULL || destroy_image_view == NULL) return -ENOSYS;
+    const VkImageViewUsageCreateInfo usage = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
+        .usage = request->usage,
+    };
+    const VkImageViewCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .pNext = (request->pnext_flags &
+                  BVB_VULKAN_IMAGE_VIEW_CREATE_PNEXT_USAGE) != 0U
+            ? &usage : NULL,
+        .flags = request->flags,
+        .image = image_from_bits(image_bits),
+        .viewType = (VkImageViewType)request->view_type,
+        .format = (VkFormat)request->format,
+        .components = {
+            (VkComponentSwizzle)request->component_r,
+            (VkComponentSwizzle)request->component_g,
+            (VkComponentSwizzle)request->component_b,
+            (VkComponentSwizzle)request->component_a,
+        },
+        .subresourceRange = {
+            .aspectMask = request->aspect_mask,
+            .baseMipLevel = request->base_mip_level,
+            .levelCount = request->level_count,
+            .baseArrayLayer = request->base_array_layer,
+            .layerCount = request->layer_count,
+        },
+    };
+    VkImageView image_view = VK_NULL_HANDLE;
+    response->vulkan_result = create_image_view(
+        device, &create_info, NULL, &image_view);
+    if (response->vulkan_result != VK_SUCCESS) return 0;
+    const uint64_t wire_id = bvb_handle_id(
+        BVB_OBJECT_IMAGE_VIEW, context->next_image_view_serial++);
+    result = bvb_handle_table_insert(
+        &context->objects, wire_id, request->image_id,
+        handle_bits(&image_view, sizeof(image_view)));
+    if (result != 0) {
+        destroy_image_view(device, image_view, NULL);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    response->object_id = wire_id;
+    return 0;
+}
+
+int bvb_vulkan_global_context_destroy_image_view(
+    struct bvb_vulkan_global_context *context, uint64_t image_view_id,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL) return -EINVAL;
+    uint64_t image_id = 0U;
+    uint64_t image_view_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, image_view_id, BVB_OBJECT_IMAGE_VIEW,
+        &image_id, &image_view_bits);
+    uint64_t device_id = 0U;
+    uint64_t image_bits = 0U;
+    if (result == 0) {
+        result = bvb_handle_table_lookup(
+            &context->objects, image_id, BVB_OBJECT_IMAGE,
+            &device_id, &image_bits);
+    }
+    uint64_t device_bits = 0U;
+    if (result == 0) {
+        result = bvb_handle_table_lookup(
+            &context->objects, device_id, BVB_OBJECT_DEVICE,
+            NULL, &device_bits);
+    }
+    if (result != 0) return result;
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkDestroyImageView destroy_image_view =
+        (PFN_vkDestroyImageView)context->get_device_proc_addr(
+            device, "vkDestroyImageView");
+    if (destroy_image_view == NULL) return -ENOSYS;
+    result = bvb_handle_table_remove(
+        &context->objects, image_view_id, BVB_OBJECT_IMAGE_VIEW, NULL);
+    if (result == 0) {
+        destroy_image_view(device, image_view_from_bits(image_view_bits), NULL);
+    }
+    return result;
 }
 
 int bvb_vulkan_global_context_command_buffer_fill(

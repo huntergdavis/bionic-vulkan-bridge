@@ -3,6 +3,7 @@
 import os
 import array
 import pathlib
+import re
 import socket
 import struct
 import subprocess
@@ -131,6 +132,11 @@ def main() -> int:
             assert "command_submit=0 pool_reset=0" in completed.stdout
             assert f"buffer={0x1300000000000001}" in completed.stdout
             assert f"memory={0x0900000000000001}" in completed.stdout
+            image_match = re.search(r"\bimage=(\d+)\b", completed.stdout)
+            assert image_match is not None
+            assert int(image_match.group(1)) >> 56 == 7
+            assert f"image_view={0x0800000000000001}" in completed.stdout
+            assert "image_bytes=16384" in completed.stdout
             assert "mapped_bytes=4096 mapped_mismatches=0" in completed.stdout
             assert "fill_words=1024 mismatches=0" in completed.stdout
             assert f"fence={0x1200000000000001}" in completed.stdout

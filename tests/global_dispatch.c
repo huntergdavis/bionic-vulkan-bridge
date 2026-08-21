@@ -633,6 +633,12 @@ int main(void) {
     PFN_vkAllocateMemory allocate_memory = NULL;
     PFN_vkFreeMemory free_memory = NULL;
     PFN_vkBindBufferMemory bind_buffer_memory = NULL;
+    PFN_vkCreateImage create_image = NULL;
+    PFN_vkDestroyImage destroy_image = NULL;
+    PFN_vkGetImageMemoryRequirements get_image_memory_requirements = NULL;
+    PFN_vkBindImageMemory bind_image_memory = NULL;
+    PFN_vkCreateImageView create_image_view = NULL;
+    PFN_vkDestroyImageView destroy_image_view = NULL;
     PFN_vkMapMemory map_memory = NULL;
     PFN_vkUnmapMemory unmap_memory = NULL;
     PFN_vkFlushMappedMemoryRanges flush_mapped_memory_ranges = NULL;
@@ -718,6 +724,25 @@ int main(void) {
     erased = vkGetDeviceProcAddr(device, "vkBindBufferMemory");
     CHECK(erased != NULL);
     memcpy(&bind_buffer_memory, &erased, sizeof(bind_buffer_memory));
+    erased = vkGetDeviceProcAddr(device, "vkCreateImage");
+    CHECK(erased != NULL);
+    memcpy(&create_image, &erased, sizeof(create_image));
+    erased = vkGetDeviceProcAddr(device, "vkDestroyImage");
+    CHECK(erased != NULL);
+    memcpy(&destroy_image, &erased, sizeof(destroy_image));
+    erased = vkGetDeviceProcAddr(device, "vkGetImageMemoryRequirements");
+    CHECK(erased != NULL);
+    memcpy(&get_image_memory_requirements, &erased,
+           sizeof(get_image_memory_requirements));
+    erased = vkGetDeviceProcAddr(device, "vkBindImageMemory");
+    CHECK(erased != NULL);
+    memcpy(&bind_image_memory, &erased, sizeof(bind_image_memory));
+    erased = vkGetDeviceProcAddr(device, "vkCreateImageView");
+    CHECK(erased != NULL);
+    memcpy(&create_image_view, &erased, sizeof(create_image_view));
+    erased = vkGetDeviceProcAddr(device, "vkDestroyImageView");
+    CHECK(erased != NULL);
+    memcpy(&destroy_image_view, &erased, sizeof(destroy_image_view));
     erased = vkGetDeviceProcAddr(device, "vkMapMemory");
     CHECK(erased != NULL);
     memcpy(&map_memory, &erased, sizeof(map_memory));
@@ -1141,6 +1166,103 @@ int main(void) {
     CHECK(bvb_handle_type(memory_id) == BVB_OBJECT_DEVICE_MEMORY);
     CHECK(bvb_handle_serial(memory_id) == 1U);
     CHECK(bind_buffer_memory(device, buffer, device_memory, 0U) == VK_SUCCESS);
+    const VkImageStencilUsageCreateInfo stencil_usage = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_STENCIL_USAGE_CREATE_INFO,
+        .stencilUsage = VK_IMAGE_USAGE_SAMPLED_BIT,
+    };
+    const VkFormat view_format = VK_FORMAT_R8G8B8A8_UNORM;
+    const VkImageFormatListCreateInfo format_list = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO,
+        .pNext = &stencil_usage,
+        .viewFormatCount = 1U,
+        .pViewFormats = &view_format,
+    };
+    const VkImageCreateInfo image_create_info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .pNext = &format_list,
+        .flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = VK_FORMAT_R8G8B8A8_UNORM,
+        .extent = {64U, 64U, 1U},
+        .mipLevels = 1U,
+        .arrayLayers = 1U,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                 VK_IMAGE_USAGE_SAMPLED_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    VkImage image = VK_NULL_HANDLE;
+    CHECK(create_image(device, &image_create_info, NULL, &image) == VK_SUCCESS);
+    const uint64_t image_id = bvb_image_proxy_id(image);
+    CHECK(bvb_handle_type(image_id) == BVB_OBJECT_IMAGE);
+    CHECK(bvb_handle_serial(image_id) != 0U);
+    VkMemoryRequirements image_requirements = {0};
+    get_image_memory_requirements(device, image, &image_requirements);
+    CHECK(image_requirements.size == 64U * 64U * sizeof(uint32_t));
+    CHECK(image_requirements.alignment == 4096U);
+    CHECK(image_requirements.memoryTypeBits == 1U);
+    const VkMemoryAllocateInfo image_memory_allocate_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = image_requirements.size,
+        .memoryTypeIndex = memory_type_index,
+    };
+    VkDeviceMemory image_memory = VK_NULL_HANDLE;
+    CHECK(allocate_memory(
+              device, &image_memory_allocate_info, NULL, &image_memory) ==
+          VK_SUCCESS);
+    CHECK(bind_image_memory(device, image, image_memory, 0U) == VK_SUCCESS);
+    const VkImageViewUsageCreateInfo image_view_usage = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
+        .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+    };
+    const VkImageViewCreateInfo image_view_create_info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .pNext = &image_view_usage,
+        .image = image,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = VK_FORMAT_R8G8B8A8_UNORM,
+        .components = {
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+        },
+        .subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .levelCount = 1U,
+            .layerCount = 1U,
+        },
+    };
+    VkImageView image_view = VK_NULL_HANDLE;
+    CHECK(create_image_view(
+              device, &image_view_create_info, NULL, &image_view) ==
+          VK_SUCCESS);
+    const uint64_t image_view_id = bvb_image_view_proxy_id(image_view);
+    CHECK(bvb_handle_type(image_view_id) == BVB_OBJECT_IMAGE_VIEW);
+    CHECK(bvb_handle_serial(image_view_id) == 1U);
+
+    const VkBaseInStructure unsupported_image_chain = {
+        .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+    };
+    VkImageCreateInfo rejected_image_info = image_create_info;
+    rejected_image_info.pNext = &unsupported_image_chain;
+    VkImage rejected_image = (VkImage)(uintptr_t)1U;
+    CHECK(create_image(device, &rejected_image_info, NULL, &rejected_image) ==
+          VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(rejected_image == VK_NULL_HANDLE);
+    const VkAllocationCallbacks unsupported_image_allocator = {0};
+    CHECK(create_image(
+              device, &image_create_info, &unsupported_image_allocator,
+              &rejected_image) == VK_ERROR_FEATURE_NOT_PRESENT);
+    VkImageViewCreateInfo rejected_view_info = image_view_create_info;
+    rejected_view_info.subresourceRange.levelCount = 0U;
+    VkImageView rejected_view = (VkImageView)(uintptr_t)1U;
+    CHECK(create_image_view(
+              device, &rejected_view_info, NULL, &rejected_view) ==
+          VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(rejected_view == VK_NULL_HANDLE);
     uint8_t *mapped = NULL;
     CHECK(map_memory(device, device_memory, 0U, VK_WHOLE_SIZE, 0U,
                      (void **)&mapped) == VK_SUCCESS);
@@ -1270,6 +1392,22 @@ int main(void) {
           VK_SUCCESS);
     CHECK(timeline_value == UINT64_C(13));
     destroy_semaphore(device, timeline, NULL);
+    destroy_image_view(device, image_view, NULL);
+    CHECK(bvb_image_view_proxy_id(image_view) == 0U);
+    destroy_image(device, image, NULL);
+    CHECK(bvb_image_proxy_id(image) == 0U);
+    free_memory(device, image_memory, NULL);
+
+    VkImage teardown_image = VK_NULL_HANDLE;
+    CHECK(create_image(
+              device, &image_create_info, NULL, &teardown_image) == VK_SUCCESS);
+    VkImageViewCreateInfo teardown_view_info = image_view_create_info;
+    teardown_view_info.image = teardown_image;
+    VkImageView teardown_view = VK_NULL_HANDLE;
+    CHECK(create_image_view(
+              device, &teardown_view_info, NULL, &teardown_view) == VK_SUCCESS);
+    CHECK(bvb_image_proxy_id(teardown_image) != 0U);
+    CHECK(bvb_image_view_proxy_id(teardown_view) != 0U);
     CHECK(reset_command_pool(device, command_pool, 0U) == VK_SUCCESS);
     free_command_buffers(device, command_pool, 1U, &command_buffer);
     destroy_command_pool(device, command_pool, NULL);
@@ -1445,6 +1583,7 @@ int main(void) {
            "empty_submit=0 queue_wait=0 device_wait=0 "
            "command_pool=%llu command_buffer=%llu command_submit=0 "
            "pool_reset=0 buffer=%llu memory=%llu memory_type=%u "
+           "image=%llu image_view=%llu image_bytes=%llu "
            "mapped_bytes=4096 mapped_mismatches=%u "
            "fill_words=1024 mismatches=%u fence=%llu fence_before=1 "
            "fenced_submit=0 fence_after=0 fence_wait=0 fence_reset=0 "
@@ -1463,7 +1602,10 @@ int main(void) {
            (unsigned long long)command_buffer_id,
            (unsigned long long)buffer_id,
            (unsigned long long)memory_id,
-           memory_type_index, mapped_mismatches, mismatched_words,
+           memory_type_index, (unsigned long long)image_id,
+           (unsigned long long)image_view_id,
+           (unsigned long long)image_requirements.size,
+           mapped_mismatches, mismatched_words,
            (unsigned long long)fence_id);
     return 0;
 }

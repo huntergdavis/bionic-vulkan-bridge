@@ -1,0 +1,92 @@
+{
+  "schema_version": 1,
+  "gate": "E063",
+  "result": "pass_host_contract",
+  "objective": "forward a bounded native Vulkan image, memory binding, and image-view lifecycle through the glibc-to-Bionic bridge without transmitting pointers or fabricating Vulkan handles",
+  "source": {
+    "dxvk_commit": "a6764047e587178283fcde4073ae6e1410af594f",
+    "path": "src/dxvk/dxvk_memory.cpp",
+    "covered_calls": [
+      "vkCreateImage",
+      "vkDestroyImage",
+      "vkGetImageMemoryRequirements",
+      "vkBindImageMemory",
+      "vkCreateImageView",
+      "vkDestroyImageView"
+    ]
+  },
+  "wire": {
+    "opcodes": {
+      "90": "image create",
+      "91": "image destroy",
+      "92": "legacy image memory requirements",
+      "93": "image memory bind",
+      "94": "image-view create",
+      "95": "image-view destroy"
+    },
+    "representation": "canonical fixed-width little-endian scalars and typed 64-bit bridge object IDs only",
+    "image_create_bytes": 176,
+    "image_requirements_bytes": 24,
+    "image_bind_bytes": 24,
+    "image_view_create_bytes": 72,
+    "maximum_queue_families": 8,
+    "maximum_view_formats": 16,
+    "pointers_crossed": false,
+    "native_reconstruction": "the Bionic service resolves same-device native handles and reconstructs local VkImageCreateInfo, VkImageFormatListCreateInfo, VkImageStencilUsageCreateInfo, and VkImageViewCreateInfo records"
+  },
+  "supported_shape": {
+    "image_pnext": [
+      "VkImageFormatListCreateInfo",
+      "VkImageStencilUsageCreateInfo"
+    ],
+    "image_view_pnext": [
+      "VkImageViewUsageCreateInfo"
+    ],
+    "allocators": "VK_NULL_HANDLE callbacks only",
+    "images": "bounded core 1D, 2D, or 3D non-sparse images with exclusive or bounded concurrent sharing",
+    "views": "bounded core image views whose mip, layer, type, format mutability, and same-device image lineage are validated before native creation"
+  },
+  "ownership": {
+    "image": "typed BVB_OBJECT_IMAGE backed by a real native VkImage and parented to its VkDevice",
+    "image_view": "typed BVB_OBJECT_IMAGE_VIEW backed by a real native VkImageView and parented to its image",
+    "bind": "image and VkDeviceMemory must share the same device parent",
+    "explicit_destroy": "view destruction removes and destroys the native view; image destruction refuses while a child view is live",
+    "device_teardown": "remaining image views are destroyed before their images and before the native device"
+  },
+  "fail_closed": [
+    "non-null allocation callbacks",
+    "unknown, duplicate, overlong, or unsupported pNext records",
+    "over-limit queue-family or view-format arrays and malformed pointers",
+    "unsupported sparse, DRM-modifier, external-memory, compression, swapchain, or image-view extension shapes",
+    "invalid image dimensions, type relationships, samples, usages, layouts, flags, view ranges, or component/aspect enums",
+    "wrong-type, missing, cross-device, or wrong-parent object IDs",
+    "nonzero reserved or unused fixed-wire fields"
+  ],
+  "dispatch_policy": {
+    "baseline": "E058's proven 74 executable names",
+    "promotion": "exactly six image and image-view names move from required_unimplemented to executable",
+    "counts": {
+      "executable": 80,
+      "required_unimplemented": 360,
+      "probed_null": 302
+    }
+  },
+  "verification": {
+    "host_contracts": "31/31 passed",
+    "canonical_codec": "round trips all fixed records and rejects reserved-byte, over-limit, unsupported-chain, and wrong-type corruption",
+    "cross_process_fake_driver": "observed the exact native image and view create shapes, returned real non-dummy handles, returned 16384-byte memory requirements, bound real image memory, and aborted device destruction if service teardown leaked an image or view",
+    "hardware_or_game_claim": false
+  },
+  "first_remaining_call_in_dxvk_image_path": {
+    "command": "vkGetImageMemoryRequirements2",
+    "derivation": "pinned DXVK createImageResource calls vkCreateImage at src/dxvk/dxvk_memory.cpp:1111 and immediately calls vkGetImageMemoryRequirements2 at line 1130 with VkMemoryDedicatedRequirements; E063 intentionally exposes only the requested legacy requirements entry",
+    "consequence": "the v2 requirements query and its dedicated-allocation pNext response must be implemented before this image allocation path can reach memory allocation and vkBindImageMemory"
+  },
+  "remaining": [
+    "vkGetImageMemoryRequirements2 and its bounded VkMemoryDedicatedRequirements response",
+    "the existing ordinary allocation path rejects allocations above 16 MiB, smaller than a native-resolution RGBA image",
+    "additional image pNext shapes, sparse resources, buffer views, rendering commands, and virtual presentation remain separate gates",
+    "real private-Turnip execution, Tomb Raider output, and FPS remain unproven"
+  ],
+  "reuse": "Required deja searches returned no indexed prior image-resource implementation. Reused E034/E058 generated resolver-policy promotion, E046 fixed-width typed-object ownership, E056 local pNext reconstruction, and the existing buffer/device-memory lifecycle pattern."
+}

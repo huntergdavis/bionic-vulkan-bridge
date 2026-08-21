@@ -1595,6 +1595,27 @@ static int answer_vulkan_resource_create(
                 context, &decoded, &created, diagnostic, sizeof(diagnostic));
         }
         expected_type = BVB_OBJECT_PIPELINE_LAYOUT;
+    } else if (request->header.opcode == BVB_OPCODE_VULKAN_IMAGE_CREATE &&
+               request->header.payload_length ==
+                   BVB_VULKAN_IMAGE_CREATE_REQUEST_SIZE) {
+        struct bvb_vulkan_image_create_request decoded;
+        result = bvb_protocol_decode_vulkan_image_create_request(
+            request->payload, &decoded);
+        if (result == 0)
+            result = bvb_vulkan_global_context_create_image(
+                context, &decoded, &created, diagnostic, sizeof(diagnostic));
+        expected_type = BVB_OBJECT_IMAGE;
+    } else if (request->header.opcode ==
+                   BVB_OPCODE_VULKAN_IMAGE_VIEW_CREATE &&
+               request->header.payload_length ==
+                   BVB_VULKAN_IMAGE_VIEW_CREATE_REQUEST_SIZE) {
+        struct bvb_vulkan_image_view_create_request decoded;
+        result = bvb_protocol_decode_vulkan_image_view_create_request(
+            request->payload, &decoded);
+        if (result == 0)
+            result = bvb_vulkan_global_context_create_image_view(
+                context, &decoded, &created, diagnostic, sizeof(diagnostic));
+        expected_type = BVB_OBJECT_IMAGE_VIEW;
     }
     if (result != 0) {
         fprintf(stderr, "bvb: resource create failed: %s\n", diagnostic);
@@ -1637,8 +1658,13 @@ static int answer_vulkan_resource_destroy(
     const bool descriptor_pool =
         descriptor_type == BVB_OBJECT_DESCRIPTOR_POOL;
     const bool sampler = descriptor_type == BVB_OBJECT_SAMPLER;
+    const bool image =
+        request->header.opcode == BVB_OPCODE_VULKAN_IMAGE_DESTROY;
+    const bool image_view =
+        request->header.opcode == BVB_OPCODE_VULKAN_IMAGE_VIEW_DESTROY;
     uint64_t object_id = 0U;
     int result = buffer || memory || fence || semaphore || pipeline_layout ||
+                         image || image_view ||
                          descriptor_layout || descriptor_pool || sampler
                      ? bvb_protocol_decode_vulkan_object_id(
                            request->payload, &object_id,
@@ -1647,6 +1673,8 @@ static int answer_vulkan_resource_destroy(
                            fence ? BVB_OBJECT_FENCE :
                            semaphore ? BVB_OBJECT_SEMAPHORE :
                            pipeline_layout ? BVB_OBJECT_PIPELINE_LAYOUT :
+                           image ? BVB_OBJECT_IMAGE :
+                           image_view ? BVB_OBJECT_IMAGE_VIEW :
                            descriptor_layout
                                ? BVB_OBJECT_DESCRIPTOR_SET_LAYOUT
                            : descriptor_pool
@@ -1669,6 +1697,12 @@ static int answer_vulkan_resource_destroy(
                 context, object_id, diagnostic, sizeof(diagnostic));
         } else if (pipeline_layout) {
             result = bvb_vulkan_global_context_destroy_pipeline_layout(
+                context, object_id, diagnostic, sizeof(diagnostic));
+        } else if (image) {
+            result = bvb_vulkan_global_context_destroy_image(
+                context, object_id, diagnostic, sizeof(diagnostic));
+        } else if (image_view) {
+            result = bvb_vulkan_global_context_destroy_image_view(
                 context, object_id, diagnostic, sizeof(diagnostic));
         } else if (descriptor_layout) {
             result = bvb_vulkan_global_context_destroy_descriptor_set_layout(
@@ -1800,6 +1834,66 @@ static int answer_vulkan_buffer_bind(
         response.header.payload_length = BVB_VULKAN_RESULT_SIZE;
     else {
         fprintf(stderr, "bvb: buffer bind failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_image_requirements(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length != BVB_VULKAN_OBJECT_ID_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    uint64_t image_id = 0U;
+    int result = bvb_protocol_decode_vulkan_object_id(
+        request->payload, &image_id, BVB_OBJECT_IMAGE);
+    struct bvb_vulkan_image_requirements requirements = {0};
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_get_image_requirements(
+            context, image_id, &requirements, diagnostic, sizeof(diagnostic));
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_image_requirements(
+            response.payload, &requirements);
+    if (result == 0)
+        response.header.payload_length = BVB_VULKAN_IMAGE_REQUIREMENTS_SIZE;
+    else {
+        fprintf(stderr, "bvb: image requirements failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_image_bind(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length != BVB_VULKAN_IMAGE_BIND_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_image_bind_request decoded;
+    int result = bvb_protocol_decode_vulkan_image_bind_request(
+        request->payload, &decoded);
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_bind_image_memory(
+            context, &decoded, &vulkan_result, diagnostic, sizeof(diagnostic));
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_result(
+            response.payload, vulkan_result);
+    if (result == 0)
+        response.header.payload_length = BVB_VULKAN_RESULT_SIZE;
+    else {
+        fprintf(stderr, "bvb: image bind failed: %s\n", diagnostic);
         response.header.status = result;
     }
     return bvb_transport_send(client_fd, &response);
@@ -2712,7 +2806,10 @@ static int serve_connection(int client_fd, const char *loader_path,
                    request.header.opcode ==
                        BVB_OPCODE_VULKAN_SAMPLER_CREATE ||
                    request.header.opcode ==
-                       BVB_OPCODE_VULKAN_PIPELINE_LAYOUT_CREATE) {
+                       BVB_OPCODE_VULKAN_PIPELINE_LAYOUT_CREATE ||
+                   request.header.opcode == BVB_OPCODE_VULKAN_IMAGE_CREATE ||
+                   request.header.opcode ==
+                       BVB_OPCODE_VULKAN_IMAGE_VIEW_CREATE) {
             result = answer_vulkan_resource_create(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode == BVB_OPCODE_VULKAN_BUFFER_DESTROY ||
@@ -2723,7 +2820,10 @@ static int serve_connection(int client_fd, const char *loader_path,
                    request.header.opcode ==
                        BVB_OPCODE_VULKAN_DESCRIPTOR_OBJECT_DESTROY ||
                    request.header.opcode ==
-                       BVB_OPCODE_VULKAN_PIPELINE_LAYOUT_DESTROY) {
+                       BVB_OPCODE_VULKAN_PIPELINE_LAYOUT_DESTROY ||
+                   request.header.opcode == BVB_OPCODE_VULKAN_IMAGE_DESTROY ||
+                   request.header.opcode ==
+                       BVB_OPCODE_VULKAN_IMAGE_VIEW_DESTROY) {
             result = answer_vulkan_resource_destroy(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
@@ -2740,6 +2840,13 @@ static int serve_connection(int client_fd, const char *loader_path,
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode == BVB_OPCODE_VULKAN_BUFFER_BIND) {
             result = answer_vulkan_buffer_bind(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_IMAGE_REQUIREMENTS) {
+            result = answer_vulkan_image_requirements(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode == BVB_OPCODE_VULKAN_IMAGE_BIND) {
+            result = answer_vulkan_image_bind(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_COMMAND_BUFFER_FILL) {

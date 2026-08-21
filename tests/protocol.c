@@ -2,6 +2,8 @@
 #include <bvb/vulkan_descriptor_wire.h>
 #include <bvb/vulkan_pipeline_wire.h>
 
+#include <vulkan/vulkan.h>
+
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -83,6 +85,9 @@ int main(void) {
     };
     CHECK(bvb_protocol_encode_header(wire, &last_opcode_header) == 0);
     CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
+    CHECK(BVB_OPCODE_VULKAN_IMAGE_CREATE == 90);
+    CHECK(BVB_OPCODE_VULKAN_IMAGE_VIEW_DESTROY == 95);
+    CHECK(BVB_OPCODE_VULKAN_SWAPCHAIN_ACQUIRE == 100);
     CHECK(decoded.opcode == BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT);
 
     const struct bvb_hello_request hello = {
@@ -1025,6 +1030,104 @@ int main(void) {
     CHECK(bvb_protocol_decode_vulkan_buffer_bind_request(
               buffer_bind_wire, &buffer_bind_decoded) == 0);
     CHECK(buffer_bind_decoded.memory_id == buffer_bind.memory_id);
+    const struct bvb_vulkan_image_create_request image_create = {
+        .device_id = buffer_create.device_id,
+        .flags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT,
+        .image_type = VK_IMAGE_TYPE_2D,
+        .format = VK_FORMAT_R8G8B8A8_UNORM,
+        .extent_width = 64U,
+        .extent_height = 64U,
+        .extent_depth = 1U,
+        .mip_levels = 1U,
+        .array_layers = 1U,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                 VK_IMAGE_USAGE_SAMPLED_BIT,
+        .sharing_mode = VK_SHARING_MODE_EXCLUSIVE,
+        .initial_layout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .pnext_flags = BVB_VULKAN_IMAGE_CREATE_PNEXT_FORMAT_LIST |
+                       BVB_VULKAN_IMAGE_CREATE_PNEXT_STENCIL_USAGE,
+        .view_format_count = 1U,
+        .stencil_usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+        .view_formats = {VK_FORMAT_R8G8B8A8_UNORM},
+    };
+    uint8_t image_create_wire[BVB_VULKAN_IMAGE_CREATE_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_image_create_request(
+              image_create_wire, &image_create) == 0);
+    CHECK(bvb_wire_get_u32(image_create_wire + 76) == 0U);
+    struct bvb_vulkan_image_create_request image_create_decoded;
+    CHECK(bvb_protocol_decode_vulkan_image_create_request(
+              image_create_wire, &image_create_decoded) == 0);
+    CHECK(image_create_decoded.extent_width == 64U);
+    CHECK(image_create_decoded.view_format_count == 1U);
+    CHECK(image_create_decoded.view_formats[0] ==
+          VK_FORMAT_R8G8B8A8_UNORM);
+    image_create_wire[76] = 1U;
+    CHECK(bvb_protocol_decode_vulkan_image_create_request(
+              image_create_wire, &image_create_decoded) == -EPROTO);
+    image_create_wire[76] = 0U;
+    bvb_wire_put_u32(image_create_wire + 68,
+                     BVB_VULKAN_IMAGE_MAX_VIEW_FORMATS + 1U);
+    CHECK(bvb_protocol_decode_vulkan_image_create_request(
+              image_create_wire, &image_create_decoded) == -EPROTO);
+    CHECK(bvb_protocol_encode_vulkan_image_create_request(
+              image_create_wire, &image_create) == 0);
+    const struct bvb_vulkan_object_create_response image_created = {
+        .vulkan_result = VK_SUCCESS,
+        .object_id = UINT64_C(0x0700000000000001),
+    };
+    CHECK(bvb_protocol_encode_vulkan_object_create_response(
+              object_created_wire, &image_created, 7U) == 0);
+    const struct bvb_vulkan_image_requirements image_requirements = {
+        .size = 16384U,
+        .alignment = 4096U,
+        .memory_type_bits = 1U,
+    };
+    uint8_t image_requirements_wire[BVB_VULKAN_IMAGE_REQUIREMENTS_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_image_requirements(
+              image_requirements_wire, &image_requirements) == 0);
+    struct bvb_vulkan_image_requirements image_requirements_decoded;
+    CHECK(bvb_protocol_decode_vulkan_image_requirements(
+              image_requirements_wire, &image_requirements_decoded) == 0);
+    CHECK(image_requirements_decoded.size == 16384U);
+    const struct bvb_vulkan_image_bind_request image_bind = {
+        .image_id = image_created.object_id,
+        .memory_id = buffer_bind.memory_id,
+        .offset = 4096U,
+    };
+    uint8_t image_bind_wire[BVB_VULKAN_IMAGE_BIND_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_image_bind_request(
+              image_bind_wire, &image_bind) == 0);
+    struct bvb_vulkan_image_bind_request image_bind_decoded;
+    CHECK(bvb_protocol_decode_vulkan_image_bind_request(
+              image_bind_wire, &image_bind_decoded) == 0);
+    CHECK(image_bind_decoded.offset == 4096U);
+    const struct bvb_vulkan_image_view_create_request image_view_create = {
+        .device_id = image_create.device_id,
+        .image_id = image_created.object_id,
+        .view_type = VK_IMAGE_VIEW_TYPE_2D,
+        .format = VK_FORMAT_R8G8B8A8_UNORM,
+        .component_r = VK_COMPONENT_SWIZZLE_IDENTITY,
+        .component_g = VK_COMPONENT_SWIZZLE_IDENTITY,
+        .component_b = VK_COMPONENT_SWIZZLE_IDENTITY,
+        .component_a = VK_COMPONENT_SWIZZLE_IDENTITY,
+        .aspect_mask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .level_count = 1U,
+        .layer_count = 1U,
+        .pnext_flags = BVB_VULKAN_IMAGE_VIEW_CREATE_PNEXT_USAGE,
+        .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+    };
+    uint8_t image_view_create_wire[BVB_VULKAN_IMAGE_VIEW_CREATE_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_image_view_create_request(
+              image_view_create_wire, &image_view_create) == 0);
+    struct bvb_vulkan_image_view_create_request image_view_create_decoded;
+    CHECK(bvb_protocol_decode_vulkan_image_view_create_request(
+              image_view_create_wire, &image_view_create_decoded) == 0);
+    CHECK(image_view_create_decoded.image_id == image_created.object_id);
+    bvb_wire_put_u32(image_view_create_wire + 64, UINT32_C(0x80000000));
+    CHECK(bvb_protocol_decode_vulkan_image_view_create_request(
+              image_view_create_wire, &image_view_create_decoded) == -EPROTO);
     const struct bvb_vulkan_command_buffer_fill_request buffer_fill = {
         .command_buffer_id = buffer_allocated.command_buffer_id,
         .buffer_id = buffer_created.object_id,

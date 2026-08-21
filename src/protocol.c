@@ -1,6 +1,8 @@
 #include <bvb/command_batch.h>
 #include <bvb/protocol.h>
 
+#include <vulkan/vulkan.h>
+
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -1819,6 +1821,349 @@ int bvb_protocol_decode_vulkan_buffer_bind_request(
     return wire_id_is_type(request->buffer_id, 19U) &&
                    wire_id_is_type(request->memory_id, 9U)
                ? 0 : -EPROTO;
+}
+
+static bool image_usage_valid(uint32_t usage) {
+    const uint32_t supported =
+        VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+        VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+        VK_IMAGE_USAGE_SAMPLED_BIT |
+        VK_IMAGE_USAGE_STORAGE_BIT |
+        VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT |
+        VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT |
+        VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT;
+    return usage != 0U && (usage & ~supported) == 0U;
+}
+
+static bool image_create_request_valid(
+    const struct bvb_vulkan_image_create_request *request) {
+    const uint32_t supported_flags =
+        VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT |
+        VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT |
+        VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT |
+        VK_IMAGE_CREATE_BLOCK_TEXEL_VIEW_COMPATIBLE_BIT |
+        VK_IMAGE_CREATE_EXTENDED_USAGE_BIT |
+        VK_IMAGE_CREATE_ALIAS_BIT;
+    const uint32_t supported_samples =
+        VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT |
+        VK_SAMPLE_COUNT_4_BIT | VK_SAMPLE_COUNT_8_BIT |
+        VK_SAMPLE_COUNT_16_BIT | VK_SAMPLE_COUNT_32_BIT |
+        VK_SAMPLE_COUNT_64_BIT;
+    if (request == NULL ||
+        !wire_id_is_type(request->device_id, BVB_OBJECT_DEVICE) ||
+        (request->flags & ~supported_flags) != 0U ||
+        request->image_type > VK_IMAGE_TYPE_3D ||
+        request->format == VK_FORMAT_UNDEFINED ||
+        request->extent_width == 0U || request->extent_width > 32768U ||
+        request->extent_height == 0U || request->extent_height > 32768U ||
+        request->extent_depth == 0U || request->extent_depth > 32768U ||
+        request->mip_levels == 0U || request->mip_levels > 32U ||
+        request->array_layers == 0U || request->array_layers > 2048U ||
+        request->samples == 0U ||
+        (request->samples & (request->samples - 1U)) != 0U ||
+        (request->samples & ~supported_samples) != 0U ||
+        request->tiling > VK_IMAGE_TILING_LINEAR ||
+        !image_usage_valid(request->usage) ||
+        request->sharing_mode > VK_SHARING_MODE_CONCURRENT ||
+        request->queue_family_index_count >
+            BVB_VULKAN_IMAGE_MAX_QUEUE_FAMILIES ||
+        (request->sharing_mode == VK_SHARING_MODE_EXCLUSIVE &&
+         request->queue_family_index_count != 0U) ||
+        (request->sharing_mode == VK_SHARING_MODE_CONCURRENT &&
+         request->queue_family_index_count < 2U) ||
+        (request->initial_layout != VK_IMAGE_LAYOUT_UNDEFINED &&
+         request->initial_layout != VK_IMAGE_LAYOUT_PREINITIALIZED) ||
+        (request->pnext_flags & ~BVB_VULKAN_IMAGE_CREATE_PNEXT_MASK) != 0U ||
+        request->view_format_count > BVB_VULKAN_IMAGE_MAX_VIEW_FORMATS ||
+        ((request->pnext_flags &
+          BVB_VULKAN_IMAGE_CREATE_PNEXT_FORMAT_LIST) == 0U &&
+         request->view_format_count != 0U) ||
+        ((request->pnext_flags &
+          BVB_VULKAN_IMAGE_CREATE_PNEXT_STENCIL_USAGE) == 0U &&
+         request->stencil_usage != 0U) ||
+        ((request->pnext_flags &
+          BVB_VULKAN_IMAGE_CREATE_PNEXT_STENCIL_USAGE) != 0U &&
+         !image_usage_valid(request->stencil_usage)) ||
+        (request->image_type == VK_IMAGE_TYPE_1D &&
+         (request->extent_height != 1U || request->extent_depth != 1U)) ||
+        (request->image_type == VK_IMAGE_TYPE_2D &&
+         request->extent_depth != 1U) ||
+        (request->image_type == VK_IMAGE_TYPE_3D &&
+         request->array_layers != 1U) ||
+        ((request->flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) != 0U &&
+         (request->image_type != VK_IMAGE_TYPE_2D ||
+          request->extent_width != request->extent_height ||
+          request->array_layers < 6U)) ||
+        ((request->flags & VK_IMAGE_CREATE_2D_ARRAY_COMPATIBLE_BIT) != 0U &&
+         request->image_type != VK_IMAGE_TYPE_3D)) {
+        return false;
+    }
+    for (uint32_t index = 0U;
+         index < BVB_VULKAN_IMAGE_MAX_QUEUE_FAMILIES; ++index) {
+        if (index >= request->queue_family_index_count &&
+            request->queue_family_indices[index] != 0U) {
+            return false;
+        }
+        for (uint32_t other = 0U;
+             index < request->queue_family_index_count && other < index;
+             ++other) {
+            if (request->queue_family_indices[index] ==
+                request->queue_family_indices[other]) {
+                return false;
+            }
+        }
+    }
+    for (uint32_t index = 0U;
+         index < BVB_VULKAN_IMAGE_MAX_VIEW_FORMATS; ++index) {
+        if ((index < request->view_format_count &&
+             request->view_formats[index] == VK_FORMAT_UNDEFINED) ||
+            (index >= request->view_format_count &&
+             request->view_formats[index] != 0U)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+int bvb_protocol_encode_vulkan_image_create_request(
+    uint8_t output[BVB_VULKAN_IMAGE_CREATE_REQUEST_SIZE],
+    const struct bvb_vulkan_image_create_request *request) {
+    if (output == NULL || !image_create_request_valid(request)) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_IMAGE_CREATE_REQUEST_SIZE);
+    bvb_wire_put_u64(output, request->device_id);
+    bvb_wire_put_u32(output + 8, request->flags);
+    bvb_wire_put_u32(output + 12, request->image_type);
+    bvb_wire_put_u32(output + 16, request->format);
+    bvb_wire_put_u32(output + 20, request->extent_width);
+    bvb_wire_put_u32(output + 24, request->extent_height);
+    bvb_wire_put_u32(output + 28, request->extent_depth);
+    bvb_wire_put_u32(output + 32, request->mip_levels);
+    bvb_wire_put_u32(output + 36, request->array_layers);
+    bvb_wire_put_u32(output + 40, request->samples);
+    bvb_wire_put_u32(output + 44, request->tiling);
+    bvb_wire_put_u32(output + 48, request->usage);
+    bvb_wire_put_u32(output + 52, request->sharing_mode);
+    bvb_wire_put_u32(output + 56, request->queue_family_index_count);
+    bvb_wire_put_u32(output + 60, request->initial_layout);
+    bvb_wire_put_u32(output + 64, request->pnext_flags);
+    bvb_wire_put_u32(output + 68, request->view_format_count);
+    bvb_wire_put_u32(output + 72, request->stencil_usage);
+    for (uint32_t index = 0U;
+         index < BVB_VULKAN_IMAGE_MAX_QUEUE_FAMILIES; ++index) {
+        bvb_wire_put_u32(output + 80U + index * 4U,
+                         request->queue_family_indices[index]);
+    }
+    for (uint32_t index = 0U;
+         index < BVB_VULKAN_IMAGE_MAX_VIEW_FORMATS; ++index) {
+        bvb_wire_put_u32(output + 112U + index * 4U,
+                         request->view_formats[index]);
+    }
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_image_create_request(
+    const uint8_t input[BVB_VULKAN_IMAGE_CREATE_REQUEST_SIZE],
+    struct bvb_vulkan_image_create_request *request) {
+    if (input == NULL || request == NULL) {
+        return -EINVAL;
+    }
+    struct bvb_vulkan_image_create_request decoded = {
+        .device_id = bvb_wire_get_u64(input),
+        .flags = bvb_wire_get_u32(input + 8),
+        .image_type = bvb_wire_get_u32(input + 12),
+        .format = bvb_wire_get_u32(input + 16),
+        .extent_width = bvb_wire_get_u32(input + 20),
+        .extent_height = bvb_wire_get_u32(input + 24),
+        .extent_depth = bvb_wire_get_u32(input + 28),
+        .mip_levels = bvb_wire_get_u32(input + 32),
+        .array_layers = bvb_wire_get_u32(input + 36),
+        .samples = bvb_wire_get_u32(input + 40),
+        .tiling = bvb_wire_get_u32(input + 44),
+        .usage = bvb_wire_get_u32(input + 48),
+        .sharing_mode = bvb_wire_get_u32(input + 52),
+        .queue_family_index_count = bvb_wire_get_u32(input + 56),
+        .initial_layout = bvb_wire_get_u32(input + 60),
+        .pnext_flags = bvb_wire_get_u32(input + 64),
+        .view_format_count = bvb_wire_get_u32(input + 68),
+        .stencil_usage = bvb_wire_get_u32(input + 72),
+    };
+    if (bvb_wire_get_u32(input + 76) != 0U) {
+        return -EPROTO;
+    }
+    for (uint32_t index = 0U;
+         index < BVB_VULKAN_IMAGE_MAX_QUEUE_FAMILIES; ++index) {
+        decoded.queue_family_indices[index] =
+            bvb_wire_get_u32(input + 80U + index * 4U);
+    }
+    for (uint32_t index = 0U;
+         index < BVB_VULKAN_IMAGE_MAX_VIEW_FORMATS; ++index) {
+        decoded.view_formats[index] =
+            bvb_wire_get_u32(input + 112U + index * 4U);
+    }
+    if (!image_create_request_valid(&decoded)) {
+        return -EPROTO;
+    }
+    *request = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_image_requirements(
+    uint8_t output[BVB_VULKAN_IMAGE_REQUIREMENTS_SIZE],
+    const struct bvb_vulkan_image_requirements *requirements) {
+    if (output == NULL || requirements == NULL || requirements->size == 0U ||
+        requirements->alignment == 0U ||
+        requirements->memory_type_bits == 0U) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_IMAGE_REQUIREMENTS_SIZE);
+    bvb_wire_put_u64(output, requirements->size);
+    bvb_wire_put_u64(output + 8, requirements->alignment);
+    bvb_wire_put_u32(output + 16, requirements->memory_type_bits);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_image_requirements(
+    const uint8_t input[BVB_VULKAN_IMAGE_REQUIREMENTS_SIZE],
+    struct bvb_vulkan_image_requirements *requirements) {
+    if (input == NULL || requirements == NULL) {
+        return -EINVAL;
+    }
+    const struct bvb_vulkan_image_requirements decoded = {
+        .size = bvb_wire_get_u64(input),
+        .alignment = bvb_wire_get_u64(input + 8),
+        .memory_type_bits = bvb_wire_get_u32(input + 16),
+    };
+    if (decoded.size == 0U || decoded.alignment == 0U ||
+        decoded.memory_type_bits == 0U || bvb_wire_get_u32(input + 20) != 0U) {
+        return -EPROTO;
+    }
+    *requirements = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_image_bind_request(
+    uint8_t output[BVB_VULKAN_IMAGE_BIND_REQUEST_SIZE],
+    const struct bvb_vulkan_image_bind_request *request) {
+    if (output == NULL || request == NULL ||
+        !wire_id_is_type(request->image_id, BVB_OBJECT_IMAGE) ||
+        !wire_id_is_type(request->memory_id, BVB_OBJECT_DEVICE_MEMORY)) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u64(output, request->image_id);
+    bvb_wire_put_u64(output + 8, request->memory_id);
+    bvb_wire_put_u64(output + 16, request->offset);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_image_bind_request(
+    const uint8_t input[BVB_VULKAN_IMAGE_BIND_REQUEST_SIZE],
+    struct bvb_vulkan_image_bind_request *request) {
+    if (input == NULL || request == NULL) {
+        return -EINVAL;
+    }
+    const struct bvb_vulkan_image_bind_request decoded = {
+        .image_id = bvb_wire_get_u64(input),
+        .memory_id = bvb_wire_get_u64(input + 8),
+        .offset = bvb_wire_get_u64(input + 16),
+    };
+    if (!wire_id_is_type(decoded.image_id, BVB_OBJECT_IMAGE) ||
+        !wire_id_is_type(decoded.memory_id, BVB_OBJECT_DEVICE_MEMORY)) {
+        return -EPROTO;
+    }
+    *request = decoded;
+    return 0;
+}
+
+static bool image_view_create_request_valid(
+    const struct bvb_vulkan_image_view_create_request *request) {
+    const uint32_t aspect_mask =
+        VK_IMAGE_ASPECT_COLOR_BIT | VK_IMAGE_ASPECT_DEPTH_BIT |
+        VK_IMAGE_ASPECT_STENCIL_BIT | VK_IMAGE_ASPECT_METADATA_BIT |
+        VK_IMAGE_ASPECT_PLANE_0_BIT | VK_IMAGE_ASPECT_PLANE_1_BIT |
+        VK_IMAGE_ASPECT_PLANE_2_BIT;
+    if (request == NULL ||
+        !wire_id_is_type(request->device_id, BVB_OBJECT_DEVICE) ||
+        !wire_id_is_type(request->image_id, BVB_OBJECT_IMAGE) ||
+        request->flags != 0U || request->view_type > VK_IMAGE_VIEW_TYPE_CUBE_ARRAY ||
+        request->format == VK_FORMAT_UNDEFINED ||
+        request->component_r > VK_COMPONENT_SWIZZLE_A ||
+        request->component_g > VK_COMPONENT_SWIZZLE_A ||
+        request->component_b > VK_COMPONENT_SWIZZLE_A ||
+        request->component_a > VK_COMPONENT_SWIZZLE_A ||
+        request->aspect_mask == 0U ||
+        (request->aspect_mask & ~aspect_mask) != 0U ||
+        request->level_count == 0U || request->layer_count == 0U ||
+        (request->pnext_flags &
+         ~BVB_VULKAN_IMAGE_VIEW_CREATE_PNEXT_MASK) != 0U ||
+        ((request->pnext_flags &
+          BVB_VULKAN_IMAGE_VIEW_CREATE_PNEXT_USAGE) == 0U &&
+         request->usage != 0U) ||
+        ((request->pnext_flags &
+          BVB_VULKAN_IMAGE_VIEW_CREATE_PNEXT_USAGE) != 0U &&
+         !image_usage_valid(request->usage))) {
+        return false;
+    }
+    return true;
+}
+
+int bvb_protocol_encode_vulkan_image_view_create_request(
+    uint8_t output[BVB_VULKAN_IMAGE_VIEW_CREATE_REQUEST_SIZE],
+    const struct bvb_vulkan_image_view_create_request *request) {
+    if (output == NULL || !image_view_create_request_valid(request)) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_IMAGE_VIEW_CREATE_REQUEST_SIZE);
+    bvb_wire_put_u64(output, request->device_id);
+    bvb_wire_put_u64(output + 8, request->image_id);
+    bvb_wire_put_u32(output + 16, request->flags);
+    bvb_wire_put_u32(output + 20, request->view_type);
+    bvb_wire_put_u32(output + 24, request->format);
+    bvb_wire_put_u32(output + 28, request->component_r);
+    bvb_wire_put_u32(output + 32, request->component_g);
+    bvb_wire_put_u32(output + 36, request->component_b);
+    bvb_wire_put_u32(output + 40, request->component_a);
+    bvb_wire_put_u32(output + 44, request->aspect_mask);
+    bvb_wire_put_u32(output + 48, request->base_mip_level);
+    bvb_wire_put_u32(output + 52, request->level_count);
+    bvb_wire_put_u32(output + 56, request->base_array_layer);
+    bvb_wire_put_u32(output + 60, request->layer_count);
+    bvb_wire_put_u32(output + 64, request->pnext_flags);
+    bvb_wire_put_u32(output + 68, request->usage);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_image_view_create_request(
+    const uint8_t input[BVB_VULKAN_IMAGE_VIEW_CREATE_REQUEST_SIZE],
+    struct bvb_vulkan_image_view_create_request *request) {
+    if (input == NULL || request == NULL) {
+        return -EINVAL;
+    }
+    const struct bvb_vulkan_image_view_create_request decoded = {
+        .device_id = bvb_wire_get_u64(input),
+        .image_id = bvb_wire_get_u64(input + 8),
+        .flags = bvb_wire_get_u32(input + 16),
+        .view_type = bvb_wire_get_u32(input + 20),
+        .format = bvb_wire_get_u32(input + 24),
+        .component_r = bvb_wire_get_u32(input + 28),
+        .component_g = bvb_wire_get_u32(input + 32),
+        .component_b = bvb_wire_get_u32(input + 36),
+        .component_a = bvb_wire_get_u32(input + 40),
+        .aspect_mask = bvb_wire_get_u32(input + 44),
+        .base_mip_level = bvb_wire_get_u32(input + 48),
+        .level_count = bvb_wire_get_u32(input + 52),
+        .base_array_layer = bvb_wire_get_u32(input + 56),
+        .layer_count = bvb_wire_get_u32(input + 60),
+        .pnext_flags = bvb_wire_get_u32(input + 64),
+        .usage = bvb_wire_get_u32(input + 68),
+    };
+    if (!image_view_create_request_valid(&decoded)) {
+        return -EPROTO;
+    }
+    *request = decoded;
+    return 0;
 }
 
 int bvb_protocol_encode_vulkan_command_buffer_fill_request(

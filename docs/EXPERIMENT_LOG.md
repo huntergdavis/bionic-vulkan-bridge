@@ -2588,3 +2588,46 @@ Source tracing identifies the next exact eager null entry as
 `vkCreateGraphicsPipelines`, submitted by
 `DxvkShaderPipelineLibrary::compileFragmentShaderPipeline` immediately after
 the independent pipeline layout.
+
+## E063 — Native image and image-view resource slice (2026-08-21)
+
+Status: passed through the cross-process host fake driver; no Android, game
+frame, or FPS claim. The bridge now forwards `vkCreateImage`,
+`vkDestroyImage`, legacy `vkGetImageMemoryRequirements`, `vkBindImageMemory`,
+`vkCreateImageView`, and `vkDestroyImageView` through opcodes 90–95. The wire
+uses fixed-width little-endian scalars and typed IDs only, bounds queue-family
+and view-format arrays at eight and sixteen, and reconstructs only the
+supported format-list, stencil-usage, and view-usage `pNext` records on the
+Bionic side.
+
+Every returned image and view owns a real native fake-driver handle. Images
+are parented to their device, views to their image, and image-memory binding
+requires common device ownership. Explicit image destruction refuses a live
+view child; device teardown destroys views before images. Both sides fail
+closed on allocation callbacks, unsupported or malformed chains, unsupported
+image shapes, invalid ranges and enums, cross-device IDs, and noncanonical
+wire fields. All 31 host contracts pass, including native create,
+16,384-byte requirements, allocation/bind, view creation, explicit destroy,
+and an intentional leaked image/view pair that the service must tear down
+before the fake driver permits device destruction.
+
+The E063 allowlist is mechanically E058's proven list plus exactly the six
+new names. Generated policy counts are 80 executable, 360
+required-unimplemented, and 302 probed-null. Pinned DXVK source identifies the
+next exact call in this image path: `vkCreateImage` at
+`src/dxvk/dxvk_memory.cpp:1111` is immediately followed by
+`vkGetImageMemoryRequirements2` at line 1130 with a
+`VkMemoryDedicatedRequirements` response chain. The legacy requirements call
+implemented here therefore does not yet let DXVK complete image allocation;
+the v2 query is the next gate. The ordinary allocation path's 16 MiB ceiling
+is another known blocker for a native-resolution RGBA image.
+
+Canonical evidence is
+`docs/evidence/e063-native-image-resources-host.json`, 5,118 bytes, SHA-256
+`a637cc151e1ad055db4d6066f6a4ac6fd66dee32fe71bf3f3db7c083208d1f98`.
+Required `deja` searches returned no indexed prior image-resource
+implementation. This gate reuses E034/E058 resolver-policy generation, E046
+fixed-width typed ownership, E056 local `pNext` reconstruction, and the
+existing buffer/device-memory lifecycle pattern. Real Turnip execution,
+requirements2, large allocations, rendering, presentation, a Tomb Raider
+frame, and FPS remain unproven.

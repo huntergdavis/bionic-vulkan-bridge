@@ -95,6 +95,12 @@ enum {
     BVB_OPCODE_VULKAN_SEMAPHORE_WAIT = 83,
     BVB_OPCODE_VULKAN_SEMAPHORE_SIGNAL = 84,
     BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2 = 85,
+    BVB_OPCODE_VULKAN_IMAGE_CREATE = 90,
+    BVB_OPCODE_VULKAN_IMAGE_DESTROY = 91,
+    BVB_OPCODE_VULKAN_IMAGE_REQUIREMENTS = 92,
+    BVB_OPCODE_VULKAN_IMAGE_BIND = 93,
+    BVB_OPCODE_VULKAN_IMAGE_VIEW_CREATE = 94,
+    BVB_OPCODE_VULKAN_IMAGE_VIEW_DESTROY = 95,
     BVB_OPCODE_VULKAN_SWAPCHAIN_ACQUIRE = 100,
     BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT = 101,
     BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT,
@@ -158,6 +164,12 @@ enum {
     BVB_VULKAN_BUFFER_REQUIREMENTS_SIZE = 24,
     BVB_VULKAN_MEMORY_ALLOCATE_REQUEST_SIZE = 24,
     BVB_VULKAN_BUFFER_BIND_REQUEST_SIZE = 24,
+    BVB_VULKAN_IMAGE_MAX_QUEUE_FAMILIES = 8,
+    BVB_VULKAN_IMAGE_MAX_VIEW_FORMATS = 16,
+    BVB_VULKAN_IMAGE_CREATE_REQUEST_SIZE = 176,
+    BVB_VULKAN_IMAGE_REQUIREMENTS_SIZE = 24,
+    BVB_VULKAN_IMAGE_BIND_REQUEST_SIZE = 24,
+    BVB_VULKAN_IMAGE_VIEW_CREATE_REQUEST_SIZE = 72,
     BVB_VULKAN_COMMAND_BUFFER_FILL_REQUEST_SIZE = 40,
     BVB_VULKAN_MEMORY_VERIFY_FILL_REQUEST_SIZE = 32,
     BVB_VULKAN_MEMORY_VERIFY_FILL_RESPONSE_SIZE = 8,
@@ -230,6 +242,20 @@ enum bvb_vulkan_device_feature_struct_bits {
         BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_5 |
         BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_6 |
         BVB_VULKAN_DEVICE_FEATURE_BASE,
+};
+
+enum bvb_vulkan_image_create_pnext_bits {
+    BVB_VULKAN_IMAGE_CREATE_PNEXT_FORMAT_LIST = 1U << 0,
+    BVB_VULKAN_IMAGE_CREATE_PNEXT_STENCIL_USAGE = 1U << 1,
+    BVB_VULKAN_IMAGE_CREATE_PNEXT_MASK =
+        BVB_VULKAN_IMAGE_CREATE_PNEXT_FORMAT_LIST |
+        BVB_VULKAN_IMAGE_CREATE_PNEXT_STENCIL_USAGE,
+};
+
+enum bvb_vulkan_image_view_create_pnext_bits {
+    BVB_VULKAN_IMAGE_VIEW_CREATE_PNEXT_USAGE = 1U << 0,
+    BVB_VULKAN_IMAGE_VIEW_CREATE_PNEXT_MASK =
+        BVB_VULKAN_IMAGE_VIEW_CREATE_PNEXT_USAGE,
 };
 
 struct bvb_protocol_header {
@@ -603,6 +629,60 @@ struct bvb_vulkan_buffer_bind_request {
     uint64_t buffer_id;
     uint64_t memory_id;
     uint64_t offset;
+};
+
+struct bvb_vulkan_image_create_request {
+    uint64_t device_id;
+    uint32_t flags;
+    uint32_t image_type;
+    uint32_t format;
+    uint32_t extent_width;
+    uint32_t extent_height;
+    uint32_t extent_depth;
+    uint32_t mip_levels;
+    uint32_t array_layers;
+    uint32_t samples;
+    uint32_t tiling;
+    uint32_t usage;
+    uint32_t sharing_mode;
+    uint32_t queue_family_index_count;
+    uint32_t initial_layout;
+    uint32_t pnext_flags;
+    uint32_t view_format_count;
+    uint32_t stencil_usage;
+    uint32_t queue_family_indices[BVB_VULKAN_IMAGE_MAX_QUEUE_FAMILIES];
+    uint32_t view_formats[BVB_VULKAN_IMAGE_MAX_VIEW_FORMATS];
+};
+
+struct bvb_vulkan_image_requirements {
+    uint64_t size;
+    uint64_t alignment;
+    uint32_t memory_type_bits;
+};
+
+struct bvb_vulkan_image_bind_request {
+    uint64_t image_id;
+    uint64_t memory_id;
+    uint64_t offset;
+};
+
+struct bvb_vulkan_image_view_create_request {
+    uint64_t device_id;
+    uint64_t image_id;
+    uint32_t flags;
+    uint32_t view_type;
+    uint32_t format;
+    uint32_t component_r;
+    uint32_t component_g;
+    uint32_t component_b;
+    uint32_t component_a;
+    uint32_t aspect_mask;
+    uint32_t base_mip_level;
+    uint32_t level_count;
+    uint32_t base_array_layer;
+    uint32_t layer_count;
+    uint32_t pnext_flags;
+    uint32_t usage;
 };
 
 struct bvb_vulkan_command_buffer_fill_request {
@@ -1080,6 +1160,30 @@ int bvb_protocol_encode_vulkan_buffer_bind_request(
 int bvb_protocol_decode_vulkan_buffer_bind_request(
     const uint8_t input[BVB_VULKAN_BUFFER_BIND_REQUEST_SIZE],
     struct bvb_vulkan_buffer_bind_request *request);
+int bvb_protocol_encode_vulkan_image_create_request(
+    uint8_t output[BVB_VULKAN_IMAGE_CREATE_REQUEST_SIZE],
+    const struct bvb_vulkan_image_create_request *request);
+int bvb_protocol_decode_vulkan_image_create_request(
+    const uint8_t input[BVB_VULKAN_IMAGE_CREATE_REQUEST_SIZE],
+    struct bvb_vulkan_image_create_request *request);
+int bvb_protocol_encode_vulkan_image_requirements(
+    uint8_t output[BVB_VULKAN_IMAGE_REQUIREMENTS_SIZE],
+    const struct bvb_vulkan_image_requirements *requirements);
+int bvb_protocol_decode_vulkan_image_requirements(
+    const uint8_t input[BVB_VULKAN_IMAGE_REQUIREMENTS_SIZE],
+    struct bvb_vulkan_image_requirements *requirements);
+int bvb_protocol_encode_vulkan_image_bind_request(
+    uint8_t output[BVB_VULKAN_IMAGE_BIND_REQUEST_SIZE],
+    const struct bvb_vulkan_image_bind_request *request);
+int bvb_protocol_decode_vulkan_image_bind_request(
+    const uint8_t input[BVB_VULKAN_IMAGE_BIND_REQUEST_SIZE],
+    struct bvb_vulkan_image_bind_request *request);
+int bvb_protocol_encode_vulkan_image_view_create_request(
+    uint8_t output[BVB_VULKAN_IMAGE_VIEW_CREATE_REQUEST_SIZE],
+    const struct bvb_vulkan_image_view_create_request *request);
+int bvb_protocol_decode_vulkan_image_view_create_request(
+    const uint8_t input[BVB_VULKAN_IMAGE_VIEW_CREATE_REQUEST_SIZE],
+    struct bvb_vulkan_image_view_create_request *request);
 int bvb_protocol_encode_vulkan_command_buffer_fill_request(
     uint8_t output[BVB_VULKAN_COMMAND_BUFFER_FILL_REQUEST_SIZE],
     const struct bvb_vulkan_command_buffer_fill_request *request);

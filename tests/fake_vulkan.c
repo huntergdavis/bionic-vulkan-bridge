@@ -29,6 +29,8 @@
 static VkDeviceMemory fake_bound_memory = VK_NULL_HANDLE;
 static VkDeviceMemory fake_bound_image_memory = VK_NULL_HANDLE;
 static VkDeviceSize fake_buffer_size = 4096U;
+static uint32_t fake_live_images;
+static uint32_t fake_live_image_views;
 static int fake_android_surface_enabled;
 static int fake_swapchain_enabled;
 static int fake_swapchain_created;
@@ -753,6 +755,7 @@ static void VKAPI_CALL fake_destroy_device(
     const VkAllocationCallbacks *allocator) {
     (void)device;
     (void)allocator;
+    if (fake_live_image_views != 0U || fake_live_images != 0U) abort();
     fake_swapchain_enabled = 0;
     fake_swapchain_created = 0;
     fake_image_acquired = 0;
@@ -1395,10 +1398,52 @@ static VkResult VKAPI_CALL fake_create_image(
         create_info->extent.width == 0U ||
         create_info->extent.width > 4096U ||
         create_info->extent.height == 0U ||
-        create_info->extent.height > 4096U) {
+        create_info->extent.height > 4096U ||
+        create_info->extent.depth != 1U ||
+        create_info->imageType != VK_IMAGE_TYPE_2D ||
+        create_info->mipLevels != 1U || create_info->arrayLayers != 1U ||
+        create_info->samples != VK_SAMPLE_COUNT_1_BIT ||
+        create_info->tiling != VK_IMAGE_TILING_OPTIMAL ||
+        create_info->sharingMode != VK_SHARING_MODE_EXCLUSIVE ||
+        create_info->initialLayout != VK_IMAGE_LAYOUT_UNDEFINED) {
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    }
+    bool format_list_seen = false;
+    bool stencil_usage_seen = false;
+    for (const VkBaseInStructure *next = create_info->pNext;
+         next != NULL; next = next->pNext) {
+        if (next->sType == VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO) {
+            const VkImageFormatListCreateInfo *format_list =
+                (const VkImageFormatListCreateInfo *)next;
+            if (format_list_seen || format_list->viewFormatCount != 1U ||
+                format_list->pViewFormats == NULL ||
+                format_list->pViewFormats[0] != VK_FORMAT_R8G8B8A8_UNORM) {
+                return VK_ERROR_FORMAT_NOT_SUPPORTED;
+            }
+            format_list_seen = true;
+        } else if (next->sType ==
+                   VK_STRUCTURE_TYPE_IMAGE_STENCIL_USAGE_CREATE_INFO) {
+            const VkImageStencilUsageCreateInfo *stencil_usage =
+                (const VkImageStencilUsageCreateInfo *)next;
+            if (stencil_usage_seen ||
+                stencil_usage->stencilUsage != VK_IMAGE_USAGE_SAMPLED_BIT) {
+                return VK_ERROR_FORMAT_NOT_SUPPORTED;
+            }
+            stencil_usage_seen = true;
+        } else if (next->sType !=
+                   VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO) {
+            return VK_ERROR_FORMAT_NOT_SUPPORTED;
+        }
+    }
+    if (format_list_seen != stencil_usage_seen ||
+        (format_list_seen &&
+         (create_info->format != VK_FORMAT_R8G8B8A8_UNORM ||
+          create_info->extent.width != 64U ||
+          create_info->extent.height != 64U))) {
         return VK_ERROR_FORMAT_NOT_SUPPORTED;
     }
     *image = (VkImage)(uintptr_t)UINT64_C(0xa000);
+    ++fake_live_images;
     return VK_SUCCESS;
 }
 
@@ -1407,6 +1452,7 @@ static void VKAPI_CALL fake_destroy_image(
     (void)device;
     (void)image;
     (void)allocator;
+    if (fake_live_images != 0U) --fake_live_images;
 }
 
 static void VKAPI_CALL fake_get_image_memory_requirements(
@@ -1428,6 +1474,47 @@ static VkResult VKAPI_CALL fake_bind_image_memory(
     (void)offset;
     fake_bound_image_memory = memory;
     return VK_SUCCESS;
+}
+
+static VkResult VKAPI_CALL fake_create_image_view(
+    VkDevice device, const VkImageViewCreateInfo *create_info,
+    const VkAllocationCallbacks *allocator, VkImageView *image_view) {
+    (void)device;
+    (void)allocator;
+    if (create_info == NULL || image_view == NULL ||
+        create_info->image != (VkImage)(uintptr_t)UINT64_C(0xa000) ||
+        create_info->viewType != VK_IMAGE_VIEW_TYPE_2D ||
+        create_info->format != VK_FORMAT_R8G8B8A8_UNORM ||
+        create_info->components.r != VK_COMPONENT_SWIZZLE_IDENTITY ||
+        create_info->components.g != VK_COMPONENT_SWIZZLE_IDENTITY ||
+        create_info->components.b != VK_COMPONENT_SWIZZLE_IDENTITY ||
+        create_info->components.a != VK_COMPONENT_SWIZZLE_IDENTITY ||
+        create_info->subresourceRange.aspectMask !=
+            VK_IMAGE_ASPECT_COLOR_BIT ||
+        create_info->subresourceRange.baseMipLevel != 0U ||
+        create_info->subresourceRange.levelCount != 1U ||
+        create_info->subresourceRange.baseArrayLayer != 0U ||
+        create_info->subresourceRange.layerCount != 1U) {
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    }
+    const VkImageViewUsageCreateInfo *usage = create_info->pNext;
+    if (usage == NULL ||
+        usage->sType != VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO ||
+        usage->pNext != NULL || usage->usage != VK_IMAGE_USAGE_SAMPLED_BIT) {
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    }
+    *image_view = (VkImageView)(uintptr_t)UINT64_C(0xa100);
+    ++fake_live_image_views;
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL fake_destroy_image_view(
+    VkDevice device, VkImageView image_view,
+    const VkAllocationCallbacks *allocator) {
+    (void)device;
+    (void)image_view;
+    (void)allocator;
+    if (fake_live_image_views != 0U) --fake_live_image_views;
 }
 
 static VkResult VKAPI_CALL fake_create_command_pool(
@@ -1847,6 +1934,8 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkGetImageMemoryRequirements",
                      fake_get_image_memory_requirements)
     BVB_DEVICE_MATCH("vkBindImageMemory", fake_bind_image_memory)
+    BVB_DEVICE_MATCH("vkCreateImageView", fake_create_image_view)
+    BVB_DEVICE_MATCH("vkDestroyImageView", fake_destroy_image_view)
     BVB_DEVICE_MATCH("vkCreateCommandPool", fake_create_command_pool)
     BVB_DEVICE_MATCH("vkDestroyCommandPool", fake_destroy_command_pool)
     BVB_DEVICE_MATCH("vkResetCommandPool", fake_reset_command_pool)
