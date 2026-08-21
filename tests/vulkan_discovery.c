@@ -48,6 +48,7 @@ int main(void) {
                    "BVB Adreno 730");
     properties.pipelineCacheUUID[15] = UINT8_C(0xa5);
     properties.limits.maxImageDimension2D = 16384U;
+    properties.limits.maxPushConstantsSize = 256U;
     properties.limits.maxComputeWorkGroupCount[2] = 65535U;
     properties.limits.maxSamplerAnisotropy = 16.0F;
     properties.limits.viewportBoundsRange[0] = -32768.0F;
@@ -67,6 +68,7 @@ int main(void) {
     CHECK(strcmp(properties_decoded.deviceName, properties.deviceName) == 0);
     CHECK(properties_decoded.pipelineCacheUUID[15] == UINT8_C(0xa5));
     CHECK(properties_decoded.limits.maxImageDimension2D == 16384U);
+    CHECK(properties_decoded.limits.maxPushConstantsSize == 256U);
     CHECK(properties_decoded.limits.maxComputeWorkGroupCount[2] == 65535U);
     CHECK(properties_decoded.limits.maxSamplerAnisotropy == 16.0F);
     CHECK(properties_decoded.limits.viewportBoundsRange[0] == -32768.0F);

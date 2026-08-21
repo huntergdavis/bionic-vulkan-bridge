@@ -288,6 +288,7 @@ static void VKAPI_CALL fake_get_device_properties(
     properties->deviceType = VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
     strncpy(properties->deviceName, "BVB Fake Adreno 730 \"quoted\"",
             sizeof(properties->deviceName) - 1U);
+    properties->limits.maxPushConstantsSize = 256U;
 }
 
 static void VKAPI_CALL fake_get_device_features(

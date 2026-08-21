@@ -304,6 +304,7 @@ int main(void) {
     CHECK(properties.apiVersion >= VK_API_VERSION_1_0);
     CHECK(properties.vendorID != 0U);
     CHECK(properties.deviceName[0] != '\0');
+    CHECK(properties.limits.maxPushConstantsSize == 256U);
 
     VkFormatProperties format_properties;
     get_format_properties(
