@@ -2537,3 +2537,17 @@ SHA-256
 Source tracing shows the first still-unresolved eager DXVK call is
 `vkCreatePipelineLayout`, after the empty descriptor-set layout used by the
 null fragment pipeline.
+
+## E062 — Private Turnip maintenance5/6 hardware acceptance (2026-08-21)
+
+Status: passed on the real Adreno 730 target; no bridge-frame or FPS claim.
+The hash-pinned Mesa 26.2.0 Android API 34 private candidate enumerated 150
+device extensions, including `VK_KHR_maintenance5` and
+`VK_KHR_maintenance6` at spec version 1. Native feature queries returned both
+feature bits as true, and a logical device created with both extension names
+and both feature structs enabled. `vkDeviceWaitIdle` and teardown passed.
+Steam PID 5973 and Termux:X11 PID 27923 remained alive after the isolated
+probe. This validates the selective API-34 allowlist exception described in
+`docs/PRIVATE_TURNIP.md`; it does not validate the remaining BVB feature wire,
+virtual swapchain, a Tomb Raider frame, or FPS. Canonical evidence is
+`docs/evidence/e062-private-turnip-maintenance56-hardware.json`.

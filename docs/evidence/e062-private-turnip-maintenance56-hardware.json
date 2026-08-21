@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "gate": "E062",
+  "captured_at": "2026-08-21T00:06:44-07:00",
+  "result": "pass",
+  "target": {
+    "gpu": "Turnip Adreno (TM) 730",
+    "vulkan_api_version_raw": 4211042,
+    "enumerated_device_extension_count": 150
+  },
+  "candidate": {
+    "mesa_version": "26.2.0",
+    "android_api": 34,
+    "android_strict": true,
+    "driver_sha256": "8ac6ef78c3c92998aa46c59fd0081edcba82756f5bad561d1b24a57684874a45",
+    "probe_sha256": "5f326d0a8397b4c28e52f0f3838fa0bdaec525fb23deb88821437d57975dcf9c"
+  },
+  "observations": {
+    "VK_KHR_maintenance5_spec_version": 1,
+    "VK_KHR_maintenance6_spec_version": 1,
+    "maintenance5_feature": true,
+    "maintenance6_feature": true,
+    "create_device_with_both_extensions_and_features": "pass",
+    "device_wait_idle": "pass"
+  },
+  "native_output": "PASS: private Turnip maintenance5/6 device=Turnip Adreno (TM) 730 api=4211042 extensions=150 maintenance5_spec=1 maintenance6_spec=1 features=1,1 create_device=pass device_idle=pass",
+  "process_survival": {
+    "steam_pid": 5973,
+    "steam_alive_after_probe": true,
+    "termux_x11_pid": 27923,
+    "termux_x11_alive_after_probe": true
+  },
+  "limits": [
+    "This proves private raw-Turnip enumeration, feature query, device creation, idle, and teardown on the target hardware.",
+    "It does not prove BVB device-feature serialization, VK_KHR_swapchain translation, a Tomb Raider frame, or FPS."
+  ]
+}
