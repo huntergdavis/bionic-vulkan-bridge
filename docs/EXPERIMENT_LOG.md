@@ -3256,3 +3256,34 @@ compact evidence checksum.
 The two authoritative 12,785-byte and 12,797-byte hardware records are archived
 byte-for-byte under `docs/evidence/raw/`; their recomputed SHA-256 values are the
 strict/shared raw hashes recorded by the compact evidence.
+
+The subsequent installer hardening reuses the same no-clobber rollback rule.
+`install-steam-icd-termux.sh` now stages all four artifacts before mutation,
+rejects a partial prior installation, preserves every prior target in a private
+transaction directory, commits each target by same-filesystem rename, verifies
+the installed hashes and stamp, and restores the complete previous set after a
+signal, command failure, or verification error. A fault-injection contract
+fails the second commit rename and proves byte-identical restoration; initial,
+upgrade, partial-install rejection, modes, and retained-backup paths are also
+covered. A second fault executes the first rename and then kills the installer;
+the next invocation detects the durable `prepared` journal and restores the
+prior generation before rejecting an intentionally invalid new source. The
+journal and target transitions are ordered with filesystem durability barriers,
+state replacement is atomic, and every target directory must share the
+transaction directory's device. A third fault kills a first-ever installation
+after its newly installed library has already been moved into failed-artifact
+evidence; the next recovery recognizes that rollback step as complete and
+finishes idempotently. The journal binds the four exact installed paths and new
+artifact hashes plus the authenticated hashes of every prior backup. Rollback
+refuses to overwrite a target or trust a backup/failed artifact whose identity
+changed between attempts, validates even targets whose staged file still exists,
+syncs restored bytes before their rename, and verifies the resulting target.
+No second installer can
+interleave because the transaction holds a
+nonblocking kernel `flock`, whose crash cleanup does not require deleting a
+stale lock directory. The exact installer and fault-injection contract were
+then staged in an isolated tablet candidate directory and passed under Termux,
+exercising its real `flock`, `sync -f`, `stat -c`, rename, and signal behavior
+against temporary fake install roots only. No tablet installation was performed. The required transactional
+installer `deja` query returned no indexed implementation; this reuses E077's
+verified rollback boundary rather than inventing a second recovery path.

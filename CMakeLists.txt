@@ -789,6 +789,13 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/raw/e077-authoritative-shared-global.json"
   )
   add_test(
+    NAME steam-icd-transactional-installer-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_install_steam_icd.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/install-steam-icd-termux.sh"
+  )
+  add_test(
     NAME global-activity-harness-contract
     COMMAND
       "${Python3_EXECUTABLE}"
