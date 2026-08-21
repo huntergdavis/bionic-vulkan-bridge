@@ -45,7 +45,7 @@ printf '%s\n' \
     '  "file_format_version": "1.0.1",' \
     '  "ICD": {' \
     "    \"library_path\": \"$library\"," \
-    '    "api_version": "1.1.0",' \
+    '    "api_version": "1.3.0",' \
     '    "library_arch": "64"' \
     '  }' \
     '}' >"$manifest.tmp"
