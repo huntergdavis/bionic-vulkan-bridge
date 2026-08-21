@@ -297,7 +297,8 @@ def wait_for_service(
 
 
 def wait_for_renderer(
-    process: subprocess.Popen[Any], service_log: pathlib.Path, timeout: float
+    process: subprocess.Popen[Any], service_log: pathlib.Path, timeout: float,
+    required_extent: tuple[int, int] | None = None,
 ) -> tuple[int, int, int, list[dict[str, int]]]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -308,6 +309,10 @@ def wait_for_renderer(
             record
             for record in events
             if record["event"] == 11 and record["width"] > 0 and record["height"] > 0
+            and (
+                required_extent is None
+                or (record["width"], record["height"]) == required_extent
+            )
         ]
         codes = {record["event"] for record in events}
         if ready and {1, 2, 3, 7, 11}.issubset(codes):
@@ -543,6 +548,14 @@ def parse_arguments() -> argparse.Namespace:
             "authorized adb device serial"
         ),
     )
+    parser.add_argument(
+        "--adb-dex-fullscreen",
+        action="store_true",
+        help=(
+            "after ADB launch, use the measured Galaxy Tab S8+ DeX maximize "
+            "and immersive controls and require a 2800x1752 renderer event"
+        ),
+    )
     parser.add_argument("--adb", default=os.environ.get("BVB_ADB", "adb"))
     parser.add_argument("--am", default=os.environ.get("BVB_ACTIVITY_LAUNCHER", "am"))
     parser.add_argument("--pm", default=os.environ.get("BVB_PACKAGE_MANAGER", "pm"))
@@ -576,6 +589,8 @@ def parse_arguments() -> argparse.Namespace:
             "--animated-rgbw requires --expected-service-sha256, "
             "--expected-client-sha256, --bridge-icd, and --expected-icd-sha256"
         )
+    if arguments.adb_dex_fullscreen and not arguments.adb_serial:
+        parser.error("--adb-dex-fullscreen requires --adb-serial")
     arguments.project = project
     return arguments
 
@@ -790,8 +805,24 @@ def run(arguments: argparse.Namespace) -> int:
             launch_text = launch_text.replace(sensitive, "<redacted>")
         activity_launch.write_text(launch_text)
         activity_started = True
+        dex_fullscreen_actions: list[dict[str, int | str]] = []
+        if arguments.adb_dex_fullscreen:
+            for label, x, y in (
+                ("maximize", 2550, 535),
+                ("immersive", 2630, 74),
+            ):
+                run_text(
+                    android_shell_prefix
+                    + ["input", "tap", str(x), str(y)],
+                    timeout=min(arguments.timeout, 5.0),
+                )
+                dex_fullscreen_actions.append({"action": label, "x": x, "y": y})
+                time.sleep(1.0)
         activity_pid, width, height, events = wait_for_renderer(
-            service_process, service_stdout, arguments.timeout
+            service_process,
+            service_stdout,
+            arguments.timeout,
+            (2800, 1752) if arguments.adb_dex_fullscreen else None,
         )
         running_after_launch = run_text(pid_command, timeout=5.0, check=False)
         if str(activity_pid) not in running_after_launch.stdout.split():
@@ -955,6 +986,8 @@ def run(arguments: argparse.Namespace) -> int:
                     "retain_external_renderer": True,
                     "width": width,
                     "height": height,
+                    "adb_dex_fullscreen": arguments.adb_dex_fullscreen,
+                    "adb_dex_fullscreen_actions": dex_fullscreen_actions,
                 },
                 "frame_transport": {
                     "helper": frame_document,

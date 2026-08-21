@@ -3582,3 +3582,11 @@ authenticated fullscreen run whose producer presents red, green, blue, and
 white through slots `0,1,2,0`; success requires matching Android import/present
 markers plus screenshot-confirmed changing pixels. Tomb Raider resumes only
 after that transport proof.
+
+The visual runner also has an explicit, opt-in Galaxy Tab S8+ DeX fullscreen
+step. After the authorized ADB launch it reuses the two controls measured in
+the preceding tablet session (maximize at `2550,535`, then immersive at
+`2630,74`) and refuses to start the producer until a fresh authenticated
+`2800x1752` renderer event arrives. Default/non-ADB runs are unchanged. This
+prevents a freeform-window extent from being mistaken for the native-resolution
+RGBW proof; the tablet screenshot is still required.
