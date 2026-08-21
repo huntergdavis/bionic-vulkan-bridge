@@ -2670,3 +2670,41 @@ integrated runtime trace must confirm the real boundary. Canonical evidence is
 `docs/evidence/e064-dxvk-null-fragment-pipeline-host.json`, 6,447 bytes,
 SHA-256
 `f9aade59ae46739ed1ef2cfb3ff7e485d64b0b41e56bf998360674c3d45cd92f`.
+
+## E065 — DXVK image requirements and dedicated allocation (2026-08-21)
+
+Status: passed through the cross-process host fake driver; no Android, game
+frame, or FPS claim. Pinned DXVK commit
+`a6764047e587178283fcde4073ae6e1410af594f` calls
+`vkGetImageMemoryRequirements2` immediately after image creation, consumes a
+`VkMemoryDedicatedRequirements` output, may pass the image through
+`VkMemoryDedicatedAllocateInfo`, may prepend the device-address-only
+`VkMemoryAllocateFlagsInfo`, and finally uses legacy `vkBindImageMemory`.
+E065 forwards that exact bounded chain through opcodes 96 and 97. The wire is
+pointer-free and fixed-width; the service resolves typed same-device image
+ownership and reconstructs all native records locally.
+
+The ordinary device-memory ceiling is now a finite 256 MiB, matching pinned
+DXVK's `MaxChunkSize`. This admits a 2800x1752 RGBA image (19,622,400 bytes,
+or 19,623,936 bytes at 4096-byte alignment) without changing the 4,096-byte
+protocol payload ceiling or the 4,072-byte mapped-memory I/O chunk. Unknown
+or duplicate pNext records, dedicated buffers, memory-priority, import/export,
+device groups, nonzero device masks, callbacks, invalid ownership, and the
+first byte above the cap all fail closed.
+
+All 31 host contracts pass. The fake-native integration returns the
+19,623,936-byte requirement, reports
+both dedicated booleans true, verifies the exact flags-to-dedicated native
+chain and native image handle, allocates real memory, and completes legacy
+binding. Only `vkGetImageMemoryRequirements2` is newly promoted, producing 83
+executable, 357 required-unimplemented, and 302 probed-null names. The pinned
+path does not invoke BindImageMemory2, so E065 does not fabricate or promote
+it. The known eager `vkGetDeviceBufferMemoryRequirements` prerequisite remains
+a separate gate.
+
+Canonical evidence is
+`docs/evidence/e065-dxvk-image-allocation-host.json`, 5,521 bytes, SHA-256
+`cba3c3eb7e1fabd46ceedd41832e4f1b02f35ca6687940737690f87e25386b7e`.
+The required `deja` query returned no indexed implementation. This gate reuses
+E046 typed ownership, E056 bounded local pNext reconstruction, E063 image
+lineage and legacy binding, and E034/E064 resolver-policy generation.

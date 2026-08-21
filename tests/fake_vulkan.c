@@ -29,6 +29,7 @@
 static VkDeviceMemory fake_bound_memory = VK_NULL_HANDLE;
 static VkDeviceMemory fake_bound_image_memory = VK_NULL_HANDLE;
 static VkDeviceSize fake_buffer_size = 4096U;
+static const VkDeviceSize fake_native_image_allocation_size = UINT64_C(19623936);
 static uint32_t fake_live_images;
 static uint32_t fake_live_image_views;
 static int fake_android_surface_enabled;
@@ -1415,14 +1416,41 @@ static VkResult VKAPI_CALL fake_allocate_memory(
     (void)allocator;
     const VkImportMemoryFdInfoKHR *import_info = NULL;
     const VkExportMemoryAllocateInfo *export_info = NULL;
+    const VkMemoryDedicatedAllocateInfo *dedicated_info = NULL;
+    const VkMemoryAllocateFlagsInfo *flags_info = NULL;
     for (const VkBaseInStructure *next = allocate_info->pNext;
          next != NULL; next = next->pNext) {
         if (next->sType == VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR) {
+            if (import_info != NULL) return VK_ERROR_INITIALIZATION_FAILED;
             import_info = (const VkImportMemoryFdInfoKHR *)next;
         } else if (next->sType ==
                    VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO) {
+            if (export_info != NULL) return VK_ERROR_INITIALIZATION_FAILED;
             export_info = (const VkExportMemoryAllocateInfo *)next;
+        } else if (next->sType ==
+                   VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO) {
+            if (dedicated_info != NULL) return VK_ERROR_INITIALIZATION_FAILED;
+            dedicated_info = (const VkMemoryDedicatedAllocateInfo *)next;
+        } else if (next->sType ==
+                   VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO) {
+            if (flags_info != NULL) return VK_ERROR_INITIALIZATION_FAILED;
+            flags_info = (const VkMemoryAllocateFlagsInfo *)next;
+        } else {
+            return VK_ERROR_INITIALIZATION_FAILED;
         }
+    }
+    if (flags_info != NULL &&
+        (flags_info->flags != VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT ||
+         flags_info->deviceMask != 0U ||
+         flags_info->pNext != dedicated_info)) {
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    if (dedicated_info != NULL && export_info == NULL &&
+        (dedicated_info->buffer != VK_NULL_HANDLE ||
+         dedicated_info->image !=
+             (VkImage)(uintptr_t)UINT64_C(0xa000) ||
+         allocate_info->allocationSize != fake_native_image_allocation_size)) {
+        return VK_ERROR_FEATURE_NOT_PRESENT;
     }
     struct bvb_fake_memory_record *record = fake_memory_slot();
     if (record == NULL) return VK_ERROR_TOO_MANY_OBJECTS;
@@ -1600,6 +1628,35 @@ static void VKAPI_CALL fake_get_image_memory_requirements(
         .alignment = 4096U,
         .memoryTypeBits = 1U,
     };
+}
+
+static void VKAPI_CALL fake_get_image_memory_requirements_2(
+    VkDevice device, const VkImageMemoryRequirementsInfo2 *info,
+    VkMemoryRequirements2 *requirements) {
+    (void)device;
+    if (info == NULL || requirements == NULL ||
+        info->sType != VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2 ||
+        info->pNext != NULL ||
+        info->image != (VkImage)(uintptr_t)UINT64_C(0xa000) ||
+        requirements->sType != VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2) {
+        abort();
+    }
+    VkMemoryDedicatedRequirements *dedicated = requirements->pNext;
+    if (dedicated != NULL &&
+        (dedicated->sType !=
+             VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS ||
+         dedicated->pNext != NULL)) {
+        abort();
+    }
+    requirements->memoryRequirements = (VkMemoryRequirements){
+        .size = fake_native_image_allocation_size,
+        .alignment = 4096U,
+        .memoryTypeBits = 1U,
+    };
+    if (dedicated != NULL) {
+        dedicated->prefersDedicatedAllocation = VK_TRUE;
+        dedicated->requiresDedicatedAllocation = VK_TRUE;
+    }
 }
 
 static VkResult VKAPI_CALL fake_bind_image_memory(
@@ -2071,6 +2128,8 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkDestroyImage", fake_destroy_image)
     BVB_DEVICE_MATCH("vkGetImageMemoryRequirements",
                      fake_get_image_memory_requirements)
+    BVB_DEVICE_MATCH("vkGetImageMemoryRequirements2",
+                     fake_get_image_memory_requirements_2)
     BVB_DEVICE_MATCH("vkBindImageMemory", fake_bind_image_memory)
     BVB_DEVICE_MATCH("vkCreateImageView", fake_create_image_view)
     BVB_DEVICE_MATCH("vkDestroyImageView", fake_destroy_image_view)

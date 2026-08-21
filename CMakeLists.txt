@@ -274,14 +274,14 @@ add_custom_command(
     "${bvb_dxvk_dispatch_policy_include}"
     "${bvb_dxvk_dispatch_policy_json}"
     --additional-executable
-    "${CMAKE_CURRENT_SOURCE_DIR}/config/e063-native-image-dispatch.txt"
-    --gate E063
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e065-image-allocation-dispatch.txt"
+    --gate E065
   DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-dxvk-dispatch-policy.py"
     "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
     "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
     "${bvb_triangle_dispatch_include}"
-    "${CMAKE_CURRENT_SOURCE_DIR}/config/e063-native-image-dispatch.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e065-image-allocation-dispatch.txt"
   VERBATIM
 )
 add_library(
@@ -589,7 +589,7 @@ if(BUILD_TESTING)
       "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
       "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
       "${bvb_triangle_dispatch_include}"
-      "${CMAKE_CURRENT_SOURCE_DIR}/config/e063-native-image-dispatch.txt"
+      "${CMAKE_CURRENT_SOURCE_DIR}/config/e065-image-allocation-dispatch.txt"
       "${bvb_dxvk_dispatch_policy_json}"
   )
 

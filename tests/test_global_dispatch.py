@@ -137,6 +137,8 @@ def main() -> int:
             assert int(image_match.group(1)) >> 56 == 7
             assert f"image_view={0x0800000000000001}" in completed.stdout
             assert "image_bytes=16384" in completed.stdout
+            assert "image_allocation_bytes=19623936" in completed.stdout
+            assert "image_dedicated=1,1" in completed.stdout
             assert "mapped_bytes=4096 mapped_mismatches=0" in completed.stdout
             assert "fill_words=1024 mismatches=0" in completed.stdout
             assert f"fence={0x1200000000000001}" in completed.stdout

@@ -3306,16 +3306,17 @@ int bvb_vulkan_global_context_get_buffer_requirements(
                ? 0 : -EPROTO;
 }
 
-int bvb_vulkan_global_context_allocate_memory(
+int bvb_vulkan_global_context_allocate_memory_extended(
     struct bvb_vulkan_global_context *context,
-    const struct bvb_vulkan_memory_allocate_request *request,
+    const struct bvb_vulkan_memory_allocate_extended_request *request,
     struct bvb_vulkan_object_create_response *response,
     char *error, size_t error_size) {
     if (error != NULL && error_size != 0U) error[0] = '\0';
     if (context == NULL || request == NULL || response == NULL) return -EINVAL;
     *response = (struct bvb_vulkan_object_create_response){0};
-    if (request->allocation_size == 0U ||
-        request->allocation_size > 16U * 1024U * 1024U) {
+    uint8_t validation[BVB_VULKAN_MEMORY_ALLOCATE_EXTENDED_REQUEST_SIZE];
+    if (bvb_protocol_encode_vulkan_memory_allocate_extended_request(
+            validation, request) != 0) {
         response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
         return 0;
     }
@@ -3333,6 +3334,39 @@ int bvb_vulkan_global_context_allocate_memory(
         return 0;
     }
     const VkDevice device = device_from_bits(device_bits);
+    VkMemoryDedicatedAllocateInfo dedicated = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
+    };
+    if ((request->pnext_flags &
+         BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_DEDICATED_IMAGE) != 0U) {
+        uint64_t image_device_id = 0U;
+        uint64_t image_bits = 0U;
+        VkDevice image_device = VK_NULL_HANDLE;
+        result = resolve_device_child(
+            context, request->dedicated_image_id, BVB_OBJECT_IMAGE,
+            &image_device_id, &image_device, &image_bits);
+        if (result != 0 || image_device_id != request->device_id ||
+            image_device != device) {
+            return result != 0 ? result : -EPROTO;
+        }
+        dedicated.image = image_from_bits(image_bits);
+    }
+    VkMemoryAllocateFlagsInfo flags = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
+        .flags = request->allocation_flags,
+        .deviceMask = request->device_mask,
+    };
+    const void *pnext = NULL;
+    if ((request->pnext_flags &
+         BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_DEDICATED_IMAGE) != 0U) {
+        dedicated.pNext = pnext;
+        pnext = &dedicated;
+    }
+    if ((request->pnext_flags &
+         BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_FLAGS) != 0U) {
+        flags.pNext = pnext;
+        pnext = &flags;
+    }
     PFN_vkAllocateMemory allocate =
         (PFN_vkAllocateMemory)context->get_device_proc_addr(
             device, "vkAllocateMemory");
@@ -3342,6 +3376,7 @@ int bvb_vulkan_global_context_allocate_memory(
     if (allocate == NULL || free_memory == NULL) return -ENOSYS;
     const VkMemoryAllocateInfo allocate_info = {
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .pNext = pnext,
         .allocationSize = request->allocation_size,
         .memoryTypeIndex = request->memory_type_index,
     };
@@ -3372,6 +3407,21 @@ int bvb_vulkan_global_context_allocate_memory(
     };
     response->object_id = wire_id;
     return 0;
+}
+
+int bvb_vulkan_global_context_allocate_memory(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_allocate_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size) {
+    if (request == NULL) return -EINVAL;
+    const struct bvb_vulkan_memory_allocate_extended_request extended = {
+        .device_id = request->device_id,
+        .allocation_size = request->allocation_size,
+        .memory_type_index = request->memory_type_index,
+    };
+    return bvb_vulkan_global_context_allocate_memory_extended(
+        context, &extended, response, error, error_size);
 }
 
 int bvb_vulkan_global_context_free_memory(
@@ -3594,6 +3644,64 @@ int bvb_vulkan_global_context_get_image_requirements(
     return native.size != 0U && native.alignment != 0U &&
                    native.memoryTypeBits != 0U
                ? 0 : -EPROTO;
+}
+
+int bvb_vulkan_global_context_get_image_requirements_2(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_image_requirements_2_request *request,
+    struct bvb_vulkan_image_requirements_2_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL) return -EINVAL;
+    *response = (struct bvb_vulkan_image_requirements_2_response){0};
+    uint8_t validation[BVB_VULKAN_IMAGE_REQUIREMENTS_2_REQUEST_SIZE];
+    if (bvb_protocol_encode_vulkan_image_requirements_2_request(
+            validation, request) != 0) {
+        return -EINVAL;
+    }
+    uint64_t device_id = 0U;
+    uint64_t image_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, request->image_id, BVB_OBJECT_IMAGE, &device_id, &device,
+        &image_bits);
+    if (result != 0) return result;
+    PFN_vkGetImageMemoryRequirements2 get_requirements =
+        (PFN_vkGetImageMemoryRequirements2)context->get_device_proc_addr(
+            device, "vkGetImageMemoryRequirements2");
+    if (get_requirements == NULL) return -ENOSYS;
+    const VkImageMemoryRequirementsInfo2 info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2,
+        .image = image_from_bits(image_bits),
+    };
+    VkMemoryDedicatedRequirements dedicated = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS,
+    };
+    VkMemoryRequirements2 native = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,
+        .pNext = (request->pnext_flags &
+                  BVB_VULKAN_IMAGE_REQUIREMENTS_2_PNEXT_DEDICATED) != 0U
+            ? &dedicated : NULL,
+    };
+    get_requirements(device, &info, &native);
+    if (native.memoryRequirements.size == 0U ||
+        native.memoryRequirements.alignment == 0U ||
+        native.memoryRequirements.memoryTypeBits == 0U ||
+        dedicated.prefersDedicatedAllocation > VK_TRUE ||
+        dedicated.requiresDedicatedAllocation > VK_TRUE) {
+        return -EPROTO;
+    }
+    *response = (struct bvb_vulkan_image_requirements_2_response){
+        .size = native.memoryRequirements.size,
+        .alignment = native.memoryRequirements.alignment,
+        .memory_type_bits = native.memoryRequirements.memoryTypeBits,
+        .pnext_flags = request->pnext_flags,
+        .prefers_dedicated =
+            (uint32_t)dedicated.prefersDedicatedAllocation,
+        .requires_dedicated =
+            (uint32_t)dedicated.requiresDedicatedAllocation,
+    };
+    return 0;
 }
 
 int bvb_vulkan_global_context_bind_image_memory(

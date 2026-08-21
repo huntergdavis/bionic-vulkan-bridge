@@ -1532,6 +1532,17 @@ static int answer_vulkan_resource_create(
             result = bvb_vulkan_global_context_allocate_memory(
                 context, &decoded, &created, diagnostic, sizeof(diagnostic));
         expected_type = BVB_OBJECT_DEVICE_MEMORY;
+    } else if (request->header.opcode ==
+                   BVB_OPCODE_VULKAN_MEMORY_ALLOCATE_EXTENDED &&
+               request->header.payload_length ==
+                   BVB_VULKAN_MEMORY_ALLOCATE_EXTENDED_REQUEST_SIZE) {
+        struct bvb_vulkan_memory_allocate_extended_request decoded;
+        result = bvb_protocol_decode_vulkan_memory_allocate_extended_request(
+            request->payload, &decoded);
+        if (result == 0)
+            result = bvb_vulkan_global_context_allocate_memory_extended(
+                context, &decoded, &created, diagnostic, sizeof(diagnostic));
+        expected_type = BVB_OBJECT_DEVICE_MEMORY;
     } else if (request->header.opcode == BVB_OPCODE_VULKAN_FENCE_CREATE &&
                request->header.payload_length ==
                    BVB_VULKAN_FENCE_CREATE_REQUEST_SIZE) {
@@ -1880,6 +1891,38 @@ static int answer_vulkan_image_requirements(
         response.header.payload_length = BVB_VULKAN_IMAGE_REQUIREMENTS_SIZE;
     else {
         fprintf(stderr, "bvb: image requirements failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_image_requirements_2(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_IMAGE_REQUIREMENTS_2_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_image_requirements_2_request decoded;
+    int result = bvb_protocol_decode_vulkan_image_requirements_2_request(
+        request->payload, &decoded);
+    struct bvb_vulkan_image_requirements_2_response requirements = {0};
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_get_image_requirements_2(
+            context, &decoded, &requirements, diagnostic, sizeof(diagnostic));
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_image_requirements_2_response(
+            response.payload, &requirements);
+    if (result == 0)
+        response.header.payload_length =
+            BVB_VULKAN_IMAGE_REQUIREMENTS_2_RESPONSE_SIZE;
+    else {
+        fprintf(stderr, "bvb: image requirements2 failed: %s\n", diagnostic);
         response.header.status = result;
     }
     return bvb_transport_send(client_fd, &response);
@@ -2812,6 +2855,8 @@ static int serve_connection(int client_fd, const char *loader_path,
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode == BVB_OPCODE_VULKAN_BUFFER_CREATE ||
                    request.header.opcode == BVB_OPCODE_VULKAN_MEMORY_ALLOCATE ||
+                   request.header.opcode ==
+                       BVB_OPCODE_VULKAN_MEMORY_ALLOCATE_EXTENDED ||
                    request.header.opcode == BVB_OPCODE_VULKAN_FENCE_CREATE ||
                    request.header.opcode ==
                        BVB_OPCODE_VULKAN_SEMAPHORE_CREATE ||
@@ -2864,6 +2909,10 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_IMAGE_REQUIREMENTS) {
             result = answer_vulkan_image_requirements(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_IMAGE_REQUIREMENTS_2) {
+            result = answer_vulkan_image_requirements_2(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode == BVB_OPCODE_VULKAN_IMAGE_BIND) {
             result = answer_vulkan_image_bind(

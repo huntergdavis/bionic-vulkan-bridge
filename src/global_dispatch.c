@@ -4351,6 +4351,48 @@ static void VKAPI_CALL bvb_bridge_vkGetBufferMemoryRequirements(
     }
 }
 
+static VkResult encode_memory_allocate_pnext(
+    const void *pnext,
+    struct bvb_vulkan_memory_allocate_extended_request *request) {
+    const VkBaseInStructure *next = pnext;
+    uint32_t count = 0U;
+    while (next != NULL) {
+        if (++count > 2U) return VK_ERROR_FEATURE_NOT_PRESENT;
+        if (next->sType == VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO) {
+            const VkMemoryDedicatedAllocateInfo *dedicated =
+                (const VkMemoryDedicatedAllocateInfo *)next;
+            if ((request->pnext_flags &
+                 BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_DEDICATED_IMAGE) != 0U ||
+                dedicated->buffer != VK_NULL_HANDLE ||
+                dedicated->image == VK_NULL_HANDLE) {
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+            request->pnext_flags |=
+                BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_DEDICATED_IMAGE;
+            request->dedicated_image_id = non_dispatchable_wire_id(
+                &dedicated->image, sizeof(dedicated->image));
+        } else if (next->sType ==
+                   VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO) {
+            const VkMemoryAllocateFlagsInfo *flags =
+                (const VkMemoryAllocateFlagsInfo *)next;
+            if ((request->pnext_flags &
+                 BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_FLAGS) != 0U ||
+                flags->flags != VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT ||
+                flags->deviceMask != 0U) {
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+            request->pnext_flags |=
+                BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_FLAGS;
+            request->allocation_flags = flags->flags;
+            request->device_mask = flags->deviceMask;
+        } else {
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+        next = next->pNext;
+    }
+    return VK_SUCCESS;
+}
+
 static VkResult VKAPI_CALL bvb_bridge_vkAllocateMemory(
     VkDevice device, const VkMemoryAllocateInfo *allocate_info,
     const VkAllocationCallbacks *allocator, VkDeviceMemory *memory) {
@@ -4359,27 +4401,43 @@ static VkResult VKAPI_CALL bvb_bridge_vkAllocateMemory(
     if (device_state == NULL || allocate_info == NULL || memory == NULL ||
         allocator != NULL ||
         allocate_info->sType != VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO ||
-        allocate_info->pNext != NULL || allocate_info->allocationSize == 0U ||
-        allocate_info->allocationSize > 16U * 1024U * 1024U)
+        allocate_info->allocationSize == 0U ||
+        allocate_info->allocationSize > BVB_VULKAN_MAX_MEMORY_ALLOCATION_SIZE)
         return VK_ERROR_FEATURE_NOT_PRESENT;
     struct bvb_resource_proxy *state = calloc(1, sizeof(*state));
     if (state == NULL) return VK_ERROR_OUT_OF_HOST_MEMORY;
-    const struct bvb_vulkan_memory_allocate_request decoded = {
+    struct bvb_vulkan_memory_allocate_extended_request decoded = {
         .device_id = device_state->wire_id,
         .allocation_size = allocate_info->allocationSize,
         .memory_type_index = allocate_info->memoryTypeIndex,
     };
-    uint8_t payload[BVB_VULKAN_MEMORY_ALLOCATE_REQUEST_SIZE];
-    int result = bvb_protocol_encode_vulkan_memory_allocate_request(
-        payload, &decoded);
+    VkResult vulkan_result = encode_memory_allocate_pnext(
+        allocate_info->pNext, &decoded);
+    uint8_t payload[BVB_VULKAN_MEMORY_ALLOCATE_EXTENDED_REQUEST_SIZE];
+    int result = vulkan_result == VK_SUCCESS
+        ? bvb_protocol_encode_vulkan_memory_allocate_extended_request(
+              payload, &decoded)
+        : -EINVAL;
     if (result != 0 || pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
         free(state);
-        return VK_ERROR_INITIALIZATION_FAILED;
+        return vulkan_result != VK_SUCCESS
+            ? vulkan_result : VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if ((decoded.pnext_flags &
+         BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_DEDICATED_IMAGE) != 0U) {
+        struct bvb_resource_proxy *image_state = resource_proxy_locked(
+            decoded.dedicated_image_id, BVB_OBJECT_IMAGE);
+        if (image_state == NULL ||
+            image_state->parent_id != device_state->wire_id) {
+            (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+            free(state);
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
     }
     state->allocation_size = allocate_info->allocationSize;
     uint64_t wire_id = 0U;
-    VkResult vulkan_result = create_resource_locked(
-        BVB_OPCODE_VULKAN_MEMORY_ALLOCATE, payload, sizeof(payload),
+    vulkan_result = create_resource_locked(
+        BVB_OPCODE_VULKAN_MEMORY_ALLOCATE_EXTENDED, payload, sizeof(payload),
         BVB_OBJECT_DEVICE_MEMORY, device_state->wire_id, state, &wire_id);
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
     if (vulkan_result != VK_SUCCESS) {
@@ -4587,6 +4645,90 @@ static void VKAPI_CALL bvb_bridge_vkGetImageMemoryRequirements(
         requirements->size = decoded.size;
         requirements->alignment = decoded.alignment;
         requirements->memoryTypeBits = decoded.memory_type_bits;
+    }
+}
+
+static void VKAPI_CALL bvb_bridge_vkGetImageMemoryRequirements2(
+    VkDevice device, const VkImageMemoryRequirementsInfo2 *info,
+    VkMemoryRequirements2 *requirements) {
+    if (requirements == NULL) return;
+    requirements->memoryRequirements = (VkMemoryRequirements){0};
+    VkMemoryDedicatedRequirements *dedicated = NULL;
+    if (requirements->pNext != NULL) {
+        VkBaseOutStructure *next = requirements->pNext;
+        if (next->sType != VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS) {
+            return;
+        }
+        dedicated = (VkMemoryDedicatedRequirements *)next;
+        dedicated->prefersDedicatedAllocation = VK_FALSE;
+        dedicated->requiresDedicatedAllocation = VK_FALSE;
+        if (next->pNext != NULL) return;
+    }
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || info == NULL ||
+        info->sType != VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2 ||
+        info->pNext != NULL ||
+        requirements->sType != VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2) {
+        return;
+    }
+    const uint64_t image_id = non_dispatchable_wire_id(
+        &info->image, sizeof(info->image));
+    const struct bvb_vulkan_image_requirements_2_request decoded = {
+        .image_id = image_id,
+        .pnext_flags = dedicated != NULL
+            ? BVB_VULKAN_IMAGE_REQUIREMENTS_2_PNEXT_DEDICATED : 0U,
+    };
+    uint8_t payload[BVB_VULKAN_IMAGE_REQUIREMENTS_2_REQUEST_SIZE];
+    int result = bvb_protocol_encode_vulkan_image_requirements_2_request(
+        payload, &decoded);
+    if (result != 0 || pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return;
+    }
+    struct bvb_resource_proxy *image_state = resource_proxy_locked(
+        image_id, BVB_OBJECT_IMAGE);
+    if (image_state == NULL ||
+        image_state->parent_id != device_state->wire_id) {
+        result = -EINVAL;
+    } else {
+        result = connect_locked();
+    }
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_IMAGE_REQUIREMENTS_2,
+        .request_id = next_request_id_locked(),
+        .payload_length = sizeof(payload),
+    };
+    if (result == 0) memcpy(request.payload, payload, sizeof(payload));
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) result = exchange_locked(&request, &response);
+    if (result == 0 &&
+        (response.header.status != 0 ||
+         response.header.payload_length !=
+             BVB_VULKAN_IMAGE_REQUIREMENTS_2_RESPONSE_SIZE)) {
+        result = -EPROTO;
+    }
+    struct bvb_vulkan_image_requirements_2_response wire = {0};
+    if (result == 0) {
+        result = bvb_protocol_decode_vulkan_image_requirements_2_response(
+            response.payload, &wire);
+    }
+    if (result == 0 && wire.pnext_flags != decoded.pnext_flags) {
+        result = -EPROTO;
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result != 0) return;
+    requirements->memoryRequirements = (VkMemoryRequirements){
+        .size = wire.size,
+        .alignment = wire.alignment,
+        .memoryTypeBits = wire.memory_type_bits,
+    };
+    if (dedicated != NULL) {
+        dedicated->prefersDedicatedAllocation =
+            (VkBool32)wire.prefers_dedicated;
+        dedicated->requiresDedicatedAllocation =
+            (VkBool32)wire.requires_dedicated;
     }
 }
 
@@ -6149,6 +6291,8 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     BVB_DEVICE_MATCH("vkDestroyImage", bvb_bridge_vkDestroyImage)
     BVB_DEVICE_MATCH("vkGetImageMemoryRequirements",
                      bvb_bridge_vkGetImageMemoryRequirements)
+    BVB_DEVICE_MATCH("vkGetImageMemoryRequirements2",
+                     bvb_bridge_vkGetImageMemoryRequirements2)
     BVB_DEVICE_MATCH("vkBindImageMemory", bvb_bridge_vkBindImageMemory)
     BVB_DEVICE_MATCH("vkCreateImageView", bvb_bridge_vkCreateImageView)
     BVB_DEVICE_MATCH("vkDestroyImageView", bvb_bridge_vkDestroyImageView)

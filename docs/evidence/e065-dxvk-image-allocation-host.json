@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "gate": "E065",
+  "result": "pass_host_contract",
+  "objective": "close the pinned DXVK native image-allocation chain after E063 by forwarding requirements2, dedicated-allocation truth, and the exact bounded allocation pNext variants without transporting pointers",
+  "source": {
+    "dxvk_commit": "a6764047e587178283fcde4073ae6e1410af594f",
+    "path": "src/dxvk/dxvk_memory.cpp",
+    "sequence": [
+      "line 1111: vkCreateImage",
+      "lines 1124-1130: vkGetImageMemoryRequirements2 with VkMemoryDedicatedRequirements",
+      "lines 1151-1155: preferred or required VkMemoryDedicatedAllocateInfo image allocation",
+      "lines 1347-1378: vkAllocateMemory, optionally prepending VkMemoryAllocateFlagsInfo with VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT",
+      "lines 1230-1236: legacy vkBindImageMemory"
+    ],
+    "bind_image_memory_2_invoked_by_this_path": false,
+    "memory_priority_status": "not serialized because the bridge does not expose extMemoryPriority.memoryPriority to this DXVK configuration"
+  },
+  "wire": {
+    "opcodes": {
+      "96": "image memory requirements2",
+      "97": "extended device-memory allocation"
+    },
+    "reserved_opcodes_left_free": [98, 99],
+    "producer_opcodes_preserved": {
+      "100": "swapchain acquire",
+      "101": "swapchain present"
+    },
+    "representation": "canonical fixed-width little-endian scalar records and typed 64-bit bridge IDs only",
+    "requirements2_request_bytes": 16,
+    "requirements2_response_bytes": 32,
+    "extended_allocate_request_bytes": 40,
+    "pointers_crossed": false,
+    "memory_io_payload_cap_changed": false
+  },
+  "supported_shape": {
+    "requirements_input_pnext": null,
+    "requirements_output_pnext": "null or exactly one VkMemoryDedicatedRequirements with null tail",
+    "allocation_pnext": [
+      "zero or one VkMemoryDedicatedAllocateInfo with image set and buffer null",
+      "zero or one VkMemoryAllocateFlagsInfo with exactly VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT and deviceMask zero"
+    ],
+    "allocation_callbacks": null,
+    "bind": "the pinned path continues through E063's legacy vkBindImageMemory implementation"
+  },
+  "allocation_bound": {
+    "old_bytes": 16777216,
+    "new_bytes": 268435456,
+    "rationale": "match pinned DXVK's MaxChunkSize of 256 MiB while retaining a finite per-allocation bound",
+    "native_2800x1752_rgba_bytes": 19622400,
+    "native_2800x1752_rgba_aligned_4096_bytes": 19623936,
+    "protocol_max_payload_bytes": 4096,
+    "memory_io_max_bytes": 4072
+  },
+  "native_reconstruction_and_ownership": {
+    "requirements": "the Bionic service resolves the typed image and reconstructs local VkImageMemoryRequirementsInfo2, VkMemoryRequirements2, and optional VkMemoryDedicatedRequirements records",
+    "allocation": "the service resolves same-device image ownership, reconstructs local flags-then-dedicated pNext records, and stores the real returned VkDeviceMemory in the existing device-owned handle table",
+    "teardown": "the existing explicit free and device teardown paths destroy the real native memory handle"
+  },
+  "fail_closed": [
+    "unknown, duplicate, overlong, or unsupported pNext records",
+    "dedicated allocation with a buffer, null image, wrong-type image, missing image, or cross-device image",
+    "allocation flags other than exactly VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT or nonzero deviceMask",
+    "allocation size zero or above 256 MiB, invalid memory type, non-null allocation callbacks, or malformed fixed wire",
+    "requirements2 input pNext, unsupported output pNext, malformed typed image ownership, invalid native zero requirements, or non-boolean dedicated results"
+  ],
+  "dispatch_policy": {
+    "baseline": "E064's 82 executable, 358 required-unimplemented, and 302 probed-null names",
+    "promotion": "only vkGetImageMemoryRequirements2 moves from required_unimplemented to executable; vkAllocateMemory and legacy vkBindImageMemory were already executable",
+    "counts": {
+      "executable": 83,
+      "required_unimplemented": 357,
+      "probed_null": 302
+    }
+  },
+  "verification": {
+    "base_commit": "8b253ffcac0e96cbd56cc4275950af0e8cbbfde2",
+    "host_contracts": "31/31 passed",
+    "build": "clean with project warnings treated as errors",
+    "canonical_codec": "round trips requirements2 and extended-allocation records and rejects unknown flags, reserved bytes, invalid booleans, wrong handle types, and the first byte above the allocation cap",
+    "cross_process_fake_driver": "returns a 19,623,936-byte 4096-aligned requirement, sets both dedicated booleans true, verifies the exact flags-to-dedicated native pNext chain and real image handle, allocates real native memory, and completes legacy image binding",
+    "hardware_or_game_claim": false
+  },
+  "known_remaining": [
+    "no vkBindImageMemory2 path is promoted because pinned createImageResource invokes legacy vkBindImageMemory",
+    "dedicated buffers, memory-priority, import/export, device groups, and other allocation pNext variants remain fail-closed",
+    "the already-identified eager vkGetDeviceBufferMemoryRequirements prerequisite remains outside this image slice",
+    "real private-Turnip execution, a Tomb Raider frame, and FPS remain unproven"
+  ],
+  "reuse": "The required deja query found no indexed requirements2 or dedicated-allocation implementation. Reused E046 typed ownership, E056 bounded local pNext reconstruction, E063 image lineage and legacy bind, and E034/E064 generated resolver-policy contracts."
+}

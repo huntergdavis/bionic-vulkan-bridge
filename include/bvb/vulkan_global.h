@@ -207,6 +207,11 @@ int bvb_vulkan_global_context_allocate_memory(
     const struct bvb_vulkan_memory_allocate_request *request,
     struct bvb_vulkan_object_create_response *response,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_allocate_memory_extended(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_allocate_extended_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_free_memory(
     struct bvb_vulkan_global_context *context, uint64_t memory_id,
     char *error, size_t error_size);
@@ -225,6 +230,11 @@ int bvb_vulkan_global_context_destroy_image(
 int bvb_vulkan_global_context_get_image_requirements(
     const struct bvb_vulkan_global_context *context, uint64_t image_id,
     struct bvb_vulkan_image_requirements *requirements,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_get_image_requirements_2(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_image_requirements_2_request *request,
+    struct bvb_vulkan_image_requirements_2_response *response,
     char *error, size_t error_size);
 int bvb_vulkan_global_context_bind_image_memory(
     const struct bvb_vulkan_global_context *context,

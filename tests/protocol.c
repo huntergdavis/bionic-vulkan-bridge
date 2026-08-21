@@ -87,7 +87,10 @@ int main(void) {
     CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
     CHECK(BVB_OPCODE_VULKAN_IMAGE_CREATE == 90);
     CHECK(BVB_OPCODE_VULKAN_IMAGE_VIEW_DESTROY == 95);
+    CHECK(BVB_OPCODE_VULKAN_IMAGE_REQUIREMENTS_2 == 96);
+    CHECK(BVB_OPCODE_VULKAN_MEMORY_ALLOCATE_EXTENDED == 97);
     CHECK(BVB_OPCODE_VULKAN_SWAPCHAIN_ACQUIRE == 100);
+    CHECK(BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT == 101);
     CHECK(decoded.opcode == BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT);
 
     const struct bvb_hello_request hello = {
@@ -1019,6 +1022,33 @@ int main(void) {
     CHECK(bvb_protocol_decode_vulkan_memory_allocate_request(
               memory_allocate_wire, &memory_allocate_decoded) == 0);
     CHECK(memory_allocate_decoded.memory_type_index == 1U);
+    struct bvb_vulkan_memory_allocate_extended_request memory_extended = {
+        .device_id = buffer_create.device_id,
+        .allocation_size = UINT64_C(19623936),
+        .dedicated_image_id = UINT64_C(0x0700000000000001),
+        .memory_type_index = 0U,
+        .pnext_flags = BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_DEDICATED_IMAGE |
+                       BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_FLAGS,
+        .allocation_flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT,
+    };
+    uint8_t memory_extended_wire[
+        BVB_VULKAN_MEMORY_ALLOCATE_EXTENDED_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_memory_allocate_extended_request(
+              memory_extended_wire, &memory_extended) == 0);
+    struct bvb_vulkan_memory_allocate_extended_request
+        memory_extended_decoded;
+    CHECK(bvb_protocol_decode_vulkan_memory_allocate_extended_request(
+              memory_extended_wire, &memory_extended_decoded) == 0);
+    CHECK(memory_extended_decoded.allocation_size == UINT64_C(19623936));
+    CHECK(memory_extended_decoded.dedicated_image_id ==
+          UINT64_C(0x0700000000000001));
+    bvb_wire_put_u32(memory_extended_wire + 28, UINT32_C(0x80000000));
+    CHECK(bvb_protocol_decode_vulkan_memory_allocate_extended_request(
+              memory_extended_wire, &memory_extended_decoded) == -EPROTO);
+    memory_extended.allocation_size =
+        (uint64_t)BVB_VULKAN_MAX_MEMORY_ALLOCATION_SIZE + 1U;
+    CHECK(bvb_protocol_encode_vulkan_memory_allocate_extended_request(
+              memory_extended_wire, &memory_extended) == -EINVAL);
     const struct bvb_vulkan_buffer_bind_request buffer_bind = {
         .buffer_id = buffer_created.object_id,
         .memory_id = UINT64_C(0x0900000000000001),
@@ -1091,6 +1121,47 @@ int main(void) {
     CHECK(bvb_protocol_decode_vulkan_image_requirements(
               image_requirements_wire, &image_requirements_decoded) == 0);
     CHECK(image_requirements_decoded.size == 16384U);
+    const struct bvb_vulkan_image_requirements_2_request requirements_2 = {
+        .image_id = image_created.object_id,
+        .pnext_flags =
+            BVB_VULKAN_IMAGE_REQUIREMENTS_2_PNEXT_DEDICATED,
+    };
+    uint8_t requirements_2_request_wire[
+        BVB_VULKAN_IMAGE_REQUIREMENTS_2_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_image_requirements_2_request(
+              requirements_2_request_wire, &requirements_2) == 0);
+    struct bvb_vulkan_image_requirements_2_request requirements_2_decoded;
+    CHECK(bvb_protocol_decode_vulkan_image_requirements_2_request(
+              requirements_2_request_wire, &requirements_2_decoded) == 0);
+    CHECK(requirements_2_decoded.image_id == image_created.object_id);
+    requirements_2_request_wire[12] = 1U;
+    CHECK(bvb_protocol_decode_vulkan_image_requirements_2_request(
+              requirements_2_request_wire, &requirements_2_decoded) ==
+          -EPROTO);
+    const struct bvb_vulkan_image_requirements_2_response
+        requirements_2_response = {
+            .size = UINT64_C(19623936),
+            .alignment = 4096U,
+            .memory_type_bits = 1U,
+            .pnext_flags =
+                BVB_VULKAN_IMAGE_REQUIREMENTS_2_PNEXT_DEDICATED,
+            .prefers_dedicated = 1U,
+            .requires_dedicated = 1U,
+        };
+    uint8_t requirements_2_response_wire[
+        BVB_VULKAN_IMAGE_REQUIREMENTS_2_RESPONSE_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_image_requirements_2_response(
+              requirements_2_response_wire, &requirements_2_response) == 0);
+    struct bvb_vulkan_image_requirements_2_response
+        requirements_2_response_decoded;
+    CHECK(bvb_protocol_decode_vulkan_image_requirements_2_response(
+              requirements_2_response_wire,
+              &requirements_2_response_decoded) == 0);
+    CHECK(requirements_2_response_decoded.requires_dedicated == 1U);
+    bvb_wire_put_u32(requirements_2_response_wire + 24, 2U);
+    CHECK(bvb_protocol_decode_vulkan_image_requirements_2_response(
+              requirements_2_response_wire,
+              &requirements_2_response_decoded) == -EPROTO);
     const struct bvb_vulkan_image_bind_request image_bind = {
         .image_id = image_created.object_id,
         .memory_id = buffer_bind.memory_id,

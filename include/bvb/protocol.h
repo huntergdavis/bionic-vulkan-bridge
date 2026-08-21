@@ -103,6 +103,8 @@ enum {
     BVB_OPCODE_VULKAN_IMAGE_BIND = 93,
     BVB_OPCODE_VULKAN_IMAGE_VIEW_CREATE = 94,
     BVB_OPCODE_VULKAN_IMAGE_VIEW_DESTROY = 95,
+    BVB_OPCODE_VULKAN_IMAGE_REQUIREMENTS_2 = 96,
+    BVB_OPCODE_VULKAN_MEMORY_ALLOCATE_EXTENDED = 97,
     BVB_OPCODE_VULKAN_SWAPCHAIN_ACQUIRE = 100,
     BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT = 101,
     BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT,
@@ -165,11 +167,15 @@ enum {
     BVB_VULKAN_OBJECT_ID_SIZE = 8,
     BVB_VULKAN_BUFFER_REQUIREMENTS_SIZE = 24,
     BVB_VULKAN_MEMORY_ALLOCATE_REQUEST_SIZE = 24,
+    BVB_VULKAN_MEMORY_ALLOCATE_EXTENDED_REQUEST_SIZE = 40,
+    BVB_VULKAN_MAX_MEMORY_ALLOCATION_SIZE = 256U * 1024U * 1024U,
     BVB_VULKAN_BUFFER_BIND_REQUEST_SIZE = 24,
     BVB_VULKAN_IMAGE_MAX_QUEUE_FAMILIES = 8,
     BVB_VULKAN_IMAGE_MAX_VIEW_FORMATS = 16,
     BVB_VULKAN_IMAGE_CREATE_REQUEST_SIZE = 176,
     BVB_VULKAN_IMAGE_REQUIREMENTS_SIZE = 24,
+    BVB_VULKAN_IMAGE_REQUIREMENTS_2_REQUEST_SIZE = 16,
+    BVB_VULKAN_IMAGE_REQUIREMENTS_2_RESPONSE_SIZE = 32,
     BVB_VULKAN_IMAGE_BIND_REQUEST_SIZE = 24,
     BVB_VULKAN_IMAGE_VIEW_CREATE_REQUEST_SIZE = 72,
     BVB_VULKAN_COMMAND_BUFFER_FILL_REQUEST_SIZE = 40,
@@ -258,6 +264,20 @@ enum bvb_vulkan_image_view_create_pnext_bits {
     BVB_VULKAN_IMAGE_VIEW_CREATE_PNEXT_USAGE = 1U << 0,
     BVB_VULKAN_IMAGE_VIEW_CREATE_PNEXT_MASK =
         BVB_VULKAN_IMAGE_VIEW_CREATE_PNEXT_USAGE,
+};
+
+enum bvb_vulkan_image_requirements_2_pnext_bits {
+    BVB_VULKAN_IMAGE_REQUIREMENTS_2_PNEXT_DEDICATED = 1U << 0,
+    BVB_VULKAN_IMAGE_REQUIREMENTS_2_PNEXT_MASK =
+        BVB_VULKAN_IMAGE_REQUIREMENTS_2_PNEXT_DEDICATED,
+};
+
+enum bvb_vulkan_memory_allocate_pnext_bits {
+    BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_DEDICATED_IMAGE = 1U << 0,
+    BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_FLAGS = 1U << 1,
+    BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_MASK =
+        BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_DEDICATED_IMAGE |
+        BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_FLAGS,
 };
 
 struct bvb_protocol_header {
@@ -627,6 +647,16 @@ struct bvb_vulkan_memory_allocate_request {
     uint32_t memory_type_index;
 };
 
+struct bvb_vulkan_memory_allocate_extended_request {
+    uint64_t device_id;
+    uint64_t allocation_size;
+    uint64_t dedicated_image_id;
+    uint32_t memory_type_index;
+    uint32_t pnext_flags;
+    uint32_t allocation_flags;
+    uint32_t device_mask;
+};
+
 struct bvb_vulkan_buffer_bind_request {
     uint64_t buffer_id;
     uint64_t memory_id;
@@ -660,6 +690,20 @@ struct bvb_vulkan_image_requirements {
     uint64_t size;
     uint64_t alignment;
     uint32_t memory_type_bits;
+};
+
+struct bvb_vulkan_image_requirements_2_request {
+    uint64_t image_id;
+    uint32_t pnext_flags;
+};
+
+struct bvb_vulkan_image_requirements_2_response {
+    uint64_t size;
+    uint64_t alignment;
+    uint32_t memory_type_bits;
+    uint32_t pnext_flags;
+    uint32_t prefers_dedicated;
+    uint32_t requires_dedicated;
 };
 
 struct bvb_vulkan_image_bind_request {
@@ -1156,6 +1200,12 @@ int bvb_protocol_encode_vulkan_memory_allocate_request(
 int bvb_protocol_decode_vulkan_memory_allocate_request(
     const uint8_t input[BVB_VULKAN_MEMORY_ALLOCATE_REQUEST_SIZE],
     struct bvb_vulkan_memory_allocate_request *request);
+int bvb_protocol_encode_vulkan_memory_allocate_extended_request(
+    uint8_t output[BVB_VULKAN_MEMORY_ALLOCATE_EXTENDED_REQUEST_SIZE],
+    const struct bvb_vulkan_memory_allocate_extended_request *request);
+int bvb_protocol_decode_vulkan_memory_allocate_extended_request(
+    const uint8_t input[BVB_VULKAN_MEMORY_ALLOCATE_EXTENDED_REQUEST_SIZE],
+    struct bvb_vulkan_memory_allocate_extended_request *request);
 int bvb_protocol_encode_vulkan_buffer_bind_request(
     uint8_t output[BVB_VULKAN_BUFFER_BIND_REQUEST_SIZE],
     const struct bvb_vulkan_buffer_bind_request *request);
@@ -1174,6 +1224,18 @@ int bvb_protocol_encode_vulkan_image_requirements(
 int bvb_protocol_decode_vulkan_image_requirements(
     const uint8_t input[BVB_VULKAN_IMAGE_REQUIREMENTS_SIZE],
     struct bvb_vulkan_image_requirements *requirements);
+int bvb_protocol_encode_vulkan_image_requirements_2_request(
+    uint8_t output[BVB_VULKAN_IMAGE_REQUIREMENTS_2_REQUEST_SIZE],
+    const struct bvb_vulkan_image_requirements_2_request *request);
+int bvb_protocol_decode_vulkan_image_requirements_2_request(
+    const uint8_t input[BVB_VULKAN_IMAGE_REQUIREMENTS_2_REQUEST_SIZE],
+    struct bvb_vulkan_image_requirements_2_request *request);
+int bvb_protocol_encode_vulkan_image_requirements_2_response(
+    uint8_t output[BVB_VULKAN_IMAGE_REQUIREMENTS_2_RESPONSE_SIZE],
+    const struct bvb_vulkan_image_requirements_2_response *response);
+int bvb_protocol_decode_vulkan_image_requirements_2_response(
+    const uint8_t input[BVB_VULKAN_IMAGE_REQUIREMENTS_2_RESPONSE_SIZE],
+    struct bvb_vulkan_image_requirements_2_response *response);
 int bvb_protocol_encode_vulkan_image_bind_request(
     uint8_t output[BVB_VULKAN_IMAGE_BIND_REQUEST_SIZE],
     const struct bvb_vulkan_image_bind_request *request);

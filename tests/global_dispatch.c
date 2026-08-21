@@ -3,6 +3,7 @@
 
 #include <bvb/global_dispatch.h>
 #include <bvb/handle.h>
+#include <bvb/protocol.h>
 #include <bvb/vulkan_discovery.h>
 
 #include <vulkan/vk_layer.h>
@@ -653,6 +654,7 @@ int main(void) {
     PFN_vkCreateImage create_image = NULL;
     PFN_vkDestroyImage destroy_image = NULL;
     PFN_vkGetImageMemoryRequirements get_image_memory_requirements = NULL;
+    PFN_vkGetImageMemoryRequirements2 get_image_memory_requirements_2 = NULL;
     PFN_vkBindImageMemory bind_image_memory = NULL;
     PFN_vkCreateImageView create_image_view = NULL;
     PFN_vkDestroyImageView destroy_image_view = NULL;
@@ -753,6 +755,10 @@ int main(void) {
     CHECK(erased != NULL);
     memcpy(&get_image_memory_requirements, &erased,
            sizeof(get_image_memory_requirements));
+    erased = vkGetDeviceProcAddr(device, "vkGetImageMemoryRequirements2");
+    CHECK(erased != NULL);
+    memcpy(&get_image_memory_requirements_2, &erased,
+           sizeof(get_image_memory_requirements_2));
     erased = vkGetDeviceProcAddr(device, "vkBindImageMemory");
     CHECK(erased != NULL);
     memcpy(&bind_image_memory, &erased, sizeof(bind_image_memory));
@@ -1310,9 +1316,39 @@ int main(void) {
     CHECK(image_requirements.size == 64U * 64U * sizeof(uint32_t));
     CHECK(image_requirements.alignment == 4096U);
     CHECK(image_requirements.memoryTypeBits == 1U);
+
+    VkMemoryDedicatedRequirements dedicated_requirements = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS,
+    };
+    VkMemoryRequirements2 image_requirements_2 = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,
+        .pNext = &dedicated_requirements,
+    };
+    const VkImageMemoryRequirementsInfo2 requirements_info_2 = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_REQUIREMENTS_INFO_2,
+        .image = image,
+    };
+    get_image_memory_requirements_2(
+        device, &requirements_info_2, &image_requirements_2);
+    CHECK(image_requirements_2.memoryRequirements.size == UINT64_C(19623936));
+    CHECK(image_requirements_2.memoryRequirements.alignment == 4096U);
+    CHECK(image_requirements_2.memoryRequirements.memoryTypeBits == 1U);
+    CHECK(dedicated_requirements.prefersDedicatedAllocation == VK_TRUE);
+    CHECK(dedicated_requirements.requiresDedicatedAllocation == VK_TRUE);
+
+    const VkMemoryDedicatedAllocateInfo dedicated_allocate_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
+        .image = image,
+    };
+    const VkMemoryAllocateFlagsInfo allocate_flags_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO,
+        .pNext = &dedicated_allocate_info,
+        .flags = VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_BIT,
+    };
     const VkMemoryAllocateInfo image_memory_allocate_info = {
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-        .allocationSize = image_requirements.size,
+        .pNext = &allocate_flags_info,
+        .allocationSize = image_requirements_2.memoryRequirements.size,
         .memoryTypeIndex = memory_type_index,
     };
     VkDeviceMemory image_memory = VK_NULL_HANDLE;
@@ -1320,6 +1356,54 @@ int main(void) {
               device, &image_memory_allocate_info, NULL, &image_memory) ==
           VK_SUCCESS);
     CHECK(bind_image_memory(device, image, image_memory, 0U) == VK_SUCCESS);
+
+    VkMemoryAllocateInfo oversized_image_allocation =
+        image_memory_allocate_info;
+    oversized_image_allocation.pNext = NULL;
+    oversized_image_allocation.allocationSize =
+        (VkDeviceSize)BVB_VULKAN_MAX_MEMORY_ALLOCATION_SIZE + 1U;
+    VkDeviceMemory rejected_memory = (VkDeviceMemory)(uintptr_t)1U;
+    CHECK(allocate_memory(
+              device, &oversized_image_allocation, NULL, &rejected_memory) ==
+          VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(rejected_memory == VK_NULL_HANDLE);
+
+    VkApplicationInfo unsupported_allocate_pnext = {
+        .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+    };
+    VkMemoryAllocateInfo unsupported_image_allocation =
+        image_memory_allocate_info;
+    unsupported_image_allocation.pNext = &unsupported_allocate_pnext;
+    rejected_memory = (VkDeviceMemory)(uintptr_t)1U;
+    CHECK(allocate_memory(
+              device, &unsupported_image_allocation, NULL,
+              &rejected_memory) == VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(rejected_memory == VK_NULL_HANDLE);
+
+    VkMemoryDedicatedRequirements unsupported_requirements_pnext = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS,
+        .pNext = &unsupported_allocate_pnext,
+        .prefersDedicatedAllocation = VK_TRUE,
+        .requiresDedicatedAllocation = VK_TRUE,
+    };
+    VkMemoryRequirements2 rejected_requirements = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_REQUIREMENTS_2,
+        .pNext = &unsupported_requirements_pnext,
+        .memoryRequirements = {
+            .size = 1U,
+            .alignment = 1U,
+            .memoryTypeBits = 1U,
+        },
+    };
+    get_image_memory_requirements_2(
+        device, &requirements_info_2, &rejected_requirements);
+    CHECK(rejected_requirements.memoryRequirements.size == 0U);
+    CHECK(rejected_requirements.memoryRequirements.alignment == 0U);
+    CHECK(rejected_requirements.memoryRequirements.memoryTypeBits == 0U);
+    CHECK(unsupported_requirements_pnext.prefersDedicatedAllocation ==
+          VK_FALSE);
+    CHECK(unsupported_requirements_pnext.requiresDedicatedAllocation ==
+          VK_FALSE);
     const VkImageViewUsageCreateInfo image_view_usage = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
         .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -1691,6 +1775,7 @@ int main(void) {
            "command_pool=%llu command_buffer=%llu command_submit=0 "
            "pool_reset=0 buffer=%llu memory=%llu memory_type=%u "
            "image=%llu image_view=%llu image_bytes=%llu "
+           "image_allocation_bytes=%llu image_dedicated=1,1 "
            "mapped_bytes=4096 mapped_mismatches=%u "
            "fill_words=1024 mismatches=%u fence=%llu fence_before=1 "
            "fenced_submit=0 fence_after=0 fence_wait=0 fence_reset=0 "
@@ -1712,6 +1797,7 @@ int main(void) {
            memory_type_index, (unsigned long long)image_id,
            (unsigned long long)image_view_id,
            (unsigned long long)image_requirements.size,
+           (unsigned long long)image_requirements_2.memoryRequirements.size,
            mapped_mismatches, mismatched_words,
            (unsigned long long)fence_id);
     return 0;
