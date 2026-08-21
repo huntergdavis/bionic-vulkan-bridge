@@ -205,13 +205,24 @@ int bvb_vulkan_global_context_create(
         (PFN_vkGetInstanceProcAddr)symbol_from_loader(
             context->loader, "vkGetInstanceProcAddr");
     if (context->get_instance_proc_addr == NULL) {
-        set_error(error, error_size, "loader has no vkGetInstanceProcAddr");
+        context->get_instance_proc_addr =
+            (PFN_vkGetInstanceProcAddr)symbol_from_loader(
+                context->loader, "vk_icdGetInstanceProcAddr");
+    }
+    if (context->get_instance_proc_addr == NULL) {
+        set_error(error, error_size,
+                  "loader has no Vulkan instance resolver");
         bvb_vulkan_global_context_destroy(context);
         return -ENOSYS;
     }
     context->get_device_proc_addr =
         (PFN_vkGetDeviceProcAddr)symbol_from_loader(
             context->loader, "vkGetDeviceProcAddr");
+    if (context->get_device_proc_addr == NULL) {
+        context->get_device_proc_addr =
+            (PFN_vkGetDeviceProcAddr)context->get_instance_proc_addr(
+                VK_NULL_HANDLE, "vkGetDeviceProcAddr");
+    }
     if (context->get_device_proc_addr == NULL) {
         set_error(error, error_size, "loader has no vkGetDeviceProcAddr");
         bvb_vulkan_global_context_destroy(context);
