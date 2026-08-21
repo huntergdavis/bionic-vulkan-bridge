@@ -43,6 +43,15 @@ def main() -> int:
     assert '--result-json "$harness_result"' in termux_gate
     assert "--hardware-validation" in termux_gate
     assert '-- grun "$client"' in termux_gate
+    assert 'invalid BVB_COMMAND_STREAM for global gate' in termux_gate
+    assert 'invalid BVB_MAPPED_MEMORY for global gate' in termux_gate
+    assert 'evidence="$project_dir/out/e077-current-global.json"' in termux_gate
+    assert '"gate": "E077-current-global"' in termux_gate
+    assert 'r"animated_frames=(\\d+) animated_reused_image=(\\d+) "' in termux_gate
+    assert 'r"memory_rtts=(\\d+),(\\d+),(\\d+),(\\d+),(\\d+) "' in termux_gate
+    assert 'r"memory_opcodes=(\\d+),(\\d+),(\\d+),(\\d+),(\\d+) "' in termux_gate
+    assert '"shared-upload-only" if shared_mapped_memory else "strict"' in termux_gate
+    assert '(106, 107, 108, 109)' in termux_gate
     assert 'harness_result["authenticated_event_count"] == 6' in termux_gate
     assert 'harness_result["visible_frame_claim"] is False' in termux_gate
     assert 'harness_result["fps_claim"] is False' in termux_gate

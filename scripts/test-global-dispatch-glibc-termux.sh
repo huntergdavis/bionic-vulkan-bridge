@@ -1,6 +1,27 @@
 #!/data/data/com.termux/files/usr/bin/sh
 set -eu
 
+case ${BVB_COMMAND_STREAM:-} in
+    ''|shared) ;;
+    *)
+        printf 'invalid BVB_COMMAND_STREAM for global gate: %s\n' \
+            "$BVB_COMMAND_STREAM" >&2
+        exit 2
+        ;;
+esac
+case ${BVB_MAPPED_MEMORY:-} in
+    ''|shared) ;;
+    *)
+        printf 'invalid BVB_MAPPED_MEMORY for global gate: %s\n' \
+            "$BVB_MAPPED_MEMORY" >&2
+        exit 2
+        ;;
+esac
+if [ -n "${BVB_TEST_ANIMATED_WSI:-}" ]; then
+    printf 'animated WSI belongs to the dedicated E076 runtime gate\n' >&2
+    exit 2
+fi
+
 project_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 build_dir="$project_dir/build"
 out_dir="$project_dir/out/triangle-dispatch-glibc"
@@ -9,7 +30,7 @@ client="$out_dir/bvb-global-dispatch-test-glibc"
 service="$build_dir/bvb-bridge-service"
 harness="$project_dir/scripts/run-global-dispatch-activity-harness.py"
 policy_json="$out_dir/generated/bvb_dxvk_dispatch_policy.json"
-evidence="$project_dir/out/e071-current-global.json"
+evidence="$project_dir/out/e077-current-global.json"
 vulkan_headers="$build_dir/_deps/vulkanheaders-src/include"
 runtime_parent=${TMPDIR:-$PREFIX/tmp}
 service_loader=${BVB_VULKAN_SERVICE_LOADER:-$HOME/steam-arm64/bvb/driver/libvulkan_freedreno.so}
@@ -50,11 +71,11 @@ if ! readelf -l "$service" | grep -Fq "$bionic_interpreter"; then
     exit 3
 fi
 
-client_stdout="$out_dir/e071-current-global-client.stdout"
-client_stderr="$out_dir/e071-current-global-client.stderr"
-service_stdout="$out_dir/e071-current-global-service.stdout"
-service_stderr="$out_dir/e071-current-global-service.stderr"
-harness_result="$out_dir/e071-current-global-harness.json"
+client_stdout="$out_dir/e077-current-global-client.stdout"
+client_stderr="$out_dir/e077-current-global-client.stderr"
+service_stdout="$out_dir/e077-current-global-service.stdout"
+service_stderr="$out_dir/e077-current-global-service.stderr"
+harness_result="$out_dir/e077-current-global-harness.json"
 
 python3 "$harness" \
     --service "$service" \
@@ -96,6 +117,7 @@ python3 - "$policy_json" "$library" "$client" "$service" \
     "$source_commit_provenance" <<'PY'
 import hashlib
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -148,12 +170,19 @@ match = re.fullmatch(
     r"memory_heaps=(\d+) device_extensions=(\d+) "
     r"sampler_anisotropy=(\d+) logical_device=(\d+) queue=(\d+) "
     r"empty_submit=(-?\d+) queue_wait=(-?\d+) device_wait=(-?\d+) "
-    r"command_pool=(\d+) command_buffer=(\d+) command_submit=(-?\d+) "
+    r"animated_frames=(\d+) animated_reused_image=(\d+) "
+    r"animated_recording_rtts=(\d+) command_pool=(\d+) "
+    r"command_buffer=(\d+) recording_rtts=(\d+) "
+    r"command_submit=(-?\d+) "
     r"pool_reset=(-?\d+) buffer=(\d+) memory=(\d+) memory_type=(\d+) "
     r"buffer_requirements2=(\d+),(\d+),(\d+) buffer_address=(\d+) "
     r"image=(\d+) image_view=(\d+) image_bytes=(\d+) "
     r"image_allocation_bytes=(\d+) image_dedicated=(\d+),(\d+) "
     r"mapped_bytes=(\d+) mapped_mismatches=(\d+) "
+    r"memory_rtts=(\d+),(\d+),(\d+),(\d+),(\d+) "
+    r"memory_opcodes=(\d+),(\d+),(\d+),(\d+),(\d+) "
+    r"ineligible_memory_rtts=(\d+),(\d+) "
+    r"ineligible_memory_opcodes=(\d+),(\d+) "
     r"fill_words=(\d+) mismatches=(\d+) fence=(\d+) fence_before=(-?\d+) "
     r"fenced_submit=(-?\d+) fence_after=(-?\d+) fence_wait=(-?\d+) "
     r"fence_reset=(-?\d+) fence_after_reset=(-?\d+)",
@@ -184,8 +213,12 @@ assert match is not None, client_stdout
     empty_submit_text,
     queue_wait_text,
     device_wait_text,
+    animated_frames_text,
+    animated_reused_image_text,
+    animated_recording_rtts_text,
     command_pool_text,
     command_buffer_text,
+    recording_rtts_text,
     command_submit_text,
     pool_reset_text,
     buffer_text,
@@ -203,6 +236,20 @@ assert match is not None, client_stdout
     image_requires_dedicated_text,
     mapped_bytes_text,
     mapped_mismatches_text,
+    map_rtts_text,
+    flush_rtts_text,
+    invalidate_rtts_text,
+    unmap_rtts_text,
+    submit_rtts_text,
+    map_opcode_text,
+    flush_opcode_text,
+    invalidate_opcode_text,
+    unmap_opcode_text,
+    submit_opcode_text,
+    ineligible_map_rtts_text,
+    ineligible_unmap_rtts_text,
+    ineligible_map_opcode_text,
+    ineligible_unmap_opcode_text,
     fill_words_text,
     mismatches_text,
     fence_text,
@@ -235,8 +282,12 @@ assert match is not None, client_stdout
     empty_submit_result,
     queue_wait_result,
     device_wait_result,
+    animated_frames,
+    animated_reused_image,
+    animated_recording_rtts,
     command_pool,
     command_buffer,
+    recording_rtts,
     command_submit_result,
     pool_reset_result,
     buffer,
@@ -254,6 +305,20 @@ assert match is not None, client_stdout
     image_requires_dedicated,
     mapped_bytes,
     mapped_mismatches,
+    map_rtts,
+    flush_rtts,
+    invalidate_rtts,
+    unmap_rtts,
+    submit_rtts,
+    map_opcode,
+    flush_opcode,
+    invalidate_opcode,
+    unmap_opcode,
+    submit_opcode,
+    ineligible_map_rtts,
+    ineligible_unmap_rtts,
+    ineligible_map_opcode,
+    ineligible_unmap_opcode,
     fill_words,
     mismatches,
     fence,
@@ -285,8 +350,12 @@ assert match is not None, client_stdout
     empty_submit_text,
     queue_wait_text,
     device_wait_text,
+    animated_frames_text,
+    animated_reused_image_text,
+    animated_recording_rtts_text,
     command_pool_text,
     command_buffer_text,
+    recording_rtts_text,
     command_submit_text,
     pool_reset_text,
     buffer_text,
@@ -304,6 +373,20 @@ assert match is not None, client_stdout
     image_requires_dedicated_text,
     mapped_bytes_text,
     mapped_mismatches_text,
+    map_rtts_text,
+    flush_rtts_text,
+    invalidate_rtts_text,
+    unmap_rtts_text,
+    submit_rtts_text,
+    map_opcode_text,
+    flush_opcode_text,
+    invalidate_opcode_text,
+    unmap_opcode_text,
+    submit_opcode_text,
+    ineligible_map_rtts_text,
+    ineligible_unmap_rtts_text,
+    ineligible_map_opcode_text,
+    ineligible_unmap_opcode_text,
     fill_words_text,
     mismatches_text,
     fence_text,
@@ -336,6 +419,12 @@ assert logical_queue >> 56 == 4
 assert empty_submit_result == 0
 assert queue_wait_result == 0
 assert device_wait_result == 0
+assert animated_frames == 0
+assert animated_reused_image == 0
+assert animated_recording_rtts == 0
+shared_command_stream = os.environ.get("BVB_COMMAND_STREAM") == "shared"
+shared_mapped_memory = os.environ.get("BVB_MAPPED_MEMORY") == "shared"
+assert recording_rtts == (0 if shared_command_stream else 5)
 assert command_pool >> 56 == 10
 assert command_buffer >> 56 == 11
 assert command_submit_result == 0
@@ -358,6 +447,19 @@ assert image_prefers_dedicated in (0, 1)
 assert image_requires_dedicated in (0, 1)
 assert mapped_bytes == 4096
 assert mapped_mismatches == 0
+assert (map_rtts, flush_rtts, invalidate_rtts, unmap_rtts, submit_rtts) == (
+    (1, 1, 1, 1, 1) if shared_mapped_memory else (2, 2, 2, 2, 1)
+)
+assert (map_opcode, flush_opcode, invalidate_opcode, unmap_opcode) == (
+    (106, 107, 108, 109) if shared_mapped_memory else (49, 48, 49, 48)
+)
+assert submit_opcode == (105 if shared_command_stream else 47)
+assert (ineligible_map_rtts, ineligible_unmap_rtts) == (
+    (2, 2) if shared_mapped_memory else (0, 0)
+)
+assert (ineligible_map_opcode, ineligible_unmap_opcode) == (
+    (49, 48) if shared_mapped_memory else (0, 0)
+)
 assert fill_words == 1024
 assert mismatches == 0
 assert fence >> 56 == 18
@@ -412,7 +514,7 @@ assert expected_exports <= symbol_names
 
 document = {
     "schema_version": 1,
-    "gate": "E071-current-global",
+    "gate": "E077-current-global",
     "result": "pass",
     "source_commit": source_commit,
     "source_commit_provenance": source_commit_provenance,
@@ -471,12 +573,22 @@ document = {
         "unsupported_submit_shape_rejected_client_side": True,
         "queue_wait_idle_result": queue_wait_result,
         "device_wait_idle_result": device_wait_result,
+        "command_stream_mode": (
+            "shared" if shared_command_stream else "strict"
+        ),
+        "mapped_memory_mode": (
+            "shared-upload-only" if shared_mapped_memory else "strict"
+        ),
+        "animated_frame_count": animated_frames,
+        "animated_reused_image": bool(animated_reused_image),
+        "animated_recording_round_trips": animated_recording_rtts,
         "command_pool_id": command_pool,
         "command_pool_type": 10,
         "command_pool_serial": command_pool & ((1 << 56) - 1),
         "command_buffer_id": command_buffer,
         "command_buffer_type": 11,
         "command_buffer_serial": command_buffer & ((1 << 56) - 1),
+        "command_recording_round_trips": recording_rtts,
         "command_submit_result": command_submit_result,
         "command_pool_reset_result": pool_reset_result,
         "command_buffer_freed_explicitly": True,
@@ -503,6 +615,26 @@ document = {
         "image_requires_dedicated_allocation": bool(image_requires_dedicated),
         "mapped_bytes": mapped_bytes,
         "mapped_mismatches": mapped_mismatches,
+        "mapped_memory_round_trips": {
+            "map": map_rtts,
+            "flush": flush_rtts,
+            "invalidate": invalidate_rtts,
+            "unmap": unmap_rtts,
+            "submit": submit_rtts,
+        },
+        "mapped_memory_opcodes": {
+            "map": map_opcode,
+            "flush": flush_opcode,
+            "invalidate": invalidate_opcode,
+            "unmap": unmap_opcode,
+            "submit": submit_opcode,
+        },
+        "ineligible_mapping_fallback": {
+            "map_round_trips": ineligible_map_rtts,
+            "unmap_round_trips": ineligible_unmap_rtts,
+            "map_opcode": ineligible_map_opcode,
+            "unmap_opcode": ineligible_unmap_opcode,
+        },
         "fill_word": "0xa5c3f00d",
         "fill_word_count": fill_words,
         "mismatched_words": mismatches,
@@ -550,7 +682,7 @@ document = {
 assert document["physical_device_discovery"]["service_ready"] is True
 evidence_path.write_text(json.dumps(document, indent=2) + "\n")
 print(json.dumps(document, indent=2))
-print("e071_current_global=PASS")
+print("e077_current_global=PASS")
 PY
 
 printf 'evidence=%s\n' "$evidence"
