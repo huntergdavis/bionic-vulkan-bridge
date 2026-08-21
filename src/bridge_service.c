@@ -2826,6 +2826,12 @@ static int answer_vulkan_swapchain_acquire(
     if (result == 0)
         result = bvb_vulkan_global_context_acquire_swapchain_image(
             context, &decoded, &acquired, diagnostic, sizeof(diagnostic));
+    if (result == 0 && acquired.vulkan_result != VK_SUCCESS &&
+        acquired.vulkan_result != VK_NOT_READY) {
+        fprintf(stderr,
+                "bvb: swapchain acquire returned vulkan_result=%d: %s\n",
+                (int)acquired.vulkan_result, diagnostic);
+    }
     if (result == 0)
         result = bvb_protocol_encode_vulkan_swapchain_acquire_response(
             response.payload, &acquired);

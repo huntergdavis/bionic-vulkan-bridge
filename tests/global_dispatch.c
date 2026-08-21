@@ -1207,6 +1207,11 @@ int main(void) {
                 if (acquire_result == VK_NOT_READY)
                     CHECK(bvb_sleep_milliseconds(1U));
             }
+            if (acquire_result != VK_SUCCESS) {
+                fprintf(stderr,
+                        "E076_ACQUIRE_FAILED frame=%u result=%d\n",
+                        frame + 1U, (int)acquire_result);
+            }
             CHECK(acquire_result == VK_SUCCESS);
             CHECK(virtual_image_index < virtual_image_count);
             animated_image_indices[frame] = virtual_image_index;
