@@ -448,13 +448,13 @@ def parse_arguments() -> argparse.Namespace:
         "--expected-service-sha256",
         help=(
             "required with --animated-rgbw; exact SHA-256 of the deployed "
-            "E076 bridge service"
+            "E076-or-newer bridge service selected for this isolated run"
         ),
     )
     parser.add_argument(
         "--expected-client-sha256",
         help=(
-            "required with --animated-rgbw; exact SHA-256 of the E076 "
+            "required with --animated-rgbw; exact SHA-256 of the E076-or-newer "
             "global-dispatch producer client"
         ),
     )
@@ -595,7 +595,7 @@ def run(arguments: argparse.Namespace) -> int:
         service = require_artifact_sha256(
             pathlib.Path(arguments.service),
             arguments.expected_service_sha256 or EXPECTED_BRIDGE_SERVICE_SHA256,
-            "installed bridge service", executable=True,
+            "selected bridge service", executable=True,
         )
         installed_bridge_client = require_artifact_sha256(
             pathlib.Path(arguments.bridge_client), EXPECTED_BRIDGE_CLIENT_SHA256,
@@ -618,7 +618,7 @@ def run(arguments: argparse.Namespace) -> int:
         if arguments.animated_rgbw:
             client = require_artifact_sha256(
                 client, arguments.expected_client_sha256,
-                "E076 global-dispatch producer client", executable=True,
+                "E076-or-newer global-dispatch producer client", executable=True,
             )
         result["artifacts"] = {
             "service": artifact(service),

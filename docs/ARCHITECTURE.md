@@ -174,8 +174,9 @@ releases slots in the observed order 0,1,2,0, proving three-image reuse and
 zero command-recording RTT. This proves native producer replay, not Activity
 import, tablet-visible pixels, Tomb Raider's first frame, or FPS.
 The bounded `test-rich-frame-animation-v40-termux.sh` handoff reuses the
-installed byte-identical v40 Activity without an APK change. It requires the
-exact deployed E076 service and producer-client hashes, correlates each producer
+installed byte-identical v40 Activity without an APK change. Its default paths
+and immutable hashes select the isolated E077 candidate service and producer
+client, so the gate does not replace the installed bridge. It correlates each producer
 `E076_FRAME_EXPECTED` RGBW sequence/slot with the Activity's
 `E057_FRAME_PRESENTED` generation/sequence/slot, and still leaves visual
 confirmation and screenshot status explicitly pending.

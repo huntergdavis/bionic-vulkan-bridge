@@ -3206,3 +3206,13 @@ frame, Tomb Raider, benchmark, or FPS improvement is claimed.
 
 The exact tablet-result `deja` query returned no indexed implementation. The
 run reused the E034/E014/E042/E060/E075/E075a contracts already cited above.
+
+The next v40 animation gate was then reduced to one fail-closed command. From
+the exact E077 tablet candidate, `scripts/test-rich-frame-animation-v40-termux.sh`
+selects the candidate service SHA-256 `214e8b11...9a8`, producer-client SHA-256
+`50a2589e...024`, and staged v40 APK path by default, while still accepting
+explicit environment/path overrides that must satisfy those immutable hashes.
+It runs the candidate in isolation and therefore does not replace installed
+E073. The Activity update remains a user-confirmed Android action, and the
+gate continues to stop at correlated RGBW metadata until a human confirms the
+changing colors and captures a screenshot.
