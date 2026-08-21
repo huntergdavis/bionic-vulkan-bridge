@@ -89,6 +89,7 @@ struct bvb_vulkan_global_context {
     uint64_t next_descriptor_pool_serial;
     uint64_t next_descriptor_set_serial;
     uint64_t next_sampler_serial;
+    uint64_t next_pipeline_layout_serial;
     struct bvb_device_metadata device_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_memory_metadata memory_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_swapchain_metadata
@@ -212,6 +213,7 @@ BVB_DEFINE_HANDLE_FROM_BITS(descriptor_set_layout_from_bits,
 BVB_DEFINE_HANDLE_FROM_BITS(descriptor_pool_from_bits, VkDescriptorPool)
 BVB_DEFINE_HANDLE_FROM_BITS(descriptor_set_from_bits, VkDescriptorSet)
 BVB_DEFINE_HANDLE_FROM_BITS(sampler_from_bits, VkSampler)
+BVB_DEFINE_HANDLE_FROM_BITS(pipeline_layout_from_bits, VkPipelineLayout)
 
 #undef BVB_DEFINE_HANDLE_FROM_BITS
 
@@ -377,6 +379,7 @@ int bvb_vulkan_global_context_create(
     context->next_descriptor_pool_serial = 1U;
     context->next_descriptor_set_serial = 1U;
     context->next_sampler_serial = 1U;
+    context->next_pipeline_layout_serial = 1U;
     *output = context;
     return 0;
 }
@@ -1591,6 +1594,15 @@ int bvb_vulkan_global_context_destroy_device(
         if (swapchain->swapchain_id != 0U &&
             swapchain->device_id == device_id) {
             result = destroy_swapchain_metadata(context, swapchain);
+            if (result != 0) return result;
+        }
+    }
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_PIPELINE_LAYOUT &&
+            entry->parent_id == device_id) {
+            result = bvb_vulkan_global_context_destroy_pipeline_layout(
+                context, entry->wire_id, NULL, 0U);
             if (result != 0) return result;
         }
     }
@@ -2819,6 +2831,146 @@ int bvb_vulkan_global_context_update_descriptors(
     if (update == NULL) return -ENOSYS;
     update(device, request->write_count, writes, 0U, NULL);
     return 0;
+}
+
+int bvb_vulkan_global_context_create_pipeline_layout(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_pipeline_layout_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL) return -EINVAL;
+    *response = (struct bvb_vulkan_object_create_response){0};
+    const VkPipelineLayoutCreateFlags allowed_flags =
+        VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT;
+    const VkShaderStageFlags allowed_stages =
+        VK_SHADER_STAGE_VERTEX_BIT |
+        VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
+        VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT |
+        VK_SHADER_STAGE_GEOMETRY_BIT |
+        VK_SHADER_STAGE_FRAGMENT_BIT |
+        VK_SHADER_STAGE_COMPUTE_BIT;
+    if ((request->flags & ~allowed_flags) != 0U ||
+        request->set_layout_count > BVB_VULKAN_MAX_PIPELINE_SET_LAYOUTS ||
+        request->push_constant_range_count >
+            BVB_VULKAN_MAX_PIPELINE_PUSH_CONSTANT_RANGES) {
+        response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    uint64_t device_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE, NULL,
+        &device_bits);
+    if (result != 0) {
+        set_error(error, error_size,
+                  "pipeline layout device lookup failed: %d", result);
+        return result;
+    }
+    VkDescriptorSetLayout
+        set_layouts[BVB_VULKAN_MAX_PIPELINE_SET_LAYOUTS] = {0};
+    for (uint32_t index = 0U; index < request->set_layout_count; ++index) {
+        const uint64_t layout_id = request->set_layout_ids[index];
+        if (layout_id == 0U) {
+            if ((request->flags &
+                 VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT) == 0U) {
+                response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+                return 0;
+            }
+            continue;
+        }
+        uint64_t layout_device_id = 0U, layout_bits = 0U;
+        result = bvb_handle_table_lookup(
+            &context->objects, layout_id, BVB_OBJECT_DESCRIPTOR_SET_LAYOUT,
+            &layout_device_id, &layout_bits);
+        if (result != 0 || layout_device_id != request->device_id) {
+            set_error(error, error_size,
+                      "pipeline layout set[%u] lineage failed: %d", index,
+                      result);
+            return result != 0 ? result : -EPROTO;
+        }
+        set_layouts[index] = descriptor_set_layout_from_bits(layout_bits);
+    }
+    VkPushConstantRange
+        ranges[BVB_VULKAN_MAX_PIPELINE_PUSH_CONSTANT_RANGES] = {0};
+    VkShaderStageFlags used_stages = 0U;
+    for (uint32_t index = 0U;
+         index < request->push_constant_range_count; ++index) {
+        const struct bvb_vulkan_pipeline_push_constant_range *wire =
+            &request->push_constant_ranges[index];
+        if (wire->stage_flags == 0U ||
+            (wire->stage_flags & ~allowed_stages) != 0U ||
+            (wire->stage_flags & used_stages) != 0U || wire->size == 0U ||
+            (wire->offset & 3U) != 0U || (wire->size & 3U) != 0U ||
+            wire->offset > 256U || wire->size > 256U - wire->offset) {
+            response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+            return 0;
+        }
+        ranges[index] = (VkPushConstantRange){
+            .stageFlags = wire->stage_flags,
+            .offset = wire->offset,
+            .size = wire->size,
+        };
+        used_stages |= wire->stage_flags;
+    }
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkCreatePipelineLayout create_pipeline_layout =
+        (PFN_vkCreatePipelineLayout)context->get_device_proc_addr(
+            device, "vkCreatePipelineLayout");
+    PFN_vkDestroyPipelineLayout destroy_pipeline_layout =
+        (PFN_vkDestroyPipelineLayout)context->get_device_proc_addr(
+            device, "vkDestroyPipelineLayout");
+    if (create_pipeline_layout == NULL || destroy_pipeline_layout == NULL) {
+        return -ENOSYS;
+    }
+    const VkPipelineLayoutCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .flags = request->flags,
+        .setLayoutCount = request->set_layout_count,
+        .pSetLayouts = request->set_layout_count == 0U ? NULL : set_layouts,
+        .pushConstantRangeCount = request->push_constant_range_count,
+        .pPushConstantRanges = request->push_constant_range_count == 0U
+            ? NULL : ranges,
+    };
+    VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+    response->vulkan_result = create_pipeline_layout(
+        device, &create_info, NULL, &pipeline_layout);
+    if (response->vulkan_result != VK_SUCCESS) return 0;
+    const uint64_t wire_id = bvb_handle_id(
+        BVB_OBJECT_PIPELINE_LAYOUT, context->next_pipeline_layout_serial++);
+    result = bvb_handle_table_insert(
+        &context->objects, wire_id, request->device_id,
+        handle_bits(&pipeline_layout, sizeof(pipeline_layout)));
+    if (result != 0) {
+        destroy_pipeline_layout(device, pipeline_layout, NULL);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    response->object_id = wire_id;
+    return 0;
+}
+
+int bvb_vulkan_global_context_destroy_pipeline_layout(
+    struct bvb_vulkan_global_context *context, uint64_t pipeline_layout_id,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    uint64_t device_id = 0U, pipeline_layout_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, pipeline_layout_id, BVB_OBJECT_PIPELINE_LAYOUT, &device_id,
+        &device, &pipeline_layout_bits);
+    if (result != 0) return result;
+    PFN_vkDestroyPipelineLayout destroy_pipeline_layout =
+        (PFN_vkDestroyPipelineLayout)context->get_device_proc_addr(
+            device, "vkDestroyPipelineLayout");
+    if (destroy_pipeline_layout == NULL) return -ENOSYS;
+    result = bvb_handle_table_remove(
+        &context->objects, pipeline_layout_id, BVB_OBJECT_PIPELINE_LAYOUT,
+        NULL);
+    if (result == 0) {
+        destroy_pipeline_layout(
+            device, pipeline_layout_from_bits(pipeline_layout_bits), NULL);
+    }
+    return result;
 }
 
 int bvb_vulkan_global_context_create_buffer(

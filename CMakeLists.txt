@@ -176,7 +176,7 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
 endif()
 
 add_library(bvb-wire STATIC src/lifecycle.c src/protocol.c
-  src/vulkan_descriptor_wire.c src/transport.c)
+  src/vulkan_descriptor_wire.c src/vulkan_pipeline_wire.c src/transport.c)
 set_target_properties(bvb-wire PROPERTIES C_VISIBILITY_PRESET hidden)
 target_include_directories(
   bvb-wire

@@ -1,5 +1,6 @@
 #include <bvb/protocol.h>
 #include <bvb/vulkan_descriptor_wire.h>
+#include <bvb/vulkan_pipeline_wire.h>
 
 #include <errno.h>
 #include <stdint.h>
@@ -1517,6 +1518,48 @@ int main(void) {
     CHECK(bvb_protocol_decode_vulkan_descriptor_update_request(
               descriptor_wire, descriptor_wire_length,
               &update_decoded) == -EPROTO);
+
+    const struct bvb_vulkan_pipeline_layout_create_request
+        pipeline_layout_request = {
+            .device_id = UINT64_C(0x0300000000000001),
+            .flags = 2U,
+            .set_layout_count = 3U,
+            .push_constant_range_count = 1U,
+            .set_layout_ids = {UINT64_C(0x1400000000000001),
+                               UINT64_C(0x1400000000000002), 0U},
+            .push_constant_ranges = {{
+                .stage_flags = 25U,
+                .offset = 0U,
+                .size = 160U,
+            }},
+        };
+    uint8_t pipeline_layout_wire[BVB_PROTOCOL_MAX_PAYLOAD];
+    uint32_t pipeline_layout_wire_length = 0U;
+    CHECK(bvb_protocol_encode_vulkan_pipeline_layout_create_request(
+              pipeline_layout_wire, &pipeline_layout_request,
+              &pipeline_layout_wire_length) == 0);
+    CHECK(pipeline_layout_wire_length ==
+          BVB_VULKAN_PIPELINE_LAYOUT_CREATE_PREFIX_SIZE + 3U * 8U +
+              BVB_VULKAN_PIPELINE_PUSH_CONSTANT_RANGE_SIZE);
+    struct bvb_vulkan_pipeline_layout_create_request
+        pipeline_layout_decoded;
+    CHECK(bvb_protocol_decode_vulkan_pipeline_layout_create_request(
+              pipeline_layout_wire, pipeline_layout_wire_length,
+              &pipeline_layout_decoded) == 0);
+    CHECK(pipeline_layout_decoded.set_layout_ids[2] == 0U);
+    CHECK(pipeline_layout_decoded.push_constant_ranges[0].stage_flags == 25U);
+    CHECK(pipeline_layout_decoded.push_constant_ranges[0].size == 160U);
+    pipeline_layout_wire[20U] = 1U;
+    CHECK(bvb_protocol_decode_vulkan_pipeline_layout_create_request(
+              pipeline_layout_wire, pipeline_layout_wire_length,
+              &pipeline_layout_decoded) == -EPROTO);
+    pipeline_layout_wire[20U] = 0U;
+    bvb_wire_put_u64(pipeline_layout_wire +
+                         BVB_VULKAN_PIPELINE_LAYOUT_CREATE_PREFIX_SIZE,
+                     UINT64_C(0x1700000000000001));
+    CHECK(bvb_protocol_decode_vulkan_pipeline_layout_create_request(
+              pipeline_layout_wire, pipeline_layout_wire_length,
+              &pipeline_layout_decoded) == -EPROTO);
 
     puts("protocol: PASS");
     return EXIT_SUCCESS;

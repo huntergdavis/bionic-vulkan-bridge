@@ -656,6 +656,8 @@ int main(void) {
     PFN_vkCreateSampler create_sampler = NULL;
     PFN_vkDestroySampler destroy_sampler = NULL;
     PFN_vkUpdateDescriptorSets update_descriptor_sets = NULL;
+    PFN_vkCreatePipelineLayout create_pipeline_layout = NULL;
+    PFN_vkDestroyPipelineLayout destroy_pipeline_layout = NULL;
     erased = vkGetDeviceProcAddr(device, "vkGetDeviceQueue");
     CHECK(erased != NULL);
     memcpy(&get_device_queue, &erased, sizeof(get_device_queue));
@@ -783,6 +785,8 @@ int main(void) {
     RESOLVE_DESCRIPTOR(vkCreateSampler, create_sampler);
     RESOLVE_DESCRIPTOR(vkDestroySampler, destroy_sampler);
     RESOLVE_DESCRIPTOR(vkUpdateDescriptorSets, update_descriptor_sets);
+    RESOLVE_DESCRIPTOR(vkCreatePipelineLayout, create_pipeline_layout);
+    RESOLVE_DESCRIPTOR(vkDestroyPipelineLayout, destroy_pipeline_layout);
 #undef RESOLVE_DESCRIPTOR
     CHECK(vkGetDeviceProcAddr(device, "vkCmdDraw") != NULL);
     PFN_vkCreateSwapchainKHR create_swapchain = NULL;
@@ -981,6 +985,62 @@ int main(void) {
         .pImageInfo = &sampler_descriptor,
     };
     update_descriptor_sets(device, 1U, &sampler_write, 0U, NULL);
+
+    const VkDescriptorSetLayoutCreateInfo empty_layout_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+    };
+    VkDescriptorSetLayout empty_layout = VK_NULL_HANDLE;
+    CHECK(create_descriptor_set_layout(
+              device, &empty_layout_info, NULL, &empty_layout) == VK_SUCCESS);
+    uint64_t empty_layout_id = 0U;
+    memcpy(&empty_layout_id, &empty_layout, sizeof(empty_layout));
+    CHECK(bvb_handle_type(empty_layout_id) ==
+          BVB_OBJECT_DESCRIPTOR_SET_LAYOUT);
+
+    const VkDescriptorSetLayout pipeline_set_layouts[3] = {
+        descriptor_layout, empty_layout, VK_NULL_HANDLE,
+    };
+    const VkPushConstantRange pipeline_push_range = {
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT |
+            VK_SHADER_STAGE_GEOMETRY_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+        .offset = 0U,
+        .size = 160U,
+    };
+    VkPipelineLayoutCreateInfo pipeline_layout_info = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .flags = VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT,
+        .setLayoutCount = 3U,
+        .pSetLayouts = pipeline_set_layouts,
+        .pushConstantRangeCount = 1U,
+        .pPushConstantRanges = &pipeline_push_range,
+    };
+    VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+    CHECK(create_pipeline_layout(
+              device, &pipeline_layout_info, &unsupported_allocator,
+              &pipeline_layout) == VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(pipeline_layout == VK_NULL_HANDLE);
+    const uint32_t unsupported_pipeline_chain = UINT32_C(0x7ffffffd);
+    pipeline_layout_info.pNext = &unsupported_pipeline_chain;
+    CHECK(create_pipeline_layout(
+              device, &pipeline_layout_info, NULL,
+              &pipeline_layout) == VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(pipeline_layout == VK_NULL_HANDLE);
+    pipeline_layout_info.pNext = NULL;
+    pipeline_layout_info.flags = 0U;
+    CHECK(create_pipeline_layout(
+              device, &pipeline_layout_info, NULL,
+              &pipeline_layout) == VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(pipeline_layout == VK_NULL_HANDLE);
+    pipeline_layout_info.flags =
+        VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT;
+    CHECK(create_pipeline_layout(
+              device, &pipeline_layout_info, NULL,
+              &pipeline_layout) == VK_SUCCESS);
+    uint64_t pipeline_layout_id = 0U;
+    memcpy(&pipeline_layout_id, &pipeline_layout, sizeof(pipeline_layout));
+    CHECK(bvb_handle_type(pipeline_layout_id) == BVB_OBJECT_PIPELINE_LAYOUT);
+    destroy_pipeline_layout(device, pipeline_layout, NULL);
+    destroy_descriptor_set_layout(device, empty_layout, NULL);
     destroy_sampler(device, sampler, NULL);
     destroy_descriptor_pool(device, descriptor_pool, NULL);
     destroy_descriptor_set_layout(device, descriptor_layout, NULL);

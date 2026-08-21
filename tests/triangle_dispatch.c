@@ -153,7 +153,10 @@ int main(void) {
                                "vkDestroyDescriptorSetLayout") == 0 ||
                         strcmp(entry->name, "vkDestroySampler") == 0 ||
                         strcmp(entry->name,
-                               "vkUpdateDescriptorSets") == 0)) {
+                               "vkUpdateDescriptorSets") == 0 ||
+                        strcmp(entry->name, "vkCreatePipelineLayout") == 0 ||
+                        strcmp(entry->name,
+                               "vkDestroyPipelineLayout") == 0)) {
                 CHECK(resolved == NULL);
             } else {
                 CHECK(resolved != NULL);
@@ -173,8 +176,8 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 72U);
-    CHECK(required_count == 368U);
+    CHECK(executable_count == 74U);
+    CHECK(required_count == 366U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");

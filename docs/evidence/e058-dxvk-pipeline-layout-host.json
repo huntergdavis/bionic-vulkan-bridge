@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "gate": "E058",
+  "result": "pass_host_contract",
+  "objective": "forward the exact eager DXVK pipeline-layout create and destroy boundary through the glibc-to-Bionic bridge with native ownership and no pointer transport",
+  "source": {
+    "dxvk_commit": "a6764047e587178283fcde4073ae6e1410af594f",
+    "constructor": "DxvkPipelineManager::DxvkPipelineManager",
+    "observed_call": "createNullFsPipelineLibrary()->compilePipeline()",
+    "source_paths": [
+      "src/dxvk/dxvk_pipemanager.cpp",
+      "src/dxvk/dxvk_shader.cpp",
+      "src/dxvk/dxvk_pipelayout.cpp",
+      "src/dxvk/dxvk_limits.h"
+    ]
+  },
+  "wire": {
+    "opcodes": {
+      "72": "pipeline-layout create",
+      "73": "pipeline-layout destroy"
+    },
+    "representation": "canonical little-endian flags, counts, push ranges, typed 64-bit object IDs, and an explicit zero descriptor-layout sentinel",
+    "maximum_set_layouts": 8,
+    "maximum_push_constant_ranges": 4,
+    "maximum_push_constant_bytes": 256,
+    "pointers_crossed": false,
+    "native_reconstruction": "the Bionic service resolves same-device descriptor-set-layout IDs, preserves null independent-set slots, builds local VkDescriptorSetLayout and VkPushConstantRange arrays, and calls native vkCreatePipelineLayout with a local VkPipelineLayoutCreateInfo"
+  },
+  "exact_eager_dxvk_shape": {
+    "flags": "VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT",
+    "set_layouts": [
+      "native sampler-heap descriptor-set layout",
+      "native empty fragment descriptor-set layout",
+      "VK_NULL_HANDLE vertex-set slot"
+    ],
+    "push_constant_range": {
+      "stage_flags": [
+        "VK_SHADER_STAGE_VERTEX_BIT",
+        "VK_SHADER_STAGE_GEOMETRY_BIT",
+        "VK_SHADER_STAGE_FRAGMENT_BIT"
+      ],
+      "offset": 0,
+      "size": 160,
+      "derivation": "64 shared bytes plus 32 bytes for each graphics stage truthfully exposed by the fake Adreno profile"
+    }
+  },
+  "fail_closed": [
+    "non-null allocation callbacks",
+    "unknown or unsupported pNext records",
+    "unsupported pipeline-layout flags or shader-stage bits",
+    "null set-layout slots without independent-sets semantics",
+    "wrong-type, missing, or cross-device descriptor-set-layout IDs",
+    "overlapping push-constant stage masks, unaligned ranges, overflow, or ranges beyond 256 bytes",
+    "over-limit counts, length mismatches, and nonzero reserved wire bytes"
+  ],
+  "ownership": {
+    "returned_handle": "typed BVB_OBJECT_PIPELINE_LAYOUT ID backed by a real native VkPipelineLayout",
+    "explicit_destroy": "vkDestroyPipelineLayout removes the typed object and forwards the native handle",
+    "device_teardown": "remaining pipeline layouts are destroyed before descriptor pools, samplers, and descriptor-set layouts"
+  },
+  "dispatch_policy": {
+    "manifest": "the immutable E011 DXVK manifest records both commands at device scope with seven lookups each",
+    "promotion": "vkCreatePipelineLayout and vkDestroyPipelineLayout move from required_unimplemented to executable",
+    "counts": {
+      "executable": 74,
+      "required_unimplemented": 366,
+      "probed_null": 302
+    }
+  },
+  "verification": {
+    "host_contracts": "30/30 passed",
+    "canonical_codec": "round trips the exact variable-length request and rejects reserved-byte and wrong-handle-type corruption",
+    "cross_process_fake_driver": "observed the exact three-slot layout topology, flags, graphics-stage mask, 160-byte range, native non-dummy handle, and destruction order",
+    "hardware_or_game_claim": false
+  },
+  "first_remaining_eager_null_entry": {
+    "command": "vkCreateGraphicsPipelines",
+    "derivation": "the null fragment library compiles immediately after its independent pipeline layout; DxvkShaderPipelineLibrary::compileFragmentShaderPipeline submits one graphics-pipeline-library create",
+    "source_location": "src/dxvk/dxvk_shader.cpp:535"
+  },
+  "reuse": "The required deja search found no prior pipeline-layout implementation. Reused E045's loader-private/local-pointer rule and E046/E056's canonical fixed-width typed-object ownership and native reconstruction patterns.",
+  "scope": "Host transport and native fake-driver proof only; no Android deployment, Turnip pipeline creation, DXVK adapter acceptance, Tomb Raider frame, or FPS claim"
+}

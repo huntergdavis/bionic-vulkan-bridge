@@ -6,6 +6,7 @@
 #include <bvb/transport.h>
 #include <bvb/vulkan_descriptor_wire.h>
 #include <bvb/vulkan_discovery.h>
+#include <bvb/vulkan_pipeline_wire.h>
 
 #include <vulkan/vk_icd.h>
 #include <vulkan/vk_layer.h>
@@ -3821,6 +3822,116 @@ static void VKAPI_CALL bvb_bridge_vkUpdateDescriptorSets(
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
 }
 
+static VkResult VKAPI_CALL bvb_bridge_vkCreatePipelineLayout(
+    VkDevice device, const VkPipelineLayoutCreateInfo *create_info,
+    const VkAllocationCallbacks *allocator,
+    VkPipelineLayout *pipeline_layout) {
+    if (pipeline_layout != NULL) *pipeline_layout = VK_NULL_HANDLE;
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    const VkPipelineLayoutCreateFlags allowed_flags =
+        VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT;
+    const VkShaderStageFlags allowed_stages =
+        VK_SHADER_STAGE_VERTEX_BIT |
+        VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT |
+        VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT |
+        VK_SHADER_STAGE_GEOMETRY_BIT |
+        VK_SHADER_STAGE_FRAGMENT_BIT |
+        VK_SHADER_STAGE_COMPUTE_BIT;
+    if (device_state == NULL || create_info == NULL ||
+        pipeline_layout == NULL || allocator != NULL ||
+        create_info->sType != VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO ||
+        create_info->pNext != NULL ||
+        (create_info->flags & ~allowed_flags) != 0U ||
+        create_info->setLayoutCount > BVB_VULKAN_MAX_PIPELINE_SET_LAYOUTS ||
+        create_info->pushConstantRangeCount >
+            BVB_VULKAN_MAX_PIPELINE_PUSH_CONSTANT_RANGES ||
+        (create_info->setLayoutCount != 0U &&
+         create_info->pSetLayouts == NULL) ||
+        (create_info->pushConstantRangeCount != 0U &&
+         create_info->pPushConstantRanges == NULL)) {
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    struct bvb_vulkan_pipeline_layout_create_request decoded = {
+        .device_id = device_state->wire_id,
+        .flags = create_info->flags,
+        .set_layout_count = create_info->setLayoutCount,
+        .push_constant_range_count = create_info->pushConstantRangeCount,
+    };
+    for (uint32_t index = 0U; index < create_info->setLayoutCount; ++index) {
+        decoded.set_layout_ids[index] = non_dispatchable_wire_id(
+            &create_info->pSetLayouts[index],
+            sizeof(create_info->pSetLayouts[index]));
+        if (decoded.set_layout_ids[index] == 0U &&
+            (create_info->flags &
+             VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT) == 0U) {
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+    }
+    VkShaderStageFlags used_stages = 0U;
+    for (uint32_t index = 0U;
+         index < create_info->pushConstantRangeCount; ++index) {
+        const VkPushConstantRange *range =
+            &create_info->pPushConstantRanges[index];
+        if (range->stageFlags == 0U ||
+            (range->stageFlags & ~allowed_stages) != 0U ||
+            (range->stageFlags & used_stages) != 0U || range->size == 0U ||
+            (range->offset & 3U) != 0U || (range->size & 3U) != 0U ||
+            range->offset > 256U || range->size > 256U - range->offset) {
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+        used_stages |= range->stageFlags;
+        decoded.push_constant_ranges[index] =
+            (struct bvb_vulkan_pipeline_push_constant_range){
+                .stage_flags = range->stageFlags,
+                .offset = range->offset,
+                .size = range->size,
+            };
+    }
+    uint8_t payload[BVB_PROTOCOL_MAX_PAYLOAD];
+    uint32_t payload_length = 0U;
+    int result = bvb_protocol_encode_vulkan_pipeline_layout_create_request(
+        payload, &decoded, &payload_length);
+    struct bvb_resource_proxy *state = calloc(1, sizeof(*state));
+    if (state == NULL) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    if (result != 0 || pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        free(state);
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    for (uint32_t index = 0U;
+         result == 0 && index < decoded.set_layout_count; ++index) {
+        if (decoded.set_layout_ids[index] == 0U) continue;
+        struct bvb_resource_proxy *layout_state = resource_proxy_locked(
+            decoded.set_layout_ids[index], BVB_OBJECT_DESCRIPTOR_SET_LAYOUT);
+        if (layout_state == NULL ||
+            layout_state->parent_id != device_state->wire_id) result = -EINVAL;
+    }
+    uint64_t wire_id = 0U;
+    VkResult vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+    if (result == 0) {
+        vulkan_result = create_resource_locked(
+            BVB_OPCODE_VULKAN_PIPELINE_LAYOUT_CREATE, payload, payload_length,
+            BVB_OBJECT_PIPELINE_LAYOUT, device_state->wire_id, state,
+            &wire_id);
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (vulkan_result != VK_SUCCESS) {
+        free(state);
+        return vulkan_result;
+    }
+    memcpy(pipeline_layout, &wire_id, sizeof(*pipeline_layout));
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL bvb_bridge_vkDestroyPipelineLayout(
+    VkDevice device, VkPipelineLayout pipeline_layout,
+    const VkAllocationCallbacks *allocator) {
+    destroy_resource(
+        device,
+        non_dispatchable_wire_id(&pipeline_layout, sizeof(pipeline_layout)),
+        BVB_OBJECT_PIPELINE_LAYOUT,
+        BVB_OPCODE_VULKAN_PIPELINE_LAYOUT_DESTROY, allocator);
+}
+
 static VkResult VKAPI_CALL bvb_bridge_vkCreateBuffer(
     VkDevice device, const VkBufferCreateInfo *create_info,
     const VkAllocationCallbacks *allocator, VkBuffer *buffer) {
@@ -5132,6 +5243,10 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     BVB_DEVICE_MATCH("vkDestroySampler", bvb_bridge_vkDestroySampler)
     BVB_DEVICE_MATCH("vkUpdateDescriptorSets",
                      bvb_bridge_vkUpdateDescriptorSets)
+    BVB_DEVICE_MATCH("vkCreatePipelineLayout",
+                     bvb_bridge_vkCreatePipelineLayout)
+    BVB_DEVICE_MATCH("vkDestroyPipelineLayout",
+                     bvb_bridge_vkDestroyPipelineLayout)
     BVB_DEVICE_MATCH("vkCreateBuffer", bvb_bridge_vkCreateBuffer)
     BVB_DEVICE_MATCH("vkDestroyBuffer", bvb_bridge_vkDestroyBuffer)
     BVB_DEVICE_MATCH("vkGetBufferMemoryRequirements",

@@ -1585,6 +1585,16 @@ static int answer_vulkan_resource_create(
                 context, &decoded, &created, diagnostic, sizeof(diagnostic));
         }
         expected_type = BVB_OBJECT_SAMPLER;
+    } else if (request->header.opcode ==
+               BVB_OPCODE_VULKAN_PIPELINE_LAYOUT_CREATE) {
+        struct bvb_vulkan_pipeline_layout_create_request decoded;
+        result = bvb_protocol_decode_vulkan_pipeline_layout_create_request(
+            request->payload, request->header.payload_length, &decoded);
+        if (result == 0) {
+            result = bvb_vulkan_global_context_create_pipeline_layout(
+                context, &decoded, &created, diagnostic, sizeof(diagnostic));
+        }
+        expected_type = BVB_OBJECT_PIPELINE_LAYOUT;
     }
     if (result != 0) {
         fprintf(stderr, "bvb: resource create failed: %s\n", diagnostic);
@@ -1615,6 +1625,8 @@ static int answer_vulkan_resource_destroy(
     const bool fence = request->header.opcode == BVB_OPCODE_VULKAN_FENCE_DESTROY;
     const bool semaphore =
         request->header.opcode == BVB_OPCODE_VULKAN_SEMAPHORE_DESTROY;
+    const bool pipeline_layout = request->header.opcode ==
+        BVB_OPCODE_VULKAN_PIPELINE_LAYOUT_DESTROY;
     const bool descriptor_object = request->header.opcode ==
         BVB_OPCODE_VULKAN_DESCRIPTOR_OBJECT_DESTROY;
     const enum bvb_object_type descriptor_type = descriptor_object
@@ -1626,7 +1638,7 @@ static int answer_vulkan_resource_destroy(
         descriptor_type == BVB_OBJECT_DESCRIPTOR_POOL;
     const bool sampler = descriptor_type == BVB_OBJECT_SAMPLER;
     uint64_t object_id = 0U;
-    int result = buffer || memory || fence || semaphore ||
+    int result = buffer || memory || fence || semaphore || pipeline_layout ||
                          descriptor_layout || descriptor_pool || sampler
                      ? bvb_protocol_decode_vulkan_object_id(
                            request->payload, &object_id,
@@ -1634,6 +1646,7 @@ static int answer_vulkan_resource_destroy(
                            memory ? BVB_OBJECT_DEVICE_MEMORY :
                            fence ? BVB_OBJECT_FENCE :
                            semaphore ? BVB_OBJECT_SEMAPHORE :
+                           pipeline_layout ? BVB_OBJECT_PIPELINE_LAYOUT :
                            descriptor_layout
                                ? BVB_OBJECT_DESCRIPTOR_SET_LAYOUT
                            : descriptor_pool
@@ -1653,6 +1666,9 @@ static int answer_vulkan_resource_destroy(
                 context, object_id, diagnostic, sizeof(diagnostic));
         } else if (semaphore) {
             result = bvb_vulkan_global_context_destroy_semaphore(
+                context, object_id, diagnostic, sizeof(diagnostic));
+        } else if (pipeline_layout) {
+            result = bvb_vulkan_global_context_destroy_pipeline_layout(
                 context, object_id, diagnostic, sizeof(diagnostic));
         } else if (descriptor_layout) {
             result = bvb_vulkan_global_context_destroy_descriptor_set_layout(
@@ -2625,7 +2641,9 @@ static int serve_connection(int client_fd, const char *loader_path,
                    request.header.opcode ==
                        BVB_OPCODE_VULKAN_DESCRIPTOR_POOL_CREATE ||
                    request.header.opcode ==
-                       BVB_OPCODE_VULKAN_SAMPLER_CREATE) {
+                       BVB_OPCODE_VULKAN_SAMPLER_CREATE ||
+                   request.header.opcode ==
+                       BVB_OPCODE_VULKAN_PIPELINE_LAYOUT_CREATE) {
             result = answer_vulkan_resource_create(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode == BVB_OPCODE_VULKAN_BUFFER_DESTROY ||
@@ -2634,7 +2652,9 @@ static int serve_connection(int client_fd, const char *loader_path,
                    request.header.opcode ==
                        BVB_OPCODE_VULKAN_SEMAPHORE_DESTROY ||
                    request.header.opcode ==
-                       BVB_OPCODE_VULKAN_DESCRIPTOR_OBJECT_DESTROY) {
+                       BVB_OPCODE_VULKAN_DESCRIPTOR_OBJECT_DESTROY ||
+                   request.header.opcode ==
+                       BVB_OPCODE_VULKAN_PIPELINE_LAYOUT_DESTROY) {
             result = answer_vulkan_resource_destroy(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==

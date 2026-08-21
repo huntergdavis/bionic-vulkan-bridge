@@ -4,6 +4,7 @@
 #include <bvb/protocol.h>
 #include <bvb/vulkan_descriptor_wire.h>
 #include <bvb/vulkan_discovery.h>
+#include <bvb/vulkan_pipeline_wire.h>
 
 #include <stddef.h>
 
@@ -126,6 +127,14 @@ int bvb_vulkan_global_context_destroy_sampler(
 int bvb_vulkan_global_context_update_descriptors(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_descriptor_update_request *request,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_create_pipeline_layout(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_pipeline_layout_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_destroy_pipeline_layout(
+    struct bvb_vulkan_global_context *context, uint64_t pipeline_layout_id,
     char *error, size_t error_size);
 int bvb_vulkan_global_context_get_device_queue(
     struct bvb_vulkan_global_context *context,

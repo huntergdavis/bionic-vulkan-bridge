@@ -2551,3 +2551,40 @@ probe. This validates the selective API-34 allowlist exception described in
 `docs/PRIVATE_TURNIP.md`; it does not validate the remaining BVB feature wire,
 virtual swapchain, a Tomb Raider frame, or FPS. Canonical evidence is
 `docs/evidence/e062-private-turnip-maintenance56-hardware.json`.
+
+## E058 — DXVK eager pipeline-layout boundary (2026-08-21)
+
+Status: passed through the cross-process host fake driver; no Android, game
+frame, or FPS claim. Against exact DXVK commit
+`a6764047e587178283fcde4073ae6e1410af594f`, the bridge now forwards
+`vkCreatePipelineLayout` and `vkDestroyPipelineLayout` through opcodes 72 and
+73. The proven eager null-fragment shape has independent-set semantics, the
+sampler-heap layout, an empty fragment layout, a null vertex slot, and one
+160-byte push-constant range covering the vertex, geometry, and fragment
+stages truthfully exposed by the fake Adreno profile.
+
+The canonical variable-length wire carries only little-endian scalars and
+typed object IDs. Set-layout and push-range counts are bounded at eight and
+four. The Bionic service resolves same-device native layouts, reconstructs all
+Vulkan arrays locally, owns the returned native pipeline-layout handle, and
+destroys it explicitly or before descriptor dependencies at device teardown.
+Both sides fail closed on allocators, unknown chains, unsupported flags or
+stages, invalid null slots, wrong lineage, overlapping stages, unaligned or
+oversized push ranges, malformed lengths, and nonzero reserved bytes.
+
+All 30 current host contracts pass. The fake native driver verifies the exact
+DXVK flags, three-slot native/null topology, stage mask, 160-byte range, real
+handle, and destroy order. The immutable E011 manifest already records both
+commands at device scope with seven lookups each; policy promotion yields 74
+executable, 366 required-unimplemented, and 302 probed-null names. This reuses
+E045's loader-private/local-pointer rule and E046/E056's canonical typed-object
+ownership pattern. The required `deja` query found no prior pipeline-layout
+implementation.
+
+Canonical evidence is
+`docs/evidence/e058-dxvk-pipeline-layout-host.json`, 4,309 bytes, SHA-256
+`206a00a42afc636e29789995a48d613661837cdd31926ff62a452fb65ce6eb34`.
+Source tracing identifies the next exact eager null entry as
+`vkCreateGraphicsPipelines`, submitted by
+`DxvkShaderPipelineLibrary::compileFragmentShaderPipeline` immediately after
+the independent pipeline layout.
