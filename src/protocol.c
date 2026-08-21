@@ -617,7 +617,23 @@ int bvb_protocol_encode_vulkan_core_features(
         features->shader_draw_parameters > 1U ||
         features->buffer_device_address > 1U ||
         features->descriptor_indexing > 1U ||
-        features->descriptor_binding_sampled_image_update_after_bind > 1U) {
+        features->descriptor_binding_sampled_image_update_after_bind > 1U ||
+        features->descriptor_binding_update_unused_while_pending > 1U ||
+        features->descriptor_binding_partially_bound > 1U ||
+        features->host_query_reset > 1U ||
+        features->runtime_descriptor_array > 1U ||
+        features->sampler_mirror_clamp_to_edge > 1U ||
+        features->scalar_block_layout > 1U ||
+        features->timeline_semaphore > 1U ||
+        features->uniform_buffer_standard_layout > 1U ||
+        features->vulkan_memory_model > 1U ||
+        features->compute_full_subgroups > 1U ||
+        features->dynamic_rendering > 1U ||
+        features->maintenance4 > 1U ||
+        features->shader_demote_to_helper_invocation > 1U ||
+        features->shader_zero_initialize_workgroup_memory > 1U ||
+        features->subgroup_size_control > 1U ||
+        features->synchronization2 > 1U) {
         return -EINVAL;
     }
     bvb_wire_put_u32(output, features->shader_draw_parameters);
@@ -626,6 +642,28 @@ int bvb_protocol_encode_vulkan_core_features(
     bvb_wire_put_u32(
         output + 12,
         features->descriptor_binding_sampled_image_update_after_bind);
+    bvb_wire_put_u32(
+        output + 16,
+        features->descriptor_binding_update_unused_while_pending);
+    bvb_wire_put_u32(
+        output + 20, features->descriptor_binding_partially_bound);
+    bvb_wire_put_u32(output + 24, features->host_query_reset);
+    bvb_wire_put_u32(output + 28, features->runtime_descriptor_array);
+    bvb_wire_put_u32(output + 32, features->sampler_mirror_clamp_to_edge);
+    bvb_wire_put_u32(output + 36, features->scalar_block_layout);
+    bvb_wire_put_u32(output + 40, features->timeline_semaphore);
+    bvb_wire_put_u32(output + 44, features->uniform_buffer_standard_layout);
+    bvb_wire_put_u32(output + 48, features->vulkan_memory_model);
+    bvb_wire_put_u32(output + 52, features->compute_full_subgroups);
+    bvb_wire_put_u32(output + 56, features->dynamic_rendering);
+    bvb_wire_put_u32(output + 60, features->maintenance4);
+    bvb_wire_put_u32(
+        output + 64, features->shader_demote_to_helper_invocation);
+    bvb_wire_put_u32(
+        output + 68,
+        features->shader_zero_initialize_workgroup_memory);
+    bvb_wire_put_u32(output + 72, features->subgroup_size_control);
+    bvb_wire_put_u32(output + 76, features->synchronization2);
     return 0;
 }
 
@@ -640,9 +678,42 @@ int bvb_protocol_decode_vulkan_core_features(
     const uint32_t descriptor_indexing = bvb_wire_get_u32(input + 8);
     const uint32_t descriptor_binding_sampled_image_update_after_bind =
         bvb_wire_get_u32(input + 12);
+    const uint32_t descriptor_binding_update_unused_while_pending =
+        bvb_wire_get_u32(input + 16);
+    const uint32_t descriptor_binding_partially_bound =
+        bvb_wire_get_u32(input + 20);
+    const uint32_t host_query_reset = bvb_wire_get_u32(input + 24);
+    const uint32_t runtime_descriptor_array =
+        bvb_wire_get_u32(input + 28);
+    const uint32_t sampler_mirror_clamp_to_edge =
+        bvb_wire_get_u32(input + 32);
+    const uint32_t scalar_block_layout = bvb_wire_get_u32(input + 36);
+    const uint32_t timeline_semaphore = bvb_wire_get_u32(input + 40);
+    const uint32_t uniform_buffer_standard_layout =
+        bvb_wire_get_u32(input + 44);
+    const uint32_t vulkan_memory_model = bvb_wire_get_u32(input + 48);
+    const uint32_t compute_full_subgroups = bvb_wire_get_u32(input + 52);
+    const uint32_t dynamic_rendering = bvb_wire_get_u32(input + 56);
+    const uint32_t maintenance4 = bvb_wire_get_u32(input + 60);
+    const uint32_t shader_demote_to_helper_invocation =
+        bvb_wire_get_u32(input + 64);
+    const uint32_t shader_zero_initialize_workgroup_memory =
+        bvb_wire_get_u32(input + 68);
+    const uint32_t subgroup_size_control = bvb_wire_get_u32(input + 72);
+    const uint32_t synchronization2 = bvb_wire_get_u32(input + 76);
     if (shader_draw_parameters > 1U || buffer_device_address > 1U ||
         descriptor_indexing > 1U ||
-        descriptor_binding_sampled_image_update_after_bind > 1U) {
+        descriptor_binding_sampled_image_update_after_bind > 1U ||
+        descriptor_binding_update_unused_while_pending > 1U ||
+        descriptor_binding_partially_bound > 1U || host_query_reset > 1U ||
+        runtime_descriptor_array > 1U ||
+        sampler_mirror_clamp_to_edge > 1U || scalar_block_layout > 1U ||
+        timeline_semaphore > 1U || uniform_buffer_standard_layout > 1U ||
+        vulkan_memory_model > 1U || compute_full_subgroups > 1U ||
+        dynamic_rendering > 1U || maintenance4 > 1U ||
+        shader_demote_to_helper_invocation > 1U ||
+        shader_zero_initialize_workgroup_memory > 1U ||
+        subgroup_size_control > 1U || synchronization2 > 1U) {
         return -EPROTO;
     }
     *features = (struct bvb_vulkan_core_features){
@@ -651,6 +722,26 @@ int bvb_protocol_decode_vulkan_core_features(
         .descriptor_indexing = descriptor_indexing,
         .descriptor_binding_sampled_image_update_after_bind =
             descriptor_binding_sampled_image_update_after_bind,
+        .descriptor_binding_update_unused_while_pending =
+            descriptor_binding_update_unused_while_pending,
+        .descriptor_binding_partially_bound =
+            descriptor_binding_partially_bound,
+        .host_query_reset = host_query_reset,
+        .runtime_descriptor_array = runtime_descriptor_array,
+        .sampler_mirror_clamp_to_edge = sampler_mirror_clamp_to_edge,
+        .scalar_block_layout = scalar_block_layout,
+        .timeline_semaphore = timeline_semaphore,
+        .uniform_buffer_standard_layout = uniform_buffer_standard_layout,
+        .vulkan_memory_model = vulkan_memory_model,
+        .compute_full_subgroups = compute_full_subgroups,
+        .dynamic_rendering = dynamic_rendering,
+        .maintenance4 = maintenance4,
+        .shader_demote_to_helper_invocation =
+            shader_demote_to_helper_invocation,
+        .shader_zero_initialize_workgroup_memory =
+            shader_zero_initialize_workgroup_memory,
+        .subgroup_size_control = subgroup_size_control,
+        .synchronization2 = synchronization2,
     };
     return 0;
 }

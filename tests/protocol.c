@@ -451,6 +451,22 @@ int main(void) {
         .buffer_device_address = 1U,
         .descriptor_indexing = 1U,
         .descriptor_binding_sampled_image_update_after_bind = 1U,
+        .descriptor_binding_update_unused_while_pending = 1U,
+        .descriptor_binding_partially_bound = 1U,
+        .host_query_reset = 1U,
+        .runtime_descriptor_array = 1U,
+        .sampler_mirror_clamp_to_edge = 1U,
+        .scalar_block_layout = 1U,
+        .timeline_semaphore = 1U,
+        .uniform_buffer_standard_layout = 1U,
+        .vulkan_memory_model = 1U,
+        .compute_full_subgroups = 1U,
+        .dynamic_rendering = 1U,
+        .maintenance4 = 1U,
+        .shader_demote_to_helper_invocation = 1U,
+        .shader_zero_initialize_workgroup_memory = 1U,
+        .subgroup_size_control = 1U,
+        .synchronization2 = 1U,
     };
     uint8_t core_features_wire[BVB_VULKAN_CORE_FEATURES_SIZE];
     CHECK(bvb_protocol_encode_vulkan_core_features(
@@ -463,6 +479,24 @@ int main(void) {
     CHECK(core_features_decoded.descriptor_indexing == 1U);
     CHECK(core_features_decoded
               .descriptor_binding_sampled_image_update_after_bind == 1U);
+    CHECK(core_features_decoded
+              .descriptor_binding_update_unused_while_pending == 1U);
+    CHECK(core_features_decoded.descriptor_binding_partially_bound == 1U);
+    CHECK(core_features_decoded.host_query_reset == 1U);
+    CHECK(core_features_decoded.runtime_descriptor_array == 1U);
+    CHECK(core_features_decoded.sampler_mirror_clamp_to_edge == 1U);
+    CHECK(core_features_decoded.scalar_block_layout == 1U);
+    CHECK(core_features_decoded.timeline_semaphore == 1U);
+    CHECK(core_features_decoded.uniform_buffer_standard_layout == 1U);
+    CHECK(core_features_decoded.vulkan_memory_model == 1U);
+    CHECK(core_features_decoded.compute_full_subgroups == 1U);
+    CHECK(core_features_decoded.dynamic_rendering == 1U);
+    CHECK(core_features_decoded.maintenance4 == 1U);
+    CHECK(core_features_decoded.shader_demote_to_helper_invocation == 1U);
+    CHECK(core_features_decoded
+              .shader_zero_initialize_workgroup_memory == 1U);
+    CHECK(core_features_decoded.subgroup_size_control == 1U);
+    CHECK(core_features_decoded.synchronization2 == 1U);
     core_features_wire[4] = 2U;
     CHECK(bvb_protocol_decode_vulkan_core_features(
               core_features_wire, &core_features_decoded) == -EPROTO);

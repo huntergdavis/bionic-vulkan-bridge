@@ -1936,6 +1936,8 @@ static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFeatures2(
             entry->sType ==
                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES ||
             entry->sType ==
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES ||
+            entry->sType ==
                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES ||
             entry->sType ==
                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
@@ -1981,6 +1983,43 @@ static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFeatures2(
             vulkan12->descriptorBindingSampledImageUpdateAfterBind =
                 (VkBool32)bridged
                     .descriptor_binding_sampled_image_update_after_bind;
+            vulkan12->descriptorBindingUpdateUnusedWhilePending =
+                (VkBool32)bridged
+                    .descriptor_binding_update_unused_while_pending;
+            vulkan12->descriptorBindingPartiallyBound =
+                (VkBool32)bridged.descriptor_binding_partially_bound;
+            vulkan12->hostQueryReset =
+                (VkBool32)bridged.host_query_reset;
+            vulkan12->runtimeDescriptorArray =
+                (VkBool32)bridged.runtime_descriptor_array;
+            vulkan12->samplerMirrorClampToEdge =
+                (VkBool32)bridged.sampler_mirror_clamp_to_edge;
+            vulkan12->scalarBlockLayout =
+                (VkBool32)bridged.scalar_block_layout;
+            vulkan12->timelineSemaphore =
+                (VkBool32)bridged.timeline_semaphore;
+            vulkan12->uniformBufferStandardLayout =
+                (VkBool32)bridged.uniform_buffer_standard_layout;
+            vulkan12->vulkanMemoryModel =
+                (VkBool32)bridged.vulkan_memory_model;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES) {
+            VkPhysicalDeviceVulkan13Features *vulkan13 =
+                (VkPhysicalDeviceVulkan13Features *)entry;
+            vulkan13->computeFullSubgroups =
+                (VkBool32)bridged.compute_full_subgroups;
+            vulkan13->dynamicRendering =
+                (VkBool32)bridged.dynamic_rendering;
+            vulkan13->maintenance4 = (VkBool32)bridged.maintenance4;
+            vulkan13->shaderDemoteToHelperInvocation =
+                (VkBool32)bridged.shader_demote_to_helper_invocation;
+            vulkan13->shaderZeroInitializeWorkgroupMemory =
+                (VkBool32)bridged
+                    .shader_zero_initialize_workgroup_memory;
+            vulkan13->subgroupSizeControl =
+                (VkBool32)bridged.subgroup_size_control;
+            vulkan13->synchronization2 =
+                (VkBool32)bridged.synchronization2;
         } else if (entry->sType ==
                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES) {
             VkPhysicalDeviceBufferDeviceAddressFeatures *buffer_address =

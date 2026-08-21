@@ -910,7 +910,11 @@ int bvb_vulkan_global_context_get_core_features(
     VkPhysicalDeviceVulkan12Features vulkan12 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
     };
+    VkPhysicalDeviceVulkan13Features vulkan13 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+    };
     vulkan11.pNext = &vulkan12;
+    vulkan12.pNext = &vulkan13;
     VkPhysicalDeviceFeatures2 base = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         .pNext = &vulkan11,
@@ -926,6 +930,39 @@ int bvb_vulkan_global_context_get_core_features(
         vulkan12.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE
             ? 1U
             : 0U;
+    features->descriptor_binding_update_unused_while_pending =
+        vulkan12.descriptorBindingUpdateUnusedWhilePending == VK_TRUE ? 1U
+                                                                      : 0U;
+    features->descriptor_binding_partially_bound =
+        vulkan12.descriptorBindingPartiallyBound == VK_TRUE ? 1U : 0U;
+    features->host_query_reset =
+        vulkan12.hostQueryReset == VK_TRUE ? 1U : 0U;
+    features->runtime_descriptor_array =
+        vulkan12.runtimeDescriptorArray == VK_TRUE ? 1U : 0U;
+    features->sampler_mirror_clamp_to_edge =
+        vulkan12.samplerMirrorClampToEdge == VK_TRUE ? 1U : 0U;
+    features->scalar_block_layout =
+        vulkan12.scalarBlockLayout == VK_TRUE ? 1U : 0U;
+    features->timeline_semaphore =
+        vulkan12.timelineSemaphore == VK_TRUE ? 1U : 0U;
+    features->uniform_buffer_standard_layout =
+        vulkan12.uniformBufferStandardLayout == VK_TRUE ? 1U : 0U;
+    features->vulkan_memory_model =
+        vulkan12.vulkanMemoryModel == VK_TRUE ? 1U : 0U;
+    features->compute_full_subgroups =
+        vulkan13.computeFullSubgroups == VK_TRUE ? 1U : 0U;
+    features->dynamic_rendering =
+        vulkan13.dynamicRendering == VK_TRUE ? 1U : 0U;
+    features->maintenance4 =
+        vulkan13.maintenance4 == VK_TRUE ? 1U : 0U;
+    features->shader_demote_to_helper_invocation =
+        vulkan13.shaderDemoteToHelperInvocation == VK_TRUE ? 1U : 0U;
+    features->shader_zero_initialize_workgroup_memory =
+        vulkan13.shaderZeroInitializeWorkgroupMemory == VK_TRUE ? 1U : 0U;
+    features->subgroup_size_control =
+        vulkan13.subgroupSizeControl == VK_TRUE ? 1U : 0U;
+    features->synchronization2 =
+        vulkan13.synchronization2 == VK_TRUE ? 1U : 0U;
     return 0;
 }
 

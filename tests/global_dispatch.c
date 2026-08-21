@@ -339,7 +339,11 @@ int main(void) {
     VkPhysicalDeviceVulkan12Features vulkan12_features = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
     };
+    VkPhysicalDeviceVulkan13Features vulkan13_features = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+    };
     vulkan11_features.pNext = &vulkan12_features;
+    vulkan12_features.pNext = &vulkan13_features;
     VkPhysicalDeviceFeatures2 features2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         .pNext = &vulkan11_features,
@@ -351,6 +355,23 @@ int main(void) {
     CHECK(vulkan12_features.descriptorIndexing == VK_TRUE);
     CHECK(vulkan12_features.descriptorBindingSampledImageUpdateAfterBind ==
           VK_TRUE);
+    CHECK(vulkan12_features.descriptorBindingUpdateUnusedWhilePending ==
+          VK_TRUE);
+    CHECK(vulkan12_features.descriptorBindingPartiallyBound == VK_TRUE);
+    CHECK(vulkan12_features.hostQueryReset == VK_TRUE);
+    CHECK(vulkan12_features.runtimeDescriptorArray == VK_TRUE);
+    CHECK(vulkan12_features.samplerMirrorClampToEdge == VK_TRUE);
+    CHECK(vulkan12_features.scalarBlockLayout == VK_TRUE);
+    CHECK(vulkan12_features.timelineSemaphore == VK_TRUE);
+    CHECK(vulkan12_features.uniformBufferStandardLayout == VK_TRUE);
+    CHECK(vulkan12_features.vulkanMemoryModel == VK_TRUE);
+    CHECK(vulkan13_features.computeFullSubgroups == VK_TRUE);
+    CHECK(vulkan13_features.dynamicRendering == VK_TRUE);
+    CHECK(vulkan13_features.maintenance4 == VK_TRUE);
+    CHECK(vulkan13_features.shaderDemoteToHelperInvocation == VK_TRUE);
+    CHECK(vulkan13_features.shaderZeroInitializeWorkgroupMemory == VK_TRUE);
+    CHECK(vulkan13_features.subgroupSizeControl == VK_TRUE);
+    CHECK(vulkan13_features.synchronization2 == VK_TRUE);
     VkPhysicalDeviceProperties2 properties2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
     };

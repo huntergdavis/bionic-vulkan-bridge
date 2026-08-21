@@ -106,7 +106,7 @@ enum {
     BVB_VULKAN_EXTERNAL_BUFFER_PROPERTIES_SIZE = 12,
     BVB_VULKAN_EXTERNAL_SEMAPHORE_QUERY_SIZE = 16,
     BVB_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES_SIZE = 12,
-    BVB_VULKAN_CORE_FEATURES_SIZE = 16,
+    BVB_VULKAN_CORE_FEATURES_SIZE = 80,
     BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE = 16,
     BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE = 32,
     BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE = 128,
@@ -317,6 +317,22 @@ struct bvb_vulkan_core_features {
     uint32_t buffer_device_address;
     uint32_t descriptor_indexing;
     uint32_t descriptor_binding_sampled_image_update_after_bind;
+    uint32_t descriptor_binding_update_unused_while_pending;
+    uint32_t descriptor_binding_partially_bound;
+    uint32_t host_query_reset;
+    uint32_t runtime_descriptor_array;
+    uint32_t sampler_mirror_clamp_to_edge;
+    uint32_t scalar_block_layout;
+    uint32_t timeline_semaphore;
+    uint32_t uniform_buffer_standard_layout;
+    uint32_t vulkan_memory_model;
+    uint32_t compute_full_subgroups;
+    uint32_t dynamic_rendering;
+    uint32_t maintenance4;
+    uint32_t shader_demote_to_helper_invocation;
+    uint32_t shader_zero_initialize_workgroup_memory;
+    uint32_t subgroup_size_control;
+    uint32_t synchronization2;
 };
 
 struct bvb_vulkan_device_extension_query {

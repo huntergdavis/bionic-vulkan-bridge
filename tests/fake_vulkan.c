@@ -321,6 +321,26 @@ static void VKAPI_CALL fake_get_device_features2(
             vulkan12->descriptorIndexing = VK_TRUE;
             vulkan12->descriptorBindingSampledImageUpdateAfterBind =
                 VK_TRUE;
+            vulkan12->descriptorBindingUpdateUnusedWhilePending = VK_TRUE;
+            vulkan12->descriptorBindingPartiallyBound = VK_TRUE;
+            vulkan12->hostQueryReset = VK_TRUE;
+            vulkan12->runtimeDescriptorArray = VK_TRUE;
+            vulkan12->samplerMirrorClampToEdge = VK_TRUE;
+            vulkan12->scalarBlockLayout = VK_TRUE;
+            vulkan12->timelineSemaphore = VK_TRUE;
+            vulkan12->uniformBufferStandardLayout = VK_TRUE;
+            vulkan12->vulkanMemoryModel = VK_TRUE;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES) {
+            VkPhysicalDeviceVulkan13Features *vulkan13 =
+                (VkPhysicalDeviceVulkan13Features *)entry;
+            vulkan13->computeFullSubgroups = VK_TRUE;
+            vulkan13->dynamicRendering = VK_TRUE;
+            vulkan13->maintenance4 = VK_TRUE;
+            vulkan13->shaderDemoteToHelperInvocation = VK_TRUE;
+            vulkan13->shaderZeroInitializeWorkgroupMemory = VK_TRUE;
+            vulkan13->subgroupSizeControl = VK_TRUE;
+            vulkan13->synchronization2 = VK_TRUE;
         } else if (entry->sType ==
                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES) {
             ((VkPhysicalDeviceBufferDeviceAddressFeatures *)entry)
