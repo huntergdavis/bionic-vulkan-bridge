@@ -2508,3 +2508,32 @@ implementation. Canonical evidence is
 `docs/evidence/e055-dxvk-submit2-host.json`. Descriptor/sampler construction,
 the remaining rendering command surface, Activity consumption, a Tomb Raider
 frame, and FPS remain separate gates.
+## E056 — DXVK descriptor/sampler device bootstrap contract (2026-08-20)
+
+Status: passed through the cross-process host fake driver; no Android or game
+frame claim. Against exact DXVK commit
+`a6764047e587178283fcde4073ae6e1410af594f`, the bridge now forwards the
+legacy sampler-heap constructor sequence: descriptor-set layout, descriptor
+pool, batched set allocation, sampler, and batched sampler descriptor update.
+Matching sampler, pool, and layout destroys reach the native driver in DXVK's
+order. Every returned handle owns a real native fake-driver object; none is a
+dummy.
+
+The wire contains only canonical little-endian scalars and typed object IDs.
+The Bionic side reconstructs all Vulkan arrays, structures, and the supported
+binding-flags `pNext` locally. Counts are bounded, allocation and updates are
+batched, and the client and service fail closed on allocators, immutable
+samplers, unknown chains, unsupported descriptor shapes, invalid lineage, and
+nonzero padding. This reuses E045's loader-private/local-pointer rule and
+E046's fixed-width ownership pattern. The required `deja` search found no
+older descriptor-bootstrap implementation.
+
+All 28 current host contracts pass, including canonical codec corruption
+checks and a fake native driver that verifies the exact requested flags,
+counts, enums, float fields, descriptor contents, and destroy order. Canonical
+evidence is `docs/evidence/e056-dxvk-descriptor-bootstrap.json`, 3,659 bytes,
+SHA-256
+`c09ca06162e1576c035d705d1fd4507fafc8e2a5b0cba43a577486809ccb861b`.
+Source tracing shows the first still-unresolved eager DXVK call is
+`vkCreatePipelineLayout`, after the empty descriptor-set layout used by the
+null fragment pipeline.

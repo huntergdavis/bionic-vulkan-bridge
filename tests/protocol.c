@@ -1,4 +1,5 @@
 #include <bvb/protocol.h>
+#include <bvb/vulkan_descriptor_wire.h>
 
 #include <errno.h>
 #include <stdint.h>
@@ -1382,6 +1383,140 @@ int main(void) {
     CHECK(activity_status_decoded.width == 2800U);
     CHECK(activity_status_decoded.last_event_received_ns ==
           UINT64_C(9876543999));
+
+    const struct bvb_vulkan_descriptor_set_layout_create_request
+        descriptor_layout_request = {
+            .device_id = UINT64_C(0x0300000000000001),
+            .flags = 2U,
+            .binding_count = 1U,
+            .has_binding_flags = 1U,
+            .bindings = {{
+                .binding = 3U,
+                .descriptor_type = 0U,
+                .descriptor_count = 4096U,
+                .stage_flags = 31U,
+                .binding_flags = 7U,
+            }},
+        };
+    uint8_t descriptor_wire[BVB_PROTOCOL_MAX_PAYLOAD];
+    uint32_t descriptor_wire_length = 0U;
+    CHECK(bvb_protocol_encode_vulkan_descriptor_set_layout_create_request(
+              descriptor_wire, &descriptor_layout_request,
+              &descriptor_wire_length) == 0);
+    struct bvb_vulkan_descriptor_set_layout_create_request
+        descriptor_layout_decoded;
+    CHECK(bvb_protocol_decode_vulkan_descriptor_set_layout_create_request(
+              descriptor_wire, descriptor_wire_length,
+              &descriptor_layout_decoded) == 0);
+    CHECK(descriptor_layout_decoded.bindings[0].descriptor_count == 4096U);
+    CHECK(descriptor_layout_decoded.bindings[0].binding_flags == 7U);
+
+    const struct bvb_vulkan_descriptor_pool_create_request
+        descriptor_pool_request = {
+            .device_id = UINT64_C(0x0300000000000001),
+            .flags = 2U,
+            .max_sets = 1U,
+            .pool_size_count = 1U,
+            .pool_sizes = {{.descriptor_type = 0U,
+                            .descriptor_count = 4096U}},
+        };
+    CHECK(bvb_protocol_encode_vulkan_descriptor_pool_create_request(
+              descriptor_wire, &descriptor_pool_request,
+              &descriptor_wire_length) == 0);
+    struct bvb_vulkan_descriptor_pool_create_request descriptor_pool_decoded;
+    CHECK(bvb_protocol_decode_vulkan_descriptor_pool_create_request(
+              descriptor_wire, descriptor_wire_length,
+              &descriptor_pool_decoded) == 0);
+    CHECK(descriptor_pool_decoded.pool_sizes[0].descriptor_count == 4096U);
+
+    const struct bvb_vulkan_descriptor_set_allocate_request
+        descriptor_allocate_request = {
+            .descriptor_pool_id = UINT64_C(0x1500000000000001),
+            .descriptor_set_count = 2U,
+            .set_layout_ids = {UINT64_C(0x1400000000000001),
+                               UINT64_C(0x1400000000000002)},
+        };
+    CHECK(bvb_protocol_encode_vulkan_descriptor_set_allocate_request(
+              descriptor_wire, &descriptor_allocate_request,
+              &descriptor_wire_length) == 0);
+    struct bvb_vulkan_descriptor_set_allocate_request
+        descriptor_allocate_decoded;
+    CHECK(bvb_protocol_decode_vulkan_descriptor_set_allocate_request(
+              descriptor_wire, descriptor_wire_length,
+              &descriptor_allocate_decoded) == 0);
+    CHECK(descriptor_allocate_decoded.descriptor_set_count == 2U);
+    CHECK(descriptor_allocate_decoded.set_layout_ids[1] ==
+          UINT64_C(0x1400000000000002));
+
+    const struct bvb_vulkan_descriptor_set_allocate_response
+        descriptor_allocate_response = {
+            .vulkan_result = 0,
+            .descriptor_set_count = 2U,
+            .descriptor_set_ids = {UINT64_C(0x1600000000000001),
+                                   UINT64_C(0x1600000000000002)},
+        };
+    CHECK(bvb_protocol_encode_vulkan_descriptor_set_allocate_response(
+              descriptor_wire, &descriptor_allocate_response,
+              &descriptor_wire_length) == 0);
+    struct bvb_vulkan_descriptor_set_allocate_response
+        descriptor_allocate_response_decoded;
+    CHECK(bvb_protocol_decode_vulkan_descriptor_set_allocate_response(
+              descriptor_wire, descriptor_wire_length,
+              &descriptor_allocate_response_decoded) == 0);
+    CHECK(descriptor_allocate_response_decoded.descriptor_set_ids[0] ==
+          UINT64_C(0x1600000000000001));
+
+    const struct bvb_vulkan_sampler_create_request sampler_request = {
+        .device_id = UINT64_C(0x0300000000000001),
+        .mag_filter = 1U,
+        .min_filter = 0U,
+        .mipmap_mode = 1U,
+        .address_mode_v = 2U,
+        .address_mode_w = 1U,
+        .mip_lod_bias_bits = UINT32_C(0x3e800000),
+        .anisotropy_enable = 1U,
+        .max_anisotropy_bits = UINT32_C(0x41000000),
+        .compare_enable = 1U,
+        .compare_op = 3U,
+        .max_lod_bits = UINT32_C(0x41400000),
+        .border_color = 4U,
+    };
+    uint8_t sampler_wire[BVB_VULKAN_SAMPLER_CREATE_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_sampler_create_request(
+              sampler_wire, &sampler_request) == 0);
+    struct bvb_vulkan_sampler_create_request sampler_decoded;
+    CHECK(bvb_protocol_decode_vulkan_sampler_create_request(
+              sampler_wire, &sampler_decoded) == 0);
+    CHECK(sampler_decoded.max_anisotropy_bits == UINT32_C(0x41000000));
+
+    const struct bvb_vulkan_descriptor_update_request update_request = {
+        .device_id = UINT64_C(0x0300000000000001),
+        .write_count = 1U,
+        .sampler_count = 2U,
+        .writes = {{
+            .descriptor_set_id = UINT64_C(0x1600000000000001),
+            .dst_binding = 0U,
+            .dst_array_element = 7U,
+            .descriptor_count = 2U,
+            .descriptor_type = 0U,
+            .first_sampler = 0U,
+        }},
+        .sampler_ids = {UINT64_C(0x1700000000000001),
+                        UINT64_C(0x1700000000000002)},
+    };
+    CHECK(bvb_protocol_encode_vulkan_descriptor_update_request(
+              descriptor_wire, &update_request,
+              &descriptor_wire_length) == 0);
+    struct bvb_vulkan_descriptor_update_request update_decoded;
+    CHECK(bvb_protocol_decode_vulkan_descriptor_update_request(
+              descriptor_wire, descriptor_wire_length,
+              &update_decoded) == 0);
+    CHECK(update_decoded.writes[0].dst_array_element == 7U);
+    CHECK(update_decoded.sampler_ids[1] == UINT64_C(0x1700000000000002));
+    descriptor_wire[BVB_VULKAN_DESCRIPTOR_UPDATE_PREFIX_SIZE + 28U] = 1U;
+    CHECK(bvb_protocol_decode_vulkan_descriptor_update_request(
+              descriptor_wire, descriptor_wire_length,
+              &update_decoded) == -EPROTO);
 
     puts("protocol: PASS");
     return EXIT_SUCCESS;

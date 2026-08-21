@@ -100,7 +100,11 @@ def main() -> int:
                 timeout=5.0,
                 env=environment,
             )
-            assert completed.returncode == 0, completed.stderr
+            if completed.returncode != 0:
+                _, service_stderr = server.communicate(timeout=5.0)
+                raise AssertionError(
+                    f"{completed.stderr}service stderr: {service_stderr}"
+                )
             assert completed.stderr == ""
             assert completed.stdout.startswith("PASS: global Vulkan discovery")
             assert f"api={0x00400000 | (4 << 12) | 354}" in completed.stdout

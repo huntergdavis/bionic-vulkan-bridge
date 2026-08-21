@@ -648,6 +648,14 @@ int main(void) {
     PFN_vkGetSemaphoreCounterValue get_semaphore_counter = NULL;
     PFN_vkWaitSemaphores wait_semaphores = NULL;
     PFN_vkSignalSemaphore signal_semaphore = NULL;
+    PFN_vkCreateDescriptorSetLayout create_descriptor_set_layout = NULL;
+    PFN_vkDestroyDescriptorSetLayout destroy_descriptor_set_layout = NULL;
+    PFN_vkCreateDescriptorPool create_descriptor_pool = NULL;
+    PFN_vkDestroyDescriptorPool destroy_descriptor_pool = NULL;
+    PFN_vkAllocateDescriptorSets allocate_descriptor_sets = NULL;
+    PFN_vkCreateSampler create_sampler = NULL;
+    PFN_vkDestroySampler destroy_sampler = NULL;
+    PFN_vkUpdateDescriptorSets update_descriptor_sets = NULL;
     erased = vkGetDeviceProcAddr(device, "vkGetDeviceQueue");
     CHECK(erased != NULL);
     memcpy(&get_device_queue, &erased, sizeof(get_device_queue));
@@ -759,6 +767,23 @@ int main(void) {
     CHECK(erased != NULL);
     memcpy(&signal_semaphore, &erased, sizeof(signal_semaphore));
     CHECK(vkGetDeviceProcAddr(device, "vkSignalSemaphoreKHR") == erased);
+#define RESOLVE_DESCRIPTOR(entry_name, variable)                             \
+    do {                                                                      \
+        erased = vkGetDeviceProcAddr(device, #entry_name);                   \
+        CHECK(erased != NULL);                                                \
+        memcpy(&(variable), &erased, sizeof(variable));                       \
+    } while (0)
+    RESOLVE_DESCRIPTOR(vkCreateDescriptorSetLayout,
+                       create_descriptor_set_layout);
+    RESOLVE_DESCRIPTOR(vkDestroyDescriptorSetLayout,
+                       destroy_descriptor_set_layout);
+    RESOLVE_DESCRIPTOR(vkCreateDescriptorPool, create_descriptor_pool);
+    RESOLVE_DESCRIPTOR(vkDestroyDescriptorPool, destroy_descriptor_pool);
+    RESOLVE_DESCRIPTOR(vkAllocateDescriptorSets, allocate_descriptor_sets);
+    RESOLVE_DESCRIPTOR(vkCreateSampler, create_sampler);
+    RESOLVE_DESCRIPTOR(vkDestroySampler, destroy_sampler);
+    RESOLVE_DESCRIPTOR(vkUpdateDescriptorSets, update_descriptor_sets);
+#undef RESOLVE_DESCRIPTOR
     CHECK(vkGetDeviceProcAddr(device, "vkCmdDraw") != NULL);
     PFN_vkCreateSwapchainKHR create_swapchain = NULL;
     PFN_vkDestroySwapchainKHR destroy_swapchain = NULL;
@@ -837,6 +862,128 @@ int main(void) {
     CHECK(queue_submit(queue, 1U, &unsupported_submit, VK_NULL_HANDLE) ==
           VK_ERROR_FEATURE_NOT_PRESENT);
     CHECK(queue_wait_idle(queue) == VK_SUCCESS);
+    CHECK(device_wait_idle(device) == VK_SUCCESS);
+
+    const VkDescriptorBindingFlags sampler_binding_flags =
+        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+        VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT |
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+    const VkDescriptorSetLayoutBindingFlagsCreateInfo layout_flags_info = {
+        .sType =
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+        .bindingCount = 1U,
+        .pBindingFlags = &sampler_binding_flags,
+    };
+    const VkDescriptorSetLayoutBinding sampler_binding = {
+        .binding = 0U,
+        .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+        .descriptorCount = 4096U,
+        .stageFlags =
+            VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_COMPUTE_BIT,
+    };
+    const VkDescriptorSetLayoutCreateInfo descriptor_layout_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .pNext = &layout_flags_info,
+        .flags =
+            VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT,
+        .bindingCount = 1U,
+        .pBindings = &sampler_binding,
+    };
+    VkDescriptorSetLayout descriptor_layout = VK_NULL_HANDLE;
+    const VkAllocationCallbacks unsupported_allocator = {0};
+    CHECK(create_descriptor_set_layout(
+              device, &descriptor_layout_info, &unsupported_allocator,
+              &descriptor_layout) == VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(descriptor_layout == VK_NULL_HANDLE);
+    CHECK(create_descriptor_set_layout(
+              device, &descriptor_layout_info, NULL,
+              &descriptor_layout) == VK_SUCCESS);
+    uint64_t descriptor_layout_id = 0U;
+    memcpy(&descriptor_layout_id, &descriptor_layout,
+           sizeof(descriptor_layout));
+    CHECK(bvb_handle_type(descriptor_layout_id) ==
+          BVB_OBJECT_DESCRIPTOR_SET_LAYOUT);
+
+    const VkDescriptorPoolSize descriptor_pool_size = {
+        .type = VK_DESCRIPTOR_TYPE_SAMPLER,
+        .descriptorCount = 4096U,
+    };
+    const VkDescriptorPoolCreateInfo descriptor_pool_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT,
+        .maxSets = 1U,
+        .poolSizeCount = 1U,
+        .pPoolSizes = &descriptor_pool_size,
+    };
+    VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
+    CHECK(create_descriptor_pool(
+              device, &descriptor_pool_info, NULL,
+              &descriptor_pool) == VK_SUCCESS);
+    uint64_t descriptor_pool_id = 0U;
+    memcpy(&descriptor_pool_id, &descriptor_pool, sizeof(descriptor_pool));
+    CHECK(bvb_handle_type(descriptor_pool_id) ==
+          BVB_OBJECT_DESCRIPTOR_POOL);
+
+    const VkDescriptorSetAllocateInfo descriptor_allocate_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = descriptor_pool,
+        .descriptorSetCount = 1U,
+        .pSetLayouts = &descriptor_layout,
+    };
+    VkDescriptorSet descriptor_set = VK_NULL_HANDLE;
+    CHECK(allocate_descriptor_sets(
+              device, &descriptor_allocate_info,
+              &descriptor_set) == VK_SUCCESS);
+    uint64_t descriptor_set_id = 0U;
+    memcpy(&descriptor_set_id, &descriptor_set, sizeof(descriptor_set));
+    CHECK(bvb_handle_type(descriptor_set_id) == BVB_OBJECT_DESCRIPTOR_SET);
+
+    VkSamplerCreateInfo sampler_info = {
+        .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .magFilter = VK_FILTER_LINEAR,
+        .minFilter = VK_FILTER_NEAREST,
+        .mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+        .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+        .addressModeW = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT,
+        .mipLodBias = 0.25F,
+        .anisotropyEnable = VK_TRUE,
+        .maxAnisotropy = 8.0F,
+        .compareEnable = VK_TRUE,
+        .compareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
+        .minLod = 0.0F,
+        .maxLod = 12.0F,
+        .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE,
+    };
+    const uint32_t unsupported_sampler_chain = UINT32_C(0x7ffffffe);
+    sampler_info.pNext = &unsupported_sampler_chain;
+    VkSampler sampler = VK_NULL_HANDLE;
+    CHECK(create_sampler(device, &sampler_info, NULL, &sampler) ==
+          VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(sampler == VK_NULL_HANDLE);
+    sampler_info.pNext = NULL;
+    CHECK(create_sampler(device, &sampler_info, NULL, &sampler) == VK_SUCCESS);
+    uint64_t sampler_id = 0U;
+    memcpy(&sampler_id, &sampler, sizeof(sampler));
+    CHECK(bvb_handle_type(sampler_id) == BVB_OBJECT_SAMPLER);
+
+    const VkDescriptorImageInfo sampler_descriptor = {
+        .sampler = sampler,
+        .imageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    const VkWriteDescriptorSet sampler_write = {
+        .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+        .dstSet = descriptor_set,
+        .dstBinding = 0U,
+        .dstArrayElement = 7U,
+        .descriptorCount = 1U,
+        .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
+        .pImageInfo = &sampler_descriptor,
+    };
+    update_descriptor_sets(device, 1U, &sampler_write, 0U, NULL);
+    destroy_sampler(device, sampler, NULL);
+    destroy_descriptor_pool(device, descriptor_pool, NULL);
+    destroy_descriptor_set_layout(device, descriptor_layout, NULL);
     CHECK(device_wait_idle(device) == VK_SUCCESS);
 
     const VkCommandPoolCreateInfo pool_create_info = {

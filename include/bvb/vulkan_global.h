@@ -2,6 +2,7 @@
 #define BVB_VULKAN_GLOBAL_H
 
 #include <bvb/protocol.h>
+#include <bvb/vulkan_descriptor_wire.h>
 #include <bvb/vulkan_discovery.h>
 
 #include <stddef.h>
@@ -93,6 +94,39 @@ int bvb_vulkan_global_context_create_device_packed(
     char *error, size_t error_size);
 int bvb_vulkan_global_context_destroy_device(
     struct bvb_vulkan_global_context *context, uint64_t device_id);
+int bvb_vulkan_global_context_create_descriptor_set_layout(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_descriptor_set_layout_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_destroy_descriptor_set_layout(
+    struct bvb_vulkan_global_context *context, uint64_t layout_id,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_create_descriptor_pool(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_descriptor_pool_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_destroy_descriptor_pool(
+    struct bvb_vulkan_global_context *context, uint64_t pool_id,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_allocate_descriptor_sets(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_descriptor_set_allocate_request *request,
+    struct bvb_vulkan_descriptor_set_allocate_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_create_sampler(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_sampler_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_destroy_sampler(
+    struct bvb_vulkan_global_context *context, uint64_t sampler_id,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_update_descriptors(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_descriptor_update_request *request,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_get_device_queue(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_device_queue_request *request,

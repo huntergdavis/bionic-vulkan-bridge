@@ -85,6 +85,10 @@ struct bvb_vulkan_global_context {
     uint64_t next_semaphore_serial;
     uint64_t next_swapchain_serial;
     uint64_t next_image_serial;
+    uint64_t next_descriptor_set_layout_serial;
+    uint64_t next_descriptor_pool_serial;
+    uint64_t next_descriptor_set_serial;
+    uint64_t next_sampler_serial;
     struct bvb_device_metadata device_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_memory_metadata memory_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_swapchain_metadata
@@ -193,6 +197,23 @@ static VkSemaphore semaphore_from_bits(uint64_t bits) {
     memcpy(&semaphore, &bits, sizeof(semaphore));
     return semaphore;
 }
+
+#define BVB_DEFINE_HANDLE_FROM_BITS(function_name, handle_type)              \
+    static handle_type function_name(uint64_t bits) {                        \
+        handle_type handle = VK_NULL_HANDLE;                                 \
+        _Static_assert(sizeof(handle) <= sizeof(bits),                       \
+                       #handle_type " exceeds bridge handle width");         \
+        memcpy(&handle, &bits, sizeof(handle));                              \
+        return handle;                                                       \
+    }
+
+BVB_DEFINE_HANDLE_FROM_BITS(descriptor_set_layout_from_bits,
+                            VkDescriptorSetLayout)
+BVB_DEFINE_HANDLE_FROM_BITS(descriptor_pool_from_bits, VkDescriptorPool)
+BVB_DEFINE_HANDLE_FROM_BITS(descriptor_set_from_bits, VkDescriptorSet)
+BVB_DEFINE_HANDLE_FROM_BITS(sampler_from_bits, VkSampler)
+
+#undef BVB_DEFINE_HANDLE_FROM_BITS
 
 static int resolve_physical_device(
     const struct bvb_vulkan_global_context *context,
@@ -352,6 +373,10 @@ int bvb_vulkan_global_context_create(
     context->next_semaphore_serial = 1U;
     context->next_swapchain_serial = 1U;
     context->next_image_serial = 1U;
+    context->next_descriptor_set_layout_serial = 1U;
+    context->next_descriptor_pool_serial = 1U;
+    context->next_descriptor_set_serial = 1U;
+    context->next_sampler_serial = 1U;
     *output = context;
     return 0;
 }
@@ -1571,6 +1596,34 @@ int bvb_vulkan_global_context_destroy_device(
     }
     for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
         const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_DESCRIPTOR_POOL &&
+            entry->parent_id == device_id) {
+            result = bvb_vulkan_global_context_destroy_descriptor_pool(
+                context, entry->wire_id, NULL, 0U);
+            if (result != 0) return result;
+        }
+    }
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_SAMPLER &&
+            entry->parent_id == device_id) {
+            result = bvb_vulkan_global_context_destroy_sampler(
+                context, entry->wire_id, NULL, 0U);
+            if (result != 0) return result;
+        }
+    }
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) ==
+                BVB_OBJECT_DESCRIPTOR_SET_LAYOUT &&
+            entry->parent_id == device_id) {
+            result = bvb_vulkan_global_context_destroy_descriptor_set_layout(
+                context, entry->wire_id, NULL, 0U);
+            if (result != 0) return result;
+        }
+    }
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
         if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_COMMAND_POOL &&
             entry->parent_id == device_id) {
             result = bvb_vulkan_global_context_destroy_command_pool(
@@ -2280,6 +2333,492 @@ static struct bvb_memory_metadata *memory_metadata_slot(
         if (metadata->memory_id == 0U && empty == NULL) empty = metadata;
     }
     return empty;
+}
+
+int bvb_vulkan_global_context_create_descriptor_set_layout(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_descriptor_set_layout_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL) return -EINVAL;
+    *response = (struct bvb_vulkan_object_create_response){0};
+    const VkDescriptorSetLayoutCreateFlags allowed_layout_flags =
+        VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
+    const VkDescriptorBindingFlags allowed_binding_flags =
+        VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+        VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT |
+        VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+    if ((request->flags & ~allowed_layout_flags) != 0U ||
+        request->binding_count > BVB_VULKAN_MAX_DESCRIPTOR_LAYOUT_BINDINGS ||
+        request->has_binding_flags > 1U) {
+        response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    VkDescriptorSetLayoutBinding
+        bindings[BVB_VULKAN_MAX_DESCRIPTOR_LAYOUT_BINDINGS] = {0};
+    VkDescriptorBindingFlags
+        binding_flags[BVB_VULKAN_MAX_DESCRIPTOR_LAYOUT_BINDINGS] = {0};
+    for (uint32_t index = 0U; index < request->binding_count; ++index) {
+        const struct bvb_vulkan_descriptor_layout_binding *wire =
+            &request->bindings[index];
+        if (wire->descriptor_type != VK_DESCRIPTOR_TYPE_SAMPLER ||
+            wire->descriptor_count == 0U ||
+            wire->descriptor_count > (1U << 20) ||
+            wire->stage_flags == 0U ||
+            (wire->binding_flags & ~allowed_binding_flags) != 0U ||
+            (!request->has_binding_flags && wire->binding_flags != 0U)) {
+            response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+            return 0;
+        }
+        bindings[index] = (VkDescriptorSetLayoutBinding){
+            .binding = wire->binding,
+            .descriptorType = (VkDescriptorType)wire->descriptor_type,
+            .descriptorCount = wire->descriptor_count,
+            .stageFlags = wire->stage_flags,
+        };
+        binding_flags[index] = wire->binding_flags;
+    }
+    uint64_t device_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE, NULL,
+        &device_bits);
+    if (result != 0) {
+        set_error(error, error_size,
+                  "descriptor layout device lookup failed: %d", result);
+        return result;
+    }
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkCreateDescriptorSetLayout create_layout =
+        (PFN_vkCreateDescriptorSetLayout)context->get_device_proc_addr(
+            device, "vkCreateDescriptorSetLayout");
+    PFN_vkDestroyDescriptorSetLayout destroy_layout =
+        (PFN_vkDestroyDescriptorSetLayout)context->get_device_proc_addr(
+            device, "vkDestroyDescriptorSetLayout");
+    if (create_layout == NULL || destroy_layout == NULL) return -ENOSYS;
+    const VkDescriptorSetLayoutBindingFlagsCreateInfo flags_info = {
+        .sType =
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO,
+        .bindingCount = request->binding_count,
+        .pBindingFlags = binding_flags,
+    };
+    const VkDescriptorSetLayoutCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .pNext = request->has_binding_flags ? &flags_info : NULL,
+        .flags = request->flags,
+        .bindingCount = request->binding_count,
+        .pBindings = request->binding_count == 0U ? NULL : bindings,
+    };
+    VkDescriptorSetLayout layout = VK_NULL_HANDLE;
+    response->vulkan_result =
+        create_layout(device, &create_info, NULL, &layout);
+    if (response->vulkan_result != VK_SUCCESS) return 0;
+    const uint64_t wire_id = bvb_handle_id(
+        BVB_OBJECT_DESCRIPTOR_SET_LAYOUT,
+        context->next_descriptor_set_layout_serial++);
+    result = bvb_handle_table_insert(
+        &context->objects, wire_id, request->device_id,
+        handle_bits(&layout, sizeof(layout)));
+    if (result != 0) {
+        destroy_layout(device, layout, NULL);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    response->object_id = wire_id;
+    return 0;
+}
+
+int bvb_vulkan_global_context_destroy_descriptor_set_layout(
+    struct bvb_vulkan_global_context *context, uint64_t layout_id,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    uint64_t device_id = 0U, layout_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, layout_id, BVB_OBJECT_DESCRIPTOR_SET_LAYOUT, &device_id,
+        &device, &layout_bits);
+    if (result != 0) return result;
+    PFN_vkDestroyDescriptorSetLayout destroy_layout =
+        (PFN_vkDestroyDescriptorSetLayout)context->get_device_proc_addr(
+            device, "vkDestroyDescriptorSetLayout");
+    if (destroy_layout == NULL) return -ENOSYS;
+    result = bvb_handle_table_remove(
+        &context->objects, layout_id, BVB_OBJECT_DESCRIPTOR_SET_LAYOUT, NULL);
+    if (result == 0) {
+        destroy_layout(
+            device, descriptor_set_layout_from_bits(layout_bits), NULL);
+    }
+    return result;
+}
+
+int bvb_vulkan_global_context_create_descriptor_pool(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_descriptor_pool_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL) return -EINVAL;
+    *response = (struct bvb_vulkan_object_create_response){0};
+    if ((request->flags & ~VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT) !=
+            0U ||
+        request->max_sets == 0U || request->max_sets > (1U << 20) ||
+        request->pool_size_count == 0U ||
+        request->pool_size_count > BVB_VULKAN_MAX_DESCRIPTOR_POOL_SIZES) {
+        response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    VkDescriptorPoolSize sizes[BVB_VULKAN_MAX_DESCRIPTOR_POOL_SIZES] = {0};
+    for (uint32_t index = 0U; index < request->pool_size_count; ++index) {
+        if (request->pool_sizes[index].descriptor_type !=
+                VK_DESCRIPTOR_TYPE_SAMPLER ||
+            request->pool_sizes[index].descriptor_count == 0U ||
+            request->pool_sizes[index].descriptor_count > (1U << 20)) {
+            response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+            return 0;
+        }
+        sizes[index] = (VkDescriptorPoolSize){
+            .type = (VkDescriptorType)
+                request->pool_sizes[index].descriptor_type,
+            .descriptorCount = request->pool_sizes[index].descriptor_count,
+        };
+    }
+    uint64_t device_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE, NULL,
+        &device_bits);
+    if (result != 0) {
+        set_error(error, error_size,
+                  "descriptor pool device lookup failed: %d", result);
+        return result;
+    }
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkCreateDescriptorPool create_pool =
+        (PFN_vkCreateDescriptorPool)context->get_device_proc_addr(
+            device, "vkCreateDescriptorPool");
+    PFN_vkDestroyDescriptorPool destroy_pool =
+        (PFN_vkDestroyDescriptorPool)context->get_device_proc_addr(
+            device, "vkDestroyDescriptorPool");
+    if (create_pool == NULL || destroy_pool == NULL) return -ENOSYS;
+    const VkDescriptorPoolCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .flags = request->flags,
+        .maxSets = request->max_sets,
+        .poolSizeCount = request->pool_size_count,
+        .pPoolSizes = sizes,
+    };
+    VkDescriptorPool pool = VK_NULL_HANDLE;
+    response->vulkan_result = create_pool(device, &create_info, NULL, &pool);
+    if (response->vulkan_result != VK_SUCCESS) return 0;
+    const uint64_t wire_id = bvb_handle_id(
+        BVB_OBJECT_DESCRIPTOR_POOL,
+        context->next_descriptor_pool_serial++);
+    result = bvb_handle_table_insert(
+        &context->objects, wire_id, request->device_id,
+        handle_bits(&pool, sizeof(pool)));
+    if (result != 0) {
+        destroy_pool(device, pool, NULL);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    response->object_id = wire_id;
+    return 0;
+}
+
+int bvb_vulkan_global_context_destroy_descriptor_pool(
+    struct bvb_vulkan_global_context *context, uint64_t pool_id,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    uint64_t device_id = 0U, pool_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, pool_id, BVB_OBJECT_DESCRIPTOR_POOL, &device_id,
+        &device, &pool_bits);
+    if (result != 0) return result;
+    PFN_vkDestroyDescriptorPool destroy_pool =
+        (PFN_vkDestroyDescriptorPool)context->get_device_proc_addr(
+            device, "vkDestroyDescriptorPool");
+    if (destroy_pool == NULL) return -ENOSYS;
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_DESCRIPTOR_SET &&
+            entry->parent_id == pool_id) {
+            result = bvb_handle_table_remove(
+                &context->objects, entry->wire_id,
+                BVB_OBJECT_DESCRIPTOR_SET, NULL);
+            if (result != 0) return result;
+        }
+    }
+    result = bvb_handle_table_remove(
+        &context->objects, pool_id, BVB_OBJECT_DESCRIPTOR_POOL, NULL);
+    if (result == 0) {
+        destroy_pool(device, descriptor_pool_from_bits(pool_bits), NULL);
+    }
+    return result;
+}
+
+int bvb_vulkan_global_context_allocate_descriptor_sets(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_descriptor_set_allocate_request *request,
+    struct bvb_vulkan_descriptor_set_allocate_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL) return -EINVAL;
+    *response = (struct bvb_vulkan_descriptor_set_allocate_response){0};
+    if (request->descriptor_set_count == 0U ||
+        request->descriptor_set_count >
+            BVB_VULKAN_MAX_DESCRIPTOR_SETS_PER_ALLOCATE ||
+        request->descriptor_set_count >
+            context->objects.capacity - context->objects.count) {
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    uint64_t device_id = 0U, pool_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, request->descriptor_pool_id,
+        BVB_OBJECT_DESCRIPTOR_POOL, &device_id, &pool_bits);
+    uint64_t device_bits = 0U;
+    if (result == 0) {
+        result = bvb_handle_table_lookup(
+            &context->objects, device_id, BVB_OBJECT_DEVICE, NULL,
+            &device_bits);
+    }
+    if (result != 0) return result;
+    VkDescriptorSetLayout
+        layouts[BVB_VULKAN_MAX_DESCRIPTOR_SETS_PER_ALLOCATE] = {0};
+    for (uint32_t index = 0U; index < request->descriptor_set_count; ++index) {
+        uint64_t layout_device_id = 0U, layout_bits = 0U;
+        result = bvb_handle_table_lookup(
+            &context->objects, request->set_layout_ids[index],
+            BVB_OBJECT_DESCRIPTOR_SET_LAYOUT, &layout_device_id,
+            &layout_bits);
+        if (result != 0 || layout_device_id != device_id) {
+            return result != 0 ? result : -EPROTO;
+        }
+        layouts[index] = descriptor_set_layout_from_bits(layout_bits);
+    }
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkAllocateDescriptorSets allocate_sets =
+        (PFN_vkAllocateDescriptorSets)context->get_device_proc_addr(
+            device, "vkAllocateDescriptorSets");
+    if (allocate_sets == NULL) return -ENOSYS;
+    const VkDescriptorSetAllocateInfo allocate_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = descriptor_pool_from_bits(pool_bits),
+        .descriptorSetCount = request->descriptor_set_count,
+        .pSetLayouts = layouts,
+    };
+    VkDescriptorSet sets[BVB_VULKAN_MAX_DESCRIPTOR_SETS_PER_ALLOCATE] = {0};
+    response->vulkan_result =
+        allocate_sets(device, &allocate_info, sets);
+    if (response->vulkan_result != VK_SUCCESS) return 0;
+    response->descriptor_set_count = request->descriptor_set_count;
+    for (uint32_t index = 0U; index < request->descriptor_set_count; ++index) {
+        const uint64_t wire_id = bvb_handle_id(
+            BVB_OBJECT_DESCRIPTOR_SET,
+            context->next_descriptor_set_serial++);
+        result = bvb_handle_table_insert(
+            &context->objects, wire_id, request->descriptor_pool_id,
+            handle_bits(&sets[index], sizeof(sets[index])));
+        if (result != 0) {
+            response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+            response->descriptor_set_count = 0U;
+            return 0;
+        }
+        response->descriptor_set_ids[index] = wire_id;
+    }
+    return 0;
+}
+
+static float wire_float(uint32_t bits) {
+    float value = 0.0F;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+int bvb_vulkan_global_context_create_sampler(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_sampler_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL) return -EINVAL;
+    *response = (struct bvb_vulkan_object_create_response){0};
+    if (request->flags != 0U || request->mag_filter > VK_FILTER_LINEAR ||
+        request->min_filter > VK_FILTER_LINEAR ||
+        request->mipmap_mode > VK_SAMPLER_MIPMAP_MODE_LINEAR ||
+        request->address_mode_u > VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE ||
+        request->address_mode_v > VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE ||
+        request->address_mode_w > VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE ||
+        request->anisotropy_enable > 1U || request->compare_enable > 1U ||
+        request->compare_op > VK_COMPARE_OP_ALWAYS ||
+        request->border_color > VK_BORDER_COLOR_INT_OPAQUE_WHITE ||
+        request->unnormalized_coordinates > 1U) {
+        response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    uint64_t device_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE, NULL,
+        &device_bits);
+    if (result != 0) return result;
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkCreateSampler create_sampler =
+        (PFN_vkCreateSampler)context->get_device_proc_addr(
+            device, "vkCreateSampler");
+    PFN_vkDestroySampler destroy_sampler =
+        (PFN_vkDestroySampler)context->get_device_proc_addr(
+            device, "vkDestroySampler");
+    if (create_sampler == NULL || destroy_sampler == NULL) return -ENOSYS;
+    const VkSamplerCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .flags = request->flags,
+        .magFilter = (VkFilter)request->mag_filter,
+        .minFilter = (VkFilter)request->min_filter,
+        .mipmapMode = (VkSamplerMipmapMode)request->mipmap_mode,
+        .addressModeU = (VkSamplerAddressMode)request->address_mode_u,
+        .addressModeV = (VkSamplerAddressMode)request->address_mode_v,
+        .addressModeW = (VkSamplerAddressMode)request->address_mode_w,
+        .mipLodBias = wire_float(request->mip_lod_bias_bits),
+        .anisotropyEnable = request->anisotropy_enable,
+        .maxAnisotropy = wire_float(request->max_anisotropy_bits),
+        .compareEnable = request->compare_enable,
+        .compareOp = (VkCompareOp)request->compare_op,
+        .minLod = wire_float(request->min_lod_bits),
+        .maxLod = wire_float(request->max_lod_bits),
+        .borderColor = (VkBorderColor)request->border_color,
+        .unnormalizedCoordinates = request->unnormalized_coordinates,
+    };
+    VkSampler sampler = VK_NULL_HANDLE;
+    response->vulkan_result =
+        create_sampler(device, &create_info, NULL, &sampler);
+    if (response->vulkan_result != VK_SUCCESS) return 0;
+    const uint64_t wire_id = bvb_handle_id(
+        BVB_OBJECT_SAMPLER, context->next_sampler_serial++);
+    result = bvb_handle_table_insert(
+        &context->objects, wire_id, request->device_id,
+        handle_bits(&sampler, sizeof(sampler)));
+    if (result != 0) {
+        destroy_sampler(device, sampler, NULL);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    response->object_id = wire_id;
+    return 0;
+}
+
+int bvb_vulkan_global_context_destroy_sampler(
+    struct bvb_vulkan_global_context *context, uint64_t sampler_id,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    uint64_t device_id = 0U, sampler_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, sampler_id, BVB_OBJECT_SAMPLER, &device_id, &device,
+        &sampler_bits);
+    if (result != 0) return result;
+    PFN_vkDestroySampler destroy_sampler =
+        (PFN_vkDestroySampler)context->get_device_proc_addr(
+            device, "vkDestroySampler");
+    if (destroy_sampler == NULL) return -ENOSYS;
+    result = bvb_handle_table_remove(
+        &context->objects, sampler_id, BVB_OBJECT_SAMPLER, NULL);
+    if (result == 0) {
+        destroy_sampler(device, sampler_from_bits(sampler_bits), NULL);
+    }
+    return result;
+}
+
+int bvb_vulkan_global_context_update_descriptors(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_descriptor_update_request *request,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || request->write_count == 0U ||
+        request->write_count > BVB_VULKAN_MAX_DESCRIPTOR_WRITES ||
+        request->sampler_count == 0U ||
+        request->sampler_count > BVB_VULKAN_MAX_DESCRIPTOR_SAMPLERS) {
+        return -EINVAL;
+    }
+    uint64_t device_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE, NULL,
+        &device_bits);
+    if (result != 0) {
+        set_error(error, error_size,
+                  "descriptor update device lookup failed: %d", result);
+        return result;
+    }
+    VkDescriptorImageInfo
+        image_infos[BVB_VULKAN_MAX_DESCRIPTOR_SAMPLERS] = {0};
+    for (uint32_t index = 0U; index < request->sampler_count; ++index) {
+        uint64_t sampler_device_id = 0U, sampler_bits = 0U;
+        result = bvb_handle_table_lookup(
+            &context->objects, request->sampler_ids[index],
+            BVB_OBJECT_SAMPLER, &sampler_device_id, &sampler_bits);
+        if (result != 0 || sampler_device_id != request->device_id) {
+            set_error(error, error_size,
+                      "descriptor update sampler[%u] lineage failed: "
+                      "lookup=%d parent=%#llx expected=%#llx",
+                      index, result, (unsigned long long)sampler_device_id,
+                      (unsigned long long)request->device_id);
+            return result != 0 ? result : -EPROTO;
+        }
+        image_infos[index] = (VkDescriptorImageInfo){
+            .sampler = sampler_from_bits(sampler_bits),
+            .imageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        };
+    }
+    VkWriteDescriptorSet writes[BVB_VULKAN_MAX_DESCRIPTOR_WRITES] = {0};
+    for (uint32_t index = 0U; index < request->write_count; ++index) {
+        const struct bvb_vulkan_descriptor_write *wire =
+            &request->writes[index];
+        if (wire->descriptor_type != VK_DESCRIPTOR_TYPE_SAMPLER ||
+            wire->descriptor_count == 0U ||
+            wire->first_sampler >= request->sampler_count ||
+            wire->descriptor_count >
+                request->sampler_count - wire->first_sampler) {
+            return -EPROTO;
+        }
+        uint64_t pool_id = 0U, set_bits = 0U;
+        result = bvb_handle_table_lookup(
+            &context->objects, wire->descriptor_set_id,
+            BVB_OBJECT_DESCRIPTOR_SET, &pool_id, &set_bits);
+        if (result != 0) {
+            set_error(error, error_size,
+                      "descriptor update set[%u] lookup failed: %d",
+                      index, result);
+            return result;
+        }
+        uint64_t set_device_id = 0U, pool_bits = 0U;
+        result = bvb_handle_table_lookup(
+            &context->objects, pool_id, BVB_OBJECT_DESCRIPTOR_POOL,
+            &set_device_id, &pool_bits);
+        if (result != 0 || set_device_id != request->device_id) {
+            set_error(error, error_size,
+                      "descriptor update set[%u] pool lineage failed: "
+                      "lookup=%d pool=%#llx parent=%#llx expected=%#llx",
+                      index, result, (unsigned long long)pool_id,
+                      (unsigned long long)set_device_id,
+                      (unsigned long long)request->device_id);
+            return result != 0 ? result : -EPROTO;
+        }
+        writes[index] = (VkWriteDescriptorSet){
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .dstSet = descriptor_set_from_bits(set_bits),
+            .dstBinding = wire->dst_binding,
+            .dstArrayElement = wire->dst_array_element,
+            .descriptorCount = wire->descriptor_count,
+            .descriptorType = (VkDescriptorType)wire->descriptor_type,
+            .pImageInfo = &image_infos[wire->first_sampler],
+        };
+    }
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkUpdateDescriptorSets update =
+        (PFN_vkUpdateDescriptorSets)context->get_device_proc_addr(
+            device, "vkUpdateDescriptorSets");
+    if (update == NULL) return -ENOSYS;
+    update(device, request->write_count, writes, 0U, NULL);
+    return 0;
 }
 
 int bvb_vulkan_global_context_create_buffer(

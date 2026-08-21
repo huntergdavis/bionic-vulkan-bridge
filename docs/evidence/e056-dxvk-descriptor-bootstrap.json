@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "gate": "E056",
+  "result": "pass_host_contract",
+  "objective": "forward DXVK's first logical-device descriptor and sampler bootstrap calls through the glibc-to-Bionic bridge without transmitting pointers or fabricating Vulkan handles",
+  "source": {
+    "dxvk_commit": "a6764047e587178283fcde4073ae6e1410af594f",
+    "path": "src/dxvk/dxvk_sampler.cpp",
+    "observed_constructor_order": [
+      "vkCreateDescriptorSetLayout",
+      "vkCreateDescriptorPool",
+      "vkAllocateDescriptorSets",
+      "vkCreateSampler",
+      "vkUpdateDescriptorSets"
+    ],
+    "observed_destroy_order": [
+      "vkDestroySampler",
+      "vkDestroyDescriptorPool",
+      "vkDestroyDescriptorSetLayout"
+    ]
+  },
+  "wire": {
+    "opcodes": {
+      "66": "descriptor-set-layout create",
+      "67": "descriptor-pool create",
+      "68": "batched descriptor-set allocate",
+      "69": "sampler create",
+      "70": "batched sampler descriptor writes",
+      "71": "typed descriptor/sampler object destroy"
+    },
+    "representation": "canonical little-endian scalar records and typed 64-bit bridge object IDs only",
+    "maximum_layout_bindings": 32,
+    "maximum_pool_sizes": 16,
+    "maximum_sets_per_allocate": 16,
+    "maximum_writes_per_update": 32,
+    "maximum_samplers_per_update": 128,
+    "pointers_crossed": false,
+    "native_reconstruction": "the Bionic service creates local Vulkan bindings, binding flags, pool sizes, set-layout arrays, sampler structs, image infos, writes, and pNext links"
+  },
+  "supported_shape": {
+    "layout": "sampler bindings, no immutable samplers, and the exact binding-flags pNext used by DXVK's legacy sampler heap",
+    "pool": "sampler-only update-after-bind pools",
+    "allocation": "one bounded RPC may allocate up to 16 real native descriptor sets",
+    "sampler": "base VkSamplerCreateInfo with no pNext",
+    "update": "one bounded RPC may carry up to 32 sampler-only writes and 128 sampler IDs",
+    "destroy": "real native sampler, pool, and layout destruction with pool-owned set invalidation"
+  },
+  "fail_closed": [
+    "non-null allocation callbacks",
+    "unknown or unsupported pNext records",
+    "immutable samplers",
+    "unsupported descriptor types, flags, or malformed counts",
+    "descriptor copies and non-sampler writes",
+    "cross-device or wrong-type object IDs",
+    "nonzero reserved wire bytes"
+  ],
+  "verification": {
+    "host_contracts": "28/28 passed",
+    "canonical_codec": "round trips every new variable and fixed record and rejects corrupted reserved bytes",
+    "cross_process_fake_driver": "observed the exact constructor and destruction order, exact requested booleans/counts/enums/floats, native non-dummy handles, and sampler descriptor contents",
+    "hardware_or_game_claim": false
+  },
+  "first_remaining_call": {
+    "command": "vkCreatePipelineLayout",
+    "derivation": "after the sampler pool creates its default sampler, DxvkObjects constructs DxvkPipelineManager; its eager null-fragment library builds an empty descriptor-set layout (covered by this create codec) and then creates a pipeline layout",
+    "source_paths": [
+      "src/dxvk/dxvk_objects.h",
+      "src/dxvk/dxvk_pipemanager.cpp",
+      "src/dxvk/dxvk_shader.cpp",
+      "src/dxvk/dxvk_pipelayout.cpp"
+    ]
+  },
+  "reuse": "Reused E045's loader-private/local-pointer rule and E046's fixed-width object-RPC ownership pattern. The required deja search returned no prior descriptor-bootstrap implementation.",
+  "scope": "Host transport and native fake-driver proof only; no Android deployment, Turnip execution, DXVK adapter acceptance, pipeline creation, game frame, or FPS claim"
+}

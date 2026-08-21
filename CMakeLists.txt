@@ -165,7 +165,8 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "Android")
   bvb_enable_warnings(bvb-vulkan-resolve-trace)
 endif()
 
-add_library(bvb-wire STATIC src/lifecycle.c src/protocol.c src/transport.c)
+add_library(bvb-wire STATIC src/lifecycle.c src/protocol.c
+  src/vulkan_descriptor_wire.c src/transport.c)
 set_target_properties(bvb-wire PROPERTIES C_VISIBILITY_PRESET hidden)
 target_include_directories(
   bvb-wire

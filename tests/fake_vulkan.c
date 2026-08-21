@@ -39,6 +39,15 @@ static int fake_to_present_barrier;
 static int fake_submitted;
 static int fake_fence_created;
 static int fake_fence_signaled;
+static uint32_t fake_descriptor_step;
+static const VkDescriptorSetLayout fake_descriptor_layout =
+    (VkDescriptorSetLayout)(uintptr_t)UINT64_C(0xa100);
+static const VkDescriptorPool fake_descriptor_pool =
+    (VkDescriptorPool)(uintptr_t)UINT64_C(0xa200);
+static const VkDescriptorSet fake_descriptor_set =
+    (VkDescriptorSet)(uintptr_t)UINT64_C(0xa300);
+static const VkSampler fake_sampler =
+    (VkSampler)(uintptr_t)UINT64_C(0xa400);
 static const VkFence fake_fence_handle =
     (VkFence)(uintptr_t)UINT64_C(0x9000);
 
@@ -746,6 +755,165 @@ static void VKAPI_CALL fake_destroy_device(
     fake_clear_recorded = 0;
     fake_to_present_barrier = 0;
     fake_submitted = 0;
+    fake_descriptor_step = 0U;
+}
+
+static VkResult VKAPI_CALL fake_create_descriptor_set_layout(
+    VkDevice device, const VkDescriptorSetLayoutCreateInfo *create_info,
+    const VkAllocationCallbacks *allocator,
+    VkDescriptorSetLayout *set_layout) {
+    (void)device;
+    if (fake_descriptor_step != 0U || allocator != NULL ||
+        create_info == NULL || set_layout == NULL ||
+        create_info->sType !=
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO ||
+        create_info->flags !=
+            VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT ||
+        create_info->bindingCount != 1U || create_info->pBindings == NULL ||
+        create_info->pBindings[0].binding != 0U ||
+        create_info->pBindings[0].descriptorType !=
+            VK_DESCRIPTOR_TYPE_SAMPLER ||
+        create_info->pBindings[0].descriptorCount != 4096U ||
+        create_info->pBindings[0].stageFlags !=
+            (VK_SHADER_STAGE_ALL_GRAPHICS | VK_SHADER_STAGE_COMPUTE_BIT) ||
+        create_info->pBindings[0].pImmutableSamplers != NULL) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    const VkDescriptorSetLayoutBindingFlagsCreateInfo *flags =
+        create_info->pNext;
+    if (flags == NULL ||
+        flags->sType !=
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO ||
+        flags->pNext != NULL || flags->bindingCount != 1U ||
+        flags->pBindingFlags == NULL || flags->pBindingFlags[0] !=
+            (VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
+             VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT |
+             VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT)) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    *set_layout = fake_descriptor_layout;
+    fake_descriptor_step = 1U;
+    return VK_SUCCESS;
+}
+
+static VkResult VKAPI_CALL fake_create_descriptor_pool(
+    VkDevice device, const VkDescriptorPoolCreateInfo *create_info,
+    const VkAllocationCallbacks *allocator, VkDescriptorPool *pool) {
+    (void)device;
+    if (fake_descriptor_step != 1U || allocator != NULL ||
+        create_info == NULL || pool == NULL ||
+        create_info->sType != VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO ||
+        create_info->pNext != NULL ||
+        create_info->flags != VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT ||
+        create_info->maxSets != 1U || create_info->poolSizeCount != 1U ||
+        create_info->pPoolSizes == NULL ||
+        create_info->pPoolSizes[0].type != VK_DESCRIPTOR_TYPE_SAMPLER ||
+        create_info->pPoolSizes[0].descriptorCount != 4096U) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    *pool = fake_descriptor_pool;
+    fake_descriptor_step = 2U;
+    return VK_SUCCESS;
+}
+
+static VkResult VKAPI_CALL fake_allocate_descriptor_sets(
+    VkDevice device, const VkDescriptorSetAllocateInfo *allocate_info,
+    VkDescriptorSet *descriptor_sets) {
+    (void)device;
+    if (fake_descriptor_step != 2U || allocate_info == NULL ||
+        descriptor_sets == NULL ||
+        allocate_info->sType != VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO ||
+        allocate_info->pNext != NULL ||
+        allocate_info->descriptorPool != fake_descriptor_pool ||
+        allocate_info->descriptorSetCount != 1U ||
+        allocate_info->pSetLayouts == NULL ||
+        allocate_info->pSetLayouts[0] != fake_descriptor_layout) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    descriptor_sets[0] = fake_descriptor_set;
+    fake_descriptor_step = 3U;
+    return VK_SUCCESS;
+}
+
+static VkResult VKAPI_CALL fake_create_sampler(
+    VkDevice device, const VkSamplerCreateInfo *create_info,
+    const VkAllocationCallbacks *allocator, VkSampler *sampler) {
+    (void)device;
+    if (fake_descriptor_step != 3U || allocator != NULL ||
+        create_info == NULL || sampler == NULL ||
+        create_info->sType != VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO ||
+        create_info->pNext != NULL || create_info->flags != 0U ||
+        create_info->magFilter != VK_FILTER_LINEAR ||
+        create_info->minFilter != VK_FILTER_NEAREST ||
+        create_info->mipmapMode != VK_SAMPLER_MIPMAP_MODE_LINEAR ||
+        create_info->addressModeU != VK_SAMPLER_ADDRESS_MODE_REPEAT ||
+        create_info->addressModeV != VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE ||
+        create_info->addressModeW != VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT ||
+        create_info->mipLodBias != 0.25F ||
+        create_info->anisotropyEnable != VK_TRUE ||
+        create_info->maxAnisotropy != 8.0F ||
+        create_info->compareEnable != VK_TRUE ||
+        create_info->compareOp != VK_COMPARE_OP_LESS_OR_EQUAL ||
+        create_info->minLod != 0.0F || create_info->maxLod != 12.0F ||
+        create_info->borderColor != VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE ||
+        create_info->unnormalizedCoordinates != VK_FALSE) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    *sampler = fake_sampler;
+    fake_descriptor_step = 4U;
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL fake_update_descriptor_sets(
+    VkDevice device, uint32_t write_count,
+    const VkWriteDescriptorSet *writes, uint32_t copy_count,
+    const VkCopyDescriptorSet *copies) {
+    (void)device;
+    if (fake_descriptor_step != 4U || write_count != 1U || writes == NULL ||
+        copy_count != 0U || copies != NULL ||
+        writes[0].sType != VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET ||
+        writes[0].pNext != NULL || writes[0].dstSet != fake_descriptor_set ||
+        writes[0].dstBinding != 0U || writes[0].dstArrayElement != 7U ||
+        writes[0].descriptorCount != 1U ||
+        writes[0].descriptorType != VK_DESCRIPTOR_TYPE_SAMPLER ||
+        writes[0].pImageInfo == NULL || writes[0].pBufferInfo != NULL ||
+        writes[0].pTexelBufferView != NULL ||
+        writes[0].pImageInfo[0].sampler != fake_sampler ||
+        writes[0].pImageInfo[0].imageView != VK_NULL_HANDLE ||
+        writes[0].pImageInfo[0].imageLayout != VK_IMAGE_LAYOUT_UNDEFINED) {
+        return;
+    }
+    fake_descriptor_step = 5U;
+}
+
+static void VKAPI_CALL fake_destroy_sampler(
+    VkDevice device, VkSampler sampler,
+    const VkAllocationCallbacks *allocator) {
+    (void)device;
+    if (fake_descriptor_step == 5U && sampler == fake_sampler &&
+        allocator == NULL) {
+        fake_descriptor_step = 6U;
+    }
+}
+
+static void VKAPI_CALL fake_destroy_descriptor_pool(
+    VkDevice device, VkDescriptorPool pool,
+    const VkAllocationCallbacks *allocator) {
+    (void)device;
+    if (fake_descriptor_step == 6U && pool == fake_descriptor_pool &&
+        allocator == NULL) {
+        fake_descriptor_step = 7U;
+    }
+}
+
+static void VKAPI_CALL fake_destroy_descriptor_set_layout(
+    VkDevice device, VkDescriptorSetLayout set_layout,
+    const VkAllocationCallbacks *allocator) {
+    (void)device;
+    if (fake_descriptor_step == 7U && set_layout == fake_descriptor_layout &&
+        allocator == NULL) {
+        fake_descriptor_step = 8U;
+    }
 }
 
 static VkResult VKAPI_CALL fake_create_swapchain(
@@ -1447,6 +1615,11 @@ static VkResult VKAPI_CALL fake_reset_command_pool(
 
 static VkResult VKAPI_CALL fake_device_wait_idle(VkDevice device) {
     (void)device;
+    if (fake_descriptor_step != 0U && fake_descriptor_step != 8U) {
+        fprintf(stderr, "fake Vulkan descriptor sequence stopped at step %u\n",
+                fake_descriptor_step);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
     return VK_SUCCESS;
 }
 
@@ -1576,6 +1749,17 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkWaitForFences", fake_wait_for_fences)
     BVB_DEVICE_MATCH("vkResetFences", fake_reset_fences)
     BVB_DEVICE_MATCH("vkAcquireNextImageKHR", fake_acquire_next_image)
+    BVB_DEVICE_MATCH("vkCreateDescriptorSetLayout",
+                     fake_create_descriptor_set_layout)
+    BVB_DEVICE_MATCH("vkDestroyDescriptorSetLayout",
+                     fake_destroy_descriptor_set_layout)
+    BVB_DEVICE_MATCH("vkCreateDescriptorPool", fake_create_descriptor_pool)
+    BVB_DEVICE_MATCH("vkDestroyDescriptorPool", fake_destroy_descriptor_pool)
+    BVB_DEVICE_MATCH("vkAllocateDescriptorSets",
+                     fake_allocate_descriptor_sets)
+    BVB_DEVICE_MATCH("vkCreateSampler", fake_create_sampler)
+    BVB_DEVICE_MATCH("vkDestroySampler", fake_destroy_sampler)
+    BVB_DEVICE_MATCH("vkUpdateDescriptorSets", fake_update_descriptor_sets)
     BVB_DEVICE_MATCH("vkCreateBuffer", fake_create_buffer)
     BVB_DEVICE_MATCH("vkDestroyBuffer", fake_destroy_buffer)
     BVB_DEVICE_MATCH("vkGetBufferMemoryRequirements",

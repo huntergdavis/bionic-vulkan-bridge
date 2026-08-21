@@ -1545,6 +1545,38 @@ static int answer_vulkan_resource_create(
             result = bvb_vulkan_global_context_create_semaphore(
                 context, &decoded, &created, diagnostic, sizeof(diagnostic));
         expected_type = BVB_OBJECT_SEMAPHORE;
+    } else if (request->header.opcode ==
+               BVB_OPCODE_VULKAN_DESCRIPTOR_SET_LAYOUT_CREATE) {
+        struct bvb_vulkan_descriptor_set_layout_create_request decoded;
+        result =
+            bvb_protocol_decode_vulkan_descriptor_set_layout_create_request(
+                request->payload, request->header.payload_length, &decoded);
+        if (result == 0) {
+            result = bvb_vulkan_global_context_create_descriptor_set_layout(
+                context, &decoded, &created, diagnostic, sizeof(diagnostic));
+        }
+        expected_type = BVB_OBJECT_DESCRIPTOR_SET_LAYOUT;
+    } else if (request->header.opcode ==
+               BVB_OPCODE_VULKAN_DESCRIPTOR_POOL_CREATE) {
+        struct bvb_vulkan_descriptor_pool_create_request decoded;
+        result = bvb_protocol_decode_vulkan_descriptor_pool_create_request(
+            request->payload, request->header.payload_length, &decoded);
+        if (result == 0) {
+            result = bvb_vulkan_global_context_create_descriptor_pool(
+                context, &decoded, &created, diagnostic, sizeof(diagnostic));
+        }
+        expected_type = BVB_OBJECT_DESCRIPTOR_POOL;
+    } else if (request->header.opcode == BVB_OPCODE_VULKAN_SAMPLER_CREATE &&
+               request->header.payload_length ==
+                   BVB_VULKAN_SAMPLER_CREATE_REQUEST_SIZE) {
+        struct bvb_vulkan_sampler_create_request decoded;
+        result = bvb_protocol_decode_vulkan_sampler_create_request(
+            request->payload, &decoded);
+        if (result == 0) {
+            result = bvb_vulkan_global_context_create_sampler(
+                context, &decoded, &created, diagnostic, sizeof(diagnostic));
+        }
+        expected_type = BVB_OBJECT_SAMPLER;
     }
     if (result != 0) {
         fprintf(stderr, "bvb: resource create failed: %s\n", diagnostic);
@@ -1575,31 +1607,115 @@ static int answer_vulkan_resource_destroy(
     const bool fence = request->header.opcode == BVB_OPCODE_VULKAN_FENCE_DESTROY;
     const bool semaphore =
         request->header.opcode == BVB_OPCODE_VULKAN_SEMAPHORE_DESTROY;
+    const bool descriptor_object = request->header.opcode ==
+        BVB_OPCODE_VULKAN_DESCRIPTOR_OBJECT_DESTROY;
+    const enum bvb_object_type descriptor_type = descriptor_object
+        ? bvb_handle_type(bvb_wire_get_u64(request->payload))
+        : BVB_OBJECT_INVALID;
+    const bool descriptor_layout =
+        descriptor_type == BVB_OBJECT_DESCRIPTOR_SET_LAYOUT;
+    const bool descriptor_pool =
+        descriptor_type == BVB_OBJECT_DESCRIPTOR_POOL;
+    const bool sampler = descriptor_type == BVB_OBJECT_SAMPLER;
     uint64_t object_id = 0U;
-    int result = buffer || memory || fence || semaphore
+    int result = buffer || memory || fence || semaphore ||
+                         descriptor_layout || descriptor_pool || sampler
                      ? bvb_protocol_decode_vulkan_object_id(
                            request->payload, &object_id,
                            buffer ? BVB_OBJECT_BUFFER :
                            memory ? BVB_OBJECT_DEVICE_MEMORY :
                            fence ? BVB_OBJECT_FENCE :
-                                   BVB_OBJECT_SEMAPHORE)
+                           semaphore ? BVB_OBJECT_SEMAPHORE :
+                           descriptor_layout
+                               ? BVB_OBJECT_DESCRIPTOR_SET_LAYOUT
+                           : descriptor_pool
+                               ? BVB_OBJECT_DESCRIPTOR_POOL
+                               : BVB_OBJECT_SAMPLER)
                      : -EPROTO;
     char diagnostic[512] = {0};
-    if (result == 0)
-        result = buffer ? bvb_vulkan_global_context_destroy_buffer(
-                              context, object_id, diagnostic,
-                              sizeof(diagnostic)) :
-                 memory ? bvb_vulkan_global_context_free_memory(
-                              context, object_id, diagnostic,
-                              sizeof(diagnostic)) :
-                 fence ? bvb_vulkan_global_context_destroy_fence(
-                             context, object_id, diagnostic,
-                             sizeof(diagnostic))
-                       : bvb_vulkan_global_context_destroy_semaphore(
-                             context, object_id, diagnostic,
-                             sizeof(diagnostic));
+    if (result == 0) {
+        if (buffer) {
+            result = bvb_vulkan_global_context_destroy_buffer(
+                context, object_id, diagnostic, sizeof(diagnostic));
+        } else if (memory) {
+            result = bvb_vulkan_global_context_free_memory(
+                context, object_id, diagnostic, sizeof(diagnostic));
+        } else if (fence) {
+            result = bvb_vulkan_global_context_destroy_fence(
+                context, object_id, diagnostic, sizeof(diagnostic));
+        } else if (semaphore) {
+            result = bvb_vulkan_global_context_destroy_semaphore(
+                context, object_id, diagnostic, sizeof(diagnostic));
+        } else if (descriptor_layout) {
+            result = bvb_vulkan_global_context_destroy_descriptor_set_layout(
+                context, object_id, diagnostic, sizeof(diagnostic));
+        } else if (descriptor_pool) {
+            result = bvb_vulkan_global_context_destroy_descriptor_pool(
+                context, object_id, diagnostic, sizeof(diagnostic));
+        } else {
+            result = bvb_vulkan_global_context_destroy_sampler(
+                context, object_id, diagnostic, sizeof(diagnostic));
+        }
+    }
     if (result != 0) {
         fprintf(stderr, "bvb: resource destroy failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_descriptor_set_allocate(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_descriptor_set_allocate_request decoded;
+    int result = bvb_protocol_decode_vulkan_descriptor_set_allocate_request(
+        request->payload, request->header.payload_length, &decoded);
+    struct bvb_vulkan_descriptor_set_allocate_response allocated = {0};
+    char diagnostic[512] = {0};
+    if (result == 0) {
+        result = bvb_vulkan_global_context_allocate_descriptor_sets(
+            context, &decoded, &allocated, diagnostic, sizeof(diagnostic));
+    }
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_descriptor_set_allocate_response(
+            response.payload, &allocated, &response.header.payload_length);
+    }
+    if (result != 0) {
+        fprintf(stderr, "bvb: descriptor-set allocate failed: %s\n",
+                diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_descriptor_update(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_descriptor_update_request decoded;
+    int result = bvb_protocol_decode_vulkan_descriptor_update_request(
+        request->payload, request->header.payload_length, &decoded);
+    const bool wire_decoded = result == 0;
+    char diagnostic[512] = {0};
+    if (result == 0) {
+        result = bvb_vulkan_global_context_update_descriptors(
+            context, &decoded, diagnostic, sizeof(diagnostic));
+    }
+    if (result != 0) {
+        fprintf(stderr,
+                "bvb: descriptor update failed: status=%d phase=%s %s\n",
+                result, wire_decoded ? "native" : "wire", diagnostic);
         response.header.status = result;
     }
     return bvb_transport_send(client_fd, &response);
@@ -2460,15 +2576,31 @@ static int serve_connection(int client_fd, const char *loader_path,
                    request.header.opcode == BVB_OPCODE_VULKAN_MEMORY_ALLOCATE ||
                    request.header.opcode == BVB_OPCODE_VULKAN_FENCE_CREATE ||
                    request.header.opcode ==
-                       BVB_OPCODE_VULKAN_SEMAPHORE_CREATE) {
+                       BVB_OPCODE_VULKAN_SEMAPHORE_CREATE ||
+                   request.header.opcode ==
+                       BVB_OPCODE_VULKAN_DESCRIPTOR_SET_LAYOUT_CREATE ||
+                   request.header.opcode ==
+                       BVB_OPCODE_VULKAN_DESCRIPTOR_POOL_CREATE ||
+                   request.header.opcode ==
+                       BVB_OPCODE_VULKAN_SAMPLER_CREATE) {
             result = answer_vulkan_resource_create(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode == BVB_OPCODE_VULKAN_BUFFER_DESTROY ||
                    request.header.opcode == BVB_OPCODE_VULKAN_MEMORY_FREE ||
                    request.header.opcode == BVB_OPCODE_VULKAN_FENCE_DESTROY ||
                    request.header.opcode ==
-                       BVB_OPCODE_VULKAN_SEMAPHORE_DESTROY) {
+                       BVB_OPCODE_VULKAN_SEMAPHORE_DESTROY ||
+                   request.header.opcode ==
+                       BVB_OPCODE_VULKAN_DESCRIPTOR_OBJECT_DESTROY) {
             result = answer_vulkan_resource_destroy(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_DESCRIPTOR_SET_ALLOCATE) {
+            result = answer_vulkan_descriptor_set_allocate(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_DESCRIPTOR_UPDATE) {
+            result = answer_vulkan_descriptor_update(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_BUFFER_REQUIREMENTS) {
