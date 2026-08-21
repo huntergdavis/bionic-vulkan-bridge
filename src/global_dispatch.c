@@ -2230,6 +2230,10 @@ bvb_bridge_vkGetPhysicalDeviceSparseImageFormatProperties2(
 #define BVB_FEATURE_INDEX(type, first, field) \
     ((offsetof(type, field) - offsetof(type, first)) / sizeof(VkBool32))
 
+_Static_assert(sizeof(VkPhysicalDeviceFeatures) ==
+                   BVB_VULKAN_BASE_FEATURES_SIZE,
+               "VkPhysicalDeviceFeatures wire size changed");
+
 static bool requested_feature_bools_are_supported(
     const VkBool32 *values, size_t value_count,
     const size_t *supported_indices, size_t supported_count) {
@@ -2253,6 +2257,91 @@ static bool requested_feature_bools_are_supported(
         }
     }
     return true;
+}
+
+static bool zero_only_extension_feature_struct(
+    const VkBaseInStructure *entry) {
+    const VkBool32 *values = NULL;
+    size_t count = 0U;
+#define BVB_ZERO_FEATURE_RANGE(type, first, last) \
+    do { \
+        const type *features = (const type *)entry; \
+        values = &features->first; \
+        count = BVB_FEATURE_INDEX(type, first, last) + 1U; \
+    } while (0)
+    switch (entry->sType) {
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_SUBGROUP_UNIFORM_CONTROL_FLOW_FEATURES_KHR:
+        BVB_ZERO_FEATURE_RANGE(
+            VkPhysicalDeviceShaderSubgroupUniformControlFlowFeaturesKHR,
+            shaderSubgroupUniformControlFlow,
+            shaderSubgroupUniformControlFlow);
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VERTEX_ATTRIBUTE_DIVISOR_FEATURES:
+        BVB_ZERO_FEATURE_RANGE(
+            VkPhysicalDeviceVertexAttributeDivisorFeatures,
+            vertexAttributeInstanceRateDivisor,
+            vertexAttributeInstanceRateZeroDivisor);
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TRANSFORM_FEEDBACK_FEATURES_EXT:
+        BVB_ZERO_FEATURE_RANGE(
+            VkPhysicalDeviceTransformFeedbackFeaturesEXT,
+            transformFeedback, geometryStreams);
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MODULE_IDENTIFIER_FEATURES_EXT:
+        BVB_ZERO_FEATURE_RANGE(
+            VkPhysicalDeviceShaderModuleIdentifierFeaturesEXT,
+            shaderModuleIdentifier, shaderModuleIdentifier);
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_NON_SEAMLESS_CUBE_MAP_FEATURES_EXT:
+        BVB_ZERO_FEATURE_RANGE(
+            VkPhysicalDeviceNonSeamlessCubeMapFeaturesEXT,
+            nonSeamlessCubeMap, nonSeamlessCubeMap);
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MULTI_DRAW_FEATURES_EXT:
+        BVB_ZERO_FEATURE_RANGE(
+            VkPhysicalDeviceMultiDrawFeaturesEXT, multiDraw, multiDraw);
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_LINE_RASTERIZATION_FEATURES:
+        BVB_ZERO_FEATURE_RANGE(
+            VkPhysicalDeviceLineRasterizationFeatures, rectangularLines,
+            stippledSmoothLines);
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_GRAPHICS_PIPELINE_LIBRARY_FEATURES_EXT:
+        BVB_ZERO_FEATURE_RANGE(
+            VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT,
+            graphicsPipelineLibrary, graphicsPipelineLibrary);
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_3_FEATURES_EXT:
+        BVB_ZERO_FEATURE_RANGE(
+            VkPhysicalDeviceExtendedDynamicState3FeaturesEXT,
+            extendedDynamicState3TessellationDomainOrigin,
+            extendedDynamicState3ShadingRateImageEnable);
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_BUFFER_FEATURES_EXT:
+        BVB_ZERO_FEATURE_RANGE(
+            VkPhysicalDeviceDescriptorBufferFeaturesEXT, descriptorBuffer,
+            descriptorBufferPushDescriptors);
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CUSTOM_BORDER_COLOR_FEATURES_EXT:
+        BVB_ZERO_FEATURE_RANGE(
+            VkPhysicalDeviceCustomBorderColorFeaturesEXT,
+            customBorderColors, customBorderColorWithoutFormat);
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BORDER_COLOR_SWIZZLE_FEATURES_EXT:
+        BVB_ZERO_FEATURE_RANGE(
+            VkPhysicalDeviceBorderColorSwizzleFeaturesEXT,
+            borderColorSwizzle, borderColorSwizzleFromImage);
+        break;
+    case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_FEATURES_EXT:
+        BVB_ZERO_FEATURE_RANGE(
+            VkPhysicalDeviceAttachmentFeedbackLoopLayoutFeaturesEXT,
+            attachmentFeedbackLoopLayout, attachmentFeedbackLoopLayout);
+        break;
+    default:
+        return false;
+    }
+#undef BVB_ZERO_FEATURE_RANGE
+    return requested_feature_bools_are_supported(values, count, NULL, 0U);
 }
 
 static VkResult pack_device_feature_chain(
@@ -2466,6 +2555,9 @@ static VkResult pack_device_feature_chain(
             feature_bit = BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_6;
             packed->enabled_features.maintenance6 =
                 (uint32_t)features->maintenance6;
+        } else if (zero_only_extension_feature_struct(entry)) {
+            entry = entry->pNext;
+            continue;
         } else {
             return VK_ERROR_FEATURE_NOT_PRESENT;
         }
@@ -2557,9 +2649,6 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
                     index, create_info->ppEnabledExtensionNames[index]);
         }
     }
-    if (create_info->pEnabledFeatures != NULL) {
-        return VK_ERROR_FEATURE_NOT_PRESENT;
-    }
     struct bvb_vulkan_device_create_packed_request packed = {
         .physical_device_id = physical->wire_id,
         .flags = create_info->flags,
@@ -2567,6 +2656,13 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
         .enabled_layer_count = create_info->enabledLayerCount,
         .enabled_extension_count = native_extension_count,
     };
+    if (create_info->pEnabledFeatures != NULL) {
+        packed.enabled_feature_structs |=
+            BVB_VULKAN_DEVICE_FEATURE_BASE;
+        memcpy(packed.enabled_base_features.values,
+               create_info->pEnabledFeatures,
+               BVB_VULKAN_BASE_FEATURES_SIZE);
+    }
     const VkResult feature_result =
         pack_device_feature_chain(create_info->pNext, &packed);
     if (feature_result != VK_SUCCESS) {

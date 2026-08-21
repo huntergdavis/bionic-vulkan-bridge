@@ -962,6 +962,12 @@ int main(void) {
         .enabledExtensionCount = 59U,
         .ppEnabledExtensionNames = scaled_extensions,
     };
+    VkPhysicalDeviceFeatures enabled_base_features = {
+        .robustBufferAccess = VK_TRUE,
+        .geometryShader = VK_TRUE,
+        .samplerAnisotropy = VK_TRUE,
+    };
+    scaled_create_info.pEnabledFeatures = &enabled_base_features;
     VkDevice scaled_device = VK_NULL_HANDLE;
     const VkPhysicalDeviceVulkan12Features unsupported_scaled_features = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,

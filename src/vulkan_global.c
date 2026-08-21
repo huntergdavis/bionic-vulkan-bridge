@@ -1406,6 +1406,12 @@ int bvb_vulkan_global_context_create_device_packed(
     BVB_APPEND_DEVICE_FEATURE(
         BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_6, maintenance6);
 #undef BVB_APPEND_DEVICE_FEATURE
+    _Static_assert(sizeof(VkPhysicalDeviceFeatures) ==
+                       BVB_VULKAN_BASE_FEATURES_SIZE,
+                   "VkPhysicalDeviceFeatures wire size changed");
+    VkPhysicalDeviceFeatures base_features = {0};
+    memcpy(&base_features, request->enabled_base_features.values,
+           BVB_VULKAN_BASE_FEATURES_SIZE);
     const VkDeviceCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .pNext = feature_chain,
@@ -1413,6 +1419,11 @@ int bvb_vulkan_global_context_create_device_packed(
         .pQueueCreateInfos = queue_infos,
         .enabledExtensionCount = request->enabled_extension_count,
         .ppEnabledExtensionNames = enabled_extensions,
+        .pEnabledFeatures =
+            (request->enabled_feature_structs &
+             BVB_VULKAN_DEVICE_FEATURE_BASE) == 0U
+                ? NULL
+                : &base_features,
     };
     VkDevice device = VK_NULL_HANDLE;
     VkResult result = create_device(

@@ -6,6 +6,10 @@
 #include <stdint.h>
 #include <string.h>
 
+_Static_assert(sizeof(struct bvb_vulkan_base_features) ==
+                   BVB_VULKAN_BASE_FEATURES_SIZE,
+               "base feature wire size changed");
+
 void bvb_wire_put_u16(uint8_t *output, uint16_t value) {
     output[0] = (uint8_t)(value & 0xffU);
     output[1] = (uint8_t)(value >> 8);
@@ -1005,9 +1009,49 @@ static bool packed_device_feature_groups_match_mask(
         features->maintenance5 != 0U) {
         return false;
     }
-    return (request->enabled_feature_structs &
-            BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_6) != 0U ||
-        features->maintenance6 == 0U;
+    if ((request->enabled_feature_structs &
+         BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_6) == 0U &&
+        features->maintenance6 != 0U) {
+        return false;
+    }
+    for (size_t index = 0U;
+         index < sizeof(request->enabled_base_features.values) /
+                 sizeof(request->enabled_base_features.values[0]);
+         ++index) {
+        if (request->enabled_base_features.values[index] > 1U ||
+            ((request->enabled_feature_structs &
+              BVB_VULKAN_DEVICE_FEATURE_BASE) == 0U &&
+             request->enabled_base_features.values[index] != 0U)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void encode_vulkan_base_features(
+    uint8_t output[BVB_VULKAN_BASE_FEATURES_SIZE],
+    const struct bvb_vulkan_base_features *features) {
+    for (size_t index = 0U;
+         index < sizeof(features->values) / sizeof(features->values[0]);
+         ++index) {
+        bvb_wire_put_u32(
+            output + index * sizeof(uint32_t), features->values[index]);
+    }
+}
+
+static int decode_vulkan_base_features(
+    const uint8_t input[BVB_VULKAN_BASE_FEATURES_SIZE],
+    struct bvb_vulkan_base_features *features) {
+    for (size_t index = 0U;
+         index < sizeof(features->values) / sizeof(features->values[0]);
+         ++index) {
+        features->values[index] =
+            bvb_wire_get_u32(input + index * sizeof(uint32_t));
+        if (features->values[index] > 1U) {
+            return -EPROTO;
+        }
+    }
+    return 0;
 }
 
 int bvb_protocol_encode_vulkan_device_create_packed_request(
@@ -1022,6 +1066,9 @@ int bvb_protocol_encode_vulkan_device_create_packed_request(
     uint32_t length = BVB_VULKAN_DEVICE_CREATE_PACKED_PREFIX_SIZE +
         (request->enabled_feature_structs == 0U
              ? 0U : BVB_VULKAN_CORE_FEATURES_SIZE) +
+        ((request->enabled_feature_structs &
+          BVB_VULKAN_DEVICE_FEATURE_BASE) == 0U
+             ? 0U : BVB_VULKAN_BASE_FEATURES_SIZE) +
         request->queue_create_info_count *
             BVB_VULKAN_DEVICE_QUEUE_CREATE_INFO_SIZE +
         request->queue_priority_count * sizeof(uint32_t);
@@ -1055,6 +1102,12 @@ int bvb_protocol_encode_vulkan_device_create_packed_request(
             return -EINVAL;
         }
         cursor += BVB_VULKAN_CORE_FEATURES_SIZE;
+    }
+    if ((request->enabled_feature_structs &
+         BVB_VULKAN_DEVICE_FEATURE_BASE) != 0U) {
+        encode_vulkan_base_features(
+            output + cursor, &request->enabled_base_features);
+        cursor += BVB_VULKAN_BASE_FEATURES_SIZE;
     }
     for (uint32_t index = 0U;
          index < request->queue_create_info_count; ++index) {
@@ -1117,6 +1170,15 @@ int bvb_protocol_decode_vulkan_device_create_packed_request(
             return -EPROTO;
         }
         cursor += BVB_VULKAN_CORE_FEATURES_SIZE;
+    }
+    if ((decoded.enabled_feature_structs &
+         BVB_VULKAN_DEVICE_FEATURE_BASE) != 0U) {
+        if (BVB_VULKAN_BASE_FEATURES_SIZE > input_length - cursor ||
+            decode_vulkan_base_features(
+                input + cursor, &decoded.enabled_base_features) != 0) {
+            return -EPROTO;
+        }
+        cursor += BVB_VULKAN_BASE_FEATURES_SIZE;
     }
     if (!packed_device_feature_groups_match_mask(&decoded)) {
         return -EPROTO;

@@ -108,6 +108,7 @@ enum {
     BVB_VULKAN_EXTERNAL_SEMAPHORE_QUERY_SIZE = 16,
     BVB_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES_SIZE = 12,
     BVB_VULKAN_CORE_FEATURES_SIZE = 100,
+    BVB_VULKAN_BASE_FEATURES_SIZE = 55 * sizeof(uint32_t),
     BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE = 16,
     BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE = 32,
     BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE = 128,
@@ -168,6 +169,7 @@ enum bvb_vulkan_device_feature_struct_bits {
     BVB_VULKAN_DEVICE_FEATURE_ROBUSTNESS_2 = 1U << 4,
     BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_5 = 1U << 5,
     BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_6 = 1U << 6,
+    BVB_VULKAN_DEVICE_FEATURE_BASE = 1U << 7,
     BVB_VULKAN_DEVICE_FEATURE_STRUCT_MASK =
         BVB_VULKAN_DEVICE_FEATURE_VULKAN_11 |
         BVB_VULKAN_DEVICE_FEATURE_VULKAN_12 |
@@ -175,7 +177,8 @@ enum bvb_vulkan_device_feature_struct_bits {
         BVB_VULKAN_DEVICE_FEATURE_DEPTH_CLIP_ENABLE |
         BVB_VULKAN_DEVICE_FEATURE_ROBUSTNESS_2 |
         BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_5 |
-        BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_6,
+        BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_6 |
+        BVB_VULKAN_DEVICE_FEATURE_BASE,
 };
 
 struct bvb_protocol_header {
@@ -364,6 +367,10 @@ struct bvb_vulkan_core_features {
     uint32_t maintenance6;
 };
 
+struct bvb_vulkan_base_features {
+    uint32_t values[55];
+};
+
 struct bvb_vulkan_device_extension_query {
     uint64_t physical_device_id;
     uint32_t first;
@@ -402,6 +409,7 @@ struct bvb_vulkan_device_create_packed_request {
     uint32_t enabled_extension_count;
     uint32_t enabled_feature_structs;
     struct bvb_vulkan_core_features enabled_features;
+    struct bvb_vulkan_base_features enabled_base_features;
     struct bvb_vulkan_device_queue_create_info
         queue_create_infos[BVB_VULKAN_MAX_DEVICE_QUEUE_CREATE_INFOS];
     uint32_t queue_priority_bits[BVB_VULKAN_MAX_DEVICE_QUEUE_PRIORITIES];

@@ -681,6 +681,10 @@ static VkResult VKAPI_CALL fake_create_device(
             create_info->pQueueCreateInfos[1].pQueuePriorities == NULL ||
             create_info->pQueueCreateInfos[0].pQueuePriorities[0] != 0.75F ||
             create_info->pQueueCreateInfos[1].pQueuePriorities[0] != 0.25F ||
+            create_info->pEnabledFeatures == NULL ||
+            create_info->pEnabledFeatures->robustBufferAccess != VK_TRUE ||
+            create_info->pEnabledFeatures->geometryShader != VK_TRUE ||
+            create_info->pEnabledFeatures->samplerAnisotropy != VK_TRUE ||
             !fake_scaled_device_features_are_enabled(create_info->pNext)) {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
