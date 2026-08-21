@@ -2743,6 +2743,7 @@ static int answer_vulkan_swapchain_prepare(
             .height = decoded.height,
             .format = decoded.format,
             .image_usage = decoded.image_usage,
+            .flags = BVB_ACTIVITY_FRAME_FLAG_DMA_BUF,
             .generation = prepared.generation,
         };
         for (uint32_t index = 0U; index < prepared.image_count; ++index) {

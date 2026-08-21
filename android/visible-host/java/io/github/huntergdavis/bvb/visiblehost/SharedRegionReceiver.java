@@ -64,6 +64,7 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
             int height = reply.readInt();
             int format = reply.readInt();
             int imageUsage = reply.readInt();
+            int setupFlags = reply.readInt();
             long generation = reply.readLong();
             if (imageCount < 2 || imageCount > 4) {
                 throw new IllegalArgumentException("invalid frame image count");
@@ -86,7 +87,8 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
             }
             status = SharedRegionProvider.nativeInstallFrameTransport(
                     token, imageCount, width, height, format, imageUsage,
-                    generation, allocationSizes, memoryTypes, detached);
+                    setupFlags, generation, allocationSizes, memoryTypes,
+                    detached);
             /* Native consumes or closes every detached descriptor. */
             detached = null;
             detail = status == 0 ? "installed" : "native_status=" + status;

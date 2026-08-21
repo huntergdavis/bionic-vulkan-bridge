@@ -27,7 +27,8 @@ public final class SharedRegionProvider extends ContentProvider {
 
     static native int nativeInstallFrameTransport(
             String token, int imageCount, int width, int height, int format,
-            int imageUsage, long generation, long[] allocationSizes,
+            int imageUsage, int setupFlags, long generation,
+            long[] allocationSizes,
             int[] memoryTypes, int[] descriptors);
 
     static final class ExternalMemoryResult {

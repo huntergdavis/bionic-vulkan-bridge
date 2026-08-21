@@ -48,6 +48,7 @@ int main(int argc, char **argv) {
     static const char *const extensions[] = {
         VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
         VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
+        VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
     };
     const float priority = 1.0F;
     uint32_t priority_bits = 0U;
@@ -59,7 +60,7 @@ int main(int argc, char **argv) {
         .queue_family_index = 0U,
         .queue_count = 1U,
         .queue_priority_bits = priority_bits,
-        .enabled_extension_count = 2U,
+        .enabled_extension_count = 3U,
     };
     struct bvb_vulkan_device_create_response device = {0};
     CHECK(bvb_vulkan_global_context_create_device(

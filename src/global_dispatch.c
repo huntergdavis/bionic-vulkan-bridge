@@ -3317,8 +3317,10 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
         }
     }
     bool external_memory_fd_injected = false;
+    bool external_memory_dma_buf_injected = false;
     if (virtual_swapchain_requested) {
-        bool native_dependency_supported = false;
+        bool native_external_memory_fd_supported = false;
+        bool native_external_memory_dma_buf_supported = false;
         if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -3329,31 +3331,38 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
         if (extension_result == 0) {
             for (uint32_t index = 0U;
                  index < native_property_count; ++index) {
-                if (strcmp(
-                        native_properties[index].extensionName,
-                        VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) == 0) {
-                    native_dependency_supported = true;
-                    break;
-                }
+                const char *extension_name =
+                    native_properties[index].extensionName;
+                native_external_memory_fd_supported |=
+                    strcmp(extension_name,
+                           VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) == 0;
+                native_external_memory_dma_buf_supported |=
+                    strcmp(extension_name,
+                           VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME) == 0;
             }
         }
         (void)pthread_mutex_unlock(&bvb_global_client.mutex);
         if (extension_result != 0) {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
-        if (!native_dependency_supported) {
+        if (!native_external_memory_fd_supported ||
+            !native_external_memory_dma_buf_supported) {
             return VK_ERROR_EXTENSION_NOT_PRESENT;
         }
-        bool dependency_enabled = false;
+        bool external_memory_fd_enabled = false;
+        bool external_memory_dma_buf_enabled = false;
         for (uint32_t index = 0U;
              index < native_extension_count; ++index) {
             if (strcmp(native_extensions[index],
                        VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) == 0) {
-                dependency_enabled = true;
-                break;
+                external_memory_fd_enabled = true;
+            }
+            if (strcmp(native_extensions[index],
+                       VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME) == 0) {
+                external_memory_dma_buf_enabled = true;
             }
         }
-        if (!dependency_enabled) {
+        if (!external_memory_fd_enabled) {
             if (native_extension_count >=
                 BVB_VULKAN_MAX_DEVICE_CREATE_EXTENSIONS) {
                 return VK_ERROR_INITIALIZATION_FAILED;
@@ -3361,6 +3370,15 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
             native_extensions[native_extension_count++] =
                 VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME;
             external_memory_fd_injected = true;
+        }
+        if (!external_memory_dma_buf_enabled) {
+            if (native_extension_count >=
+                BVB_VULKAN_MAX_DEVICE_CREATE_EXTENSIONS) {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            native_extensions[native_extension_count++] =
+                VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME;
+            external_memory_dma_buf_injected = true;
         }
     }
     if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
@@ -3372,10 +3390,12 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
         }
         fprintf(stderr,
                 "BVB_ICD_CREATE_DEVICE_NORMALIZED original=%u native=%u "
-                "virtual_swapchain=%u external_memory_fd_injected=%u\n",
+                "virtual_swapchain=%u external_memory_fd_injected=%u "
+                "external_memory_dma_buf_injected=%u\n",
                 create_info->enabledExtensionCount, native_extension_count,
                 virtual_swapchain_requested ? 1U : 0U,
-                external_memory_fd_injected ? 1U : 0U);
+                external_memory_fd_injected ? 1U : 0U,
+                external_memory_dma_buf_injected ? 1U : 0U);
     }
     struct bvb_vulkan_device_create_packed_request packed = {
         .physical_device_id = physical->wire_id,

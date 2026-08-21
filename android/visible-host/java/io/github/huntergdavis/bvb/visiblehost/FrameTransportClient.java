@@ -23,6 +23,7 @@ public final class FrameTransportClient extends Binder {
     private static final int SETUP_MAGIC = 0x31544642;
     private static final int SETUP_VERSION = 1;
     private static final int SETUP_BYTES = 128;
+    private static final int SETUP_FLAG_DMA_BUF = 1;
     private static final int MAX_IMAGES = 4;
     private static final long RESULT_TIMEOUT_NS = 10000000000L;
     private static final String HOST_PACKAGE =
@@ -36,6 +37,7 @@ public final class FrameTransportClient extends Binder {
     private int height;
     private int format;
     private int imageUsage;
+    private int setupFlags;
     private long generation;
     private boolean resultDelivered;
     private int nativeStatus;
@@ -52,6 +54,7 @@ public final class FrameTransportClient extends Binder {
         height = getI32(setup, 16);
         format = getI32(setup, 20);
         imageUsage = getI32(setup, 24);
+        setupFlags = getI32(setup, 28);
         generation = getI64(setup, 32);
         if (imageCount < 2 || imageCount > MAX_IMAGES || width <= 0
                 || height <= 0 || format == 0 || imageUsage == 0
@@ -66,7 +69,7 @@ public final class FrameTransportClient extends Binder {
                 throw new IllegalArgumentException("invalid allocation table");
             }
         }
-        if (getI32(setup, 28) != 0) {
+        if ((setupFlags & ~SETUP_FLAG_DMA_BUF) != 0) {
             throw new IllegalArgumentException("unsupported setup flags");
         }
         for (int offset = 88; offset < SETUP_BYTES; offset += 4) {
@@ -142,6 +145,7 @@ public final class FrameTransportClient extends Binder {
             reply.writeInt(height);
             reply.writeInt(format);
             reply.writeInt(imageUsage);
+            reply.writeInt(setupFlags);
             reply.writeLong(generation);
             for (int index = 0; index < imageCount; ++index) {
                 reply.writeLong(allocationSizes[index]);

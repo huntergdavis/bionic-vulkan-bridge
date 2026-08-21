@@ -31,12 +31,14 @@ def main() -> int:
 
     setup = setup_path.read_text()
     assert "BVB_ACTIVITY_FRAME_SETUP_BYTES = 128" in setup
+    assert "BVB_ACTIVITY_FRAME_FLAG_DMA_BUF" in setup
     assert "image_count image-memory FDs followed by" in setup
 
     client = client_path.read_text()
     assert "getPeerCredentials" in client and "Process.myUid()" in client
     assert "TRANSACTION_REQUEST_GAME_FRAME_RING" in client
     assert "same_uid_scm_rights_then_binder_reply" in client
+    assert "setupFlags" in client and "SETUP_FLAG_DMA_BUF" in client
 
     receiver = receiver_path.read_text()
     assert "nativeInstallFrameTransport" in receiver
@@ -64,14 +66,16 @@ def main() -> int:
         'E088_IMPORT_FAIL stage=renderer_ready',
         'E088_IMPORT_FAIL stage=format_blit',
         'E088_IMPORT_FAIL stage=allocation_size',
-        'E089_IMPORT_FAIL stage=opaque_fd_contract',
+        'E090_IMPORT_FAIL stage=memory_type',
         'E088_IMPORT_FAIL stage=allocate',
         'E088_IMPORT_FAIL stage=bind',
     ):
         assert primitive in native
     frame_import = native.split("static int import_game_frame_transport(", 1)[1]
     frame_import = frame_import.split("static ", 1)[0]
-    assert "state.get_memory_fd_properties(" not in frame_import
+    assert "VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT" in frame_import
+    assert "state.get_memory_fd_properties(" in frame_import
+    assert "VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME" in native
     assert "VkImportMemoryFdInfoKHR import_info" in frame_import
     assert ".memoryTypeIndex = consumer_memory_type" in frame_import
     assert "E057_FRAME_TRANSPORT_IMPORTED" in native

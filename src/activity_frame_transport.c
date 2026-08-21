@@ -16,7 +16,8 @@ static int validate(const struct bvb_activity_frame_setup *setup) {
         setup->image_count < 2U ||
         setup->image_count > BVB_WSI_FRAME_RING_MAX_SLOTS ||
         setup->width == 0U || setup->height == 0U || setup->format == 0U ||
-        setup->image_usage == 0U || setup->flags != 0U ||
+        setup->image_usage == 0U ||
+        (setup->flags & ~BVB_ACTIVITY_FRAME_KNOWN_FLAGS) != 0U ||
         setup->generation == 0U) {
         return -EINVAL;
     }

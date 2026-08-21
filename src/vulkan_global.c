@@ -6273,10 +6273,12 @@ int bvb_vulkan_global_context_prepare_swapchain(
     const VkImageUsageFlags transport_usage =
         (VkImageUsageFlags)request->image_usage |
         VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    const VkExternalMemoryHandleTypeFlagBits transport_handle_type =
+        VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
     const VkPhysicalDeviceExternalImageFormatInfo external_query = {
         .sType =
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO,
-        .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+        .handleType = transport_handle_type,
     };
     const VkPhysicalDeviceImageFormatInfo2 format_query = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
@@ -6304,7 +6306,7 @@ int bvb_vulkan_global_context_prepare_swapchain(
         (external_properties.externalMemoryProperties.externalMemoryFeatures &
          required_features) != required_features ||
         (external_properties.externalMemoryProperties.compatibleHandleTypes &
-         VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT) == 0U) {
+         transport_handle_type) == 0U) {
         response->vulkan_result = vulkan_result != VK_SUCCESS
             ? vulkan_result : VK_ERROR_FORMAT_NOT_SUPPORTED;
         *metadata = (struct bvb_swapchain_metadata){.control_fd = -1};
@@ -6332,7 +6334,7 @@ int bvb_vulkan_global_context_prepare_swapchain(
     }
     const VkExternalMemoryImageCreateInfo external_image_info = {
         .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
-        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+        .handleTypes = transport_handle_type,
     };
     const VkImageCreateInfo image_info = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -6370,7 +6372,7 @@ int bvb_vulkan_global_context_prepare_swapchain(
         const VkExportMemoryAllocateInfo export_info = {
             .sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO,
             .pNext = &dedicated_info,
-            .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+            .handleTypes = transport_handle_type,
         };
         const VkMemoryAllocateInfo allocation_info = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
@@ -6389,7 +6391,7 @@ int bvb_vulkan_global_context_prepare_swapchain(
         const VkMemoryGetFdInfoKHR fd_info = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
             .memory = metadata->memories[index],
-            .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+            .handleType = transport_handle_type,
         };
         if (vulkan_result == VK_SUCCESS) {
             vulkan_result = get_memory_fd(

@@ -24,6 +24,7 @@ int main(void) {
         .height = 800U,
         .format = 37U,
         .image_usage = 0x10U,
+        .flags = BVB_ACTIVITY_FRAME_FLAG_DMA_BUF,
         .generation = UINT64_C(0xe057000000000001),
         .allocation_sizes = {UINT64_C(0x100000), UINT64_C(0x100000),
                              UINT64_C(0x100000), 0U},
@@ -36,6 +37,9 @@ int main(void) {
     CHECK(memcmp(&actual, &expected, sizeof(actual)) == 0);
     wire[127] = 1U;
     CHECK(bvb_activity_frame_setup_decode(wire, &actual) == -EPROTO);
+    struct bvb_activity_frame_setup invalid = expected;
+    invalid.flags = UINT32_C(1) << 1;
+    CHECK(bvb_activity_frame_setup_encode(wire, &invalid) == -EINVAL);
     puts("PASS: fixed-width Activity frame setup envelope");
     return 0;
 }

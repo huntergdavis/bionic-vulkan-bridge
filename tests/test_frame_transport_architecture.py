@@ -38,7 +38,7 @@ def main() -> int:
     assert "Binder" not in ring and "Java" not in ring
 
     global_source = global_path.read_text()
-    assert "VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT" in global_source
+    assert "VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT" in global_source
     assert "VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO" in global_source
     assert "vkGetMemoryFdKHR" in global_source
     assert "bvb_wsi_frame_ring_initialize" in global_source

@@ -2316,9 +2316,13 @@ static int import_game_frame_transport(
     }
     (void)close(descriptors[setup->image_count]);
     descriptors[setup->image_count] = -1;
+    const VkExternalMemoryHandleTypeFlagBits memory_handle_type =
+        (setup->flags & BVB_ACTIVITY_FRAME_FLAG_DMA_BUF) != 0U
+            ? VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT
+            : VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
     const VkExternalMemoryImageCreateInfo external_info = {
         .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
-        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+        .handleTypes = memory_handle_type,
     };
     const VkImageCreateInfo image_info = {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -2357,26 +2361,45 @@ static int import_game_frame_transport(
                 goto import_failed;
             }
         }
-        /*
-         * vkGetMemoryFdPropertiesKHR explicitly forbids OPAQUE_FD.  For a
-         * Vulkan-exported opaque handle, allocationSize and memoryTypeIndex
-         * must instead exactly match the exporting allocation.  The setup
-         * envelope carries both values; only the consumer image's own memory
-         * requirements and memory-type count remain to validate locally.
-         */
-        const uint32_t consumer_memory_type =
-            setup->memory_type_indices[index];
-        const bool consumer_type_valid =
+        uint32_t compatible_types = requirements.memoryTypeBits;
+        VkMemoryFdPropertiesKHR fd_properties = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR,
+        };
+        if (result == VK_SUCCESS &&
+            memory_handle_type ==
+                VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) {
+            result = state.get_memory_fd_properties(
+                state.device, memory_handle_type, descriptors[index],
+                &fd_properties);
+            compatible_types &= fd_properties.memoryTypeBits;
+        }
+        uint32_t consumer_memory_type = setup->memory_type_indices[index];
+        bool consumer_type_valid =
             result == VK_SUCCESS &&
             consumer_memory_type < consumer_memory_properties.memoryTypeCount &&
-            (requirements.memoryTypeBits &
-             (UINT32_C(1) << consumer_memory_type)) != 0U;
-        const uint32_t compatible_types = requirements.memoryTypeBits;
+            (compatible_types & (UINT32_C(1) << consumer_memory_type)) != 0U;
+        if (!consumer_type_valid &&
+            memory_handle_type ==
+                VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) {
+            for (uint32_t candidate = 0U;
+                 candidate < consumer_memory_properties.memoryTypeCount;
+                 ++candidate) {
+                if ((compatible_types & (UINT32_C(1) << candidate)) != 0U) {
+                    consumer_memory_type = candidate;
+                    consumer_type_valid = true;
+                    break;
+                }
+            }
+        }
         if (!consumer_type_valid) {
-            BVB_LOGE("E089_IMPORT_FAIL stage=opaque_fd_contract image=%u "
-                     "vk_result=%d image_type_bits=0x%x producer_type=%u "
-                     "consumer_type_count=%u required=%llu exported=%llu",
-                     index, (int)result, requirements.memoryTypeBits,
+            BVB_LOGE("E090_IMPORT_FAIL stage=memory_type image=%u "
+                     "vk_result=%d handle_type=0x%x image_type_bits=0x%x "
+                     "fd_type_bits=0x%x compatible_type_bits=0x%x "
+                     "producer_type=%u consumer_type_count=%u required=%llu "
+                     "exported=%llu",
+                     index, (int)result, (unsigned)memory_handle_type,
+                     requirements.memoryTypeBits, fd_properties.memoryTypeBits,
+                     compatible_types,
                      setup->memory_type_indices[index],
                      consumer_memory_properties.memoryTypeCount,
                      (unsigned long long)requirements.size,
@@ -2391,7 +2414,7 @@ static int import_game_frame_transport(
         const VkImportMemoryFdInfoKHR import_info = {
             .sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR,
             .pNext = &dedicated,
-            .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+            .handleType = memory_handle_type,
             .fd = descriptors[index],
         };
         const VkMemoryAllocateInfo allocation = {
@@ -2525,9 +2548,9 @@ done:
 JNIEXPORT jint JNICALL
 Java_io_github_huntergdavis_bvb_visiblehost_SharedRegionProvider_nativeInstallFrameTransport(
     JNIEnv *env, jclass provider_class, jstring token_string, jint image_count,
-    jint width, jint height, jint format, jint image_usage, jlong generation,
-    jlongArray allocation_array, jintArray memory_type_array,
-    jintArray descriptor_array) {
+    jint width, jint height, jint format, jint image_usage, jint setup_flags,
+    jlong generation, jlongArray allocation_array,
+    jintArray memory_type_array, jintArray descriptor_array) {
     (void)provider_class;
     if (token_string == NULL || allocation_array == NULL ||
         memory_type_array == NULL || descriptor_array == NULL ||
@@ -2586,6 +2609,7 @@ Java_io_github_huntergdavis_bvb_visiblehost_SharedRegionProvider_nativeInstallFr
         .height = (uint32_t)height,
         .format = (uint32_t)format,
         .image_usage = (uint32_t)image_usage,
+        .flags = (uint32_t)setup_flags,
         .generation = (uint64_t)generation,
     };
     for (uint32_t index = 0U; index < (uint32_t)image_count; ++index) {
@@ -3630,6 +3654,9 @@ static bool create_renderer(ANativeWindow *window) {
                               VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME) ||
         !has_device_extension(physical_device,
                               VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) ||
+        !has_device_extension(
+            physical_device,
+            VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME) ||
         !has_device_extension(physical_device,
                               VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME) ||
         !has_device_extension(physical_device,
@@ -3737,6 +3764,7 @@ static bool create_renderer(ANativeWindow *window) {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
         VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
+        VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
         VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
         VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
     };
@@ -3744,7 +3772,7 @@ static bool create_renderer(ANativeWindow *window) {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .queueCreateInfoCount = 1,
         .pQueueCreateInfos = &queue_info,
-        .enabledExtensionCount = 5,
+        .enabledExtensionCount = 6,
         .ppEnabledExtensionNames = device_extensions,
     };
     result = vkCreateDevice(physical_device, &device_info, NULL,

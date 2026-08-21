@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "gate": "E090",
+  "date": "2026-08-21",
+  "result": "pass",
+  "source_base_commit": "a35e4cf4eec08607f5aeef22863cca10948d28f1",
+  "host_contracts": {
+    "passed": 58,
+    "total": 58,
+    "compiler_warnings_are_errors": true
+  },
+  "opaque_fd_tablet_boundary": {
+    "apk_sha256": "69b87452fb75703a9900ec9c96ad150019b401be8453975ebe694b302a96a812",
+    "allocation_result": "VK_ERROR_INVALID_EXTERNAL_HANDLE",
+    "vulkan_result": -1000072003,
+    "producer_slots_filled": [0, 1, 2],
+    "fourth_acquire": "VK_NOT_READY"
+  },
+  "transport": {
+    "image_handle_type": "VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT",
+    "producer_extensions": [
+      "VK_KHR_external_memory_fd",
+      "VK_EXT_external_memory_dma_buf"
+    ],
+    "setup_envelope_bytes": 128,
+    "setup_flag": "BVB_ACTIVITY_FRAME_FLAG_DMA_BUF",
+    "per_frame_java_calls": 0,
+    "per_frame_binder_calls": 0,
+    "per_frame_fd_transfers": 0
+  },
+  "consumer": {
+    "requires_dma_buf_extension": true,
+    "fd_property_query_handle": "VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT",
+    "memory_type_selection": "intersection of image requirements and DMA-BUF FD properties",
+    "unknown_setup_flags_fail_closed": true
+  },
+  "host_proof": [
+    "producer DMA-BUF external image query/create/dedicated allocation/export",
+    "virtual swapchain injects and deduplicates both native dependencies",
+    "missing DMA-BUF dependency rejects device creation before native create",
+    "fixed setup flag survives service, Java callback, JNI, and native validation",
+    "three-image ring and typed ownership lifecycle remain intact"
+  ],
+  "reuse": [
+    "E035 external-memory capability validation",
+    "E057 authenticated setup-only FD transport and native consumer",
+    "E088 bounded import diagnostics",
+    "E089 exact opaque-FD incompatibility result"
+  ],
+  "recall": {
+    "query": "BVB Vulkan DMA_BUF external image private Turnip system Android driver frame transport",
+    "indexed_implementation_found": false
+  },
+  "tablet_dma_buf_run": "pending",
+  "visible_rgbw": false,
+  "tomb_raider_frame": false,
+  "fps_claim": false
+}

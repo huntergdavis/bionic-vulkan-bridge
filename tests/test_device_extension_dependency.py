@@ -16,13 +16,24 @@ def run_case(service: str, client: str, loader: str, mode: str) -> None:
         server_environment["BVB_FAKE_REQUIRE_NO_NATIVE_SWAPCHAIN"] = "1"
         if mode in ("inject", "explicit"):
             server_environment["BVB_FAKE_REQUIRE_EXTERNAL_MEMORY_FD"] = "1"
+            server_environment[
+                "BVB_FAKE_REQUIRE_EXTERNAL_MEMORY_DMA_BUF"
+            ] = "1"
             server_environment["BVB_FAKE_EXPECT_EXTERNAL_MEMORY_FD_COUNT"] = "1"
-            server_environment["BVB_FAKE_EXPECT_DEVICE_EXTENSION_COUNT"] = "1"
+            server_environment[
+                "BVB_FAKE_EXPECT_EXTERNAL_MEMORY_DMA_BUF_COUNT"
+            ] = "1"
+            server_environment["BVB_FAKE_EXPECT_DEVICE_EXTENSION_COUNT"] = "2"
         elif mode == "no-swapchain":
             server_environment["BVB_FAKE_EXPECT_EXTERNAL_MEMORY_FD_COUNT"] = "0"
+            server_environment[
+                "BVB_FAKE_EXPECT_EXTERNAL_MEMORY_DMA_BUF_COUNT"
+            ] = "0"
             server_environment["BVB_FAKE_EXPECT_DEVICE_EXTENSION_COUNT"] = "0"
         else:
-            server_environment["BVB_FAKE_HIDE_EXTERNAL_MEMORY_FD"] = "1"
+            server_environment[
+                "BVB_FAKE_HIDE_EXTERNAL_MEMORY_DMA_BUF"
+            ] = "1"
             server_environment["BVB_FAKE_FORBID_CREATE_DEVICE"] = "1"
         server = subprocess.Popen(
             [

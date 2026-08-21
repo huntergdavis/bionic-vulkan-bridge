@@ -125,7 +125,7 @@ def decode_frame_setup(wire: bytes, descriptor_count: int) -> dict[str, Any]:
         raise HarnessFailure(f"frame setup image count is invalid: {image_count}")
     if width == 0 or height == 0 or image_format == 0 or image_usage == 0:
         raise HarnessFailure("frame setup has zero required image metadata")
-    if flags != 0 or generation == 0 or any(reserved):
+    if flags != 1 or generation == 0 or any(reserved):
         raise HarnessFailure("frame setup has unsupported flags/generation/reserved data")
     if any(size == 0 for size in allocation_sizes[:image_count]):
         raise HarnessFailure("active frame setup allocation size is zero")
@@ -142,6 +142,7 @@ def decode_frame_setup(wire: bytes, descriptor_count: int) -> dict[str, Any]:
         "height": height,
         "format": image_format,
         "image_usage": image_usage,
+        "flags": flags,
         "generation": generation,
         "allocation_sizes": allocation_sizes[:image_count],
         "memory_type_indices": memory_type_indices[:image_count],

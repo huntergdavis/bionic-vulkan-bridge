@@ -209,7 +209,7 @@ def main() -> int:
             setup_generation = struct.unpack_from("<Q", setup_data, 32)[0]
             assert (setup_image_count, setup_width, setup_height, setup_format,
                     setup_usage, setup_flags, setup_generation) == (
-                3, 64, 64, 37, 0x10, 0, generation
+                3, 64, 64, 37, 0x10, 1, generation
             )
             assert len(activity_descriptors) == setup_image_count + 1
             status, prepared, descriptors = receive_fd_response(connection, 64, 5)

@@ -3538,3 +3538,47 @@ rules are the Khronos `vkGetMemoryFdPropertiesKHR` valid-usage requirement
 VUID 00674 and `VkMemoryAllocateInfo` opaque-import requirement VUID 01742.
 This host change makes no visible-frame or game claim until the tablet import,
 bind, four-frame presentation, and screenshot gates pass.
+
+Tablet result: the exact E089 APK (SHA-256
+`69b87452fb75703a9900ec9c96ad150019b401be8453975ebe694b302a96a812`)
+reached the authoritative allocation call, which returned
+`VK_ERROR_INVALID_EXTERNAL_HANDLE` (`-1000072003`) for image zero with exact
+allocation size `7114752`, consumer memory type zero, and image type bits
+`0x3`. The producer again filled slots zero, one, and two before frame four
+returned `VK_NOT_READY`. This closes the opaque-FD branch: the private Turnip
+export and Samsung system-driver import do not identify a mutually importable
+opaque allocation. It does not indicate a swapchain, ring, or command-recording
+failure.
+
+## E090 — DMA-BUF game-frame transport (2026-08-21)
+
+Status: 58/58 host contracts pass; tablet build and RGBW proof pending. The
+required `deja "BVB Vulkan DMA_BUF external image private Turnip system Android
+driver frame transport"` query returned no indexed implementation. E090 reuses
+E035's external-memory validation, E057's authenticated one-time setup and
+zero-Java/Binder frame loop, and the exact E088/E089 tablet failure evidence.
+
+Only the game-frame image handle changes. The producer queries, creates,
+dedicates, allocates, and exports each virtual-swapchain image with
+`VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT`. Virtual swapchain device
+creation now requires and injects both `VK_KHR_external_memory_fd` and
+`VK_EXT_external_memory_dma_buf` into private Turnip, without exposing the
+virtual swapchain extension to the native driver. The existing fixed 128-byte
+Activity envelope uses one known flag bit to identify the DMA-BUF bundle; its
+size, image table, one-time FD transfer, and shared futex ring remain unchanged.
+
+The Android device now requires and enables the DMA-BUF extension. For each
+received FD it creates the matching external image, legally calls
+`vkGetMemoryFdPropertiesKHR` with the DMA-BUF handle type, intersects the FD and
+image memory-type masks, prefers the producer's type when compatible, and
+otherwise chooses a consumer-compatible type. Unknown setup flags and empty
+intersections fail closed with one bounded `E090_IMPORT_FAIL` record. The host
+fake driver proves both handle types, exact extension injection/deduplication,
+missing-dependency rejection, the typed setup flag, export, and the unchanged
+three-image transport lifecycle.
+
+This gate makes no visible-frame or FPS claim. The decisive tablet test is one
+authenticated fullscreen run whose producer presents red, green, blue, and
+white through slots `0,1,2,0`; success requires matching Android import/present
+markers plus screenshot-confirmed changing pixels. Tomb Raider resumes only
+after that transport proof.
