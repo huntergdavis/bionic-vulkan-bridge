@@ -81,7 +81,8 @@ int main(void) {
     };
     CHECK(bvb_protocol_encode_header(wire, &last_opcode_header) == 0);
     CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
-    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES);
+    CHECK(decoded.opcode ==
+          BVB_OPCODE_VULKAN_SHADER_DRAW_PARAMETERS_FEATURES);
 
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
@@ -445,6 +446,23 @@ int main(void) {
           48U);
     CHECK(external_semaphore_properties_decoded
               .external_semaphore_features == 3U);
+
+    const struct bvb_vulkan_shader_draw_parameters_features
+        shader_draw_parameters = {.shader_draw_parameters = 1U};
+    uint8_t shader_draw_parameters_wire[
+        BVB_VULKAN_SHADER_DRAW_PARAMETERS_FEATURES_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_shader_draw_parameters_features(
+              shader_draw_parameters_wire, &shader_draw_parameters) == 0);
+    struct bvb_vulkan_shader_draw_parameters_features
+        shader_draw_parameters_decoded;
+    CHECK(bvb_protocol_decode_vulkan_shader_draw_parameters_features(
+              shader_draw_parameters_wire,
+              &shader_draw_parameters_decoded) == 0);
+    CHECK(shader_draw_parameters_decoded.shader_draw_parameters == 1U);
+    shader_draw_parameters_wire[0] = 2U;
+    CHECK(bvb_protocol_decode_vulkan_shader_draw_parameters_features(
+              shader_draw_parameters_wire,
+              &shader_draw_parameters_decoded) == -EPROTO);
 
     const struct bvb_vulkan_device_extension_query extension_query = {
         .physical_device_id = physical_devices.ids[0],

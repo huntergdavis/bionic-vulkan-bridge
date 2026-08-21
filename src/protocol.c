@@ -610,6 +610,33 @@ int bvb_protocol_decode_vulkan_external_semaphore_properties(
     return 0;
 }
 
+int bvb_protocol_encode_vulkan_shader_draw_parameters_features(
+    uint8_t output[BVB_VULKAN_SHADER_DRAW_PARAMETERS_FEATURES_SIZE],
+    const struct bvb_vulkan_shader_draw_parameters_features *features) {
+    if (output == NULL || features == NULL ||
+        features->shader_draw_parameters > 1U) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u32(output, features->shader_draw_parameters);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_shader_draw_parameters_features(
+    const uint8_t input[BVB_VULKAN_SHADER_DRAW_PARAMETERS_FEATURES_SIZE],
+    struct bvb_vulkan_shader_draw_parameters_features *features) {
+    if (input == NULL || features == NULL) {
+        return -EINVAL;
+    }
+    const uint32_t shader_draw_parameters = bvb_wire_get_u32(input);
+    if (shader_draw_parameters > 1U) {
+        return -EPROTO;
+    }
+    *features = (struct bvb_vulkan_shader_draw_parameters_features){
+        .shader_draw_parameters = shader_draw_parameters,
+    };
+    return 0;
+}
+
 int bvb_protocol_encode_vulkan_device_extension_query(
     uint8_t output[BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE],
     const struct bvb_vulkan_device_extension_query *query) {

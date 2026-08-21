@@ -333,11 +333,16 @@ int main(void) {
               &image_format_properties) == VK_ERROR_FORMAT_NOT_SUPPORTED);
     CHECK(image_format_properties.maxExtent.width == 0U);
 
+    VkPhysicalDeviceVulkan11Features vulkan11_features = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+    };
     VkPhysicalDeviceFeatures2 features2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        .pNext = &vulkan11_features,
     };
     get_features2(physical_device, &features2);
     CHECK(features2.features.samplerAnisotropy == VK_TRUE);
+    CHECK(vulkan11_features.shaderDrawParameters == VK_TRUE);
     VkPhysicalDeviceProperties2 properties2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
     };

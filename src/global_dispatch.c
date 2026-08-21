@@ -1896,6 +1896,24 @@ bvb_bridge_vkGetPhysicalDeviceSparseImageFormatProperties(
     *property_count = 0U;
 }
 
+static int shader_draw_parameters_features_locked(
+    const struct bvb_physical_device_proxy *proxy,
+    struct bvb_vulkan_shader_draw_parameters_features *features) {
+    struct bvb_protocol_packet response = {0};
+    int result = physical_query_locked(
+        BVB_OPCODE_VULKAN_SHADER_DRAW_PARAMETERS_FEATURES, proxy, &response);
+    if (result == 0 &&
+        response.header.payload_length !=
+            BVB_VULKAN_SHADER_DRAW_PARAMETERS_FEATURES_SIZE) {
+        result = -EPROTO;
+    }
+    if (result == 0) {
+        result = bvb_protocol_decode_vulkan_shader_draw_parameters_features(
+            response.payload, features);
+    }
+    return result;
+}
+
 static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFeatures2(
     VkPhysicalDevice physical_device, VkPhysicalDeviceFeatures2 *features) {
     if (features == NULL ||
@@ -1904,6 +1922,53 @@ static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFeatures2(
     }
     bvb_bridge_vkGetPhysicalDeviceFeatures(
         physical_device, &features->features);
+    bool requested = false;
+    VkBaseOutStructure *entry = (VkBaseOutStructure *)features->pNext;
+    for (uint32_t index = 0U; entry != NULL && index < 64U; ++index) {
+        if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+            fprintf(stderr,
+                    "BVB_ICD_FEATURE_CHAIN index=%u stype=%u\n",
+                    index, (uint32_t)entry->sType);
+        }
+        requested |=
+            entry->sType ==
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES ||
+            entry->sType ==
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES;
+        entry = entry->pNext;
+    }
+    if (!requested) {
+        return;
+    }
+    struct bvb_physical_device_proxy *proxy =
+        physical_device_proxy(physical_device);
+    if (proxy == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return;
+    }
+    struct bvb_vulkan_shader_draw_parameters_features bridged = {0};
+    const int result = shader_draw_parameters_features_locked(proxy, &bridged);
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result != 0) {
+        return;
+    }
+    entry = (VkBaseOutStructure *)features->pNext;
+    for (uint32_t index = 0U; entry != NULL && index < 64U; ++index) {
+        if (entry->sType ==
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES) {
+            VkPhysicalDeviceVulkan11Features *vulkan11 =
+                (VkPhysicalDeviceVulkan11Features *)entry;
+            vulkan11->shaderDrawParameters =
+                (VkBool32)bridged.shader_draw_parameters;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES) {
+            VkPhysicalDeviceShaderDrawParametersFeatures *shader_draw =
+                (VkPhysicalDeviceShaderDrawParametersFeatures *)entry;
+            shader_draw->shaderDrawParameters =
+                (VkBool32)bridged.shader_draw_parameters;
+        }
+        entry = entry->pNext;
+    }
 }
 
 static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceProperties2(

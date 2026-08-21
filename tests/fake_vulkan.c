@@ -300,6 +300,24 @@ static void VKAPI_CALL fake_get_device_features(
     features->shaderInt64 = VK_TRUE;
 }
 
+static void VKAPI_CALL fake_get_device_features2(
+    VkPhysicalDevice device, VkPhysicalDeviceFeatures2 *features) {
+    fake_get_device_features(device, &features->features);
+    VkBaseOutStructure *entry = (VkBaseOutStructure *)features->pNext;
+    while (entry != NULL) {
+        if (entry->sType ==
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES) {
+            ((VkPhysicalDeviceVulkan11Features *)entry)
+                ->shaderDrawParameters = VK_TRUE;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES) {
+            ((VkPhysicalDeviceShaderDrawParametersFeatures *)entry)
+                ->shaderDrawParameters = VK_TRUE;
+        }
+        entry = entry->pNext;
+    }
+}
+
 static void VKAPI_CALL fake_get_format_properties(
     VkPhysicalDevice device, VkFormat format,
     VkFormatProperties *properties) {
@@ -1155,6 +1173,8 @@ static PFN_vkVoidFunction function_pointer(const char *name) {
     BVB_MATCH("vkEnumeratePhysicalDevices", fake_enumerate_devices)
     BVB_MATCH("vkGetPhysicalDeviceProperties", fake_get_device_properties)
     BVB_MATCH("vkGetPhysicalDeviceFeatures", fake_get_device_features)
+    BVB_MATCH("vkGetPhysicalDeviceFeatures2", fake_get_device_features2)
+    BVB_MATCH("vkGetPhysicalDeviceFeatures2KHR", fake_get_device_features2)
     BVB_MATCH("vkGetPhysicalDeviceFormatProperties", fake_get_format_properties)
     BVB_MATCH("vkGetPhysicalDeviceImageFormatProperties",
               fake_get_image_format_properties)

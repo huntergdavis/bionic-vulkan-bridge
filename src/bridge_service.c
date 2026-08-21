@@ -834,6 +834,45 @@ static int answer_vulkan_physical_device_features(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_shader_draw_parameters_features(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_PHYSICAL_DEVICE_ID_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    uint64_t physical_device_id = 0U;
+    int result = bvb_protocol_decode_vulkan_physical_device_id(
+        request->payload, &physical_device_id);
+    struct bvb_vulkan_shader_draw_parameters_features features;
+    char diagnostic[512];
+    if (result == 0) {
+        result =
+            bvb_vulkan_global_context_get_shader_draw_parameters_features(
+                context, physical_device_id, &features,
+                diagnostic, sizeof(diagnostic));
+        if (result != 0) {
+            fprintf(stderr,
+                    "bvb: shader-draw-parameters query failed: %s\n",
+                    diagnostic);
+        }
+    }
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_shader_draw_parameters_features(
+            response.payload, &features);
+        response.header.payload_length =
+            BVB_VULKAN_SHADER_DRAW_PARAMETERS_FEATURES_SIZE;
+    }
+    if (result != 0) {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_format_properties(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context) {
@@ -2085,6 +2124,10 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_PHYSICAL_DEVICE_FEATURES) {
             result = answer_vulkan_physical_device_features(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_SHADER_DRAW_PARAMETERS_FEATURES) {
+            result = answer_vulkan_shader_draw_parameters_features(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_FORMAT_PROPERTIES) {

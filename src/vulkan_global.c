@@ -871,6 +871,53 @@ int bvb_vulkan_global_context_get_physical_device_features(
     return 0;
 }
 
+int bvb_vulkan_global_context_get_shader_draw_parameters_features(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t physical_device_id,
+    struct bvb_vulkan_shader_draw_parameters_features *features,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (features == NULL) {
+        return -EINVAL;
+    }
+    *features = (struct bvb_vulkan_shader_draw_parameters_features){0};
+    VkInstance instance = VK_NULL_HANDLE;
+    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+    int result = resolve_physical_device(
+        context, physical_device_id, &instance, &physical_device);
+    if (result != 0) {
+        set_error(error, error_size, "unknown physical-device handle");
+        return result;
+    }
+    PFN_vkGetPhysicalDeviceFeatures2 get_features2 =
+        (PFN_vkGetPhysicalDeviceFeatures2)context->get_instance_proc_addr(
+            instance, "vkGetPhysicalDeviceFeatures2");
+    if (get_features2 == NULL) {
+        get_features2 = (PFN_vkGetPhysicalDeviceFeatures2)
+            context->get_instance_proc_addr(
+                instance, "vkGetPhysicalDeviceFeatures2KHR");
+    }
+    if (get_features2 == NULL) {
+        set_error(error, error_size,
+                  "instance has no vkGetPhysicalDeviceFeatures2");
+        return -ENOSYS;
+    }
+    VkPhysicalDeviceShaderDrawParametersFeatures native = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES,
+    };
+    VkPhysicalDeviceFeatures2 base = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        .pNext = &native,
+    };
+    get_features2(physical_device, &base);
+    features->shader_draw_parameters =
+        native.shaderDrawParameters == VK_TRUE ? 1U : 0U;
+    return 0;
+}
+
 int bvb_vulkan_global_context_get_format_properties(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_format_query *query,

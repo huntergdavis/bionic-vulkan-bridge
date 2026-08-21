@@ -76,7 +76,8 @@ enum {
     BVB_OPCODE_VULKAN_INSTANCE_CREATE_EXTENDED = 59,
     BVB_OPCODE_VULKAN_EXTERNAL_BUFFER_PROPERTIES = 60,
     BVB_OPCODE_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES = 61,
-    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES,
+    BVB_OPCODE_VULKAN_SHADER_DRAW_PARAMETERS_FEATURES = 62,
+    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_SHADER_DRAW_PARAMETERS_FEATURES,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -105,6 +106,7 @@ enum {
     BVB_VULKAN_EXTERNAL_BUFFER_PROPERTIES_SIZE = 12,
     BVB_VULKAN_EXTERNAL_SEMAPHORE_QUERY_SIZE = 16,
     BVB_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES_SIZE = 12,
+    BVB_VULKAN_SHADER_DRAW_PARAMETERS_FEATURES_SIZE = 4,
     BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE = 16,
     BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE = 32,
     BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE = 128,
@@ -308,6 +310,10 @@ struct bvb_vulkan_external_semaphore_properties {
     uint32_t export_from_imported_handle_types;
     uint32_t compatible_handle_types;
     uint32_t external_semaphore_features;
+};
+
+struct bvb_vulkan_shader_draw_parameters_features {
+    uint32_t shader_draw_parameters;
 };
 
 struct bvb_vulkan_device_extension_query {
@@ -641,6 +647,12 @@ int bvb_protocol_encode_vulkan_external_semaphore_properties(
 int bvb_protocol_decode_vulkan_external_semaphore_properties(
     const uint8_t input[BVB_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES_SIZE],
     struct bvb_vulkan_external_semaphore_properties *properties);
+int bvb_protocol_encode_vulkan_shader_draw_parameters_features(
+    uint8_t output[BVB_VULKAN_SHADER_DRAW_PARAMETERS_FEATURES_SIZE],
+    const struct bvb_vulkan_shader_draw_parameters_features *features);
+int bvb_protocol_decode_vulkan_shader_draw_parameters_features(
+    const uint8_t input[BVB_VULKAN_SHADER_DRAW_PARAMETERS_FEATURES_SIZE],
+    struct bvb_vulkan_shader_draw_parameters_features *features);
 int bvb_protocol_encode_vulkan_device_extension_query(
     uint8_t output[BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE],
     const struct bvb_vulkan_device_extension_query *query);
