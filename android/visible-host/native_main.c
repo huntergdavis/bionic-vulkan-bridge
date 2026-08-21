@@ -2357,50 +2357,26 @@ static int import_game_frame_transport(
                 goto import_failed;
             }
         }
-        VkMemoryFdPropertiesKHR fd_properties = {
-            .sType = VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR,
-        };
-        if (result == VK_SUCCESS) {
-            result = state.get_memory_fd_properties(
-                state.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
-                descriptors[index], &fd_properties);
-        }
-        const uint32_t compatible_types =
-            requirements.memoryTypeBits & fd_properties.memoryTypeBits;
-        uint32_t consumer_memory_type = UINT32_MAX;
-        if (result == VK_SUCCESS &&
-            setup->memory_type_indices[index] <
-                consumer_memory_properties.memoryTypeCount &&
-            (compatible_types &
-             (UINT32_C(1) << setup->memory_type_indices[index])) != 0U) {
-            consumer_memory_type = setup->memory_type_indices[index];
-        }
-        for (uint32_t candidate = 0U;
-             result == VK_SUCCESS &&
-             candidate < consumer_memory_properties.memoryTypeCount;
-             ++candidate) {
-            if ((compatible_types & (UINT32_C(1) << candidate)) == 0U) continue;
-            const bool candidate_local =
-                (consumer_memory_properties.memoryTypes[candidate]
-                     .propertyFlags &
-                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0U;
-            const bool selected_local =
-                consumer_memory_type != UINT32_MAX &&
-                (consumer_memory_properties.memoryTypes[consumer_memory_type]
-                     .propertyFlags &
-                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0U;
-            if (consumer_memory_type == UINT32_MAX ||
-                (candidate_local && !selected_local)) {
-                consumer_memory_type = candidate;
-            }
-        }
-        if (result != VK_SUCCESS || consumer_memory_type == UINT32_MAX) {
-            BVB_LOGE("E088_IMPORT_FAIL stage=fd_compatibility image=%u "
-                     "vk_result=%d image_type_bits=0x%x fd_type_bits=0x%x "
-                     "compatible_type_bits=0x%x producer_type=%u "
+        /*
+         * vkGetMemoryFdPropertiesKHR explicitly forbids OPAQUE_FD.  For a
+         * Vulkan-exported opaque handle, allocationSize and memoryTypeIndex
+         * must instead exactly match the exporting allocation.  The setup
+         * envelope carries both values; only the consumer image's own memory
+         * requirements and memory-type count remain to validate locally.
+         */
+        const uint32_t consumer_memory_type =
+            setup->memory_type_indices[index];
+        const bool consumer_type_valid =
+            result == VK_SUCCESS &&
+            consumer_memory_type < consumer_memory_properties.memoryTypeCount &&
+            (requirements.memoryTypeBits &
+             (UINT32_C(1) << consumer_memory_type)) != 0U;
+        const uint32_t compatible_types = requirements.memoryTypeBits;
+        if (!consumer_type_valid) {
+            BVB_LOGE("E089_IMPORT_FAIL stage=opaque_fd_contract image=%u "
+                     "vk_result=%d image_type_bits=0x%x producer_type=%u "
                      "consumer_type_count=%u required=%llu exported=%llu",
                      index, (int)result, requirements.memoryTypeBits,
-                     fd_properties.memoryTypeBits, compatible_types,
                      setup->memory_type_indices[index],
                      consumer_memory_properties.memoryTypeCount,
                      (unsigned long long)requirements.size,

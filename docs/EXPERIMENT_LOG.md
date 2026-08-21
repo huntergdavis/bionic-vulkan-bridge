@@ -3503,3 +3503,38 @@ E035's measured external-memory validation and E057's authenticated,
 setup-only FD import contract. The next tablet run must identify the exact
 stage before any transport redesign. This preparation alone makes no RGBW,
 Tomb Raider, benchmark, or FPS claim.
+
+Tablet result: the exact v40 E088 APK (SHA-256
+`850ec71fa8a08987bc35238afe4122e98f5eedc140e9405d82ee45b22fd86f2b`)
+reported `stage=fd_compatibility`, `vk_result=0`, consumer image type bits
+`0x3`, FD type bits `0x0`, producer type `0`, required size `6924340`, and
+exported allocation size `7114752`. The producer again acquired slots zero,
+one, and two before frame four returned `VK_NOT_READY`. This proves the generic
+`ENOTSUP` came solely from the empty FD-property mask.
+
+## E089 — spec-correct Vulkan opaque-FD import (2026-08-21)
+
+Status: implementation prepared for tablet RGBW proof. Khronos valid usage
+explicitly forbids passing `VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT` to
+`vkGetMemoryFdPropertiesKHR`. For a Vulkan-created opaque FD, import instead
+requires `allocationSize` and `memoryTypeIndex` to exactly match the exporting
+allocation. The Activity consumer had violated the first rule, then treated
+the driver's zero output mask as incompatibility.
+
+E089 removes that forbidden query from the game-frame import path. It requires
+the producer's transmitted memory type to exist on the consumer and to be
+allowed by the consumer image's own memory requirements, then supplies the
+producer's exact allocation size and memory type to `vkAllocateMemory`.
+`vkAllocateMemory` and `vkBindImageMemory` remain the authoritative cross-driver
+compatibility boundary and retain bounded E088 failure records. There is no
+alternate-memory-type fallback because that would violate the opaque-FD import
+contract.
+
+The required `deja "Vulkan opaque FD import same allocationSize
+memoryTypeIndex vkGetMemoryFdProperties forbidden"` search found only this
+active E088 investigation, not an earlier implementation. E089 reuses E088's
+measured type/size evidence and E057's exact setup envelope. The normative
+rules are the Khronos `vkGetMemoryFdPropertiesKHR` valid-usage requirement
+VUID 00674 and `VkMemoryAllocateInfo` opaque-import requirement VUID 01742.
+This host change makes no visible-frame or game claim until the tablet import,
+bind, four-frame presentation, and screenshot gates pass.

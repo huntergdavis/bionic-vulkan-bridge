@@ -64,11 +64,16 @@ def main() -> int:
         'E088_IMPORT_FAIL stage=renderer_ready',
         'E088_IMPORT_FAIL stage=format_blit',
         'E088_IMPORT_FAIL stage=allocation_size',
-        'E088_IMPORT_FAIL stage=fd_compatibility',
+        'E089_IMPORT_FAIL stage=opaque_fd_contract',
         'E088_IMPORT_FAIL stage=allocate',
         'E088_IMPORT_FAIL stage=bind',
     ):
         assert primitive in native
+    frame_import = native.split("static int import_game_frame_transport(", 1)[1]
+    frame_import = frame_import.split("static ", 1)[0]
+    assert "state.get_memory_fd_properties(" not in frame_import
+    assert "VkImportMemoryFdInfoKHR import_info" in frame_import
+    assert ".memoryTypeIndex = consumer_memory_type" in frame_import
     assert "E057_FRAME_TRANSPORT_IMPORTED" in native
 
     global_source = global_path.read_text()
