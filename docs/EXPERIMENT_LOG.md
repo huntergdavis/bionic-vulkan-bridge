@@ -3740,3 +3740,35 @@ no indexed implementation. E094 reuses E092's one-time AHardwareBuffer handle
 transport and E060's hold-through-client-exit test lifetime. This is a test-gate
 correction only; it does not change production transport, render a game frame,
 or claim FPS.
+
+## E095 — Tomb Raider descriptor-update-template boundary (2026-08-21)
+
+Status: passed as a bounded runtime-boundary identification on the Galaxy Tab
+S8+ at native `2800x1752`. The exact E093/E094 glibc ICD and Bionic service
+were launched with shared command recording, shared eligible mapped uploads,
+and E079a first-invocation diagnostics. The Android Activity reached a real
+fullscreen renderer at the measured native extent; a retained screenshot was
+visually inspected as the borderless animated bridge triangle. That screenshot
+proves the presentation host was visible, not a Tomb Raider frame.
+
+E093's descriptor-layout change is now hardware-proven. Private Turnip accepted
+DXVK's 2048-sampler update-after-bind layout and its first nonempty four-binding
+legacy layout. The latter contained two storage buffers, one uniform texel
+buffer, and one sampled image. Every native layout result was `VK_SUCCESS`.
+
+The next actually invoked missing entry is
+`vkCreateDescriptorUpdateTemplate`. E079a recorded the call—not merely its
+resolver lookup—as `required_unimplemented`, and DXVK immediately reported
+`DxvkDescriptorSetLayout: Failed to create descriptor update template`.
+Downstream DXGI swapchain creation therefore failed before any game image,
+Activity frame import, benchmark, or FPS result.
+
+The required `deja "vkCreateDescriptorUpdateTemplate BVB DXVK descriptor
+update template"` query returned no indexed implementation. E095 reuses E053's
+bounded Wine/DXVK trace method, E056/E093's typed descriptor ownership, E079a's
+actual-invocation diagnostic, and E092/E094's Android frame-host contracts.
+Compact evidence, including exact log, installed-runtime, and screenshot
+hashes, is
+`docs/evidence/e095-tombraider-descriptor-update-template-tablet.json`.
+The next gate implements the bounded core create/destroy family and repeats the
+same real Tomb Raider launch.

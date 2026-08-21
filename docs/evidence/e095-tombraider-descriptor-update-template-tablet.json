@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "gate": "E095",
+  "result": "pass_next_runtime_boundary_identified",
+  "objective": "rerun Tomb Raider through the E093/E094 bridge on the Galaxy Tab S8+ and identify the first actually invoked missing Vulkan operation",
+  "target": {
+    "device": "Samsung Galaxy Tab S8+",
+    "display": "2800x1752 at 60 Hz",
+    "bridge_source_commit": "392fdf91380af3916ae442678d1f6553b504aa59",
+    "installed_glibc_icd_sha256": "be190f3fe392e9f2820f574f245459147bd4ff264caa43302dbc97568ab31eb8",
+    "installed_bionic_service_sha256": "6e9463f260437813c7f0f1b7e839efc2b8838e129017cf4592b40fda5d6efad2",
+    "installed_icd_manifest_sha256": "77f3395e3f657b6a7274c182afe994edacda2a4b38d49814ea84440520af33df"
+  },
+  "run": {
+    "run_id": "20260821T221441Z-27703",
+    "command_stream": "shared",
+    "mapped_memory": "shared",
+    "first_rejection_diagnostic": true,
+    "activity_renderer_extent": "2800x1752",
+    "activity_screenshot_sha256": "28b7305067678da2bc88ffcb75bf49b49141cf49c27c59d79df332dcee89e9f8",
+    "activity_screenshot_bytes": 144622,
+    "activity_screenshot_interpretation": "visually inspected fullscreen borderless animated bridge triangle; this proves the Android presentation host was visible, not that Tomb Raider produced a frame"
+  },
+  "e093_runtime_proof": {
+    "update_after_bind_layout": {
+      "flags": 2,
+      "bindings": [
+        {"binding": 0, "descriptor_type": 0, "descriptor_count": 2048, "stage_flags": 63, "binding_flags": 7}
+      ],
+      "native_result": 0
+    },
+    "legacy_layout": {
+      "flags": 0,
+      "bindings": [
+        {"binding": 0, "descriptor_type": 7, "descriptor_count": 1, "stage_flags": 1},
+        {"binding": 1, "descriptor_type": 7, "descriptor_count": 1, "stage_flags": 1},
+        {"binding": 2, "descriptor_type": 4, "descriptor_count": 1, "stage_flags": 1},
+        {"binding": 3, "descriptor_type": 2, "descriptor_count": 1, "stage_flags": 16}
+      ],
+      "native_result": 0
+    }
+  },
+  "first_runtime_boundary": {
+    "entry": "vkCreateDescriptorUpdateTemplate",
+    "canonical": "vkCreateDescriptorUpdateTemplate",
+    "category": "required_unimplemented",
+    "reason": "diagnostic_stub_invoked",
+    "result": -8,
+    "dxvk_error": "DxvkDescriptorSetLayout: Failed to create descriptor update template",
+    "downstream": "DXGI swapchain creation failed because device initialization did not complete"
+  },
+  "artifacts": {
+    "master_log": {"bytes": 1111, "sha256": "1b9f7cda0985bc77bcebf83c8b9664b4cd9c228c556acee6a99d7a84da4a5be5"},
+    "service_log": {"bytes": 871, "sha256": "03777920cbf453049883e2f6ff3fb484c59631d35aaff3ca213efc782b283c2e"},
+    "wine_log": {"bytes": 3156958, "sha256": "445dd3b32a8a5a458eb6ede028d4c37a6521e2ab577d299b2fa54e4781c21457"},
+    "dxvk_d3d11_log": {"bytes": 30664, "sha256": "da69904e51f51ad9bd9edd0168cc0b6915a37c667ddd6a0836ddf60d306c1a77"},
+    "dxvk_d3d9_log": {"bytes": 799, "sha256": "c90c0d3f21a973d05036656109d9a537ec35a5d736282e0fbf72652c05e557b3"},
+    "dxvk_dxgi_log": {"bytes": 1286, "sha256": "35fc4d3ea573fafafdfbc3cb80197947a67b4f13de43340bf47d7b29a0f144ee"}
+  },
+  "reuse": "The required deja query returned no indexed descriptor-update-template implementation. Reused E053's bounded real Wine/DXVK trace method, E056/E093's pointer-free typed descriptor ownership, E079a's invoked-call diagnostic, E092's one-time AHardwareBuffer transport, and E094's Android contract parity.",
+  "next_boundary": "Implement core vkCreateDescriptorUpdateTemplate and vkDestroyDescriptorUpdateTemplate with bounded pointer-free template entries and typed same-device descriptor-set-layout ownership, then rerun the same Tomb Raider diagnostic launch.",
+  "claims": {
+    "activity_visible": true,
+    "e093_descriptor_layout_fix_confirmed_on_tablet": true,
+    "next_invoked_vulkan_entry_known": true,
+    "tomb_raider_frame": false,
+    "benchmark": false,
+    "fps": false
+  }
+}
