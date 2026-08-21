@@ -109,6 +109,11 @@ def main() -> int:
     )
     with tempfile.TemporaryDirectory(prefix="bvb-wsi-service-") as temporary:
         socket_path = pathlib.Path(temporary) / "runtime" / "bridge.sock"
+        activity_frame_socket = f"bvb-activity-frame-host-{os.getpid()}"
+        activity_frame_listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        activity_frame_listener.bind("\0" + activity_frame_socket)
+        activity_frame_listener.listen(1)
+        activity_frame_listener.settimeout(2.0)
         server = subprocess.Popen(
             [
                 service,
@@ -121,6 +126,8 @@ def main() -> int:
                 "0",
                 "--activity-token",
                 token.hex(),
+                "--activity-frame-socket",
+                activity_frame_socket,
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -128,6 +135,7 @@ def main() -> int:
         )
         connection = None
         descriptors: list[int] = []
+        activity_descriptors: list[int] = []
         try:
             assert server.stdout is not None
             ready = server.stdout.readline()
@@ -179,6 +187,31 @@ def main() -> int:
                 "<QIIIIIIQ", device_id, 64, 64, 37, 0x10, 3, 0, generation
             )
             connection.sendall(packet(64, 5, prepare_payload))
+            activity_connection, _ = activity_frame_listener.accept()
+            with activity_connection:
+                setup_data, setup_ancillary, setup_flags, _ = activity_connection.recvmsg(
+                    128, socket.CMSG_SPACE(5 * array.array("i").itemsize)
+                )
+                assert not setup_flags & (socket.MSG_CTRUNC | socket.MSG_TRUNC)
+                if len(setup_data) < 128:
+                    setup_data += receive_exact(activity_connection, 128 - len(setup_data))
+                for level, kind, value in setup_ancillary:
+                    if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                        received = array.array("i")
+                        received.frombytes(
+                            value[: len(value) - len(value) % received.itemsize]
+                        )
+                        activity_descriptors.extend(received)
+            assert struct.unpack_from("<IHH", setup_data) == (0x31544642, 1, 128)
+            setup_image_count, setup_width, setup_height, setup_format, setup_usage, setup_flags = struct.unpack_from(
+                "<IIIIII", setup_data, 8
+            )
+            setup_generation = struct.unpack_from("<Q", setup_data, 32)[0]
+            assert (setup_image_count, setup_width, setup_height, setup_format,
+                    setup_usage, setup_flags, setup_generation) == (
+                3, 64, 64, 37, 0x10, 0, generation
+            )
+            assert len(activity_descriptors) == setup_image_count + 1
             status, prepared, descriptors = receive_fd_response(connection, 64, 5)
             assert status == 0 and len(prepared) == 128
             vulkan_result, image_count, swapchain_id, returned_generation, control_bytes, reserved = struct.unpack_from(
@@ -195,8 +228,10 @@ def main() -> int:
                 )
                 assert image_id >> 56 == 7
                 assert allocation_size == os.fstat(descriptors[index]).st_size
+                assert allocation_size == os.fstat(activity_descriptors[index]).st_size
                 assert memory_type == 0 and image_reserved == 0
             assert os.fstat(descriptors[-1]).st_size == 4096
+            assert os.fstat(activity_descriptors[-1]).st_size == 4096
             with mmap.mmap(descriptors[-1], 4096) as control:
                 magic, version, header_bytes, slots, ring_flags, ring_generation = struct.unpack_from(
                     "<IHHIIQ", control
@@ -213,6 +248,9 @@ def main() -> int:
             for descriptor in descriptors:
                 os.close(descriptor)
             descriptors = []
+            for descriptor in activity_descriptors:
+                os.close(descriptor)
+            activity_descriptors = []
             connection.sendall(packet(65, 6, struct.pack("<Q", swapchain_id)))
             status, destroyed = receive_response(connection, 65, 6)
             assert status == 0 and destroyed == b""
@@ -223,6 +261,9 @@ def main() -> int:
         finally:
             for descriptor in descriptors:
                 os.close(descriptor)
+            for descriptor in activity_descriptors:
+                os.close(descriptor)
+            activity_frame_listener.close()
             if connection is not None:
                 connection.close()
             if server.poll() is None:

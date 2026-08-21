@@ -14,6 +14,110 @@ import java.lang.reflect.Method;
 public final class SharedRegionReceiver extends BroadcastReceiver {
     private static final String LOG_TAG = "BVBSharedRegion";
 
+    private static void deliverFrameTransportResult(
+            IBinder callback, int status, String detail) {
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        try {
+            data.writeInterfaceToken(SharedRegionClient.CALLBACK_DESCRIPTOR);
+            data.writeInt(status);
+            data.writeString(detail);
+            if (!callback.transact(
+                    SharedRegionClient.TRANSACTION_GAME_FRAME_RING_RESULT,
+                    data, reply, 0)) {
+                throw new IllegalStateException("frame result rejected");
+            }
+            reply.readException();
+        } catch (Throwable failure) {
+            Log.e(LOG_TAG, "failed to deliver frame transport result", failure);
+        } finally {
+            data.recycle();
+            reply.recycle();
+        }
+    }
+
+    private static void installFrameTransport(IBinder callback, String token) {
+        int status = -5;
+        String detail = "frame transport setup failed";
+        Parcel data = Parcel.obtain();
+        Parcel reply = Parcel.obtain();
+        ParcelFileDescriptor[] descriptors = null;
+        int[] detached = null;
+        try {
+            if (!VisibleHostActivity.authorizes(token)) {
+                throw new SecurityException("frame transport capability rejected");
+            }
+            data.writeInterfaceToken(SharedRegionClient.CALLBACK_DESCRIPTOR);
+            if (!callback.transact(
+                    SharedRegionClient.TRANSACTION_REQUEST_GAME_FRAME_RING,
+                    data, reply, 0)) {
+                throw new IllegalStateException("frame setup callback rejected");
+            }
+            reply.readException();
+            int producerStatus = reply.readInt();
+            if (producerStatus != 0) {
+                throw new IllegalStateException(
+                        "frame setup producer status=" + producerStatus);
+            }
+            int imageCount = reply.readInt();
+            int width = reply.readInt();
+            int height = reply.readInt();
+            int format = reply.readInt();
+            int imageUsage = reply.readInt();
+            long generation = reply.readLong();
+            if (imageCount < 2 || imageCount > 4) {
+                throw new IllegalArgumentException("invalid frame image count");
+            }
+            long[] allocationSizes = new long[imageCount];
+            int[] memoryTypes = new int[imageCount];
+            for (int index = 0; index < imageCount; ++index) {
+                allocationSizes[index] = reply.readLong();
+                memoryTypes[index] = reply.readInt();
+            }
+            descriptors = new ParcelFileDescriptor[imageCount + 1];
+            detached = new int[imageCount + 1];
+            for (int index = 0; index < detached.length; ++index) {
+                detached[index] = -1;
+            }
+            for (int index = 0; index < descriptors.length; ++index) {
+                descriptors[index] =
+                        ParcelFileDescriptor.CREATOR.createFromParcel(reply);
+                detached[index] = descriptors[index].detachFd();
+            }
+            status = SharedRegionProvider.nativeInstallFrameTransport(
+                    token, imageCount, width, height, format, imageUsage,
+                    generation, allocationSizes, memoryTypes, detached);
+            /* Native consumes or closes every detached descriptor. */
+            detached = null;
+            detail = status == 0 ? "installed" : "native_status=" + status;
+        } catch (Throwable failure) {
+            status = failure instanceof SecurityException ? -13 : -5;
+            detail = failure.toString();
+            Log.e(LOG_TAG, "failed to install frame transport", failure);
+        } finally {
+            if (detached != null) {
+                for (int descriptor : detached) {
+                    if (descriptor >= 0) {
+                        try {
+                            ParcelFileDescriptor.adoptFd(descriptor).close();
+                        } catch (Exception ignored) {}
+                    }
+                }
+            }
+            if (descriptors != null) {
+                for (ParcelFileDescriptor descriptor : descriptors) {
+                    if (descriptor == null) continue;
+                    try {
+                        descriptor.close();
+                    } catch (Exception ignored) {}
+                }
+            }
+            data.recycle();
+            reply.recycle();
+        }
+        deliverFrameTransportResult(callback, status, detail);
+    }
+
     private static IBinder callbackFrom(Bundle request) {
         if (request == null) {
             return null;
@@ -30,6 +134,9 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
+        boolean frameTransportInstall =
+                SharedRegionClient.ACTION_INSTALL_GAME_FRAME_RING.equals(
+                        intent.getAction());
         boolean frameRing =
                 SharedRegionClient.ACTION_EXTERNAL_IMAGE_FRAME_RING.equals(
                         intent.getAction());
@@ -45,7 +152,7 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
         boolean external = externalImage || externalSync ||
                 SharedRegionClient.ACTION_EXTERNAL_MEMORY.equals(
                 intent.getAction());
-        if (!external &&
+        if (!frameTransportInstall && !external &&
                 !SharedRegionClient.ACTION_REQUEST.equals(intent.getAction())) {
             return;
         }
@@ -56,6 +163,10 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
                 : request.getString(SharedRegionClient.EXTRA_TOKEN);
         if (callback == null) {
             Log.e(LOG_TAG, "shared-region request has no callback");
+            return;
+        }
+        if (frameTransportInstall) {
+            installFrameTransport(callback, token);
             return;
         }
 

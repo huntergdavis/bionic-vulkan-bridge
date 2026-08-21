@@ -25,7 +25,7 @@ def main() -> int:
 
     decision = decision_path.read_text()
     normalized_decision = " ".join(decision.split())
-    assert "Activity import and copy/present consumer pending" in normalized_decision
+    assert "Activity import/copy/present implementation complete" in normalized_decision
     assert "successful but invisible swapchain remains forbidden" in normalized_decision
     assert "producer-local GPU completion" in normalized_decision
     assert "Activity-local GPU completion" in normalized_decision

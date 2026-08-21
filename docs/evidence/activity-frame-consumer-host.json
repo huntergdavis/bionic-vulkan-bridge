@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "gate": "activity-frame-consumer-host",
+  "result": "pass",
+  "scope": "source, ABI, lifecycle, and architecture contracts only; no tablet frame or visible game output is claimed",
+  "reused_evidence": [
+    "E035 opaque-FD import validation",
+    "E038 authenticated Activity Binder broker",
+    "E041 producer-local GPU completion",
+    "E042 persistent futex frame ring"
+  ],
+  "setup_transport": {
+    "native_envelope_bytes": 128,
+    "image_count_min": 2,
+    "image_count_max": 4,
+    "descriptor_count": "image_count + 1 control region",
+    "service_to_helper_native_socket": true,
+    "same_uid_peer_check": true,
+    "binder_messages": 2,
+    "descriptor_messages": 1
+  },
+  "activity_import": {
+    "opaque_fd_images": true,
+    "dedicated_allocations": true,
+    "consumer_memory_type_intersection": true,
+    "ring_generation_validated": true,
+    "setup_only_java": true
+  },
+  "frame_loop": {
+    "java_calls": 0,
+    "binder_calls": 0,
+    "socket_calls": 0,
+    "fd_transfers": 0,
+    "android_swapchain_acquire": true,
+    "copy_or_blit": true,
+    "local_submit_fence": true,
+    "present": true,
+    "release_after_local_completion": true
+  },
+  "lifecycle": {
+    "pause_stops_claims": true,
+    "resume_wakes_consumer": true,
+    "window_teardown_fails_ring": true,
+    "service_teardown_fails_producer": true,
+    "device_teardown_destroys_imports": true
+  },
+  "public_swapchain_success": false,
+  "visible_output": false,
+  "next_gate": "wire game-facing virtual swapchain acquire/present to producer ownership release and ring publish, then prove a changing frame on the tablet"
+}

@@ -123,6 +123,10 @@ and game input remain outside the completed result.
 The current game-facing WSI direction is recorded in
 [decision 0005](decisions/0005-persistent-game-frame-ring.md). The service now
 prepares a bounded ring of real exportable images plus one shared futex control
-page after authenticated Activity readiness. The public swapchain still fails
-closed until the Activity's one-time reverse importer and native copy/present
-consumer produce a visually verified changing frame.
+page after authenticated Activity readiness. The service can relay that bundle
+once to a same-UID helper, whose authenticated Binder reply installs it in the
+Activity. The native lifecycle-gated consumer imports every image, copies or
+blits presented slots into the Android swapchain, and releases a slot only after
+its local GPU fence. The public swapchain still fails closed until game-facing
+acquire/present supplies the matching producer ownership transitions and a
+tablet run proves a visually changing frame.

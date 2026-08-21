@@ -1,7 +1,7 @@
 # Decision 0005: prepare a persistent game-to-Activity external-image ring
 
-Status: service-side allocation and transport contract implemented; Activity
-import and copy/present consumer pending.
+Status: service allocation plus Activity import/copy/present implementation
+complete in source and host contracts; tablet runtime proof pending.
 
 ## Context
 
@@ -36,26 +36,36 @@ single serialized image are the reverse of game presentation.
 
 ## Implemented boundary
 
-The service now owns the native image allocations, dedicated memory, stable
-wire image IDs, ring mapping, generation, descriptor bundle, and deterministic
-teardown. Host contracts exercise a 4,096-frame three-slot ring, native Vulkan
-export calls through the pinned test loader, SCM_RIGHTS descriptor delivery,
-authenticated Activity gating, and response decoding.
+The service owns the native image allocations, dedicated memory, stable wire
+image IDs, ring mapping, generation, descriptor bundle, and deterministic
+teardown. The allocation bundle now has a fixed 128-byte setup envelope. A
+same-UID native socket gives it once to an `app_process` helper; the existing
+authenticated callback returns the image/control FDs through Binder to the
+Activity. Native Activity code validates the generation, maps the ring,
+recreates and imports all opaque-FD images, intersects each FD's consumer-side
+memory-type bits instead of assuming private-Turnip indices match the Android
+loader, and owns a dedicated command pool, semaphores, and fence.
+
+The consumer sleeps on the native ring, acquires an Android swapchain image,
+copies or blits the presented game image, submits and presents locally, waits
+for its local copy fence, and only then releases the game slot. Pause stops new
+claims; resume wakes the consumer; window/device teardown fails the ring and
+destroys every imported object. Java, Binder, socket calls, and FD transfer
+remain setup-only.
 
 ## Next gate
 
-Extend the existing allocation-time Binder callback so the Activity imports
-the image FDs and control FD once, then run a native Activity consumer thread:
-wait for the next presented sequence, acquire an Android swapchain image,
-copy/blit the imported image, submit/present with local Vulkan synchronization,
-and release the slot. Only that visually verified path may make the public
-swapchain calls return success.
+Connect the game-facing virtual `vkCreateSwapchainKHR`, acquire, and present
+calls to this prepared transport. Producer present must complete its local GPU
+work, transition/release the image to `VK_IMAGE_LAYOUT_GENERAL` and
+`VK_QUEUE_FAMILY_EXTERNAL`, then publish `PRESENTED`. A tablet run must prove a
+deterministic changing frame reaches the Activity before the public swapchain
+is allowed to return success.
 
 ## Provenance
 
-The required recall query—`BVB E042 persistent external image ring virtual
-swapchain VK_KHR_swapchain acquire present Activity ingress futex`—returned no
-indexed prior session. This implementation reuses the repository's E035
-opaque-FD allocation/import rules, E038 authenticated Activity image broker,
-E041 allocation-time producer completion, E042 fixed-width shared futex
+The required recall query—`E042`—found the earlier four-slot shared-ring work
+and its explicit acquire/release ordering. This implementation reuses E035's
+opaque-FD allocation/import rules, E038's authenticated Activity broker,
+E041's allocation-time producer completion, E042's fixed-width shared futex
 control, and decision 0004's exact no-fake-success boundary.

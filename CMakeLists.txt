@@ -111,6 +111,16 @@ target_link_libraries(bvb-wsi-frame-ring PUBLIC Threads::Threads)
 bvb_enable_warnings(bvb-wsi-frame-ring)
 target_link_libraries(bvb-vulkan-global PRIVATE bvb-wsi-frame-ring)
 
+add_library(bvb-activity-frame-transport STATIC src/activity_frame_transport.c)
+target_include_directories(
+  bvb-activity-frame-transport
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
+)
+target_link_libraries(bvb-activity-frame-transport PRIVATE bvb-wire)
+bvb_enable_warnings(bvb-activity-frame-transport)
+
 add_executable(bvb-vulkan-probe src/vulkan_probe.c)
 target_link_libraries(bvb-vulkan-probe PRIVATE bvb-vulkan-caps)
 bvb_enable_warnings(bvb-vulkan-probe)
@@ -319,7 +329,7 @@ add_executable(bvb-bridge-service src/bridge_service.c)
 target_link_libraries(
   bvb-bridge-service
   PRIVATE bvb-wire bvb-command-batch bvb-vulkan-caps bvb-vulkan-global
-          bvb-vulkan-selftest-core Threads::Threads
+          bvb-vulkan-selftest-core bvb-activity-frame-transport Threads::Threads
 )
 bvb_enable_warnings(bvb-bridge-service)
 
@@ -411,6 +421,18 @@ if(BUILD_TESTING)
   bvb_enable_warnings(bvb-wsi-frame-ring-test)
   add_test(NAME wsi-frame-ring-contract COMMAND bvb-wsi-frame-ring-test)
 
+  add_executable(
+    bvb-activity-frame-transport-test tests/activity_frame_transport.c
+  )
+  target_link_libraries(
+    bvb-activity-frame-transport-test PRIVATE bvb-activity-frame-transport
+  )
+  bvb_enable_warnings(bvb-activity-frame-transport-test)
+  add_test(
+    NAME activity-frame-transport-wire-contract
+    COMMAND bvb-activity-frame-transport-test
+  )
+
   add_executable(bvb-frame-sync-test tests/frame_sync.c)
   target_link_libraries(bvb-frame-sync-test PRIVATE bvb-frame-sync)
   bvb_enable_warnings(bvb-frame-sync-test)
@@ -459,6 +481,21 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/wsi_frame_ring.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
+  )
+  add_test(
+    NAME activity-frame-consumer-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_activity_frame_consumer_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/activity-frame-consumer-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/decisions/0005-persistent-game-frame-ring.md"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/activity_frame_transport.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/android/visible-host/java/io/github/huntergdavis/bvb/visiblehost/FrameTransportClient.java"
+      "${CMAKE_CURRENT_SOURCE_DIR}/android/visible-host/java/io/github/huntergdavis/bvb/visiblehost/SharedRegionReceiver.java"
+      "${CMAKE_CURRENT_SOURCE_DIR}/android/visible-host/java/io/github/huntergdavis/bvb/visiblehost/SharedRegionProvider.java"
+      "${CMAKE_CURRENT_SOURCE_DIR}/android/visible-host/native_main.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
   )
 
   add_library(bvb-fake-media-ndk SHARED tests/fake_media_ndk.c)

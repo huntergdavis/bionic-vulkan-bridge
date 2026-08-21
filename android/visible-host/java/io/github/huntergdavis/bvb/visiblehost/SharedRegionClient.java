@@ -34,12 +34,18 @@ public final class SharedRegionClient extends Binder {
             "io.github.huntergdavis.bvb.visiblehost.REQUEST_EXTERNAL_IMAGE_FENCED";
     public static final String ACTION_EXTERNAL_IMAGE_FRAME_RING =
             "io.github.huntergdavis.bvb.visiblehost.REQUEST_EXTERNAL_IMAGE_FRAME_RING";
+    public static final String ACTION_INSTALL_GAME_FRAME_RING =
+            "io.github.huntergdavis.bvb.visiblehost.INSTALL_GAME_FRAME_RING";
     public static final String EXTRA_REQUEST = "bvb_request";
     public static final String EXTRA_CALLBACK = "bvb_callback";
     public static final String EXTRA_TOKEN = "bvb_token";
     public static final String CALLBACK_DESCRIPTOR =
             "io.github.huntergdavis.bvb.visiblehost.ISharedRegionCallback";
     public static final int TRANSACTION_DELIVER = FIRST_CALL_TRANSACTION;
+    public static final int TRANSACTION_REQUEST_GAME_FRAME_RING =
+            FIRST_CALL_TRANSACTION + 1;
+    public static final int TRANSACTION_GAME_FRAME_RING_RESULT =
+            FIRST_CALL_TRANSACTION + 2;
 
     private static final String TERMUX_PACKAGE = "com.termux";
     private static final String HOST_PACKAGE =
@@ -177,7 +183,7 @@ public final class SharedRegionClient extends Binder {
         return null;
     }
 
-    private static void sendBroadcast(Intent intent) throws Exception {
+    static void sendBroadcast(Intent intent) throws Exception {
         Object manager = activityManager();
         Method getIntentSender = methodNamed(
                 manager, "getIntentSender", Intent[].class);

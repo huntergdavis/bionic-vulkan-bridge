@@ -12,6 +12,7 @@ activity_java="$java_dir/VisibleHostActivity.java"
 provider_java="$java_dir/SharedRegionProvider.java"
 client_java="$java_dir/SharedRegionClient.java"
 receiver_java="$java_dir/SharedRegionReceiver.java"
+frame_transport_client_java="$java_dir/FrameTransportClient.java"
 lifecycle_source="$project_dir/src/lifecycle.c"
 frame_sync_source="$project_dir/src/frame_sync.c"
 protocol_source="$project_dir/src/protocol.c"
@@ -53,12 +54,14 @@ for command_name in clang aapt zipalign apksigner keytool readelf \
 done
 for required_file in "$manifest" "$source_file" "$activity_java" \
     "$provider_java" \
-    "$client_java" "$receiver_java" \
+    "$client_java" "$receiver_java" "$frame_transport_client_java" \
     "$lifecycle_source" \
     "$protocol_source" "$handle_source" "$batch_source" \
     "$transport_source" "$visible_batch_source" "$visible_ingress_source" \
     "$vertex_shader" "$fragment_shader" \
     "$project_dir/include/bvb/lifecycle.h" \
+    "$project_dir/include/bvb/activity_frame_transport.h" \
+    "$project_dir/include/bvb/wsi_frame_ring.h" \
     "$project_dir/include/bvb/command_batch.h" "$framework_resources" \
     "$vulkan_headers/vulkan/vulkan.h" /system/lib64/libandroid.so \
     /system/lib64/liblog.so /system/lib64/libvulkan.so \
@@ -106,7 +109,8 @@ fetch_pinned "$r8_url" "$r8_sha256" "$r8_jar"
 fetch_pinned "$android_jar_url" "$android_jar_sha256" "$android_jar"
 
 javac --release 8 -classpath "$android_jar" -d "$java_classes" \
-    "$activity_java" "$provider_java" "$client_java" "$receiver_java"
+    "$activity_java" "$provider_java" "$client_java" "$receiver_java" \
+    "$frame_transport_client_java"
 rm -f "$dex_dir/classes.dex"
 java -cp "$r8_jar" com.android.tools.r8.D8 \
     --release --no-desugaring --min-api 24 --lib "$android_jar" \
@@ -115,7 +119,8 @@ java -cp "$r8_jar" com.android.tools.r8.D8 \
     "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionProvider.class" \
     "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionProvider\$ExternalMemoryResult.class" \
     "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionClient.class" \
-    "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionReceiver.class"
+    "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionReceiver.class" \
+    "$java_classes/io/github/huntergdavis/bvb/visiblehost/FrameTransportClient.class"
 if [ ! -f "$dex_dir/classes.dex" ]; then
     printf 'D8 did not produce classes.dex\n' >&2
     exit 4
@@ -135,6 +140,8 @@ clang --target=aarch64-linux-android29 \
     -shared -Wl,-soname,libbvb-visible-host.so \
     -I"$project_dir/include" -I"$vulkan_headers" -I"$shader_dir" \
     "$source_file" "$lifecycle_source" "$frame_sync_source" \
+    "$project_dir/src/wsi_frame_ring.c" \
+    "$project_dir/src/activity_frame_transport.c" \
     "$protocol_source" \
     "$handle_source" "$batch_source" "$transport_source" \
     "$visible_batch_source" "$visible_ingress_source" \

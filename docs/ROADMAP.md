@@ -106,6 +106,12 @@
 - [x] Deliver the glibc-generated triangle batch to the visible host
 - [x] Drive sustained per-frame shader data through the shared ring and render
   a visibly rotating native-resolution triangle
+- [x] Prepare two to four real game-facing exportable swapchain images and a
+  fixed-width futex ownership ring
+- [x] Relay that setup bundle once into the authenticated Activity and implement
+  the lifecycle-gated native import/copy-or-blit/present consumer
+- [ ] Connect public virtual swapchain acquire/present to the producer ownership
+  handoff and visually prove a changing game frame before returning success
 - [ ] Reach a DXVK sample
 - [ ] Run the fixed native-resolution Tomb Raider 2013 benchmark
 - [ ] Compare FPS, frame pacing, startup time, peak RSS, and thermals against the

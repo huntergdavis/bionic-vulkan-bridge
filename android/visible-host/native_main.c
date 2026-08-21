@@ -2,12 +2,14 @@
 #define VK_USE_PLATFORM_ANDROID_KHR
 
 #include <bvb/command_batch.h>
+#include <bvb/activity_frame_transport.h>
 #include <bvb/frame_sync.h>
 #include <bvb/lifecycle.h>
 #include <bvb/native_binder.h>
 #include <bvb/protocol.h>
 #include <bvb/triangle_batch_builder.h>
 #include <bvb/visible_ingress.h>
+#include <bvb/wsi_frame_ring.h>
 
 #include <android/log.h>
 #include <android/native_activity.h>
@@ -60,7 +62,9 @@ struct bvb_visible_state {
     VkInstance instance;
     VkSurfaceKHR surface;
     VkDevice device;
+    VkPhysicalDevice physical_device;
     VkQueue queue;
+    uint32_t queue_family_index;
     VkSwapchainKHR swapchain;
     VkImage swapchain_images[BVB_MAX_IMAGES];
     uint32_t swapchain_image_count;
@@ -91,6 +95,27 @@ struct bvb_visible_state {
     uint32_t external_image_memory_type_index;
     PFN_vkGetMemoryFdKHR get_memory_fd;
     PFN_vkGetSemaphoreFdKHR get_semaphore_fd;
+};
+
+struct bvb_game_frame_transport {
+    pthread_mutex_t mutex;
+    pthread_cond_t condition;
+    bool thread_started;
+    bool installed;
+    uint64_t generation;
+    uint32_t image_count;
+    uint32_t width;
+    uint32_t height;
+    VkFormat format;
+    VkImage images[BVB_WSI_FRAME_RING_MAX_SLOTS];
+    VkDeviceMemory memories[BVB_WSI_FRAME_RING_MAX_SLOTS];
+    struct bvb_wsi_frame_ring *ring;
+    VkCommandPool command_pool;
+    VkCommandBuffer command_buffer;
+    VkSemaphore acquire_semaphore;
+    VkSemaphore copy_semaphore;
+    VkFence copy_fence;
+    uint32_t consumed_sequence;
 };
 
 struct bvb_lifecycle_client {
@@ -130,6 +155,7 @@ static atomic_uint visible_frame_count = 1U;
 static pthread_mutex_t lifecycle_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t external_memory_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t queue_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t renderer_device_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_once_t external_broker_once = PTHREAD_ONCE_INIT;
 static pthread_once_t native_binder_once = PTHREAD_ONCE_INIT;
 static AIBinder *native_binder_service;
@@ -146,6 +172,12 @@ static struct bvb_external_sync_cache external_image_cache = {
     .memory_fd = -1,
     .semaphore_fd = -1,
 };
+static struct bvb_game_frame_transport game_frames = {
+    .mutex = PTHREAD_MUTEX_INITIALIZER,
+    .condition = PTHREAD_COND_INITIALIZER,
+};
+static atomic_bool activity_resumed;
+static atomic_bool activity_window_present;
 
 enum {
     BVB_E020_REGION_BYTES = 4096,
@@ -1897,10 +1929,661 @@ static void apply_immersive_mode(ANativeActivity *activity) {
     }
 }
 
+static void close_frame_setup_descriptors(int *descriptors,
+                                          uint32_t descriptor_count) {
+    if (descriptors == NULL) return;
+    for (uint32_t index = 0U; index < descriptor_count; ++index) {
+        if (descriptors[index] >= 0) {
+            (void)close(descriptors[index]);
+            descriptors[index] = -1;
+        }
+    }
+}
+
+/* renderer_device_mutex and game_frames.mutex must both be held. */
+static void clear_game_frame_transport_locked(void) {
+    game_frames.installed = false;
+    (void)pthread_cond_broadcast(&game_frames.condition);
+    if (game_frames.ring != NULL) {
+        (void)bvb_wsi_frame_ring_fail_consumer(game_frames.ring, -EPIPE);
+    }
+    if (state.device != VK_NULL_HANDLE) {
+        if (game_frames.copy_fence != VK_NULL_HANDLE) {
+            vkDestroyFence(state.device, game_frames.copy_fence, NULL);
+        }
+        if (game_frames.copy_semaphore != VK_NULL_HANDLE) {
+            vkDestroySemaphore(state.device, game_frames.copy_semaphore, NULL);
+        }
+        if (game_frames.acquire_semaphore != VK_NULL_HANDLE) {
+            vkDestroySemaphore(state.device, game_frames.acquire_semaphore,
+                               NULL);
+        }
+        if (game_frames.command_pool != VK_NULL_HANDLE) {
+            vkDestroyCommandPool(state.device, game_frames.command_pool, NULL);
+        }
+        for (uint32_t index = 0U;
+             index < BVB_WSI_FRAME_RING_MAX_SLOTS; ++index) {
+            if (game_frames.images[index] != VK_NULL_HANDLE) {
+                vkDestroyImage(state.device, game_frames.images[index], NULL);
+            }
+            if (game_frames.memories[index] != VK_NULL_HANDLE) {
+                vkFreeMemory(state.device, game_frames.memories[index], NULL);
+            }
+        }
+    }
+    if (game_frames.ring != NULL) {
+        (void)munmap(game_frames.ring, BVB_WSI_FRAME_RING_REGION_BYTES);
+    }
+    game_frames.generation = 0U;
+    game_frames.image_count = 0U;
+    game_frames.width = 0U;
+    game_frames.height = 0U;
+    game_frames.format = VK_FORMAT_UNDEFINED;
+    memset(game_frames.images, 0, sizeof(game_frames.images));
+    memset(game_frames.memories, 0, sizeof(game_frames.memories));
+    game_frames.ring = NULL;
+    game_frames.command_pool = VK_NULL_HANDLE;
+    game_frames.command_buffer = VK_NULL_HANDLE;
+    game_frames.acquire_semaphore = VK_NULL_HANDLE;
+    game_frames.copy_semaphore = VK_NULL_HANDLE;
+    game_frames.copy_fence = VK_NULL_HANDLE;
+    game_frames.consumed_sequence = 0U;
+}
+
+static bool game_frame_transport_installed(void) {
+    (void)pthread_mutex_lock(&game_frames.mutex);
+    const bool installed = game_frames.ring != NULL;
+    (void)pthread_mutex_unlock(&game_frames.mutex);
+    return installed;
+}
+
+static int copy_game_frame_to_window_locked(uint32_t slot) {
+    if (slot >= game_frames.image_count || state.device == VK_NULL_HANDLE ||
+        state.swapchain == VK_NULL_HANDLE || state.queue == VK_NULL_HANDLE) {
+        return -ENODEV;
+    }
+    VkResult result = vkWaitForFences(state.device, 1U,
+                                      &game_frames.copy_fence, VK_TRUE,
+                                      UINT64_MAX);
+    if (result == VK_SUCCESS) {
+        result = vkResetFences(state.device, 1U, &game_frames.copy_fence);
+    }
+    if (result == VK_SUCCESS) {
+        result = vkResetCommandPool(state.device, game_frames.command_pool, 0U);
+    }
+    uint32_t destination_index = 0U;
+    if (result == VK_SUCCESS) {
+        result = vkAcquireNextImageKHR(
+            state.device, state.swapchain, UINT64_MAX,
+            game_frames.acquire_semaphore, VK_NULL_HANDLE,
+            &destination_index);
+    }
+    if ((result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) ||
+        destination_index >= state.swapchain_image_count) {
+        return -EIO;
+    }
+    const VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    result = vkBeginCommandBuffer(game_frames.command_buffer, &begin_info);
+    if (result != VK_SUCCESS) return -EIO;
+    const VkImageSubresourceRange range = {
+        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .baseMipLevel = 0U,
+        .levelCount = 1U,
+        .baseArrayLayer = 0U,
+        .layerCount = 1U,
+    };
+    const VkImageMemoryBarrier before_copy[] = {
+        {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL,
+            .dstQueueFamilyIndex = state.queue_family_index,
+            .image = game_frames.images[slot],
+            .subresourceRange = range,
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = state.swapchain_images[destination_index],
+            .subresourceRange = range,
+        },
+    };
+    vkCmdPipelineBarrier(game_frames.command_buffer,
+                         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT, 0U, 0U, NULL, 0U,
+                         NULL, 2U, before_copy);
+    if (game_frames.format == state.swapchain_format) {
+        const VkImageCopy copy = {
+            .srcSubresource = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .layerCount = 1U,
+            },
+            .dstSubresource = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .layerCount = 1U,
+            },
+            .extent = {game_frames.width, game_frames.height, 1U},
+        };
+        vkCmdCopyImage(game_frames.command_buffer, game_frames.images[slot],
+                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       state.swapchain_images[destination_index],
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1U, &copy);
+    } else {
+        const VkImageBlit blit = {
+            .srcSubresource = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .layerCount = 1U,
+            },
+            .srcOffsets = {{0, 0, 0},
+                           {(int32_t)game_frames.width,
+                            (int32_t)game_frames.height, 1}},
+            .dstSubresource = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .layerCount = 1U,
+            },
+            .dstOffsets = {{0, 0, 0},
+                           {(int32_t)state.swapchain_extent.width,
+                            (int32_t)state.swapchain_extent.height, 1}},
+        };
+        vkCmdBlitImage(game_frames.command_buffer, game_frames.images[slot],
+                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                       state.swapchain_images[destination_index],
+                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1U, &blit,
+                       VK_FILTER_NEAREST);
+    }
+    const VkImageMemoryBarrier after_copy[] = {
+        {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex = state.queue_family_index,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL,
+            .image = game_frames.images[slot],
+            .subresourceRange = range,
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = state.swapchain_images[destination_index],
+            .subresourceRange = range,
+        },
+    };
+    vkCmdPipelineBarrier(game_frames.command_buffer,
+                         VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0U, 0U, NULL,
+                         0U, NULL, 2U, after_copy);
+    result = vkEndCommandBuffer(game_frames.command_buffer);
+    const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    const VkSubmitInfo submit = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .waitSemaphoreCount = 1U,
+        .pWaitSemaphores = &game_frames.acquire_semaphore,
+        .pWaitDstStageMask = &wait_stage,
+        .commandBufferCount = 1U,
+        .pCommandBuffers = &game_frames.command_buffer,
+        .signalSemaphoreCount = 1U,
+        .pSignalSemaphores = &game_frames.copy_semaphore,
+    };
+    if (result == VK_SUCCESS) {
+        result = vkQueueSubmit(state.queue, 1U, &submit,
+                               game_frames.copy_fence);
+    }
+    const VkPresentInfoKHR present = {
+        .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+        .waitSemaphoreCount = 1U,
+        .pWaitSemaphores = &game_frames.copy_semaphore,
+        .swapchainCount = 1U,
+        .pSwapchains = &state.swapchain,
+        .pImageIndices = &destination_index,
+    };
+    if (result == VK_SUCCESS) result = vkQueuePresentKHR(state.queue, &present);
+    if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
+        result = vkWaitForFences(state.device, 1U, &game_frames.copy_fence,
+                                 VK_TRUE, UINT64_MAX);
+    }
+    return result == VK_SUCCESS ? 0 : -EIO;
+}
+
+static void *game_frame_consumer_main(void *unused) {
+    (void)unused;
+    for (;;) {
+        (void)pthread_mutex_lock(&game_frames.mutex);
+        while (!game_frames.installed || !atomic_load(&activity_resumed) ||
+               !atomic_load(&activity_window_present)) {
+            (void)pthread_cond_wait(&game_frames.condition,
+                                    &game_frames.mutex);
+        }
+        (void)pthread_mutex_unlock(&game_frames.mutex);
+
+        (void)pthread_mutex_lock(&renderer_device_mutex);
+        (void)pthread_mutex_lock(&game_frames.mutex);
+        const bool ready = game_frames.installed &&
+                           atomic_load(&activity_resumed) &&
+                           atomic_load(&activity_window_present);
+        struct bvb_wsi_frame_ring *ring = game_frames.ring;
+        const uint32_t after_sequence = game_frames.consumed_sequence;
+        (void)pthread_mutex_unlock(&game_frames.mutex);
+        int status = ready ? 0 : -EAGAIN;
+        uint32_t slot = UINT32_MAX;
+        uint32_t sequence = 0U;
+        if (status == 0) {
+            status = bvb_wsi_frame_ring_wait_present(
+                ring, after_sequence, 100U, &slot, &sequence);
+        }
+        if (status == 0) {
+            if (!atomic_load(&activity_resumed) ||
+                !atomic_load(&activity_window_present)) {
+                status = -EAGAIN;
+            }
+        }
+        if (status == 0) {
+            (void)pthread_mutex_lock(&queue_mutex);
+            status = copy_game_frame_to_window_locked(slot);
+            (void)pthread_mutex_unlock(&queue_mutex);
+        }
+        if (status == 0) {
+            status = bvb_wsi_frame_ring_release(ring, slot, sequence);
+        }
+        if (status == 0) {
+            (void)pthread_mutex_lock(&game_frames.mutex);
+            game_frames.consumed_sequence = sequence;
+            (void)pthread_mutex_unlock(&game_frames.mutex);
+            BVB_LOGI("E057_FRAME_PRESENTED generation=%llu sequence=%u slot=%u",
+                     (unsigned long long)ring->generation, sequence, slot);
+        } else if (status != -ETIMEDOUT && status != -EAGAIN) {
+            (void)bvb_wsi_frame_ring_fail_consumer(ring, status);
+            BVB_LOGE("E057_FRAME_CONSUMER_FAIL status=%d", status);
+            (void)pthread_mutex_lock(&game_frames.mutex);
+            game_frames.installed = false;
+            (void)pthread_mutex_unlock(&game_frames.mutex);
+        }
+        (void)pthread_mutex_unlock(&renderer_device_mutex);
+    }
+    return NULL;
+}
+
+static int start_game_frame_consumer_locked(void) {
+    if (game_frames.thread_started) return 0;
+    pthread_t thread;
+    int status = pthread_create(&thread, NULL, game_frame_consumer_main, NULL);
+    if (status != 0) return -status;
+    game_frames.thread_started = true;
+    status = pthread_detach(thread);
+    if (status != 0) {
+        BVB_LOGE("E057_CONSUMER_DETACH_FAIL status=%d", status);
+    }
+    return 0;
+}
+
+static int import_game_frame_transport(
+    const struct bvb_activity_frame_setup *setup, int *descriptors) {
+    const uint32_t descriptor_count = setup->image_count + 1U;
+    int status = 0;
+    (void)pthread_mutex_lock(&renderer_device_mutex);
+    (void)pthread_mutex_lock(&renderer.mutex);
+    const bool renderer_ready = renderer.ready &&
+                                renderer.width == setup->width &&
+                                renderer.height == setup->height &&
+                                atomic_load(&retain_external_renderer);
+    (void)pthread_mutex_unlock(&renderer.mutex);
+    if (!renderer_ready || state.device == VK_NULL_HANDLE ||
+        state.physical_device == VK_NULL_HANDLE ||
+        state.swapchain == VK_NULL_HANDLE) {
+        status = -EAGAIN;
+        goto done;
+    }
+    (void)pthread_mutex_lock(&game_frames.mutex);
+    if (game_frames.ring != NULL) {
+        status = -EALREADY;
+        (void)pthread_mutex_unlock(&game_frames.mutex);
+        goto done;
+    }
+    (void)pthread_mutex_unlock(&game_frames.mutex);
+    if ((VkFormat)setup->format != state.swapchain_format) {
+        VkFormatProperties source_properties = {0};
+        VkFormatProperties destination_properties = {0};
+        vkGetPhysicalDeviceFormatProperties(state.physical_device,
+                                            (VkFormat)setup->format,
+                                            &source_properties);
+        vkGetPhysicalDeviceFormatProperties(state.physical_device,
+                                            state.swapchain_format,
+                                            &destination_properties);
+        if ((source_properties.optimalTilingFeatures &
+             VK_FORMAT_FEATURE_BLIT_SRC_BIT) == 0U ||
+            (destination_properties.optimalTilingFeatures &
+             VK_FORMAT_FEATURE_BLIT_DST_BIT) == 0U) {
+            status = -ENOTSUP;
+            goto done;
+        }
+    }
+    struct bvb_game_frame_transport imported = {
+        .mutex = PTHREAD_MUTEX_INITIALIZER,
+        .condition = PTHREAD_COND_INITIALIZER,
+        .generation = setup->generation,
+        .image_count = setup->image_count,
+        .width = setup->width,
+        .height = setup->height,
+        .format = (VkFormat)setup->format,
+    };
+    imported.ring = mmap(NULL, BVB_WSI_FRAME_RING_REGION_BYTES,
+                         PROT_READ | PROT_WRITE, MAP_SHARED,
+                         descriptors[setup->image_count], 0U);
+    if (imported.ring == MAP_FAILED) {
+        imported.ring = NULL;
+        status = -errno;
+        goto import_failed;
+    }
+    if (bvb_wsi_frame_ring_validate(imported.ring, setup->generation) != 0 ||
+        imported.ring->slot_count != setup->image_count) {
+        status = -EPROTO;
+        goto import_failed;
+    }
+    (void)close(descriptors[setup->image_count]);
+    descriptors[setup->image_count] = -1;
+    const VkExternalMemoryImageCreateInfo external_info = {
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
+    const VkImageCreateInfo image_info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .pNext = &external_info,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = (VkFormat)setup->format,
+        .extent = {setup->width, setup->height, 1U},
+        .mipLevels = 1U,
+        .arrayLayers = 1U,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = (VkImageUsageFlags)setup->image_usage |
+                 VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    VkPhysicalDeviceMemoryProperties consumer_memory_properties = {0};
+    vkGetPhysicalDeviceMemoryProperties(state.physical_device,
+                                        &consumer_memory_properties);
+    for (uint32_t index = 0U; index < setup->image_count; ++index) {
+        VkResult result = vkCreateImage(state.device, &image_info, NULL,
+                                        &imported.images[index]);
+        VkMemoryRequirements requirements = {0};
+        if (result == VK_SUCCESS) {
+            vkGetImageMemoryRequirements(state.device, imported.images[index],
+                                         &requirements);
+            if (requirements.size > setup->allocation_sizes[index]) {
+                status = -EPROTO;
+                goto import_failed;
+            }
+        }
+        VkMemoryFdPropertiesKHR fd_properties = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR,
+        };
+        if (result == VK_SUCCESS) {
+            result = vkGetMemoryFdPropertiesKHR(
+                state.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+                descriptors[index], &fd_properties);
+        }
+        const uint32_t compatible_types =
+            requirements.memoryTypeBits & fd_properties.memoryTypeBits;
+        uint32_t consumer_memory_type = UINT32_MAX;
+        if (result == VK_SUCCESS &&
+            setup->memory_type_indices[index] <
+                consumer_memory_properties.memoryTypeCount &&
+            (compatible_types &
+             (UINT32_C(1) << setup->memory_type_indices[index])) != 0U) {
+            consumer_memory_type = setup->memory_type_indices[index];
+        }
+        for (uint32_t candidate = 0U;
+             result == VK_SUCCESS &&
+             candidate < consumer_memory_properties.memoryTypeCount;
+             ++candidate) {
+            if ((compatible_types & (UINT32_C(1) << candidate)) == 0U) continue;
+            const bool candidate_local =
+                (consumer_memory_properties.memoryTypes[candidate]
+                     .propertyFlags &
+                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0U;
+            const bool selected_local =
+                consumer_memory_type != UINT32_MAX &&
+                (consumer_memory_properties.memoryTypes[consumer_memory_type]
+                     .propertyFlags &
+                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0U;
+            if (consumer_memory_type == UINT32_MAX ||
+                (candidate_local && !selected_local)) {
+                consumer_memory_type = candidate;
+            }
+        }
+        if (result != VK_SUCCESS || consumer_memory_type == UINT32_MAX) {
+            status = -ENOTSUP;
+            goto import_failed;
+        }
+        const VkMemoryDedicatedAllocateInfo dedicated = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
+            .image = imported.images[index],
+        };
+        const VkImportMemoryFdInfoKHR import_info = {
+            .sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR,
+            .pNext = &dedicated,
+            .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+            .fd = descriptors[index],
+        };
+        const VkMemoryAllocateInfo allocation = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .pNext = &import_info,
+            .allocationSize = setup->allocation_sizes[index],
+            .memoryTypeIndex = consumer_memory_type,
+        };
+        if (result == VK_SUCCESS) {
+            result = vkAllocateMemory(state.device, &allocation, NULL,
+                                      &imported.memories[index]);
+            if (result == VK_SUCCESS) descriptors[index] = -1;
+        }
+        if (result == VK_SUCCESS) {
+            result = vkBindImageMemory(state.device, imported.images[index],
+                                       imported.memories[index], 0U);
+        }
+        if (result != VK_SUCCESS) {
+            status = -EIO;
+            goto import_failed;
+        }
+    }
+    const VkCommandPoolCreateInfo pool_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT |
+                 VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+        .queueFamilyIndex = state.queue_family_index,
+    };
+    VkResult result = vkCreateCommandPool(state.device, &pool_info, NULL,
+                                          &imported.command_pool);
+    const VkCommandBufferAllocateInfo command_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = imported.command_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1U,
+    };
+    if (result == VK_SUCCESS) {
+        result = vkAllocateCommandBuffers(state.device, &command_info,
+                                          &imported.command_buffer);
+    }
+    const VkSemaphoreCreateInfo semaphore_info = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+    };
+    if (result == VK_SUCCESS) {
+        result = vkCreateSemaphore(state.device, &semaphore_info, NULL,
+                                   &imported.acquire_semaphore);
+    }
+    if (result == VK_SUCCESS) {
+        result = vkCreateSemaphore(state.device, &semaphore_info, NULL,
+                                   &imported.copy_semaphore);
+    }
+    const VkFenceCreateInfo fence_info = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+    };
+    if (result == VK_SUCCESS) {
+        result = vkCreateFence(state.device, &fence_info, NULL,
+                               &imported.copy_fence);
+    }
+    if (result != VK_SUCCESS) {
+        status = -EIO;
+        goto import_failed;
+    }
+    (void)pthread_mutex_lock(&game_frames.mutex);
+    game_frames.generation = imported.generation;
+    game_frames.image_count = imported.image_count;
+    game_frames.width = imported.width;
+    game_frames.height = imported.height;
+    game_frames.format = imported.format;
+    memcpy(game_frames.images, imported.images, sizeof(game_frames.images));
+    memcpy(game_frames.memories, imported.memories,
+           sizeof(game_frames.memories));
+    game_frames.ring = imported.ring;
+    game_frames.command_pool = imported.command_pool;
+    game_frames.command_buffer = imported.command_buffer;
+    game_frames.acquire_semaphore = imported.acquire_semaphore;
+    game_frames.copy_semaphore = imported.copy_semaphore;
+    game_frames.copy_fence = imported.copy_fence;
+    game_frames.consumed_sequence = 0U;
+    game_frames.installed = true;
+    status = start_game_frame_consumer_locked();
+    if (status == 0) (void)pthread_cond_broadcast(&game_frames.condition);
+    if (status != 0) clear_game_frame_transport_locked();
+    (void)pthread_mutex_unlock(&game_frames.mutex);
+    if (status == 0) {
+        BVB_LOGI("E057_FRAME_TRANSPORT_IMPORTED generation=%llu images=%u "
+                 "width=%u height=%u format=%d",
+                 (unsigned long long)setup->generation, setup->image_count,
+                 setup->width, setup->height, (int)setup->format);
+        goto done;
+    }
+    goto done;
+
+import_failed:
+    if (imported.copy_fence != VK_NULL_HANDLE)
+        vkDestroyFence(state.device, imported.copy_fence, NULL);
+    if (imported.copy_semaphore != VK_NULL_HANDLE)
+        vkDestroySemaphore(state.device, imported.copy_semaphore, NULL);
+    if (imported.acquire_semaphore != VK_NULL_HANDLE)
+        vkDestroySemaphore(state.device, imported.acquire_semaphore, NULL);
+    if (imported.command_pool != VK_NULL_HANDLE)
+        vkDestroyCommandPool(state.device, imported.command_pool, NULL);
+    for (uint32_t index = 0U; index < setup->image_count; ++index) {
+        if (imported.images[index] != VK_NULL_HANDLE)
+            vkDestroyImage(state.device, imported.images[index], NULL);
+        if (imported.memories[index] != VK_NULL_HANDLE)
+            vkFreeMemory(state.device, imported.memories[index], NULL);
+    }
+    if (imported.ring != NULL)
+        (void)munmap(imported.ring, BVB_WSI_FRAME_RING_REGION_BYTES);
+
+done:
+    close_frame_setup_descriptors(descriptors, descriptor_count);
+    (void)pthread_mutex_unlock(&renderer_device_mutex);
+    return status;
+}
+
+JNIEXPORT jint JNICALL
+Java_io_github_huntergdavis_bvb_visiblehost_SharedRegionProvider_nativeInstallFrameTransport(
+    JNIEnv *env, jclass provider_class, jstring token_string, jint image_count,
+    jint width, jint height, jint format, jint image_usage, jlong generation,
+    jlongArray allocation_array, jintArray memory_type_array,
+    jintArray descriptor_array) {
+    (void)provider_class;
+    if (token_string == NULL || allocation_array == NULL ||
+        memory_type_array == NULL || descriptor_array == NULL ||
+        image_count < 2 || image_count > BVB_WSI_FRAME_RING_MAX_SLOTS ||
+        (*env)->GetArrayLength(env, allocation_array) != image_count ||
+        (*env)->GetArrayLength(env, memory_type_array) != image_count ||
+        (*env)->GetArrayLength(env, descriptor_array) != image_count + 1) {
+        return -EINVAL;
+    }
+    jlong allocations[BVB_WSI_FRAME_RING_MAX_SLOTS] = {0};
+    jint memory_types[BVB_WSI_FRAME_RING_MAX_SLOTS] = {0};
+    jint java_descriptors[BVB_WSI_FRAME_RING_MAX_SLOTS + 1U] = {
+        -1, -1, -1, -1, -1,
+    };
+    (*env)->GetIntArrayRegion(env, descriptor_array, 0, image_count + 1,
+                              java_descriptors);
+    int descriptors[BVB_WSI_FRAME_RING_MAX_SLOTS + 1U] = {-1, -1, -1, -1,
+                                                           -1};
+    for (uint32_t index = 0U; index < (uint32_t)image_count + 1U; ++index) {
+        descriptors[index] = java_descriptors[index];
+    }
+    (*env)->GetLongArrayRegion(env, allocation_array, 0, image_count,
+                               allocations);
+    (*env)->GetIntArrayRegion(env, memory_type_array, 0, image_count,
+                              memory_types);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        close_frame_setup_descriptors(descriptors,
+                                      (uint32_t)image_count + 1U);
+        return -EINVAL;
+    }
+    const char *token = (*env)->GetStringUTFChars(env, token_string, NULL);
+    if (token == NULL) {
+        close_frame_setup_descriptors(descriptors,
+                                      (uint32_t)image_count + 1U);
+        return -EINVAL;
+    }
+    uint8_t parsed_token[BVB_LIFECYCLE_TOKEN_SIZE];
+    int status = bvb_lifecycle_token_from_hex(token, parsed_token);
+    (*env)->ReleaseStringUTFChars(env, token_string, token);
+    (void)pthread_mutex_lock(&lifecycle_mutex);
+    const bool authorized = status == 0 && lifecycle.configured &&
+                            token_matches(parsed_token, lifecycle.token);
+    (void)pthread_mutex_unlock(&lifecycle_mutex);
+    if (!authorized) {
+        close_frame_setup_descriptors(descriptors,
+                                      (uint32_t)image_count + 1U);
+        return -EACCES;
+    }
+    struct bvb_activity_frame_setup setup = {
+        .magic = BVB_ACTIVITY_FRAME_SETUP_MAGIC,
+        .version = BVB_ACTIVITY_FRAME_SETUP_VERSION,
+        .header_bytes = BVB_ACTIVITY_FRAME_SETUP_BYTES,
+        .image_count = (uint32_t)image_count,
+        .width = (uint32_t)width,
+        .height = (uint32_t)height,
+        .format = (uint32_t)format,
+        .image_usage = (uint32_t)image_usage,
+        .generation = (uint64_t)generation,
+    };
+    for (uint32_t index = 0U; index < (uint32_t)image_count; ++index) {
+        setup.allocation_sizes[index] = (uint64_t)allocations[index];
+        setup.memory_type_indices[index] = (uint32_t)memory_types[index];
+    }
+    uint8_t validation[BVB_ACTIVITY_FRAME_SETUP_BYTES];
+    if ((*env)->ExceptionCheck(env) ||
+        bvb_activity_frame_setup_encode(validation, &setup) != 0) {
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+        close_frame_setup_descriptors(descriptors,
+                                      (uint32_t)image_count + 1U);
+        return -EINVAL;
+    }
+    return import_game_frame_transport(&setup, descriptors);
+}
+
 static void destroy_renderer(void) {
-    (void)pthread_mutex_lock(&external_memory_mutex);
     if (state.device != VK_NULL_HANDLE) {
         (void)vkDeviceWaitIdle(state.device);
+    }
+    (void)pthread_mutex_lock(&game_frames.mutex);
+    clear_game_frame_transport_locked();
+    (void)pthread_mutex_unlock(&game_frames.mutex);
+    (void)pthread_mutex_lock(&external_memory_mutex);
+    if (state.device != VK_NULL_HANDLE) {
         if (state.external_sync_semaphore != VK_NULL_HANDLE) {
             vkDestroySemaphore(state.device, state.external_sync_semaphore,
                                NULL);
@@ -2966,8 +3649,10 @@ static bool create_renderer(ANativeWindow *window) {
         physical_device, state.surface, &capabilities);
     if (result != VK_SUCCESS || capabilities.minImageCount == 0U ||
         (capabilities.supportedUsageFlags &
-         VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT) ==
-            0U) {
+         (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+          VK_IMAGE_USAGE_TRANSFER_DST_BIT)) !=
+            (VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+             VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
         BVB_LOGE("E016_FAIL surface_capabilities=%d usage=%u", (int)result,
                  capabilities.supportedUsageFlags);
         return false;
@@ -3037,6 +3722,8 @@ static bool create_renderer(ANativeWindow *window) {
         return false;
     }
     vkGetDeviceQueue(state.device, queue_family_index, 0, &state.queue);
+    state.physical_device = physical_device;
+    state.queue_family_index = queue_family_index;
     (void)pthread_mutex_lock(&external_memory_mutex);
     const bool external_memory_ready = create_external_memory(physical_device);
     const bool external_image_ready = external_memory_ready &&
@@ -3053,7 +3740,8 @@ static bool create_renderer(ANativeWindow *window) {
         .imageColorSpace = surface_format.colorSpace,
         .imageExtent = extent,
         .imageArrayLayers = 1,
-        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                      VK_IMAGE_USAGE_TRANSFER_DST_BIT,
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .preTransform = capabilities.currentTransform,
         .compositeAlpha = composite_alpha,
@@ -3625,6 +4313,7 @@ static void *renderer_worker_main(void *unused) {
         }
         (void)pthread_mutex_unlock(&renderer.mutex);
 
+        (void)pthread_mutex_lock(&renderer_device_mutex);
         destroy_renderer();
         bool success = false;
         uint32_t width = 0U;
@@ -3637,6 +4326,7 @@ static void *renderer_worker_main(void *unused) {
                 destroy_renderer();
             }
         }
+        (void)pthread_mutex_unlock(&renderer_device_mutex);
 
         (void)pthread_mutex_lock(&renderer.mutex);
         const bool current =
@@ -3668,13 +4358,17 @@ static void *renderer_worker_main(void *unused) {
                     emit_lifecycle(BVB_LIFECYCLE_EVENT_RENDERER_FAILED,
                                    width, height);
                 }
+                (void)pthread_mutex_lock(&renderer_device_mutex);
                 destroy_renderer();
+                (void)pthread_mutex_unlock(&renderer_device_mutex);
                 success = false;
             }
         }
 
         if (success && !current) {
+            (void)pthread_mutex_lock(&renderer_device_mutex);
             destroy_renderer();
+            (void)pthread_mutex_unlock(&renderer_device_mutex);
         }
         if (window != NULL) {
             ANativeWindow_release(window);
@@ -3750,6 +4444,10 @@ static void on_window_created(ANativeActivity *activity,
              ANativeWindow_getWidth(window), ANativeWindow_getHeight(window));
     uint32_t width = (uint32_t)ANativeWindow_getWidth(window);
     uint32_t height = (uint32_t)ANativeWindow_getHeight(window);
+    atomic_store(&activity_window_present, true);
+    (void)pthread_mutex_lock(&game_frames.mutex);
+    (void)pthread_cond_broadcast(&game_frames.condition);
+    (void)pthread_mutex_unlock(&game_frames.mutex);
     emit_lifecycle(BVB_LIFECYCLE_EVENT_WINDOW_CREATED, width, height);
     int result = schedule_renderer(window, true);
     if (result != 0) {
@@ -3781,7 +4479,12 @@ static void on_window_destroyed(ANativeActivity *activity,
     (void)activity;
     (void)window;
     BVB_LOGI("E008_WINDOW_DESTROYED");
-    if (atomic_load(&retain_external_renderer)) {
+    atomic_store(&activity_window_present, false);
+    (void)pthread_mutex_lock(&game_frames.mutex);
+    (void)pthread_cond_broadcast(&game_frames.condition);
+    (void)pthread_mutex_unlock(&game_frames.mutex);
+    if (atomic_load(&retain_external_renderer) &&
+        !game_frame_transport_installed()) {
         BVB_LOGI("E041_OFFSCREEN_CACHE_RETAINED");
     } else {
         int result = schedule_renderer(NULL, true);
@@ -3808,11 +4511,20 @@ static void on_start(ANativeActivity *activity) {
 
 static void on_resume(ANativeActivity *activity) {
     (void)activity;
+    atomic_store(&activity_resumed, true);
+    (void)pthread_mutex_lock(&game_frames.mutex);
+    (void)pthread_cond_broadcast(&game_frames.condition);
+    (void)pthread_mutex_unlock(&game_frames.mutex);
     emit_lifecycle(BVB_LIFECYCLE_EVENT_RESUMED, 0, 0);
 }
 
 static void on_pause(ANativeActivity *activity) {
     (void)activity;
+    atomic_store(&activity_resumed, false);
+    atomic_store(&activity_window_present, false);
+    (void)pthread_mutex_lock(&game_frames.mutex);
+    (void)pthread_cond_broadcast(&game_frames.condition);
+    (void)pthread_mutex_unlock(&game_frames.mutex);
     emit_lifecycle(BVB_LIFECYCLE_EVENT_PAUSED, 0, 0);
 }
 
@@ -3823,6 +4535,7 @@ static void on_stop(ANativeActivity *activity) {
 
 static void on_destroy(ANativeActivity *activity) {
     (void)activity;
+    atomic_store(&activity_resumed, false);
     int result = schedule_renderer(NULL, true);
     if (result != 0) {
         BVB_LOGE("E017_ACTIVITY_DESTROY_SCHEDULE_FAIL status=%d", result);

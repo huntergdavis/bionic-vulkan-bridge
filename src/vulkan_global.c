@@ -3765,6 +3765,11 @@ static int destroy_swapchain_metadata(
             metadata->device, "vkFreeMemory");
     }
     int status = 0;
+    if (metadata->control != NULL && metadata->control != MAP_FAILED) {
+        const int failed =
+            bvb_wsi_frame_ring_fail_producer(metadata->control, -EPIPE);
+        if (failed != 0 && status == 0) status = failed;
+    }
     for (uint32_t index = 0U; index < metadata->image_count; ++index) {
         if (metadata->image_ids[index] != 0U) {
             const int removed = bvb_handle_table_remove(

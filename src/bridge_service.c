@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <bvb/command_batch.h>
+#include <bvb/activity_frame_transport.h>
 #include <bvb/handle.h>
 #include <bvb/protocol.h>
 #include <bvb/transport.h>
@@ -30,6 +31,7 @@
 struct service_options {
     const char *socket_path;
     const char *loader_path;
+    const char *activity_frame_socket;
     bool once;
     bool activity_ingress;
     uint16_t activity_port;
@@ -46,6 +48,7 @@ struct shared_batch_region {
 struct connection_worker {
     int client_fd;
     const char *loader_path;
+    const char *activity_frame_socket;
     bool activity_ingress;
     struct bvb_activity_status activity_status;
     pid_t peer_pid;
@@ -55,7 +58,8 @@ static void usage(const char *program) {
     fprintf(stderr,
             "usage: %s --socket ABSOLUTE_PATH "
             "[--loader ABSOLUTE_PATH] [--once] "
-            "[--activity-port 0..65535 --activity-token 64_HEX]\n",
+            "[--activity-port 0..65535 --activity-token 64_HEX] "
+            "[--activity-frame-socket ABSTRACT_NAME]\n",
             program);
 }
 
@@ -93,6 +97,10 @@ static int parse_arguments(int argc, char **argv,
                 return 2;
             }
             options->activity_ingress = true;
+        } else if (strcmp(argv[index], "--activity-frame-socket") == 0 &&
+                   index + 1 < argc && argv[index + 1][0] != '\0' &&
+                   strlen(argv[index + 1]) <= 106U) {
+            options->activity_frame_socket = argv[++index];
         } else {
             usage(argv[0]);
             return 2;
@@ -2132,7 +2140,8 @@ static int answer_vulkan_queue_submit_2(
 static int answer_vulkan_swapchain_prepare(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context,
-    const struct bvb_activity_status *activity_status) {
+    const struct bvb_activity_status *activity_status,
+    const char *activity_frame_socket) {
     struct bvb_protocol_packet response;
     prepare_response(&response, request);
     const uint32_t required_activity =
@@ -2180,6 +2189,39 @@ static int answer_vulkan_swapchain_prepare(
         fprintf(stderr, "bvb: swapchain preparation failed: %s\n",
                 diagnostic);
         response.header.status = result;
+    }
+    if (result == 0 && prepared.vulkan_result == VK_SUCCESS &&
+        activity_frame_socket != NULL) {
+        struct bvb_activity_frame_setup setup = {
+            .magic = BVB_ACTIVITY_FRAME_SETUP_MAGIC,
+            .version = BVB_ACTIVITY_FRAME_SETUP_VERSION,
+            .header_bytes = BVB_ACTIVITY_FRAME_SETUP_BYTES,
+            .image_count = prepared.image_count,
+            .width = decoded.width,
+            .height = decoded.height,
+            .format = decoded.format,
+            .image_usage = decoded.image_usage,
+            .generation = prepared.generation,
+        };
+        for (uint32_t index = 0U; index < prepared.image_count; ++index) {
+            setup.allocation_sizes[index] =
+                prepared.images[index].allocation_size;
+            setup.memory_type_indices[index] =
+                prepared.images[index].memory_type_index;
+        }
+        result = bvb_activity_frame_setup_send(
+            activity_frame_socket, &setup, descriptors, descriptor_count);
+        if (result != 0) {
+            char destroy_diagnostic[256] = {0};
+            (void)bvb_vulkan_global_context_destroy_swapchain(
+                context, prepared.swapchain_id, destroy_diagnostic,
+                sizeof(destroy_diagnostic));
+            response.header.status = result;
+            response.header.payload_length = 0U;
+            fprintf(stderr,
+                    "bvb: Activity frame setup relay failed: %s\n",
+                    strerror(-result));
+        }
     }
     int send_result = 0;
     if (result == 0 && prepared.vulkan_result == VK_SUCCESS) {
@@ -2400,7 +2442,8 @@ static int answer_shared_batch_execute(
 
 static int serve_connection(int client_fd, const char *loader_path,
                             bool activity_ingress,
-                            const struct bvb_activity_status *activity_status) {
+                            const struct bvb_activity_status *activity_status,
+                            const char *activity_frame_socket) {
     bool negotiated = false;
     struct shared_batch_region shared_region = {0};
     struct bvb_vulkan_batch_context *vulkan_context = NULL;
@@ -2656,7 +2699,7 @@ static int serve_connection(int client_fd, const char *loader_path,
                    BVB_OPCODE_VULKAN_SWAPCHAIN_PREPARE) {
             result = answer_vulkan_swapchain_prepare(
                 client_fd, &request, negotiated, global_context,
-                activity_status);
+                activity_status, activity_frame_socket);
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_SWAPCHAIN_DESTROY) {
             result = answer_vulkan_swapchain_destroy(
@@ -2687,7 +2730,8 @@ static void *serve_connection_worker(void *opaque) {
     struct connection_worker *worker = opaque;
     int result = serve_connection(worker->client_fd, worker->loader_path,
                                   worker->activity_ingress,
-                                  &worker->activity_status);
+                                  &worker->activity_status,
+                                  worker->activity_frame_socket);
     (void)close(worker->client_fd);
     if (result != 0) {
         fprintf(stderr, "bvb: connection from pid %ld failed: %s\n",
@@ -2707,6 +2751,7 @@ static int start_connection_worker(
     *worker = (struct connection_worker){
         .client_fd = client_fd,
         .loader_path = options->loader_path,
+        .activity_frame_socket = options->activity_frame_socket,
         .activity_ingress = options->activity_ingress,
         .activity_status = *activity_status,
         .peer_pid = peer_pid,
@@ -2804,7 +2849,8 @@ int main(int argc, char **argv) {
         int result = bvb_transport_authenticate(client_fd, geteuid(), &peer_pid);
         if (result == 0 && options.once) {
             result = serve_connection(client_fd, options.loader_path,
-                                      options.activity_ingress, &activity_status);
+                                      options.activity_ingress, &activity_status,
+                                      options.activity_frame_socket);
         } else if (result == 0) {
             result = start_connection_worker(
                 client_fd, peer_pid, &options, &activity_status);
