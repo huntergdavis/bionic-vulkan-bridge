@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "gate": "E073",
+  "result": "pass",
+  "target": "Galaxy Tab S8+ Termux ARM64 glibc to Android Bionic private Turnip",
+  "source_commit": "0c54e928fdf3621b0a17848a8c293f7044f440e6",
+  "source_commit_provenance": "environment_override_for_guarded_dirty_staging_tree",
+  "objective": "prove the real private-Turnip virtual surface, swapchain, exported image ring, acquire, and present path before installing the Activity consumer update",
+  "driver": {
+    "device_name": "Turnip Adreno (TM) 730",
+    "api_version": 4211042,
+    "api_version_text": "1.4.354",
+    "driver_version": 109060096,
+    "path": "/data/data/com.termux/files/home/steam-arm64/bvb/driver/libvulkan_freedreno.so",
+    "bytes": 18041856,
+    "sha256": "8ac6ef78c3c92998aa46c59fd0081edcba82756f5bad561d1b24a57684874a45"
+  },
+  "hardware_validation": {
+    "requested_instance_api": "1.3",
+    "device_extension_count": 151,
+    "max_push_constants_size": 256,
+    "sampled_image_max_extent": [16384, 16384],
+    "queue_family_count": 2,
+    "memory_type_count": 4,
+    "buffer_requirements": {
+      "size": 4096,
+      "alignment": 64,
+      "memory_type_bits": 7
+    },
+    "buffer_device_address": 274878611456,
+    "buffer_device_address_stable": true,
+    "image_requirements": {
+      "size": 20480,
+      "allocation_size": 20480,
+      "prefers_dedicated": false,
+      "requires_dedicated": false
+    },
+    "mapped_memory_mismatches": 0,
+    "gpu_fill_mismatches": 0
+  },
+  "authenticated_activity_harness": {
+    "events": [1, 2, 3, 7, 11, 9],
+    "event_count": 6,
+    "requested_extent": [2800, 1752],
+    "frame_setup_received": true,
+    "format": 44,
+    "image_usage": 16,
+    "image_count": 3,
+    "descriptor_count": 4,
+    "allocation_sizes": [19910656, 19910656, 19910656],
+    "memory_type_indices": [0, 0, 0],
+    "client_exit": 0,
+    "service_exit": 0
+  },
+  "virtual_wsi": {
+    "surface_created": true,
+    "swapchain_created": true,
+    "swapchain_image_count": 3,
+    "acquire_next_image_succeeded": true,
+    "queue_present_succeeded": true,
+    "activity_received_one_time_fd_bundle": true,
+    "activity_imported_images": false,
+    "visible_frame_claim": false,
+    "fps_claim": false
+  },
+  "dispatch_policy": {
+    "command_count": 742,
+    "executable": 88,
+    "required_unimplemented": 352,
+    "probed_null": 302,
+    "sha256": "ac0efbda45fa26ee7cdcba1e212932a19cfef325fe03a543cbcc0c8eac78e2f4"
+  },
+  "artifacts": {
+    "glibc_library": {
+      "bytes": 365776,
+      "sha256": "c0b3dbf36f45bad941a8579bf37bcc8d5773ac7b4d3c0e10a601b58fc4aee3eb"
+    },
+    "bionic_service": {
+      "bytes": 254720,
+      "sha256": "0917ef33209b0ea32a337de48646908057854f829387671d0a832ec707371241"
+    },
+    "complete_generated_evidence": {
+      "bytes": 11833,
+      "sha256": "77572d731226da949adad9d5c38f4e4cf2ad6a46a6ed8c4797bae4d9a1216fc8"
+    },
+    "harness_result": {
+      "bytes": 848,
+      "sha256": "549397cdd6571d950f47643a7c5bddfc78f78610681cdf3af98617841b0baa08"
+    },
+    "client_stdout": {
+      "bytes": 1065,
+      "sha256": "272c5f7725718be402e32fa17d757e1d213661bd89b96684eda7088aa006566c"
+    },
+    "client_stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "service_stdout": {
+      "bytes": 651,
+      "sha256": "8ed7d171a476fbe5279668ba4a882882c1218ac137d39888d5cef14dc348aec4"
+    },
+    "service_stderr": {
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "verification": {
+    "host_contracts": "38/38 passed",
+    "termux_contracts": "36/36 passed",
+    "steam_pid_5973_alive": true,
+    "termux_x11_pid_27923_alive": true,
+    "visible_host_version_code": 39,
+    "free_storage_gib": 16
+  },
+  "next_exact_gate": "install visible-host v40, run the real Activity frame importer/consumer, and prove imported images plus changing displayed pixels before any FPS measurement",
+  "reuse": "The required deja queries returned no indexed implementation. E073 reuses E035's Android external-handle truth, E052's private-Turnip route, E070's dual validation mode, E071's corrected private-driver capability path, and E072's internal external-memory-fd swapchain dependency.",
+  "scope": "Real private-Turnip virtual WSI and one-time frame FD transport only; no Activity image import, visible game frame, Tomb Raider frame, benchmark, or FPS claim"
+}

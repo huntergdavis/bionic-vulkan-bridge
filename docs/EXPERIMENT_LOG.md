@@ -2932,3 +2932,40 @@ query returned no indexed implementation. E072 reuses E071's measured private
 Turnip boundary and the existing cached raw device-extension enumeration;
 there is no imported Activity image, visible game frame, benchmark, or FPS
 claim.
+
+## E073 — private Turnip virtual WSI and frame export pass on tablet (2026-08-21)
+
+Status: passed through the real private-Turnip virtual-swapchain producer and
+one-time frame-FD handoff; Activity image import, changing pixels, a Tomb
+Raider frame, benchmark, and FPS remain unproven. The hardware client now
+requests Vulkan 1.3, matching pinned DXVK. This corrected the prior mismatch
+where the client created a Vulkan 1.1 instance and later called core
+`vkGetDeviceBufferMemoryRequirements`, which the private driver correctly did
+not expose through that API contract. Strict-fake mode remains Vulkan 1.1, so
+the established fixture was not weakened.
+
+The canonical 2800x1752 Tab S8+ run used the explicit private Turnip artifact
+`libvulkan_freedreno.so` (18,041,856 bytes, SHA-256
+`8ac6ef78c3c92998aa46c59fd0081edcba82756f5bad561d1b24a57684874a45`).
+It authenticated lifecycle events 1, 2, 3, 7, 11, and 9; identified Adreno
+730 with Vulkan 1.4.354; enumerated 151 device extensions; created the logical
+device and queue; and passed the exercised buffer, image, memory, command,
+fence, and timeline paths. It then created the virtual surface and swapchain,
+returned three 19,910,656-byte swapchain images, acquired and presented one,
+and delivered the one-time four-FD bundle (three images plus the shared control
+page) to the authenticated synthetic Activity sink. Client and service exited
+zero with empty stderr. Steam PID 5973 and Termux:X11 PID 27923 survived.
+
+Generated full evidence is
+`out/e071-current-global.json`, 11,833 bytes, SHA-256
+`77572d731226da949adad9d5c38f4e4cf2ad6a46a6ed8c4797bae4d9a1216fc8`.
+The compact canonical record is
+`docs/evidence/e073-private-turnip-virtual-wsi-tablet.json`, 4,433 bytes,
+SHA-256
+`b8b79fdfb1899a3ebab5edb570c4dfbe983999bfb1d7ebcf71ce6d5a2199ef27`.
+The required `deja` queries found no indexed implementation. E073 reuses E035's
+measured Android external-handle split, E052's private-Turnip provenance,
+E070's honest hardware-validation branch, E071's explicit driver route, and
+E072's internal native export dependency. The next gate is installing visible
+host v40 and proving that the real Activity imports this FD bundle and presents
+changing pixels before attempting a Tomb Raider or performance claim.
