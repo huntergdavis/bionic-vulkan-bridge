@@ -173,6 +173,10 @@ match = re.fullmatch(
     r"animated_frames=(\d+) animated_reused_image=(\d+) "
     r"animated_recording_rtts=(\d+) command_pool=(\d+) "
     r"command_buffer=(\d+) recording_rtts=(\d+) "
+    r"concurrent_streams=(\d+) concurrent_commands=(\d+) "
+    r"concurrent_registry_reads=(\d+) collision_registry_reads=(\d+) "
+    r"rerecord_registry_reads=(\d+) pool_reset_registry_reads=(\d+) "
+    r"stale_resource_rejected=(\d+) stale_native_replay_blocked=(\d+) "
     r"command_submit=(-?\d+) "
     r"pool_reset=(-?\d+) buffer=(\d+) memory=(\d+) memory_type=(\d+) "
     r"buffer_requirements2=(\d+),(\d+),(\d+) buffer_address=(\d+) "
@@ -219,6 +223,14 @@ assert match is not None, client_stdout
     command_pool_text,
     command_buffer_text,
     recording_rtts_text,
+    concurrent_streams_text,
+    concurrent_commands_text,
+    concurrent_registry_reads_text,
+    collision_registry_reads_text,
+    rerecord_registry_reads_text,
+    pool_reset_registry_reads_text,
+    stale_resource_rejected_text,
+    stale_native_replay_blocked_text,
     command_submit_text,
     pool_reset_text,
     buffer_text,
@@ -288,6 +300,14 @@ assert match is not None, client_stdout
     command_pool,
     command_buffer,
     recording_rtts,
+    concurrent_streams,
+    concurrent_commands,
+    concurrent_registry_reads,
+    collision_registry_reads,
+    rerecord_registry_reads,
+    pool_reset_registry_reads,
+    stale_resource_rejected,
+    stale_native_replay_blocked,
     command_submit_result,
     pool_reset_result,
     buffer,
@@ -356,6 +376,14 @@ assert match is not None, client_stdout
     command_pool_text,
     command_buffer_text,
     recording_rtts_text,
+    concurrent_streams_text,
+    concurrent_commands_text,
+    concurrent_registry_reads_text,
+    collision_registry_reads_text,
+    rerecord_registry_reads_text,
+    pool_reset_registry_reads_text,
+    stale_resource_rejected_text,
+    stale_native_replay_blocked_text,
     command_submit_text,
     pool_reset_text,
     buffer_text,
@@ -429,6 +457,16 @@ keep_strict_mapped_memory = (
     os.environ.get("BVB_TEST_KEEP_MEMORY_MAPPED") is not None
 )
 assert recording_rtts == (0 if shared_command_stream else 5)
+assert (
+    concurrent_streams,
+    concurrent_commands,
+    concurrent_registry_reads,
+    collision_registry_reads,
+    rerecord_registry_reads,
+    pool_reset_registry_reads,
+    stale_resource_rejected,
+    stale_native_replay_blocked,
+) == (0, 0, 0, 0, 0, 0, 0, 0)
 assert command_pool >> 56 == 10
 assert command_buffer >> 56 == 11
 assert command_submit_result == 0
@@ -601,6 +639,14 @@ document = {
         "command_buffer_type": 11,
         "command_buffer_serial": command_buffer & ((1 << 56) - 1),
         "command_recording_round_trips": recording_rtts,
+        "concurrent_streams": concurrent_streams,
+        "concurrent_commands": concurrent_commands,
+        "concurrent_registry_reads": concurrent_registry_reads,
+        "collision_registry_reads": collision_registry_reads,
+        "rerecord_registry_reads": rerecord_registry_reads,
+        "pool_reset_registry_reads": pool_reset_registry_reads,
+        "stale_resource_rejected": bool(stale_resource_rejected),
+        "stale_native_replay_blocked": bool(stale_native_replay_blocked),
         "command_submit_result": command_submit_result,
         "command_pool_reset_result": pool_reset_result,
         "command_buffer_freed_explicitly": True,
