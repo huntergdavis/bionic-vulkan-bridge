@@ -284,11 +284,35 @@ add_custom_command(
     "${CMAKE_CURRENT_SOURCE_DIR}/config/e069-init-image-commands-dispatch.txt"
   VERBATIM
 )
+set(
+  bvb_first_rejection_dispatch_include
+  "${CMAKE_CURRENT_BINARY_DIR}/generated/bvb_first_rejection_dispatch.inc"
+)
+add_custom_command(
+  OUTPUT "${bvb_first_rejection_dispatch_include}"
+  COMMAND
+    "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-first-rejection-dispatch.py"
+    "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
+    "${bvb_triangle_dispatch_include}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e069-init-image-commands-dispatch.txt"
+    "${bvb_first_rejection_dispatch_include}"
+  DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-first-rejection-dispatch.py"
+    "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
+    "${bvb_triangle_dispatch_include}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/config/e069-init-image-commands-dispatch.txt"
+  VERBATIM
+)
 add_library(
   bvb-vulkan-client-dispatch SHARED
   src/dxvk_dispatch_policy.c
+  src/first_rejection.c
   src/global_dispatch.c
   src/triangle_dispatch.c
+  "${bvb_first_rejection_dispatch_include}"
   "${bvb_dxvk_dispatch_policy_include}"
   "${bvb_triangle_dispatch_include}"
 )
@@ -628,6 +652,35 @@ if(BUILD_TESTING)
     PRIVATE bvb-vulkan-client-dispatch bvb-command-batch Vulkan::Headers
   )
   bvb_enable_warnings(bvb-global-dispatch-test)
+  add_executable(bvb-first-rejection-test tests/first_rejection.c)
+  target_link_libraries(
+    bvb-first-rejection-test
+    PRIVATE bvb-vulkan-client-dispatch bvb-command-batch Vulkan::Headers
+  )
+  bvb_enable_warnings(bvb-first-rejection-test)
+  add_test(
+    NAME first-real-rejection-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_first_rejection.py"
+      "$<TARGET_FILE:bvb-first-rejection-test>"
+  )
+  add_test(
+    NAME first-real-rejection-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_first_rejection_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e079-first-real-rejection-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate-first-rejection-dispatch.py"
+      "${bvb_first_rejection_dispatch_include}"
+      "${vulkanheaders_SOURCE_DIR}/registry/vk.xml"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
+      "${bvb_triangle_dispatch_include}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/config/e069-init-image-commands-dispatch.txt"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/first_rejection.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/triangle_dispatch.c"
+  )
   add_executable(
     bvb-device-extension-dependency-test
     tests/device_extension_dependency.c

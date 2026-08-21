@@ -4,6 +4,7 @@
 #define VK_NO_PROTOTYPES
 
 #include <bvb/command_batch.h>
+#include <bvb/first_rejection.h>
 #include <bvb/global_dispatch.h>
 #include <bvb/handle.h>
 #include <bvb/protocol.h>
@@ -97,6 +98,10 @@ struct bvb_command_buffer_proxy {
     uint64_t stream_sequence;
     uint32_t stream_length;
     uint32_t stream_slot;
+    const char *diagnostic_rejection_entry;
+    const char *diagnostic_rejection_reason;
+    const char *diagnostic_rejection_shape;
+    int diagnostic_rejection_status;
     bool stream_recording;
     bool stream_sealed;
     bool stream_uploaded;
@@ -654,6 +659,37 @@ BVB_GLOBAL_EXPORT uint64_t bvb_command_buffer_proxy_id(
     return proxy == NULL ? 0U : proxy->wire_id;
 }
 
+static void store_command_diagnostic_locked(
+    struct bvb_command_buffer_proxy *proxy, const char *entry,
+    const char *reason, const char *shape, int status) {
+    if (proxy == NULL || !bvb_first_rejection_enabled() ||
+        proxy->diagnostic_rejection_entry != NULL) return;
+    proxy->diagnostic_rejection_entry = entry;
+    proxy->diagnostic_rejection_reason = reason;
+    proxy->diagnostic_rejection_shape = shape;
+    proxy->diagnostic_rejection_status = status;
+}
+
+BVB_GLOBAL_EXPORT void bvb_global_diagnostic_poison_command(
+    VkCommandBuffer command_buffer, const char *entry, const char *reason,
+    const char *shape, int status) {
+    if (!bvb_first_rejection_enabled()) return;
+    struct bvb_command_buffer_proxy *proxy =
+        command_buffer_proxy(command_buffer);
+    if (proxy == NULL) return;
+    if (command_stream_is_enabled()) {
+        if (pthread_mutex_lock(&proxy->stream_mutex) != 0) return;
+        store_command_diagnostic_locked(proxy, entry, reason, shape, status);
+        proxy->stream_error = true;
+        proxy->stream_sealed = false;
+        (void)pthread_mutex_unlock(&proxy->stream_mutex);
+        return;
+    }
+    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) return;
+    store_command_diagnostic_locked(proxy, entry, reason, shape, status);
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+}
+
 static uint64_t non_dispatchable_wire_id(const void *handle, size_t size) {
     uint64_t wire_id = 0U;
     if (handle != NULL && size <= sizeof(wire_id))
@@ -1020,6 +1056,10 @@ static void reset_command_stream_state(
     proxy->stream_sealed = false;
     proxy->stream_uploaded = false;
     proxy->stream_error = false;
+    proxy->diagnostic_rejection_entry = NULL;
+    proxy->diagnostic_rejection_reason = NULL;
+    proxy->diagnostic_rejection_shape = NULL;
+    proxy->diagnostic_rejection_status = 0;
 }
 
 static void reset_command_streams_for_pool_locked(uint64_t parent_pool_id) {
@@ -3920,6 +3960,10 @@ static VkResult VKAPI_CALL bvb_bridge_vkBeginCommandBuffer(
     if (command_stream_is_enabled()) {
         if (pthread_mutex_lock(&command_state->stream_mutex) != 0)
             return VK_ERROR_INITIALIZATION_FAILED;
+        command_state->diagnostic_rejection_entry = NULL;
+        command_state->diagnostic_rejection_reason = NULL;
+        command_state->diagnostic_rejection_shape = NULL;
+        command_state->diagnostic_rejection_status = 0;
         int result = 0;
         if (command_state->stream_recording ||
             bvb_global_client.command_stream_mapping == NULL) {
@@ -3953,6 +3997,10 @@ static VkResult VKAPI_CALL bvb_bridge_vkBeginCommandBuffer(
     }
     if (pthread_mutex_lock(&bvb_global_client.mutex) != 0)
         return VK_ERROR_FEATURE_NOT_PRESENT;
+    command_state->diagnostic_rejection_entry = NULL;
+    command_state->diagnostic_rejection_reason = NULL;
+    command_state->diagnostic_rejection_shape = NULL;
+    command_state->diagnostic_rejection_status = 0;
     const struct bvb_vulkan_command_buffer_begin_request begin_request = {
         .command_buffer_id = command_state->wire_id,
         .flags = begin_info->flags,
@@ -4000,11 +4048,41 @@ static VkResult VKAPI_CALL bvb_bridge_vkEndCommandBuffer(
             release_command_stream_slot(command_state);
         }
         command_state->stream_recording = false;
+        const char *diagnostic_entry =
+            command_state->diagnostic_rejection_entry;
+        const char *diagnostic_reason =
+            command_state->diagnostic_rejection_reason;
+        const char *diagnostic_shape =
+            command_state->diagnostic_rejection_shape;
+        const int diagnostic_status =
+            command_state->diagnostic_rejection_status;
+        const uint64_t command_buffer_id = command_state->wire_id;
+        const uint64_t command_sequence = command_state->stream_sequence;
         (void)pthread_mutex_unlock(&command_state->stream_mutex);
+        if (result != 0 && diagnostic_entry != NULL)
+            bvb_first_rejection_record_command_poison(
+                diagnostic_entry, diagnostic_reason, diagnostic_shape,
+                diagnostic_status, command_buffer_id, command_sequence);
         return result == 0 ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED;
     }
     if (pthread_mutex_lock(&bvb_global_client.mutex) != 0)
         return VK_ERROR_INITIALIZATION_FAILED;
+    if (command_state->diagnostic_rejection_entry != NULL) {
+        const char *diagnostic_entry =
+            command_state->diagnostic_rejection_entry;
+        const char *diagnostic_reason =
+            command_state->diagnostic_rejection_reason;
+        const char *diagnostic_shape =
+            command_state->diagnostic_rejection_shape;
+        const int diagnostic_status =
+            command_state->diagnostic_rejection_status;
+        const uint64_t command_buffer_id = command_state->wire_id;
+        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+        bvb_first_rejection_record_command_poison(
+            diagnostic_entry, diagnostic_reason, diagnostic_shape,
+            diagnostic_status, command_buffer_id, 0U);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
     uint8_t payload[BVB_VULKAN_COMMAND_BUFFER_ID_SIZE];
     int result = bvb_protocol_encode_vulkan_command_buffer_id(
         payload, command_state->wire_id);
@@ -6107,11 +6185,17 @@ static VkResult flush_mapped_resources_locked(uint64_t device_id) {
 }
 
 static void poison_shared_command_stream(
-    struct bvb_command_buffer_proxy *command_state) {
-    if (command_state == NULL || !command_stream_is_enabled() ||
-        pthread_mutex_lock(&command_state->stream_mutex) != 0) {
+    struct bvb_command_buffer_proxy *command_state, const char *entry,
+    const char *reason, const char *shape, int status) {
+    if (command_state == NULL) return;
+    if (!command_stream_is_enabled()) {
+        bvb_global_diagnostic_poison_command(
+            (VkCommandBuffer)command_state, entry, reason, shape, status);
         return;
     }
+    if (pthread_mutex_lock(&command_state->stream_mutex) != 0) return;
+    store_command_diagnostic_locked(
+        command_state, entry, reason, shape, status);
     command_state->stream_error = true;
     command_state->stream_sealed = false;
     (void)pthread_mutex_unlock(&command_state->stream_mutex);
@@ -6222,7 +6306,10 @@ static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
         dependency_info->imageMemoryBarrierCount >
             BVB_VULKAN_INIT_IMAGE_MAX_BARRIERS ||
         dependency_info->pImageMemoryBarriers == NULL) {
-        poison_shared_command_stream(command_state);
+        poison_shared_command_stream(
+            command_state, "vkCmdPipelineBarrier2",
+            "unsupported_dependency_shape", "VkDependencyInfo_ptr",
+            -ENOTSUP);
         return;
     }
     struct bvb_vulkan_image_barrier_2_command general = {
@@ -6245,7 +6332,10 @@ static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
             barrier->newLayout == VK_IMAGE_LAYOUT_PREINITIALIZED ||
             !command_image_barrier_range_supported(
                 &barrier->subresourceRange)) {
-            poison_shared_command_stream(command_state);
+            poison_shared_command_stream(
+                command_state, "vkCmdPipelineBarrier2",
+                "unsupported_image_barrier_shape",
+                "VkImageMemoryBarrier2_ptr", -ENOTSUP);
             return;
         }
         fixed_init_shape &= init_image_barrier_supported(barrier) != 0;
@@ -6273,7 +6363,13 @@ static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
         }
     }
     const bool shared_stream = command_stream_is_enabled();
-    if (!fixed_init_shape && !shared_stream) return;
+    if (!fixed_init_shape && !shared_stream) {
+        bvb_global_diagnostic_poison_command(
+            command_buffer, "vkCmdPipelineBarrier2",
+            "strict_transport_shape_unimplemented", "VkDependencyInfo_ptr",
+            -ENOTSUP);
+        return;
+    }
     if (shared_stream) {
         int result = shared_images_owned_by_device(
                          decoded.image_ids, decoded.image_count,
@@ -6299,6 +6395,10 @@ static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
             result = -EINVAL;
         }
         if (result != 0) {
+            store_command_diagnostic_locked(
+                command_state, "vkCmdPipelineBarrier2",
+                "ownership_or_stream_append_rejected",
+                "VkDependencyInfo_ptr", result);
             command_state->stream_error = true;
             command_state->stream_sealed = false;
         }
@@ -6332,7 +6432,10 @@ static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
     if (result == 0 &&
         (response.header.status != 0 || response.header.payload_length != 0U))
         result = -EPROTO;
-    (void)result;
+    if (result != 0)
+        store_command_diagnostic_locked(
+            command_state, "vkCmdPipelineBarrier2",
+            "strict_transport_rejected", "VkDependencyInfo_ptr", result);
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
 }
 
@@ -6349,7 +6452,11 @@ static void VKAPI_CALL bvb_bridge_vkCmdClearColorImage(
          image_layout != VK_IMAGE_LAYOUT_GENERAL) ||
         range_count == 0U ||
         range_count > BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES || ranges == NULL) {
-        poison_shared_command_stream(command_state);
+        poison_shared_command_stream(
+            command_state, "vkCmdClearColorImage",
+            "unsupported_clear_shape",
+            "VkImage_value,VkImageLayout_value,VkClearColorValue_ptr,uint32_t_value,VkImageSubresourceRange_ptr",
+            -ENOTSUP);
         return;
     }
     bool ranges_supported = true;
@@ -6358,7 +6465,11 @@ static void VKAPI_CALL bvb_bridge_vkCmdClearColorImage(
             command_clear_color_range_supported(&ranges[index]) != 0;
     }
     if (!ranges_supported) {
-        poison_shared_command_stream(command_state);
+        poison_shared_command_stream(
+            command_state, "vkCmdClearColorImage",
+            "unsupported_clear_range",
+            "VkImage_value,VkImageLayout_value,VkClearColorValue_ptr,uint32_t_value,VkImageSubresourceRange_ptr",
+            -ENOTSUP);
         return;
     }
     const bool fixed_clear_shape =
@@ -6367,7 +6478,14 @@ static void VKAPI_CALL bvb_bridge_vkCmdClearColorImage(
         color_words[2] == 0U && color_words[3] == 0U && range_count == 1U &&
         init_image_subresource_range_supported(ranges);
     const bool shared_stream = command_stream_is_enabled();
-    if (!fixed_clear_shape && !shared_stream) return;
+    if (!fixed_clear_shape && !shared_stream) {
+        bvb_global_diagnostic_poison_command(
+            command_buffer, "vkCmdClearColorImage",
+            "strict_transport_shape_unimplemented",
+            "VkImage_value,VkImageLayout_value,VkClearColorValue_ptr,uint32_t_value,VkImageSubresourceRange_ptr",
+            -ENOTSUP);
+        return;
+    }
     const uint64_t image_id =
         non_dispatchable_wire_id(&image, sizeof(image));
     if (shared_stream) {
@@ -6403,6 +6521,11 @@ static void VKAPI_CALL bvb_bridge_vkCmdClearColorImage(
             result = -EINVAL;
         }
         if (result != 0) {
+            store_command_diagnostic_locked(
+                command_state, "vkCmdClearColorImage",
+                "ownership_or_stream_append_rejected",
+                "VkImage_value,VkImageLayout_value,VkClearColorValue_ptr,uint32_t_value,VkImageSubresourceRange_ptr",
+                result);
             command_state->stream_error = true;
             command_state->stream_sealed = false;
         }
@@ -6436,7 +6559,11 @@ static void VKAPI_CALL bvb_bridge_vkCmdClearColorImage(
     if (result == 0 &&
         (response.header.status != 0 || response.header.payload_length != 0U))
         result = -EPROTO;
-    (void)result;
+    if (result != 0)
+        store_command_diagnostic_locked(
+            command_state, "vkCmdClearColorImage", "strict_transport_rejected",
+            "VkImage_value,VkImageLayout_value,VkClearColorValue_ptr,uint32_t_value,VkImageSubresourceRange_ptr",
+            result);
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
 }
 
@@ -6449,7 +6576,10 @@ static void VKAPI_CALL bvb_bridge_vkCmdFillBuffer(
         &destination_buffer, sizeof(destination_buffer));
     if (command_state == NULL || size == 0U || (destination_offset & 3U) != 0U ||
         (size & 3U) != 0U) {
-        poison_shared_command_stream(command_state);
+        poison_shared_command_stream(
+            command_state, "vkCmdFillBuffer", "unsupported_fill_shape",
+            "VkBuffer_value,VkDeviceSize_value,VkDeviceSize_value,uint32_t_value",
+            -ENOTSUP);
         return;
     }
     if (command_stream_is_enabled()) {
@@ -6473,6 +6603,11 @@ static void VKAPI_CALL bvb_bridge_vkCmdFillBuffer(
             result = -EINVAL;
         }
         if (result != 0) {
+            store_command_diagnostic_locked(
+                command_state, "vkCmdFillBuffer",
+                "ownership_or_stream_append_rejected",
+                "VkBuffer_value,VkDeviceSize_value,VkDeviceSize_value,uint32_t_value",
+                result);
             command_state->stream_error = true;
             command_state->stream_sealed = false;
         }
@@ -6506,6 +6641,14 @@ static void VKAPI_CALL bvb_bridge_vkCmdFillBuffer(
             request.payload, &decoded);
     struct bvb_protocol_packet response = {0};
     if (result == 0) result = exchange_locked(&request, &response);
+    if (result == 0 &&
+        (response.header.status != 0 || response.header.payload_length != 0U))
+        result = -EPROTO;
+    if (result != 0)
+        store_command_diagnostic_locked(
+            command_state, "vkCmdFillBuffer", "strict_transport_rejected",
+            "VkBuffer_value,VkDeviceSize_value,VkDeviceSize_value,uint32_t_value",
+            result);
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
 }
 
@@ -7699,7 +7842,10 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     }
 #define BVB_DEVICE_MATCH(entry_name, function)                                \
     if (strcmp(name, (entry_name)) == 0) {                                    \
-        return BVB_ERASE_FUNCTION((function), __typeof__(&(function)));       \
+        PFN_vkVoidFunction raw =                                               \
+            BVB_ERASE_FUNCTION((function), __typeof__(&(function)));          \
+        return bvb_first_rejection_wrap(                                       \
+            (entry_name), BVB_DXVK_SCOPE_DEVICE, raw);                        \
     }
     BVB_DEVICE_MATCH("vkGetDeviceProcAddr", vkGetDeviceProcAddr)
     BVB_DEVICE_MATCH("vkDestroyDevice", bvb_bridge_vkDestroyDevice)
@@ -7819,7 +7965,10 @@ vkGetInstanceProcAddr(VkInstance instance, const char *name) {
     }
 #define BVB_GLOBAL_MATCH(entry_name, function)                                 \
     if (strcmp(name, (entry_name)) == 0) {                                     \
-        return BVB_ERASE_FUNCTION((function), __typeof__(&(function)));        \
+        PFN_vkVoidFunction raw =                                                \
+            BVB_ERASE_FUNCTION((function), __typeof__(&(function)));           \
+        return bvb_first_rejection_wrap(                                        \
+            (entry_name), BVB_DXVK_SCOPE_GLOBAL, raw);                         \
     }
     BVB_GLOBAL_MATCH("vkGetInstanceProcAddr", vkGetInstanceProcAddr)
     BVB_GLOBAL_MATCH("vkCreateInstance", bvb_bridge_vkCreateInstance)
@@ -7833,7 +7982,10 @@ vkGetInstanceProcAddr(VkInstance instance, const char *name) {
     if (instance != VK_NULL_HANDLE) {
 #define BVB_INSTANCE_MATCH(entry_name, function)                               \
         if (strcmp(name, (entry_name)) == 0) {                                 \
-            return BVB_ERASE_FUNCTION((function), __typeof__(&(function)));    \
+            PFN_vkVoidFunction raw =                                            \
+                BVB_ERASE_FUNCTION((function), __typeof__(&(function)));       \
+            return bvb_first_rejection_wrap(                                    \
+                (entry_name), BVB_DXVK_SCOPE_INSTANCE, raw);                   \
         }
         BVB_INSTANCE_MATCH("vkDestroyInstance",
                            bvb_bridge_vkDestroyInstance)
@@ -7930,12 +8082,18 @@ vkGetInstanceProcAddr(VkInstance instance, const char *name) {
                            bvb_bridge_vkCreateDevice)
 #undef BVB_INSTANCE_MATCH
         if (strcmp(name, "vkGetDeviceProcAddr") == 0) {
-            return BVB_ERASE_FUNCTION(vkGetDeviceProcAddr,
-                                      PFN_vkGetDeviceProcAddr);
+            PFN_vkVoidFunction raw = BVB_ERASE_FUNCTION(
+                vkGetDeviceProcAddr, PFN_vkGetDeviceProcAddr);
+            return bvb_first_rejection_wrap(
+                name, BVB_DXVK_SCOPE_DEVICE, raw);
         }
+        PFN_vkVoidFunction stub = bvb_first_rejection_required_stub(
+            name, BVB_DXVK_SCOPE_INSTANCE);
+        if (stub != NULL) return stub;
         return vkGetDeviceProcAddr(VK_NULL_HANDLE, name);
     }
-    return NULL;
+    return bvb_first_rejection_required_stub(
+        name, BVB_DXVK_SCOPE_GLOBAL);
 }
 
 BVB_GLOBAL_EXPORT VKAPI_ATTR VkResult VKAPI_CALL

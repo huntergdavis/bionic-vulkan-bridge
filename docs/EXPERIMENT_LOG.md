@@ -3323,3 +3323,49 @@ evidence is
 `docs/evidence/e078-command-stream-client-locking-host.json`. No tablet files,
 APK, Activity, Steam, or X process were touched; there is no visible-frame,
 Tomb Raider, benchmark, or FPS claim.
+
+## E079 — first real Vulkan rejection diagnostic (2026-08-21)
+
+Status: 55/55 host contracts pass; isolated host-only diagnostic candidate.
+E079 does not guess the next Tomb Raider gate from the order in which DXVK asks
+for function pointers. The default resolver remains strict. Only an exact
+`BVB_FIRST_REJECTION_DIAGNOSTIC=1` selector installs generated exact-signature
+proxies and diagnostic stubs for the 434 unprotected names actually resolved in
+the E011 trace. The generated source is derived from the pinned Vulkan registry,
+E011 manifest, triangle dispatch, and active E069 executable list. Of 86
+platform-protected registry names, the six resolved Xlib/Xcb/Wayland surface
+names are deliberately excluded and remain null; private and probed-null policy
+entries also remain null.
+
+A required-unimplemented stub records when it is invoked, not when it is
+resolved. An executable proxy records its first negative `VkResult`. Void
+command wrappers preserve the first local shape/reason while recording and emit
+only when End returns the poisoned batch, carrying command-buffer ID and shared
+generation. The process prints at most one fixed-prefix
+`BVB_FIRST_REJECTION schema=1` line. It contains category, requested and
+canonical name, dispatch scope, reason, result/status, argument count,
+pointer-presence mask, bounded canonical type shape, counters, and End poison
+context. No raw pointer value crosses a boundary or appears in output.
+
+The focused host contract proves four separate processes: absent and invalid
+selectors preserve the old null result without output; an invoked
+`vkCmdDispatch` diagnostic stub produces exactly one required-unimplemented
+record; local `vkCreateInstance` validation produces one implemented-rejection
+record; and an unsupported `vkCmdBeginRendering` shape produces one End poison
+record with the exact command-buffer ID and sequence. Existing strict global,
+shared command-stream, shared mapped-memory, and triangle contracts also pass.
+The complete suite passes 55/55.
+
+The required `deja "BVB first real invoked unsupported null rejected Vulkan
+entry bounded diagnostic resolver order"` query returned no indexed
+implementation. E079 reuses E011's canonical resolved-name/policy inventory,
+E075/E075a's transactional command poison and End boundary, and E077's exact,
+default-off A/B selector discipline. It adds no protocol opcode and changes no
+service, Activity/APK, launcher, Steam, X11, or tablet process.
+
+The exact visible boundary remains deliberately unknown in this host gate. Once
+integrated and deployed, one bounded Tomb Raider run with the selector injected
+only into the final BVB Wine/DXVK process must supply the next entry and shape
+from the one diagnostic line. Resolver order is not evidence. This isolated
+commit makes no deployment, RGBW visibility, Tomb Raider invocation, benchmark,
+or FPS claim.

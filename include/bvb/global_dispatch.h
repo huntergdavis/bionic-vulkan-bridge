@@ -33,6 +33,9 @@ BVB_GLOBAL_EXPORT uint64_t bvb_fence_proxy_id(VkFence fence);
 BVB_GLOBAL_EXPORT uint64_t bvb_global_dispatch_exchange_count(void);
 BVB_GLOBAL_EXPORT uint16_t bvb_global_dispatch_last_opcode(void);
 BVB_GLOBAL_EXPORT int bvb_global_dispatch_connection_is_open(void);
+BVB_GLOBAL_EXPORT void bvb_global_diagnostic_poison_command(
+    VkCommandBuffer command_buffer, const char *entry, const char *reason,
+    const char *shape, int status);
 BVB_GLOBAL_EXPORT int bvb_verify_memory_fill(
     VkDeviceMemory memory, VkDeviceSize offset, VkDeviceSize size,
     uint32_t expected_word, uint32_t *mismatched_words);

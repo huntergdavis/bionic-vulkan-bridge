@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "gate": "E079",
+  "result": "host_contract_pass",
+  "source_base_commit": "422249a04a985872d7ecb7a2a64fd97df69f21a0",
+  "objective": "report the first Vulkan entry actually invoked and unsupported or rejected by the global game ICD without inferring a gate from resolver order",
+  "activation": {
+    "environment": "BVB_FIRST_REJECTION_DIAGNOSTIC=1",
+    "exact_value_required": true,
+    "default": "original raw executable pointer or NULL",
+    "invalid_values_disabled": [
+      "0",
+      "true",
+      "2"
+    ],
+    "service_change": false,
+    "wire_change": false
+  },
+  "generation": {
+    "generated_entry_count": 434,
+    "platform_protected_registry_count": 86,
+    "resolved_platform_protected_skipped": 6,
+    "maximum_parameters": 64,
+    "maximum_shape_bytes_excluding_nul": 384,
+    "exact_signature_source": "pinned Vulkan-Headers vk.xml",
+    "resolved_name_source": "E011 Tomb Raider dispatch manifest",
+    "active_executable_source": "generated triangle dispatch plus E069 active configuration",
+    "generator_sha256": "06fbc26d34fa7f0f8763c3c9009cbf83d073b441b752886fc4478daca9f76449",
+    "generated_include_sha256": "d74a8049be2be3df0eb4e32ae87a8283ea89b6770bb715ebe8c16200569cc6b3",
+    "vk_xml_sha256": "80e7394d0e787d6ec78b67aa324add6f96129fdd042ba640cc336a5481a208ee",
+    "e011_manifest_sha256": "6a78ddd1f1b34773e4123d3612233fab2270ed0ff418d01204ad41af1cab8afc",
+    "triangle_dispatch_sha256": "20185caa17fbe85cea88699ba43b3a98d2b162de67cd748e69349620b8b7bd3e",
+    "active_config_sha256": "ee88ae468b09c3df05350bf22afc86797b2462a81b02c9e215dd66a1ad106cd2"
+  },
+  "policy_unchanged": {
+    "executable": 88,
+    "required_unimplemented": 352,
+    "probed_null": 302,
+    "generated_policy_sha256": "09368eb1fe6a45321d53a30b7200cad163ec74d8289306698fece9b22fbf78a9"
+  },
+  "trigger_categories": {
+    "required_unimplemented": "an exact diagnostic stub was returned for a policy-required unresolved entry and the process actually invoked it",
+    "implemented_rejection": "an existing executable wrapper returned a negative VkResult",
+    "executable_target_missing": "an executable proxy was actually invoked after its raw target became unavailable",
+    "command_poison": "a void command retained its first local rejection and End observed the poisoned recording"
+  },
+  "bounded_output": {
+    "prefix": "BVB_FIRST_REJECTION",
+    "schema": 1,
+    "maximum_records_per_process": 1,
+    "pointer_values_logged": false,
+    "pointer_presence_mask_only": true,
+    "fields": [
+      "category",
+      "entry",
+      "canonical",
+      "scope",
+      "reason",
+      "result",
+      "argument_count",
+      "pointer_mask",
+      "shape",
+      "invocation/query counters",
+      "command_buffer",
+      "command_sequence",
+      "end_poison"
+    ]
+  },
+  "command_recording": {
+    "first_rejection_only": true,
+    "shared_E075_path_preserved": true,
+    "strict_path_preserved_when_disabled": true,
+    "emission_boundary": "vkEndCommandBuffer or triangle batch finish",
+    "partial_native_replay_after_poison": false
+  },
+  "verification": {
+    "default_and_invalid_selectors": "preserve vkCmdDispatch NULL and emit no record",
+    "required_stub": "actual vkCmdDispatch invocation emits one exact required_unimplemented record; a later invoked stub cannot emit a second",
+    "implemented_rejection": "local invalid vkCreateInstance call emits one exact negative-VkResult record without opening the service",
+    "void_command_poison": "unsupported vkCmdBeginRendering emits one record only at finish with exact command-buffer ID and sequence",
+    "regression_subset": "triangle, strict global, E075 shared command-stream, and E077 shared mapped-memory contracts pass",
+    "full_host_suite": "55/55 contracts passed"
+  },
+  "reuse": "The required deja query returned no indexed implementation. E079 reuses E011's canonical resolved-name and generated dispatch-policy inventory, E075/E075a's transactional command poison and End boundary, E077's exact default-off A/B selector discipline, and E078's per-command-buffer shared-recording mutex model.",
+  "next_visible_boundary": "after integration and deployment, run one bounded Tomb Raider diagnostic with the selector injected only into the final BVB Wine/DXVK process; the one emitted entry/shape/reason chooses the next implementation gate",
+  "claims": {
+    "first_invocation_host_contract": true,
+    "next_real_entry_known": false,
+    "resolver_order_is_evidence": false,
+    "android_or_apk_change": false,
+    "launcher_change": false,
+    "tablet_deployment": false,
+    "rgbw_visibility": false,
+    "tomb_raider_run": false,
+    "fps": null
+  },
+  "scope": "Isolated host diagnostic candidate only; no push, merge, deployment, Activity/APK/launcher edit, UI action, Steam action, or X11 action"
+}

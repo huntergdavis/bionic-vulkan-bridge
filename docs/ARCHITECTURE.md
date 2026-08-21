@@ -230,3 +230,23 @@ streams for whole-batch validation and native replay. Existing poison,
 cross-device, stale/corrupt, and non-success acknowledgement contracts remain
 in force. This is host synchronization/replay evidence only; it has not been
 deployed and carries no Tomb Raider or FPS claim.
+
+E079 adds a default-off, bounded first-real-rejection diagnostic for the global
+game ICD. `BVB_FIRST_REJECTION_DIAGNOSTIC=1` changes only dispatch pointers
+returned to that process. Registry-generated exact-signature proxies count
+actual executable calls and report the first negative `VkResult`. Names that
+the E011 trace resolved but the active policy still classifies as required and
+unimplemented receive exact-signature diagnostic stubs; a stub reports only
+when the game actually invokes it, never when DXVK merely resolves it. Protected
+and private/probed-null names remain null.
+
+Void command failures retain their first canonical entry, bounded shape, and
+reason on the command-buffer proxy. The diagnostic emits that record only when
+End observes the poisoned batch, including the typed command-buffer ID and
+shared-stream generation. One process emits at most one
+`BVB_FIRST_REJECTION` line; later events only advance bounded counters available
+through the host snapshot contract. With the selector absent or not exactly
+`1`, resolvers return the original raw pointer or null and command recording
+keeps the established E075/E077 behavior. This is a diagnosis mechanism, not a
+new supported Vulkan gate: the next entry is determined only by a bounded real
+Tomb Raider invocation, not by resolver order.

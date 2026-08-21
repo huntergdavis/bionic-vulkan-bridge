@@ -2,6 +2,7 @@
 
 #include <bvb/command_batch.h>
 #include <bvb/dxvk_dispatch_policy.h>
+#include <bvb/first_rejection.h>
 #include <bvb/global_dispatch.h>
 #include <bvb/triangle_dispatch.h>
 
@@ -17,6 +18,9 @@ static const uint64_t BVB_TRIANGLE_COMMAND_BUFFER_MAGIC =
 struct bvb_triangle_command_buffer {
     uint64_t magic;
     struct bvb_command_batch_builder builder;
+    const char *rejection_entry;
+    const char *rejection_reason;
+    const char *rejection_shape;
     int status;
     bool finished;
 };
@@ -42,9 +46,19 @@ static uint64_t non_dispatchable_bits(const void *handle, size_t size) {
 }
 
 static void record_status(struct bvb_triangle_command_buffer *state,
-                          int status) {
+                          VkCommandBuffer command_buffer, int status,
+                          const char *entry, const char *reason,
+                          const char *shape) {
+    if (state == NULL && status != 0) {
+        bvb_global_diagnostic_poison_command(
+            command_buffer, entry, reason, shape, status);
+        return;
+    }
     if (state != NULL && state->status == 0 && status != 0) {
         state->status = status;
+        state->rejection_entry = entry;
+        state->rejection_reason = reason;
+        state->rejection_shape = shape;
     }
 }
 
@@ -52,7 +66,8 @@ static void VKAPI_CALL bvb_bridge_vkCmdBeginRendering(
     VkCommandBuffer command_buffer, const VkRenderingInfo *rendering_info) {
     struct bvb_triangle_command_buffer *state = command_state(command_buffer);
     if (state == NULL || state->status != 0 || state->finished) {
-        record_status(state, -EINVAL);
+        record_status(state, command_buffer, -EINVAL, "vkCmdBeginRendering",
+                      "invalid_command_state", "VkRenderingInfo_ptr");
         return;
     }
     if (rendering_info == NULL ||
@@ -67,7 +82,8 @@ static void VKAPI_CALL bvb_bridge_vkCmdBeginRendering(
         rendering_info->pColorAttachments == NULL ||
         rendering_info->pDepthAttachment != NULL ||
         rendering_info->pStencilAttachment != NULL) {
-        record_status(state, -ENOTSUP);
+        record_status(state, command_buffer, -ENOTSUP, "vkCmdBeginRendering",
+                      "unsupported_rendering_info", "VkRenderingInfo_ptr");
         return;
     }
     const VkRenderingAttachmentInfo *attachment =
@@ -80,7 +96,9 @@ static void VKAPI_CALL bvb_bridge_vkCmdBeginRendering(
         bvb_handle_expect(image_view, BVB_OBJECT_IMAGE_VIEW) != 0 ||
         attachment->resolveMode != VK_RESOLVE_MODE_NONE ||
         attachment->resolveImageView != VK_NULL_HANDLE) {
-        record_status(state, -ENOTSUP);
+        record_status(state, command_buffer, -ENOTSUP, "vkCmdBeginRendering",
+                      "unsupported_color_attachment",
+                      "VkRenderingAttachmentInfo_ptr");
         return;
     }
     const struct bvb_begin_rendering_command command = {
@@ -98,8 +116,11 @@ static void VKAPI_CALL bvb_bridge_vkCmdBeginRendering(
             attachment->clearValue.color.float32[3],
         },
     };
-    record_status(state, bvb_command_batch_append_begin_rendering(
-                             &state->builder, &command));
+    record_status(state, command_buffer,
+                  bvb_command_batch_append_begin_rendering(
+                      &state->builder, &command),
+                  "vkCmdBeginRendering", "command_batch_append_failed",
+                  "VkRenderingInfo_ptr");
 }
 
 static void VKAPI_CALL bvb_bridge_vkCmdBindPipeline(
@@ -109,20 +130,27 @@ static void VKAPI_CALL bvb_bridge_vkCmdBindPipeline(
     const uint64_t pipeline_id =
         non_dispatchable_bits(&pipeline, sizeof(pipeline));
     if (state == NULL || state->status != 0 || state->finished) {
-        record_status(state, -EINVAL);
+        record_status(state, command_buffer, -EINVAL, "vkCmdBindPipeline",
+                      "invalid_command_state",
+                      "VkPipelineBindPoint_value,VkPipeline_value");
         return;
     }
     if (pipeline_bind_point != VK_PIPELINE_BIND_POINT_GRAPHICS ||
         bvb_handle_expect(pipeline_id, BVB_OBJECT_PIPELINE) != 0) {
-        record_status(state, -ENOTSUP);
+        record_status(state, command_buffer, -ENOTSUP, "vkCmdBindPipeline",
+                      "unsupported_pipeline_binding",
+                      "VkPipelineBindPoint_value,VkPipeline_value");
         return;
     }
     record_status(
-        state, bvb_command_batch_append_bind_graphics_pipeline(
+        state, command_buffer,
+        bvb_command_batch_append_bind_graphics_pipeline(
                    &state->builder,
                    &(const struct bvb_bind_graphics_pipeline_command){
                        .pipeline_id = pipeline_id,
-                   }));
+                   }),
+        "vkCmdBindPipeline", "command_batch_append_failed",
+        "VkPipelineBindPoint_value,VkPipeline_value");
 }
 
 static void VKAPI_CALL bvb_bridge_vkCmdPushConstants(
@@ -133,26 +161,33 @@ static void VKAPI_CALL bvb_bridge_vkCmdPushConstants(
     const uint64_t pipeline_layout_id =
         non_dispatchable_bits(&layout, sizeof(layout));
     if (state == NULL || state->status != 0 || state->finished) {
-        record_status(state, -EINVAL);
+        record_status(state, command_buffer, -EINVAL, "vkCmdPushConstants",
+                      "invalid_command_state",
+                      "VkPipelineLayout_value,VkShaderStageFlags_value,uint32_t_value,uint32_t_value,void_ptr");
         return;
     }
     if (bvb_handle_expect(pipeline_layout_id,
                           BVB_OBJECT_PIPELINE_LAYOUT) != 0 ||
         stage_flags != VK_SHADER_STAGE_VERTEX_BIT || offset != 0U ||
         size != 2U * sizeof(float) || values == NULL) {
-        record_status(state, -ENOTSUP);
+        record_status(state, command_buffer, -ENOTSUP, "vkCmdPushConstants",
+                      "unsupported_push_constant_shape",
+                      "VkPipelineLayout_value,VkShaderStageFlags_value,uint32_t_value,uint32_t_value,void_ptr");
         return;
     }
     float constants[2];
     memcpy(constants, values, sizeof(constants));
     record_status(
-        state, bvb_command_batch_append_push_rotation(
+        state, command_buffer,
+        bvb_command_batch_append_push_rotation(
                    &state->builder,
                    &(const struct bvb_push_rotation_command){
                        .pipeline_layout_id = pipeline_layout_id,
                        .angle_radians = constants[0],
                        .aspect_ratio = constants[1],
-                   }));
+                   }),
+        "vkCmdPushConstants", "command_batch_append_failed",
+        "VkPipelineLayout_value,VkShaderStageFlags_value,uint32_t_value,uint32_t_value,void_ptr");
 }
 
 static void VKAPI_CALL bvb_bridge_vkCmdSetViewport(
@@ -160,23 +195,31 @@ static void VKAPI_CALL bvb_bridge_vkCmdSetViewport(
     uint32_t viewport_count, const VkViewport *viewports) {
     struct bvb_triangle_command_buffer *state = command_state(command_buffer);
     if (state == NULL || state->status != 0 || state->finished) {
-        record_status(state, -EINVAL);
+        record_status(state, command_buffer, -EINVAL, "vkCmdSetViewport",
+                      "invalid_command_state",
+                      "uint32_t_value,uint32_t_value,VkViewport_ptr");
         return;
     }
     if (first_viewport != 0U || viewport_count != 1U || viewports == NULL) {
-        record_status(state, -ENOTSUP);
+        record_status(state, command_buffer, -ENOTSUP, "vkCmdSetViewport",
+                      "unsupported_viewport_shape",
+                      "uint32_t_value,uint32_t_value,VkViewport_ptr");
         return;
     }
-    record_status(state, bvb_command_batch_append_set_viewport(
-                             &state->builder,
-                             &(const struct bvb_set_viewport_command){
-                                 .x = viewports[0].x,
-                                 .y = viewports[0].y,
-                                 .width = viewports[0].width,
-                                 .height = viewports[0].height,
-                                 .minimum_depth = viewports[0].minDepth,
-                                 .maximum_depth = viewports[0].maxDepth,
-                             }));
+    record_status(
+        state, command_buffer,
+        bvb_command_batch_append_set_viewport(
+            &state->builder,
+            &(const struct bvb_set_viewport_command){
+                .x = viewports[0].x,
+                .y = viewports[0].y,
+                .width = viewports[0].width,
+                .height = viewports[0].height,
+                .minimum_depth = viewports[0].minDepth,
+                .maximum_depth = viewports[0].maxDepth,
+            }),
+        "vkCmdSetViewport", "command_batch_append_failed",
+        "uint32_t_value,uint32_t_value,VkViewport_ptr");
 }
 
 static void VKAPI_CALL bvb_bridge_vkCmdSetScissor(
@@ -184,21 +227,29 @@ static void VKAPI_CALL bvb_bridge_vkCmdSetScissor(
     uint32_t scissor_count, const VkRect2D *scissors) {
     struct bvb_triangle_command_buffer *state = command_state(command_buffer);
     if (state == NULL || state->status != 0 || state->finished) {
-        record_status(state, -EINVAL);
+        record_status(state, command_buffer, -EINVAL, "vkCmdSetScissor",
+                      "invalid_command_state",
+                      "uint32_t_value,uint32_t_value,VkRect2D_ptr");
         return;
     }
     if (first_scissor != 0U || scissor_count != 1U || scissors == NULL) {
-        record_status(state, -ENOTSUP);
+        record_status(state, command_buffer, -ENOTSUP, "vkCmdSetScissor",
+                      "unsupported_scissor_shape",
+                      "uint32_t_value,uint32_t_value,VkRect2D_ptr");
         return;
     }
-    record_status(state, bvb_command_batch_append_set_scissor(
-                             &state->builder,
-                             &(const struct bvb_set_scissor_command){
-                                 .x = scissors[0].offset.x,
-                                 .y = scissors[0].offset.y,
-                                 .width = scissors[0].extent.width,
-                                 .height = scissors[0].extent.height,
-                             }));
+    record_status(
+        state, command_buffer,
+        bvb_command_batch_append_set_scissor(
+            &state->builder,
+            &(const struct bvb_set_scissor_command){
+                .x = scissors[0].offset.x,
+                .y = scissors[0].offset.y,
+                .width = scissors[0].extent.width,
+                .height = scissors[0].extent.height,
+            }),
+        "vkCmdSetScissor", "command_batch_append_failed",
+        "uint32_t_value,uint32_t_value,VkRect2D_ptr");
 }
 
 static void VKAPI_CALL bvb_bridge_vkCmdDraw(
@@ -207,28 +258,37 @@ static void VKAPI_CALL bvb_bridge_vkCmdDraw(
     uint32_t first_instance) {
     struct bvb_triangle_command_buffer *state = command_state(command_buffer);
     if (state == NULL || state->status != 0 || state->finished) {
-        record_status(state, -EINVAL);
+        record_status(state, command_buffer, -EINVAL, "vkCmdDraw",
+                      "invalid_command_state",
+                      "uint32_t_value,uint32_t_value,uint32_t_value,uint32_t_value");
         return;
     }
-    record_status(state, bvb_command_batch_append_draw(
-                             &state->builder,
-                             &(const struct bvb_draw_command){
-                                 .vertex_count = vertex_count,
-                                 .instance_count = instance_count,
-                                 .first_vertex = first_vertex,
-                                 .first_instance = first_instance,
-                             }));
+    record_status(
+        state, command_buffer,
+        bvb_command_batch_append_draw(
+            &state->builder,
+            &(const struct bvb_draw_command){
+                .vertex_count = vertex_count,
+                .instance_count = instance_count,
+                .first_vertex = first_vertex,
+                .first_instance = first_instance,
+            }),
+        "vkCmdDraw", "command_batch_append_failed",
+        "uint32_t_value,uint32_t_value,uint32_t_value,uint32_t_value");
 }
 
 static void VKAPI_CALL bvb_bridge_vkCmdEndRendering(
     VkCommandBuffer command_buffer) {
     struct bvb_triangle_command_buffer *state = command_state(command_buffer);
     if (state == NULL || state->status != 0 || state->finished) {
-        record_status(state, -EINVAL);
+        record_status(state, command_buffer, -EINVAL, "vkCmdEndRendering",
+                      "invalid_command_state", "none");
         return;
     }
-    record_status(state,
-                  bvb_command_batch_append_end_rendering(&state->builder));
+    record_status(state, command_buffer,
+                  bvb_command_batch_append_end_rendering(&state->builder),
+                  "vkCmdEndRendering", "command_batch_append_failed",
+                  "none");
 }
 
 BVB_TRIANGLE_EXPORT VkCommandBuffer bvb_triangle_command_buffer_create(
@@ -258,6 +318,12 @@ BVB_TRIANGLE_EXPORT int bvb_triangle_command_buffer_finish(
     }
     if (state->status == 0) {
         state->status = bvb_command_batch_finish(&state->builder, batch_length);
+    }
+    if (state->status != 0 && state->rejection_entry != NULL) {
+        bvb_first_rejection_record_command_poison(
+            state->rejection_entry, state->rejection_reason,
+            state->rejection_shape, state->status,
+            state->builder.command_buffer_id, state->builder.sequence);
     }
     state->finished = true;
     return state->status;
@@ -302,7 +368,8 @@ vkGetDeviceProcAddr(VkDevice device, const char *name) {
         PFN_vkGetDeviceProcAddr typed = vkGetDeviceProcAddr;
         PFN_vkVoidFunction erased = NULL;
         memcpy(&erased, &typed, sizeof(erased));
-        return erased;
+        return bvb_first_rejection_wrap(
+            name, BVB_DXVK_SCOPE_DEVICE, erased);
     }
 #define BVB_TRIANGLE_DISPATCH_ENTRY(entry_name, wrapper, type)                 \
     if (strcmp(name, #entry_name) == 0) {                                      \
@@ -311,15 +378,11 @@ vkGetDeviceProcAddr(VkDevice device, const char *name) {
         _Static_assert(sizeof(typed) == sizeof(erased),                        \
                        "Vulkan function pointer size mismatch");              \
         memcpy(&erased, &typed, sizeof(erased));                               \
-        return erased;                                                         \
+        return bvb_first_rejection_wrap(                                       \
+            #entry_name, BVB_DXVK_SCOPE_DEVICE, erased);                       \
     }
 #include "bvb_triangle_dispatch.inc"
 #undef BVB_TRIANGLE_DISPATCH_ENTRY
-    const struct bvb_dxvk_dispatch_policy_entry *policy =
-        bvb_dxvk_dispatch_policy_lookup(name);
-    if (policy == NULL ||
-        policy->support != BVB_DXVK_SUPPORT_EXECUTABLE) {
-        return NULL;
-    }
-    return NULL;
+    return bvb_first_rejection_required_stub(
+        name, BVB_DXVK_SCOPE_DEVICE);
 }
