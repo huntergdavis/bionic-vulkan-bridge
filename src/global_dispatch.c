@@ -4708,6 +4708,112 @@ static void VKAPI_CALL bvb_bridge_vkUpdateDescriptorSets(
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
 }
 
+static VkResult VKAPI_CALL bvb_bridge_vkCreateDescriptorUpdateTemplate(
+    VkDevice device,
+    const VkDescriptorUpdateTemplateCreateInfo *create_info,
+    const VkAllocationCallbacks *allocator,
+    VkDescriptorUpdateTemplate *descriptor_update_template) {
+    if (descriptor_update_template != NULL)
+        *descriptor_update_template = VK_NULL_HANDLE;
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || create_info == NULL ||
+        descriptor_update_template == NULL || allocator != NULL ||
+        create_info->sType !=
+            VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO ||
+        create_info->pNext != NULL || create_info->flags != 0U ||
+        create_info->descriptorUpdateEntryCount == 0U ||
+        create_info->descriptorUpdateEntryCount >
+            BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_ENTRIES ||
+        create_info->pDescriptorUpdateEntries == NULL ||
+        create_info->templateType !=
+            VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET ||
+        create_info->descriptorSetLayout == VK_NULL_HANDLE ||
+        create_info->pipelineLayout != VK_NULL_HANDLE ||
+        create_info->pipelineBindPoint != VK_PIPELINE_BIND_POINT_GRAPHICS ||
+        create_info->set != 0U) {
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    struct bvb_vulkan_descriptor_update_template_create_request decoded = {
+        .device_id = device_state->wire_id,
+        .flags = create_info->flags,
+        .entry_count = create_info->descriptorUpdateEntryCount,
+        .template_type = create_info->templateType,
+        .set = create_info->set,
+        .descriptor_set_layout_id = non_dispatchable_wire_id(
+            &create_info->descriptorSetLayout,
+            sizeof(create_info->descriptorSetLayout)),
+        .pipeline_layout_id = 0U,
+        .pipeline_bind_point = create_info->pipelineBindPoint,
+    };
+    for (uint32_t index = 0U;
+         index < create_info->descriptorUpdateEntryCount; ++index) {
+        const VkDescriptorUpdateTemplateEntry *entry =
+            &create_info->pDescriptorUpdateEntries[index];
+        decoded.entries[index] =
+            (struct bvb_vulkan_descriptor_update_template_entry){
+                .dst_binding = entry->dstBinding,
+                .dst_array_element = entry->dstArrayElement,
+                .descriptor_count = entry->descriptorCount,
+                .descriptor_type = entry->descriptorType,
+                .offset = entry->offset,
+                .stride = entry->stride,
+            };
+    }
+    uint8_t payload[BVB_PROTOCOL_MAX_PAYLOAD];
+    uint32_t payload_length = 0U;
+    int result =
+        bvb_protocol_encode_vulkan_descriptor_update_template_create_request(
+            payload, &decoded, &payload_length);
+    struct bvb_resource_proxy *state = calloc(1, sizeof(*state));
+    if (state == NULL) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    if (result != 0 || pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        free(state);
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    struct bvb_resource_proxy *layout_state = resource_proxy_locked(
+        decoded.descriptor_set_layout_id,
+        BVB_OBJECT_DESCRIPTOR_SET_LAYOUT);
+    if (layout_state == NULL ||
+        layout_state->parent_id != device_state->wire_id) {
+        result = -EINVAL;
+    }
+    uint64_t wire_id = 0U;
+    VkResult vulkan_result = result == 0
+        ? create_resource_locked(
+              BVB_OPCODE_VULKAN_DESCRIPTOR_UPDATE_TEMPLATE_CREATE,
+              payload, payload_length,
+              BVB_OBJECT_DESCRIPTOR_UPDATE_TEMPLATE,
+              device_state->wire_id, state, &wire_id)
+        : VK_ERROR_INITIALIZATION_FAILED;
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        fprintf(stderr,
+                "BVB_ICD_DESCRIPTOR_TEMPLATE entries=%u layout=%#llx "
+                "result=%d\n",
+                (unsigned int)decoded.entry_count,
+                (unsigned long long)decoded.descriptor_set_layout_id,
+                (int)vulkan_result);
+    }
+    if (vulkan_result != VK_SUCCESS) {
+        free(state);
+        return vulkan_result;
+    }
+    memcpy(descriptor_update_template, &wire_id,
+           sizeof(*descriptor_update_template));
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL bvb_bridge_vkDestroyDescriptorUpdateTemplate(
+    VkDevice device, VkDescriptorUpdateTemplate descriptor_update_template,
+    const VkAllocationCallbacks *allocator) {
+    destroy_resource(
+        device,
+        non_dispatchable_wire_id(
+            &descriptor_update_template, sizeof(descriptor_update_template)),
+        BVB_OBJECT_DESCRIPTOR_UPDATE_TEMPLATE,
+        BVB_OPCODE_VULKAN_DESCRIPTOR_OBJECT_DESTROY, allocator);
+}
+
 static VkResult VKAPI_CALL bvb_bridge_vkCreatePipelineLayout(
     VkDevice device, const VkPipelineLayoutCreateInfo *create_info,
     const VkAllocationCallbacks *allocator,
@@ -8060,6 +8166,10 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     BVB_DEVICE_MATCH("vkDestroySampler", bvb_bridge_vkDestroySampler)
     BVB_DEVICE_MATCH("vkUpdateDescriptorSets",
                      bvb_bridge_vkUpdateDescriptorSets)
+    BVB_DEVICE_MATCH("vkCreateDescriptorUpdateTemplate",
+                     bvb_bridge_vkCreateDescriptorUpdateTemplate)
+    BVB_DEVICE_MATCH("vkDestroyDescriptorUpdateTemplate",
+                     bvb_bridge_vkDestroyDescriptorUpdateTemplate)
     BVB_DEVICE_MATCH("vkCreatePipelineLayout",
                      bvb_bridge_vkCreatePipelineLayout)
     BVB_DEVICE_MATCH("vkDestroyPipelineLayout",

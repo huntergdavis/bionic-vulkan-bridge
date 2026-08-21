@@ -104,6 +104,14 @@ int bvb_vulkan_global_context_create_descriptor_set_layout(
 int bvb_vulkan_global_context_destroy_descriptor_set_layout(
     struct bvb_vulkan_global_context *context, uint64_t layout_id,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_create_descriptor_update_template(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_descriptor_update_template_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_destroy_descriptor_update_template(
+    struct bvb_vulkan_global_context *context, uint64_t template_id,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_create_descriptor_pool(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_descriptor_pool_create_request *request,

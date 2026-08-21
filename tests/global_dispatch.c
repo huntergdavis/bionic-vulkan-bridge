@@ -889,6 +889,10 @@ int main(void) {
     PFN_vkCreateSampler create_sampler = NULL;
     PFN_vkDestroySampler destroy_sampler = NULL;
     PFN_vkUpdateDescriptorSets update_descriptor_sets = NULL;
+    PFN_vkCreateDescriptorUpdateTemplate create_descriptor_update_template =
+        NULL;
+    PFN_vkDestroyDescriptorUpdateTemplate destroy_descriptor_update_template =
+        NULL;
     PFN_vkCreatePipelineLayout create_pipeline_layout = NULL;
     PFN_vkDestroyPipelineLayout destroy_pipeline_layout = NULL;
     PFN_vkCreateGraphicsPipelines create_graphics_pipelines = NULL;
@@ -1072,6 +1076,10 @@ int main(void) {
     RESOLVE_DESCRIPTOR(vkCreateSampler, create_sampler);
     RESOLVE_DESCRIPTOR(vkDestroySampler, destroy_sampler);
     RESOLVE_DESCRIPTOR(vkUpdateDescriptorSets, update_descriptor_sets);
+    RESOLVE_DESCRIPTOR(vkCreateDescriptorUpdateTemplate,
+                       create_descriptor_update_template);
+    RESOLVE_DESCRIPTOR(vkDestroyDescriptorUpdateTemplate,
+                       destroy_descriptor_update_template);
     RESOLVE_DESCRIPTOR(vkCreatePipelineLayout, create_pipeline_layout);
     RESOLVE_DESCRIPTOR(vkDestroyPipelineLayout, destroy_pipeline_layout);
     RESOLVE_DESCRIPTOR(vkCreateGraphicsPipelines, create_graphics_pipelines);
@@ -1359,6 +1367,7 @@ int main(void) {
     CHECK(queue_wait_idle(queue) == VK_SUCCESS);
     CHECK(device_wait_idle(device) == VK_SUCCESS);
 
+    const VkAllocationCallbacks unsupported_allocator = {0};
     const VkDescriptorType core_descriptor_types[] = {
         VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
         VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
@@ -1404,6 +1413,80 @@ int main(void) {
     destroy_descriptor_pool(device, core_pool, NULL);
     destroy_descriptor_set_layout(device, core_layout, NULL);
 
+    const VkDescriptorType dxvk_template_types[] = {
+        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,
+        VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+    };
+    const VkShaderStageFlags dxvk_template_stages[] = {
+        VK_SHADER_STAGE_VERTEX_BIT,
+        VK_SHADER_STAGE_VERTEX_BIT,
+        VK_SHADER_STAGE_VERTEX_BIT,
+        VK_SHADER_STAGE_FRAGMENT_BIT,
+    };
+    VkDescriptorSetLayoutBinding dxvk_template_bindings[4] = {0};
+    VkDescriptorUpdateTemplateEntry dxvk_template_entries[4] = {0};
+    for (uint32_t index = 0U; index < 4U; ++index) {
+        dxvk_template_bindings[index] = (VkDescriptorSetLayoutBinding){
+            .binding = index,
+            .descriptorType = dxvk_template_types[index],
+            .descriptorCount = 1U,
+            .stageFlags = dxvk_template_stages[index],
+        };
+        dxvk_template_entries[index] = (VkDescriptorUpdateTemplateEntry){
+            .dstBinding = index,
+            .descriptorCount = 1U,
+            .descriptorType = dxvk_template_types[index],
+            .offset = 24U * index,
+            .stride = 24U,
+        };
+    }
+    const VkDescriptorSetLayoutCreateInfo dxvk_template_layout_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 4U,
+        .pBindings = dxvk_template_bindings,
+    };
+    VkDescriptorSetLayout dxvk_template_layout = VK_NULL_HANDLE;
+    CHECK(create_descriptor_set_layout(
+              device, &dxvk_template_layout_info, NULL,
+              &dxvk_template_layout) == VK_SUCCESS);
+    VkDescriptorUpdateTemplateCreateInfo dxvk_template_info = {
+        .sType =
+            VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO,
+        .descriptorUpdateEntryCount = 4U,
+        .pDescriptorUpdateEntries = dxvk_template_entries,
+        .templateType = VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET,
+        .descriptorSetLayout = dxvk_template_layout,
+    };
+    VkDescriptorUpdateTemplate dxvk_template =
+        (VkDescriptorUpdateTemplate)(uintptr_t)1U;
+    CHECK(create_descriptor_update_template(
+              device, &dxvk_template_info, &unsupported_allocator,
+              &dxvk_template) == VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(dxvk_template == VK_NULL_HANDLE);
+    const uint32_t unsupported_template_chain = UINT32_C(0x7ffffffc);
+    dxvk_template_info.pNext = &unsupported_template_chain;
+    CHECK(create_descriptor_update_template(
+              device, &dxvk_template_info, NULL,
+              &dxvk_template) == VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(dxvk_template == VK_NULL_HANDLE);
+    dxvk_template_info.pNext = NULL;
+    CHECK(create_descriptor_update_template(
+              ownership_device, &dxvk_template_info, NULL,
+              &dxvk_template) == VK_ERROR_INITIALIZATION_FAILED);
+    CHECK(dxvk_template == VK_NULL_HANDLE);
+    CHECK(create_descriptor_update_template(
+              device, &dxvk_template_info, NULL,
+              &dxvk_template) == VK_SUCCESS);
+    uint64_t dxvk_template_id = 0U;
+    memcpy(&dxvk_template_id, &dxvk_template, sizeof(dxvk_template));
+    CHECK(bvb_handle_type(dxvk_template_id) ==
+          BVB_OBJECT_DESCRIPTOR_UPDATE_TEMPLATE);
+    /* Pinned DXVK destroys the layout before its update template. */
+    destroy_descriptor_set_layout(device, dxvk_template_layout, NULL);
+    destroy_descriptor_update_template(device, dxvk_template, NULL);
+
     core_bindings[0].descriptorType =
         VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     core_layout = (VkDescriptorSetLayout)(uintptr_t)1U;
@@ -1438,7 +1521,6 @@ int main(void) {
         .pBindings = &sampler_binding,
     };
     VkDescriptorSetLayout descriptor_layout = VK_NULL_HANDLE;
-    const VkAllocationCallbacks unsupported_allocator = {0};
     CHECK(create_descriptor_set_layout(
               device, &descriptor_layout_info, &unsupported_allocator,
               &descriptor_layout) == VK_ERROR_FEATURE_NOT_PRESENT);

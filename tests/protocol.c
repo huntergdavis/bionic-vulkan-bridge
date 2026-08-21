@@ -102,7 +102,9 @@ int main(void) {
     CHECK(BVB_OPCODE_VULKAN_MEMORY_MIRROR_FLUSH == 107);
     CHECK(BVB_OPCODE_VULKAN_MEMORY_MIRROR_INVALIDATE == 108);
     CHECK(BVB_OPCODE_VULKAN_MEMORY_MIRROR_UNMAP == 109);
-    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_MEMORY_MIRROR_UNMAP);
+    CHECK(BVB_OPCODE_VULKAN_DESCRIPTOR_UPDATE_TEMPLATE_CREATE == 110);
+    CHECK(decoded.opcode ==
+          BVB_OPCODE_VULKAN_DESCRIPTOR_UPDATE_TEMPLATE_CREATE);
 
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
@@ -2119,6 +2121,43 @@ int main(void) {
     CHECK(bvb_protocol_decode_vulkan_descriptor_update_request(
               descriptor_wire, descriptor_wire_length,
               &update_decoded) == -EPROTO);
+
+    const struct bvb_vulkan_descriptor_update_template_create_request
+        template_request = {
+            .device_id = UINT64_C(0x0300000000000001),
+            .entry_count = 4U,
+            .descriptor_set_layout_id = UINT64_C(0x1400000000000001),
+            .entries = {
+                {.dst_binding = 0U, .descriptor_count = 1U,
+                 .descriptor_type = 7U, .offset = 0U, .stride = 24U},
+                {.dst_binding = 1U, .descriptor_count = 1U,
+                 .descriptor_type = 7U, .offset = 24U, .stride = 24U},
+                {.dst_binding = 2U, .descriptor_count = 1U,
+                 .descriptor_type = 4U, .offset = 48U, .stride = 24U},
+                {.dst_binding = 3U, .descriptor_count = 1U,
+                 .descriptor_type = 2U, .offset = 72U, .stride = 24U},
+            },
+        };
+    CHECK(
+        bvb_protocol_encode_vulkan_descriptor_update_template_create_request(
+            descriptor_wire, &template_request,
+            &descriptor_wire_length) == 0);
+    CHECK(descriptor_wire_length ==
+          BVB_VULKAN_DESCRIPTOR_UPDATE_TEMPLATE_PREFIX_SIZE +
+              4U * BVB_VULKAN_DESCRIPTOR_UPDATE_TEMPLATE_ENTRY_SIZE);
+    struct bvb_vulkan_descriptor_update_template_create_request
+        template_decoded;
+    CHECK(
+        bvb_protocol_decode_vulkan_descriptor_update_template_create_request(
+            descriptor_wire, descriptor_wire_length,
+            &template_decoded) == 0);
+    CHECK(template_decoded.entries[3].descriptor_type == 2U);
+    CHECK(template_decoded.entries[3].offset == 72U);
+    descriptor_wire[44U] = 1U;
+    CHECK(
+        bvb_protocol_decode_vulkan_descriptor_update_template_create_request(
+            descriptor_wire, descriptor_wire_length,
+            &template_decoded) == -EINVAL);
 
     const struct bvb_vulkan_pipeline_layout_create_request
         pipeline_layout_request = {

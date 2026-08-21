@@ -10,7 +10,8 @@ enum {
 };
 
 static int object_type_is_valid(enum bvb_object_type type) {
-    return type >= BVB_OBJECT_INSTANCE && type <= BVB_OBJECT_SAMPLER;
+    return type >= BVB_OBJECT_INSTANCE &&
+        type <= BVB_OBJECT_DESCRIPTOR_UPDATE_TEMPLATE;
 }
 
 uint64_t bvb_handle_id(enum bvb_object_type type, uint64_t serial) {

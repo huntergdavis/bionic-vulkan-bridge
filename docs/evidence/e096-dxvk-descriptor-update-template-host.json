@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "gate": "E096",
+  "result": "pass_host_contract",
+  "source_base_commit": "945dacdf6b68ec1e16c312527ae0c029f021bbc5",
+  "objective": "implement the exact vkCreateDescriptorUpdateTemplate call that stopped the E095 Tomb Raider run",
+  "measured_input": {
+    "authority": "E095 actual-invocation diagnostic and pinned DXVK a6764047e587178283fcde4073ae6e1410af594f",
+    "layout_bindings": [
+      {"binding": 0, "descriptor_type": 7, "descriptor_count": 1, "stage_flags": 1},
+      {"binding": 1, "descriptor_type": 7, "descriptor_count": 1, "stage_flags": 1},
+      {"binding": 2, "descriptor_type": 4, "descriptor_count": 1, "stage_flags": 1},
+      {"binding": 3, "descriptor_type": 2, "descriptor_count": 1, "stage_flags": 16}
+    ],
+    "template_entries": [
+      {"dst_binding": 0, "descriptor_type": 7, "descriptor_count": 1, "offset": 0, "stride": 24},
+      {"dst_binding": 1, "descriptor_type": 7, "descriptor_count": 1, "offset": 24, "stride": 24},
+      {"dst_binding": 2, "descriptor_type": 4, "descriptor_count": 1, "offset": 48, "stride": 24},
+      {"dst_binding": 3, "descriptor_type": 2, "descriptor_count": 1, "offset": 72, "stride": 24}
+    ],
+    "template_type": "VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET",
+    "destruction_order": "DXVK destroys VkDescriptorSetLayout before VkDescriptorUpdateTemplate"
+  },
+  "implementation": {
+    "opcode": 110,
+    "object_type": 24,
+    "wire": "48-byte canonical little-endian prefix plus 32 bytes per entry; maximum 32 entries and 1 MiB referenced data span",
+    "pointers_cross_wire": false,
+    "client": "validates the exact core descriptor-set template shape, resolves typed same-device layout ownership, serializes scalar entries, and returns a typed proxy handle",
+    "service": "decodes canonically, revalidates typed lineage and bounds, reconstructs local Bionic VkDescriptorUpdateTemplateEntry and VkDescriptorUpdateTemplateCreateInfo arrays, and calls private Turnip",
+    "lifetime": "template ownership is device-scoped so DXVK's observed layout-before-template destruction order works; leaked templates are destroyed before leaked layouts during device teardown",
+    "resolver_policy": {
+      "executable": 90,
+      "required_unimplemented": 350,
+      "probed_null": 302,
+      "generated_policy_sha256": "5289012a2822351263f1bc1c61bc590baabdcfaadff5398d101e801806e7eb0c"
+    }
+  },
+  "fail_closed": [
+    "application allocators",
+    "any pNext chain",
+    "pipeline templates",
+    "nonzero flags, set, or pipeline layout",
+    "zero or more than 32 entries",
+    "extension-only descriptor types",
+    "zero descriptor counts or strides",
+    "entry spans beyond 1 MiB",
+    "wrong-type, stale, or cross-device descriptor-set-layout proxy IDs",
+    "noncanonical reserved bytes"
+  ],
+  "verification": {
+    "host_contracts": "58/58 passed",
+    "protocol": "canonical encode/decode and reserved-byte corruption rejection passed",
+    "cross_process": "the real glibc client, socket service, Bionic reconstruction, and fake native driver accepted all four exact E095 entries",
+    "native_lifecycle": "fake native Vulkan required layout create, template create, layout destroy, template destroy in pinned DXVK order",
+    "negative": "allocator, pNext, and cross-device layout attempts returned fail-closed errors and null handles",
+    "tablet_or_game_after_change": false,
+    "tomb_raider_frame": false,
+    "fps": false
+  },
+  "reuse": "The required deja query returned no indexed implementation. Reused E056/E093's canonical pointer-free descriptor codec, typed object registry, and Bionic-local reconstruction; reused E095's exact real layout and pinned-DXVK call/destruction shapes rather than guessing a general template ABI.",
+  "next_boundary": "Build and deploy this exact bridge, rerun one bounded Tomb Raider launch, and use E079a's actual-invocation record to select the next missing operation. vkUpdateDescriptorSetWithTemplate remains intentionally unimplemented until constructor progress reaches its real invocation and resource payload shape.",
+  "claims": {
+    "host_create_destroy_path": true,
+    "tablet_deployment": false,
+    "tomb_raider_frame": false,
+    "benchmark": false,
+    "fps": false
+  }
+}

@@ -157,6 +157,7 @@ struct bvb_vulkan_global_context {
     uint64_t next_descriptor_pool_serial;
     uint64_t next_descriptor_set_serial;
     uint64_t next_sampler_serial;
+    uint64_t next_descriptor_update_template_serial;
     uint64_t next_pipeline_layout_serial;
     uint64_t next_image_view_serial;
     uint64_t next_pipeline_serial;
@@ -362,6 +363,8 @@ BVB_DEFINE_HANDLE_FROM_BITS(descriptor_set_layout_from_bits,
 BVB_DEFINE_HANDLE_FROM_BITS(descriptor_pool_from_bits, VkDescriptorPool)
 BVB_DEFINE_HANDLE_FROM_BITS(descriptor_set_from_bits, VkDescriptorSet)
 BVB_DEFINE_HANDLE_FROM_BITS(sampler_from_bits, VkSampler)
+BVB_DEFINE_HANDLE_FROM_BITS(descriptor_update_template_from_bits,
+                            VkDescriptorUpdateTemplate)
 BVB_DEFINE_HANDLE_FROM_BITS(pipeline_layout_from_bits, VkPipelineLayout)
 BVB_DEFINE_HANDLE_FROM_BITS(pipeline_from_bits, VkPipeline)
 
@@ -557,6 +560,7 @@ int bvb_vulkan_global_context_create(
     context->next_descriptor_pool_serial = 1U;
     context->next_descriptor_set_serial = 1U;
     context->next_sampler_serial = 1U;
+    context->next_descriptor_update_template_serial = 1U;
     context->next_pipeline_layout_serial = 1U;
     context->next_image_view_serial = 1U;
     context->next_pipeline_serial = 1U;
@@ -1863,6 +1867,17 @@ int bvb_vulkan_global_context_destroy_device(
     for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
         const struct bvb_handle_entry *entry = &context->object_entries[index];
         if (bvb_handle_type(entry->wire_id) ==
+                BVB_OBJECT_DESCRIPTOR_UPDATE_TEMPLATE &&
+            entry->parent_id == device_id) {
+            result =
+                bvb_vulkan_global_context_destroy_descriptor_update_template(
+                    context, entry->wire_id, NULL, 0U);
+            if (result != 0) return result;
+        }
+    }
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) ==
                 BVB_OBJECT_DESCRIPTOR_SET_LAYOUT &&
             entry->parent_id == device_id) {
             result = bvb_vulkan_global_context_destroy_descriptor_set_layout(
@@ -2752,6 +2767,132 @@ int bvb_vulkan_global_context_destroy_descriptor_set_layout(
     if (result == 0) {
         destroy_layout(
             device, descriptor_set_layout_from_bits(layout_bits), NULL);
+    }
+    return result;
+}
+
+int bvb_vulkan_global_context_create_descriptor_update_template(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_descriptor_update_template_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL) return -EINVAL;
+    *response = (struct bvb_vulkan_object_create_response){0};
+    if (request->flags != 0U || request->entry_count == 0U ||
+        request->entry_count >
+            BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_ENTRIES ||
+        request->template_type !=
+            VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET ||
+        request->set != 0U || request->pipeline_layout_id != 0U ||
+        request->pipeline_bind_point != 0U) {
+        response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    uint64_t device_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE, NULL,
+        &device_bits);
+    uint64_t layout_device_id = 0U, layout_bits = 0U;
+    if (result == 0) {
+        result = bvb_handle_table_lookup(
+            &context->objects, request->descriptor_set_layout_id,
+            BVB_OBJECT_DESCRIPTOR_SET_LAYOUT, &layout_device_id,
+            &layout_bits);
+    }
+    if (result != 0 || layout_device_id != request->device_id) {
+        set_error(error, error_size,
+                  "descriptor template layout lineage failed: %d", result);
+        return result != 0 ? result : -EPROTO;
+    }
+    VkDescriptorUpdateTemplateEntry
+        entries[BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_ENTRIES] = {0};
+    for (uint32_t index = 0U; index < request->entry_count; ++index) {
+        const struct bvb_vulkan_descriptor_update_template_entry *wire =
+            &request->entries[index];
+        if (!core_descriptor_type_supported(wire->descriptor_type) ||
+            wire->descriptor_count == 0U ||
+            wire->descriptor_count > (1U << 20) || wire->stride == 0U ||
+            wire->offset >=
+                BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_DATA_SIZE ||
+            wire->stride >
+                BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_DATA_SIZE ||
+            (uint64_t)(wire->descriptor_count - 1U) >
+                (BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_DATA_SIZE - 1U -
+                 wire->offset) / wire->stride) {
+            response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+            return 0;
+        }
+        entries[index] = (VkDescriptorUpdateTemplateEntry){
+            .dstBinding = wire->dst_binding,
+            .dstArrayElement = wire->dst_array_element,
+            .descriptorCount = wire->descriptor_count,
+            .descriptorType = (VkDescriptorType)wire->descriptor_type,
+            .offset = (size_t)wire->offset,
+            .stride = (size_t)wire->stride,
+        };
+    }
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkCreateDescriptorUpdateTemplate create_template =
+        (PFN_vkCreateDescriptorUpdateTemplate)context->get_device_proc_addr(
+            device, "vkCreateDescriptorUpdateTemplate");
+    PFN_vkDestroyDescriptorUpdateTemplate destroy_template =
+        (PFN_vkDestroyDescriptorUpdateTemplate)context->get_device_proc_addr(
+            device, "vkDestroyDescriptorUpdateTemplate");
+    if (create_template == NULL || destroy_template == NULL) return -ENOSYS;
+    const VkDescriptorUpdateTemplateCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO,
+        .flags = request->flags,
+        .descriptorUpdateEntryCount = request->entry_count,
+        .pDescriptorUpdateEntries = entries,
+        .templateType = (VkDescriptorUpdateTemplateType)request->template_type,
+        .descriptorSetLayout =
+            descriptor_set_layout_from_bits(layout_bits),
+        .pipelineBindPoint =
+            (VkPipelineBindPoint)request->pipeline_bind_point,
+        .pipelineLayout = VK_NULL_HANDLE,
+        .set = request->set,
+    };
+    VkDescriptorUpdateTemplate descriptor_template = VK_NULL_HANDLE;
+    response->vulkan_result = create_template(
+        device, &create_info, NULL, &descriptor_template);
+    if (response->vulkan_result != VK_SUCCESS) return 0;
+    const uint64_t wire_id = bvb_handle_id(
+        BVB_OBJECT_DESCRIPTOR_UPDATE_TEMPLATE,
+        context->next_descriptor_update_template_serial++);
+    result = bvb_handle_table_insert(
+        &context->objects, wire_id, request->device_id,
+        handle_bits(&descriptor_template, sizeof(descriptor_template)));
+    if (result != 0) {
+        destroy_template(device, descriptor_template, NULL);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    response->object_id = wire_id;
+    return 0;
+}
+
+int bvb_vulkan_global_context_destroy_descriptor_update_template(
+    struct bvb_vulkan_global_context *context, uint64_t template_id,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL) return -EINVAL;
+    uint64_t device_id = 0U, template_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, template_id, BVB_OBJECT_DESCRIPTOR_UPDATE_TEMPLATE,
+        &device_id, &device, &template_bits);
+    if (result != 0) return result;
+    PFN_vkDestroyDescriptorUpdateTemplate destroy_template =
+        (PFN_vkDestroyDescriptorUpdateTemplate)context->get_device_proc_addr(
+            device, "vkDestroyDescriptorUpdateTemplate");
+    if (destroy_template == NULL) return -ENOSYS;
+    result = bvb_handle_table_remove(
+        &context->objects, template_id,
+        BVB_OBJECT_DESCRIPTOR_UPDATE_TEMPLATE, NULL);
+    if (result == 0) {
+        destroy_template(device,
+            descriptor_update_template_from_bits(template_bits), NULL);
     }
     return result;
 }

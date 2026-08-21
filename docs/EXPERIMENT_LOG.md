@@ -3772,3 +3772,35 @@ hashes, is
 `docs/evidence/e095-tombraider-descriptor-update-template-tablet.json`.
 The next gate implements the bounded core create/destroy family and repeats the
 same real Tomb Raider launch.
+
+## E096 — DXVK descriptor update-template creation (2026-08-21)
+
+Status: 58/58 host contracts pass; tablet deployment and rerun pending. E096
+implements the exact core `vkCreateDescriptorUpdateTemplate` call observed in
+E095. The glibc side accepts a descriptor-set template with at most 32 entries,
+serializes only fixed-width scalars and typed bridge IDs, and sends opcode 110.
+The Bionic service independently validates descriptor types, counts, offsets,
+strides, the bounded one-megabyte data span, and same-device layout lineage,
+then reconstructs native Vulkan structs in Bionic-owned memory.
+
+The cross-process fake driver requires E095's exact four entries: two storage
+buffers, one uniform texel buffer, and one sampled image, each count one with
+24-byte stride and offsets `0,24,48,72`. It also requires pinned DXVK's real
+destruction order—descriptor-set layout first, update template second. Template
+proxy ownership is therefore device-scoped, while creation still validates the
+layout's typed device lineage. Leaked templates are destroyed before leaked
+layouts during device teardown.
+
+Application allocators, all `pNext` chains, pipeline templates, extension-only
+descriptor types, noncanonical bytes, excessive spans, stale types, and
+cross-device layouts fail closed. Core create/destroy are now executable in the
+generated policy (`90` executable, `350` required-unimplemented, `302`
+probed-null). `vkUpdateDescriptorSetWithTemplate` remains unresolved until the
+real runtime reaches it and establishes the descriptor-resource payload shape.
+
+The required `deja "vkCreateDescriptorUpdateTemplate BVB DXVK descriptor
+update template"` query returned no indexed implementation. E096 reuses
+E056/E093's canonical pointer-free descriptor wire, typed ownership, and
+Bionic-local reconstruction plus E095's measured call shape. Compact evidence
+is `docs/evidence/e096-dxvk-descriptor-update-template-host.json`. No tablet
+deployment, Tomb Raider frame, benchmark, or FPS result is claimed yet.

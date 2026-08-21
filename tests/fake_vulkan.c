@@ -65,6 +65,7 @@ static int fake_fence_created;
 static int fake_fence_signaled;
 static uint32_t fake_queue_submit_2_calls;
 static uint32_t fake_descriptor_step;
+static uint32_t fake_descriptor_template_step;
 static uint32_t fake_init_image_step;
 static VkCommandBuffer fake_init_image_command = VK_NULL_HANDLE;
 static int fake_init_image_violation;
@@ -96,6 +97,10 @@ static const VkDescriptorSetLayout fake_core_descriptor_layout =
     (VkDescriptorSetLayout)(uintptr_t)UINT64_C(0xa800);
 static const VkDescriptorPool fake_core_descriptor_pool =
     (VkDescriptorPool)(uintptr_t)UINT64_C(0xa900);
+static const VkDescriptorSetLayout fake_dxvk_descriptor_layout =
+    (VkDescriptorSetLayout)(uintptr_t)UINT64_C(0xaa00);
+static const VkDescriptorUpdateTemplate fake_dxvk_descriptor_template =
+    (VkDescriptorUpdateTemplate)(uintptr_t)UINT64_C(0xab00);
 static const uint32_t fake_dxvk_dummy_frag[] = {
     UINT32_C(0x07230203), UINT32_C(0x00010600), UINT32_C(0x0008000b),
     UINT32_C(0x00000006), UINT32_C(0x00000000), UINT32_C(0x00020011),
@@ -1004,6 +1009,7 @@ static void VKAPI_CALL fake_destroy_device(
     fake_to_present_barrier = 0;
     fake_submitted = 0;
     fake_descriptor_step = 0U;
+    fake_descriptor_template_step = 0U;
     fake_init_image_step = 0U;
     fake_init_image_command = VK_NULL_HANDLE;
     fake_init_image_violation = 0;
@@ -1022,6 +1028,39 @@ static VkResult VKAPI_CALL fake_create_descriptor_set_layout(
         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
     };
+    if (fake_descriptor_template_step == 0U && allocator == NULL &&
+        create_info != NULL && set_layout != NULL &&
+        create_info->sType ==
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO &&
+        create_info->pNext == NULL && create_info->flags == 0U &&
+        create_info->bindingCount == 4U && create_info->pBindings != NULL) {
+        static const VkDescriptorType dxvk_types[] = {
+            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+            VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,
+            VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        };
+        static const VkShaderStageFlags dxvk_stages[] = {
+            VK_SHADER_STAGE_VERTEX_BIT,
+            VK_SHADER_STAGE_VERTEX_BIT,
+            VK_SHADER_STAGE_VERTEX_BIT,
+            VK_SHADER_STAGE_FRAGMENT_BIT,
+        };
+        for (uint32_t index = 0U; index < 4U; ++index) {
+            const VkDescriptorSetLayoutBinding *binding =
+                &create_info->pBindings[index];
+            if (binding->binding != index ||
+                binding->descriptorType != dxvk_types[index] ||
+                binding->descriptorCount != 1U ||
+                binding->stageFlags != dxvk_stages[index] ||
+                binding->pImmutableSamplers != NULL) {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+        }
+        *set_layout = fake_dxvk_descriptor_layout;
+        fake_descriptor_template_step = 1U;
+        return VK_SUCCESS;
+    }
     if (fake_descriptor_step == 0U && allocator == NULL &&
         create_info != NULL && set_layout != NULL &&
         create_info->sType ==
@@ -1200,6 +1239,58 @@ static void VKAPI_CALL fake_update_descriptor_sets(
         return;
     }
     fake_descriptor_step = 5U;
+}
+
+static VkResult VKAPI_CALL fake_create_descriptor_update_template(
+    VkDevice device,
+    const VkDescriptorUpdateTemplateCreateInfo *create_info,
+    const VkAllocationCallbacks *allocator,
+    VkDescriptorUpdateTemplate *descriptor_update_template) {
+    (void)device;
+    static const VkDescriptorType expected_types[] = {
+        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+        VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,
+        VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+    };
+    if (fake_descriptor_template_step != 1U || allocator != NULL ||
+        create_info == NULL || descriptor_update_template == NULL ||
+        create_info->sType !=
+            VK_STRUCTURE_TYPE_DESCRIPTOR_UPDATE_TEMPLATE_CREATE_INFO ||
+        create_info->pNext != NULL || create_info->flags != 0U ||
+        create_info->descriptorUpdateEntryCount != 4U ||
+        create_info->pDescriptorUpdateEntries == NULL ||
+        create_info->templateType !=
+            VK_DESCRIPTOR_UPDATE_TEMPLATE_TYPE_DESCRIPTOR_SET ||
+        create_info->descriptorSetLayout != fake_dxvk_descriptor_layout ||
+        create_info->pipelineBindPoint != VK_PIPELINE_BIND_POINT_GRAPHICS ||
+        create_info->pipelineLayout != VK_NULL_HANDLE ||
+        create_info->set != 0U) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    for (uint32_t index = 0U; index < 4U; ++index) {
+        const VkDescriptorUpdateTemplateEntry *entry =
+            &create_info->pDescriptorUpdateEntries[index];
+        if (entry->dstBinding != index || entry->dstArrayElement != 0U ||
+            entry->descriptorCount != 1U ||
+            entry->descriptorType != expected_types[index] ||
+            entry->offset != 24U * index || entry->stride != 24U) {
+            return VK_ERROR_INITIALIZATION_FAILED;
+        }
+    }
+    *descriptor_update_template = fake_dxvk_descriptor_template;
+    fake_descriptor_template_step = 2U;
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL fake_destroy_descriptor_update_template(
+    VkDevice device, VkDescriptorUpdateTemplate descriptor_update_template,
+    const VkAllocationCallbacks *allocator) {
+    (void)device;
+    if (fake_descriptor_template_step == 3U && allocator == NULL &&
+        descriptor_update_template == fake_dxvk_descriptor_template) {
+        fake_descriptor_template_step = 4U;
+    }
 }
 
 static VkResult VKAPI_CALL fake_create_pipeline_layout(
@@ -1388,6 +1479,11 @@ static void VKAPI_CALL fake_destroy_descriptor_set_layout(
     const VkAllocationCallbacks *allocator) {
     (void)device;
     if (allocator != NULL) return;
+    if (fake_descriptor_template_step == 2U &&
+        set_layout == fake_dxvk_descriptor_layout) {
+        fake_descriptor_template_step = 3U;
+        return;
+    }
     if (fake_descriptor_step == 0U &&
         set_layout == fake_core_descriptor_layout) {
         return;
@@ -2728,6 +2824,13 @@ static VkResult VKAPI_CALL fake_device_wait_idle(VkDevice device) {
                 fake_descriptor_step);
         return VK_ERROR_INITIALIZATION_FAILED;
     }
+    if (fake_descriptor_template_step != 0U &&
+        fake_descriptor_template_step != 4U) {
+        fprintf(stderr,
+                "fake Vulkan descriptor template stopped at step %u\n",
+                fake_descriptor_template_step);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
     if (fake_animation_enabled() &&
         (fake_animation_frame_count != 4U ||
          fake_animation_submit_count != 4U ||
@@ -2917,6 +3020,10 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkCreateSampler", fake_create_sampler)
     BVB_DEVICE_MATCH("vkDestroySampler", fake_destroy_sampler)
     BVB_DEVICE_MATCH("vkUpdateDescriptorSets", fake_update_descriptor_sets)
+    BVB_DEVICE_MATCH("vkCreateDescriptorUpdateTemplate",
+                     fake_create_descriptor_update_template)
+    BVB_DEVICE_MATCH("vkDestroyDescriptorUpdateTemplate",
+                     fake_destroy_descriptor_update_template)
     BVB_DEVICE_MATCH("vkCreatePipelineLayout", fake_create_pipeline_layout)
     BVB_DEVICE_MATCH("vkDestroyPipelineLayout", fake_destroy_pipeline_layout)
     BVB_DEVICE_MATCH("vkCreateGraphicsPipelines", fake_create_graphics_pipelines)

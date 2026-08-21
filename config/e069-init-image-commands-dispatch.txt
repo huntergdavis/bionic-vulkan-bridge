@@ -11,6 +11,7 @@ vkCreateBuffer
 vkCreateCommandPool
 vkCreateDescriptorPool
 vkCreateDescriptorSetLayout
+vkCreateDescriptorUpdateTemplate
 vkCreateDevice
 vkCreateFence
 vkCreateGraphicsPipelines
@@ -24,6 +25,7 @@ vkDestroyBuffer
 vkDestroyCommandPool
 vkDestroyDescriptorPool
 vkDestroyDescriptorSetLayout
+vkDestroyDescriptorUpdateTemplate
 vkDestroyDevice
 vkDestroyFence
 vkDestroyImage
