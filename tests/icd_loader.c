@@ -140,21 +140,40 @@ int main(void) {
         vkDestroyInstance(instance, NULL);
         return 1;
     }
-    const VkPhysicalDeviceExternalSemaphoreInfo external_semaphore_info = {
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO,
-        .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
+    const VkExternalSemaphoreHandleTypeFlagBits semaphore_handle_types[] = {
+        VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
+        VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
     };
-    VkExternalSemaphoreProperties external_semaphore_properties = {
-        .sType = VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES,
-    };
-    vkGetPhysicalDeviceExternalSemaphoreProperties(
-        physical_device, &external_semaphore_info,
-        &external_semaphore_properties);
-    if ((external_semaphore_properties.externalSemaphoreFeatures &
-         VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT) == 0U ||
-        (external_semaphore_properties.compatibleHandleTypes &
-         VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT) == 0U) {
-        fputs("external-semaphore capability query failed\n", stderr);
+    VkExternalSemaphoreHandleTypeFlagBits external_semaphore_handle_type = 0U;
+    VkExternalSemaphoreProperties external_semaphore_properties = {0};
+    for (size_t index = 0U;
+         index < sizeof(semaphore_handle_types) /
+                     sizeof(semaphore_handle_types[0]);
+         ++index) {
+        const VkPhysicalDeviceExternalSemaphoreInfo external_semaphore_info = {
+            .sType =
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO,
+            .handleType = semaphore_handle_types[index],
+        };
+        external_semaphore_properties = (VkExternalSemaphoreProperties){
+            .sType = VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES,
+        };
+        vkGetPhysicalDeviceExternalSemaphoreProperties(
+            physical_device, &external_semaphore_info,
+            &external_semaphore_properties);
+        if (external_semaphore_properties.externalSemaphoreFeatures != 0U &&
+            (external_semaphore_properties.compatibleHandleTypes &
+             semaphore_handle_types[index]) != 0U) {
+            external_semaphore_handle_type = semaphore_handle_types[index];
+            break;
+        }
+    }
+    if (external_semaphore_handle_type == 0U) {
+        fprintf(stderr,
+                "external-semaphore capability query failed: features=%u "
+                "handles=%u\n",
+                external_semaphore_properties.externalSemaphoreFeatures,
+                external_semaphore_properties.compatibleHandleTypes);
         vkDestroyInstance(instance, NULL);
         return 1;
     }
@@ -286,11 +305,12 @@ int main(void) {
     }
     vkDestroyDevice(device, NULL);
     vkDestroyInstance(instance, NULL);
-    printf("PASS: Vulkan loader selected BVB ICD api=%u instance_extensions=3 device=%s vendor=%u device_id=%u external_memory_features=%u external_memory_handles=%u external_semaphore_features=%u external_semaphore_handles=%u rgba8_optimal=%u max_extent=%ux%ux%u max_resource=%llu queue_family=%u enabled_extension=%s features2_anisotropy=%u memory2_types=%u memory2_heaps=%u device_idle=pass\n",
+    printf("PASS: Vulkan loader selected BVB ICD api=%u instance_extensions=3 device=%s vendor=%u device_id=%u external_memory_features=%u external_memory_handles=%u external_semaphore_type=%u external_semaphore_features=%u external_semaphore_handles=%u rgba8_optimal=%u max_extent=%ux%ux%u max_resource=%llu queue_family=%u enabled_extension=%s features2_anisotropy=%u memory2_types=%u memory2_heaps=%u device_idle=pass\n",
            api_version, properties.deviceName,
            properties.vendorID,
            properties.deviceID, external_memory.externalMemoryFeatures,
            external_memory.compatibleHandleTypes,
+           external_semaphore_handle_type,
            external_semaphore_properties.externalSemaphoreFeatures,
            external_semaphore_properties.compatibleHandleTypes,
            format_properties.optimalTilingFeatures,
