@@ -162,6 +162,7 @@ static struct bvb_fake_memory_record *fake_memory_slot(void) {
     return NULL;
 }
 
+#ifndef VK_USE_PLATFORM_ANDROID_KHR
 struct ANativeWindow;
 typedef VkFlags VkAndroidSurfaceCreateFlagsKHR;
 typedef struct VkAndroidSurfaceCreateInfoKHR {
@@ -170,6 +171,7 @@ typedef struct VkAndroidSurfaceCreateInfoKHR {
     VkAndroidSurfaceCreateFlagsKHR flags;
     struct ANativeWindow *window;
 } VkAndroidSurfaceCreateInfoKHR;
+#endif
 typedef VkResult(VKAPI_PTR *bvb_create_android_surface_fn)(
     VkInstance instance, const VkAndroidSurfaceCreateInfoKHR *create_info,
     const VkAllocationCallbacks *allocator, VkSurfaceKHR *surface);
