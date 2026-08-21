@@ -258,15 +258,24 @@ int main(void) {
     result = vkEnumerateDeviceExtensionProperties(
         physical_device, NULL, &device_extension_count, device_extensions);
     int swapchain_advertised = 0;
+    int external_memory_fd_advertised = 0;
     if (result == VK_SUCCESS) {
         for (uint32_t index = 0U; index < device_extension_count; ++index) {
             swapchain_advertised |= strcmp(
                 device_extensions[index].extensionName,
                 VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0;
+            external_memory_fd_advertised |= strcmp(
+                device_extensions[index].extensionName,
+                VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) == 0;
         }
     }
     free(device_extensions);
-    if (result != VK_SUCCESS || swapchain_advertised == 0) {
+    const char *enabled_device_extension = swapchain_advertised != 0
+        ? VK_KHR_SWAPCHAIN_EXTENSION_NAME
+        : external_memory_fd_advertised != 0
+            ? VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME
+            : NULL;
+    if (result != VK_SUCCESS || enabled_device_extension == NULL) {
         fprintf(stderr, "required device extension unavailable: result=%d\n",
                 (int)result);
         vkDestroyInstance(instance, NULL);
@@ -284,8 +293,7 @@ int main(void) {
         .queueCreateInfoCount = 1U,
         .pQueueCreateInfos = &queue_create_info,
         .enabledExtensionCount = 1U,
-        .ppEnabledExtensionNames =
-            (const char *const[]){VK_KHR_SWAPCHAIN_EXTENSION_NAME},
+        .ppEnabledExtensionNames = &enabled_device_extension,
     };
     VkDevice device = VK_NULL_HANDLE;
     result = vkCreateDevice(
@@ -319,7 +327,7 @@ int main(void) {
            image_properties.maxExtent.height,
            image_properties.maxExtent.depth,
            (unsigned long long)image_properties.maxResourceSize,
-           queue_family_index, VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+           queue_family_index, enabled_device_extension,
            features2.features.samplerAnisotropy,
            memory2.memoryProperties.memoryTypeCount,
            memory2.memoryProperties.memoryHeapCount);
