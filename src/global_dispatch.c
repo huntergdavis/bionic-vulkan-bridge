@@ -1425,6 +1425,14 @@ static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceProperties(
     if (result != 0) {
         memset(properties, 0, sizeof(*properties));
     }
+    if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        fprintf(stderr,
+                "BVB_ICD_PHYSICAL_PROPERTIES status=%d api=%u driver=%u "
+                "vendor=%u device=%u name=%s\n",
+                result, properties->apiVersion, properties->driverVersion,
+                properties->vendorID, properties->deviceID,
+                properties->deviceName);
+    }
 }
 
 static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceQueueFamilyProperties(
