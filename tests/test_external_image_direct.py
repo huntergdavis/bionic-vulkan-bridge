@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import array
+import ctypes
 import json
 import os
 import socket
@@ -8,13 +9,30 @@ import subprocess
 import sys
 
 
+MFD_CLOEXEC = getattr(os, "MFD_CLOEXEC", 0x0001)
+
+
+def create_memfd(name: str) -> int:
+    if hasattr(os, "memfd_create"):
+        return os.memfd_create(name, MFD_CLOEXEC)
+    libc = ctypes.CDLL(None, use_errno=True)
+    native_memfd_create = libc.memfd_create
+    native_memfd_create.argtypes = [ctypes.c_char_p, ctypes.c_uint]
+    native_memfd_create.restype = ctypes.c_int
+    descriptor = native_memfd_create(name.encode(), MFD_CLOEXEC)
+    if descriptor < 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    return descriptor
+
+
 def image_response():
     width = 64
     height = 64
     expected_color = 0xFFFF00FF
     image_bytes = width * height * 4
-    image_memory = os.memfd_create("bvb-e039-image", os.MFD_CLOEXEC)
-    image_semaphore = os.memfd_create("bvb-e039-semaphore", os.MFD_CLOEXEC)
+    image_memory = create_memfd("bvb-e039-image")
+    image_semaphore = create_memfd("bvb-e039-semaphore")
     os.ftruncate(image_memory, image_bytes)
     os.pwrite(
         image_memory,

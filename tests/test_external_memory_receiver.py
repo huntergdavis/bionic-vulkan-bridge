@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import array
+import ctypes
 import json
 import os
 import socket
@@ -8,6 +9,23 @@ import subprocess
 import sys
 import tempfile
 import time
+
+
+MFD_CLOEXEC = getattr(os, "MFD_CLOEXEC", 0x0001)
+
+
+def create_memfd(name: str) -> int:
+    if hasattr(os, "memfd_create"):
+        return os.memfd_create(name, MFD_CLOEXEC)
+    libc = ctypes.CDLL(None, use_errno=True)
+    native_memfd_create = libc.memfd_create
+    native_memfd_create.argtypes = [ctypes.c_char_p, ctypes.c_uint]
+    native_memfd_create.restype = ctypes.c_int
+    descriptor = native_memfd_create(name.encode(), MFD_CLOEXEC)
+    if descriptor < 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    return descriptor
 
 
 def main():
@@ -22,7 +40,7 @@ def main():
         text=True,
     )
     assert process.stdout.readline().startswith("bvb-external-memory-receiver: ready")
-    descriptor = os.memfd_create("bvb-e036-host", os.MFD_CLOEXEC)
+    descriptor = create_memfd("bvb-e036-host")
     os.ftruncate(descriptor, 4096)
     pattern = bytes((index ^ (index >> 4) ^ 0x5A) & 0xFF for index in range(4096))
     os.pwrite(descriptor, pattern, 0)
@@ -59,8 +77,8 @@ def main():
     assert sync_process.stdout.readline().startswith(
         "bvb-external-memory-receiver: ready"
     )
-    sync_memory = os.memfd_create("bvb-e037-memory", os.MFD_CLOEXEC)
-    sync_semaphore = os.memfd_create("bvb-e037-semaphore", os.MFD_CLOEXEC)
+    sync_memory = create_memfd("bvb-e037-memory")
+    sync_semaphore = create_memfd("bvb-e037-semaphore")
     os.ftruncate(sync_memory, 4096)
     expected_fill_word = 0xE037C0DE
     os.pwrite(sync_memory, struct.pack("<I", expected_fill_word) * 1024, 0)
@@ -106,8 +124,8 @@ def main():
     assert image_process.stdout.readline().startswith(
         "bvb-external-memory-receiver: ready"
     )
-    image_memory = os.memfd_create("bvb-e038-image", os.MFD_CLOEXEC)
-    image_semaphore = os.memfd_create("bvb-e038-semaphore", os.MFD_CLOEXEC)
+    image_memory = create_memfd("bvb-e038-image")
+    image_semaphore = create_memfd("bvb-e038-semaphore")
     width = 64
     height = 64
     image_bytes = width * height * 4
@@ -162,7 +180,7 @@ def main():
     assert fenced_process.stdout.readline().startswith(
         "bvb-external-memory-receiver: ready"
     )
-    fenced_memory = os.memfd_create("bvb-e041-image", os.MFD_CLOEXEC)
+    fenced_memory = create_memfd("bvb-e041-image")
     os.ftruncate(fenced_memory, image_bytes)
     os.pwrite(
         fenced_memory,
