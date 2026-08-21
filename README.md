@@ -290,6 +290,18 @@ proves invalid-token rejection, launches the Activity with private Intent
 extras, queries the resulting state through a glibc client, and writes evidence
 under ignored `out/`. The token is not printed or retained in those artifacts.
 
+Before involving Steam, run the exact versionCode 40 Activity frame-import gate
+with:
+
+```sh
+python3 scripts/test-activity-frame-import-v40-termux.py
+```
+
+E074 refuses the older versionCode 39 APK, leaves Steam and Termux:X11 alone,
+and requires the real E057 import and native-present markers. See
+[the acceptance boundary](docs/activity-frame-v40-runtime-gate.md); this is
+log proof, not yet visible game output.
+
 ## Project boundaries
 
 - This repository owns reusable bridge source, protocol definitions, probes,

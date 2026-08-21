@@ -8,11 +8,13 @@
 
 #include <vulkan/vk_layer.h>
 
+#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define CHECK(expression)                                                       \
     do {                                                                        \
@@ -59,6 +61,36 @@ static const uint32_t test_dxvk_dummy_frag[] = {
 static bool bvb_hardware_validation_enabled(void) {
     const char *value = getenv("BVB_GLOBAL_DISPATCH_HARDWARE");
     return value != NULL && strcmp(value, "1") == 0;
+}
+
+static bool bvb_read_u32_environment(const char *name, uint32_t fallback,
+                                     uint32_t minimum, uint32_t maximum,
+                                     uint32_t *output) {
+    const char *value = getenv(name);
+    if (value == NULL || value[0] == '\0') {
+        *output = fallback;
+        return true;
+    }
+    char *end = NULL;
+    errno = 0;
+    const unsigned long parsed = strtoul(value, &end, 10);
+    if (errno != 0 || end == value || *end != '\0' || parsed < minimum ||
+        parsed > maximum) {
+        return false;
+    }
+    *output = (uint32_t)parsed;
+    return true;
+}
+
+static bool bvb_sleep_milliseconds(uint32_t milliseconds) {
+    struct timespec remaining = {
+        .tv_sec = (time_t)(milliseconds / UINT32_C(1000)),
+        .tv_nsec = (long)(milliseconds % UINT32_C(1000)) * 1000000L,
+    };
+    while (nanosleep(&remaining, &remaining) != 0) {
+        if (errno != EINTR) return false;
+    }
+    return true;
 }
 
 static bool bvb_is_power_of_two(VkDeviceSize value) {
@@ -120,6 +152,15 @@ static VkResult VKAPI_CALL test_set_device_loader_data(
 
 int main(void) {
     const bool hardware_mode = bvb_hardware_validation_enabled();
+    uint32_t wsi_width = 2800U;
+    uint32_t wsi_height = 1752U;
+    uint32_t present_hold_ms = 0U;
+    CHECK(bvb_read_u32_environment("BVB_GLOBAL_DISPATCH_WSI_WIDTH", 2800U,
+                                   1U, 16384U, &wsi_width));
+    CHECK(bvb_read_u32_environment("BVB_GLOBAL_DISPATCH_WSI_HEIGHT", 1752U,
+                                   1U, 16384U, &wsi_height));
+    CHECK(bvb_read_u32_environment("BVB_GLOBAL_DISPATCH_PRESENT_HOLD_MS", 0U,
+                                   0U, 30000U, &present_hold_ms));
     uint32_t icd_interface_version = 7U;
     CHECK(vk_icdNegotiateLoaderICDInterfaceVersion(
               &icd_interface_version) == VK_SUCCESS);
@@ -993,7 +1034,7 @@ int main(void) {
         .minImageCount = 2U,
         .imageFormat = VK_FORMAT_B8G8R8A8_UNORM,
         .imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
-        .imageExtent = {2800U, 1752U},
+        .imageExtent = {wsi_width, wsi_height},
         .imageArrayLayers = 1U,
         .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
@@ -1063,6 +1104,7 @@ int main(void) {
     };
     CHECK(queue_present(queue, &virtual_present) == VK_SUCCESS);
     CHECK(per_swapchain_result == VK_SUCCESS);
+    CHECK(bvb_sleep_milliseconds(present_hold_ms));
     destroy_swapchain(device, virtual_swapchain, NULL);
     destroy_semaphore(device, acquire_semaphore, NULL);
     CHECK(queue_submit(queue, 0U, NULL, VK_NULL_HANDLE) == VK_SUCCESS);

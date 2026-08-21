@@ -112,6 +112,9 @@
   the lifecycle-gated native import/copy-or-blit/present consumer
 - [x] Connect the three-image public virtual swapchain acquire/present path to
   native producer ownership release and publish only after GPU completion
+- [x] Prepare the fail-closed E074 versionCode 40 installed-Activity runtime
+  gate with APK identity, authentication, E057 import/present markers, and
+  bounded cleanup independent of Steam and Termux:X11
 - [ ] Deploy the combined E057/E060 launch wiring and visually prove a changing
   game-facing frame in the installed Activity
 - [ ] Reach a DXVK sample

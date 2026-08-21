@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "gate": "E074-activity-frame-import-v40-runtime-host",
+  "result": "pass",
+  "scope": "host source, APK-identity, authentication, orchestration, and cleanup contracts only; no Android Activity was installed or launched",
+  "recall": {
+    "query": "BVB v40 Activity frame import present marker launch script refuse v39 APK identity authenticated Activity E057",
+    "indexed_match": false
+  },
+  "reused_work": [
+    "E010 authenticated Activity lifecycle and wrong-token rejection",
+    "E057 Activity-native external-image import/copy-or-blit/present consumer",
+    "E060 same-UID one-time frame FD socket and persistent futex ring",
+    "E073 private-Turnip virtual swapchain producer hardware proof",
+    "steamclienttermux start-tombraider-bvb-probe service and FrameTransportClient ordering"
+  ],
+  "apk_identity": {
+    "required_version_code": 40,
+    "refuses_version_code": 39,
+    "package_match": true,
+    "byte_identity_required": true,
+    "certificate_identity_required": true,
+    "embedded_e057_markers_required": true
+  },
+  "runtime_contract": {
+    "steam_started": false,
+    "termux_x11_started": false,
+    "retain_external_renderer": true,
+    "wrong_token_status": -13,
+    "authenticated_renderer_events": [
+      1,
+      2,
+      3,
+      7,
+      11
+    ],
+    "frame_helper_before_producer": true,
+    "bounded_present_hold_ms_max": 30000,
+    "bounded_child_cleanup": true,
+    "unique_logs_and_evidence": true
+  },
+  "installed_payload_before_gate": {
+    "provenance": "tablet deployment verified independently before E074 Activity execution",
+    "bridge_client_sha256": "c0b3dbf36f45bad941a8579bf37bcc8d5773ac7b4d3c0e10a601b58fc4aee3eb",
+    "bridge_service_sha256": "0917ef33209b0ea32a337de48646908057854f829387671d0a832ec707371241",
+    "private_turnip_sha256": "8ac6ef78c3c92998aa46c59fd0081edcba82756f5bad561d1b24a57684874a45",
+    "private_turnip_changed": false,
+    "rollback_directory": "install-pre-0c54e92",
+    "rollback_verified": true,
+    "one_shot_icd_test": "pass",
+    "activity_runtime_result": "pending"
+  },
+  "required_runtime_markers": [
+    "E057_FRAME_TRANSPORT_IMPORTED",
+    "E057_FRAME_PRESENTED"
+  ],
+  "visible_output_claim": false,
+  "game_output_claim": false,
+  "fps_claim": false,
+  "visibility_boundary": "host proof prepares a real installed-Activity import/present-log gate; the E073 producer image is not initialized to a deterministic visible pattern"
+}

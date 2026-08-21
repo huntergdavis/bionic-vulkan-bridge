@@ -510,6 +510,16 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
   )
   add_test(
+    NAME activity-frame-v40-runtime-gate-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_activity_frame_runtime_gate.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-activity-frame-import-v40-termux.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e074-activity-frame-v40-runtime-gate-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/activity-frame-v40-runtime-gate.md"
+  )
+  add_test(
     NAME virtual-swapchain-producer-architecture-contract
     COMMAND
       "${Python3_EXECUTABLE}"

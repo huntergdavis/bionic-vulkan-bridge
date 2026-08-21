@@ -2969,3 +2969,46 @@ E070's honest hardware-validation branch, E071's explicit driver route, and
 E072's internal native export dependency. The next gate is installing visible
 host v40 and proving that the real Activity imports this FD bundle and presents
 changing pixels before attempting a Tomb Raider or performance claim.
+
+## E074 — exact v40 Activity import runtime gate prepared (2026-08-21)
+
+Status: host contracts passed; the script has not installed or launched an
+Android Activity, and tablet import/present proof remains pending. The
+standalone Termux entry point refuses source, staged, or installed identities
+other than versionCode 40, requires the installed base APK to be byte-identical
+to the staged signed APK, compares signing-certificate digests, and inspects
+the packaged native library for both E057 completion markers. This prevents
+the versionCode 39 E042-only Activity from silently accepting a test it cannot
+perform.
+
+The runtime sequence reuses E010 wrong-token rejection, launches the Activity
+with the previously missing `bvb_retain_external_renderer=1` requirement,
+waits for authenticated created/started/resumed/window/renderer-ready events,
+starts the same-UID `FrameTransportClient`, then runs the real E073 virtual WSI
+smoke producer. The global test client accepts the Activity's measured extent
+and a bounded post-present hold of at most 30 seconds so teardown cannot race
+the E057 consumer. All children, the exact launched BVB package, and the
+private runtime directory have bounded cleanup; Steam and Termux:X11 are never
+started or signalled. Per-run logs and evidence use a unique ignored output
+directory, and the launch capability is not retained.
+
+Before this gate was prepared, the installed tablet payload was updated and
+verified: bridge client SHA-256
+`c0b3dbf36f45bad941a8579bf37bcc8d5773ac7b4d3c0e10a601b58fc4aee3eb`,
+bridge service SHA-256
+`0917ef33209b0ea32a337de48646908057854f829387671d0a832ec707371241`,
+and unchanged private Turnip SHA-256
+`8ac6ef78c3c92998aa46c59fd0081edcba82756f5bad561d1b24a57684874a45`.
+The `install-pre-0c54e92` rollback directory was verified, and the installed
+one-shot private-Turnip ICD test passed. These deployment checks precede E074;
+they are not evidence that the Android Activity import runtime has passed.
+
+Canonical host evidence is
+`docs/evidence/e074-activity-frame-v40-runtime-gate-host.json`. The required
+exact `deja` query returned no indexed implementation. E074 reuses E010, E057,
+E060, E073, and the current `steamclienttermux`
+`start-tombraider-bvb-probe.sh` service/helper ordering. Because E073 presents
+an image without a deterministic pattern, a successful runtime pass proves
+authenticated import and native present markers only; the Activity may remain
+black, and no screenshot, changing game frame, Tomb Raider output, benchmark,
+or FPS is claimed.
