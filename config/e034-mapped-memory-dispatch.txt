@@ -43,3 +43,11 @@ vkResetCommandPool
 vkResetFences
 vkUnmapMemory
 vkWaitForFences
+vkCreateSemaphore
+vkDestroySemaphore
+vkGetSemaphoreCounterValue
+vkGetSemaphoreCounterValueKHR
+vkWaitSemaphores
+vkWaitSemaphoresKHR
+vkSignalSemaphore
+vkSignalSemaphoreKHR

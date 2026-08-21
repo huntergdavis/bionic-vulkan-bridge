@@ -2431,3 +2431,29 @@ DXVK a6764047 feature order recovered by the feature-map agent. The required
 E052 does not prove maintenance5/6 exposure, final adapter acceptance, the
 DXVK feature chain reaching native `vkCreateDevice`, swapchain creation, a
 game frame, or FPS.
+
+## E054 — DXVK timeline semaphore primitives are native-backed (2026-08-20)
+
+Status: passed as a host integration gate; no tablet deployment, frame, or FPS
+claim. Pinned DXVK `a6764047e587178` acquires three queue roles, constructs its
+device objects, then creates two timeline semaphores in `dxvk_queue.cpp`.
+Source-order analysis proved this is the synchronization gate immediately after
+the descriptor/sampler bootstrap rather than the cause of the earlier null-PC
+failure.
+
+The bridge now forwards binary and timeline semaphore creation, destruction,
+counter queries, waits, and signals to the real Bionic Vulkan device. Core and
+KHR spellings resolve to the same implementation. The fixed-width wire carries
+no pointers, validates every parent handle, bounds a wait to 16 semaphores, and
+rejects unsupported allocators, flags, structures, and cross-device handles.
+The native object table was raised from the 64-entry self-test size to 4,096 so
+a game does not exhaust it during ordinary resource creation.
+
+All 28 host contracts pass, including initial timeline value 7, signal to 11,
+successful wait at 11, timeout at 12, and deterministic destruction. This work
+reuses E032's fence ownership/teardown pattern, E034's generated dispatch
+policy, and E045's rule that loader-private metadata never crosses the wire.
+The required `deja` query found no older implementation. Canonical evidence is
+`docs/evidence/e054-dxvk-timeline-semaphores-host.json`. Descriptor/sampler
+bootstrap, timeline values in queue submission, Activity-side image import,
+the first Tomb Raider frame, and FPS remain separate gates.

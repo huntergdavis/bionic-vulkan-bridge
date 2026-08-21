@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "gate": "E054",
+  "date": "2026-08-20",
+  "result": "pass",
+  "scope": "host contracts; no tablet deployment or game-frame claim",
+  "trigger": {
+    "dxvk_commit": "a6764047e587178283fcde4073ae6e1410af594f",
+    "source": "src/dxvk/dxvk_queue.cpp",
+    "ordered_call_after_device_objects": "vkCreateSemaphore",
+    "timeline_semaphore_count": 2
+  },
+  "bridge": {
+    "operations": [
+      "vkCreateSemaphore",
+      "vkDestroySemaphore",
+      "vkGetSemaphoreCounterValue",
+      "vkWaitSemaphores",
+      "vkSignalSemaphore"
+    ],
+    "khr_aliases": true,
+    "pointer_free_little_endian_wire": true,
+    "native_turnip_forwarding": true,
+    "dummy_handles": false,
+    "maximum_wait_semaphores": 16,
+    "object_capacity_before": 64,
+    "object_capacity_after": 4096
+  },
+  "validation": {
+    "host_contracts_passed": 28,
+    "host_contracts_failed": 0,
+    "protocol_round_trip": true,
+    "timeline_create_initial_value": 7,
+    "timeline_signal_value": 11,
+    "wait_completed_value": 11,
+    "wait_timeout_value": 12,
+    "native_fake_driver_lifecycle": true
+  },
+  "reuse": [
+    "E032 fence handle ownership and service teardown",
+    "E034 dispatch policy generation",
+    "E045 client-only loader metadata rule",
+    "Khronos Vulkan timeline semaphore structures"
+  ],
+  "deja": {
+    "query": "bionic vulkan bridge timeline semaphore vkCreateSemaphore vkWaitSemaphores wire",
+    "matching_prior_sessions": 0
+  },
+  "remaining": [
+    "descriptor and sampler bootstrap must land before DXVK reaches this gate",
+    "timeline values in vkQueueSubmit are not yet bridged",
+    "Activity frame consumer is not yet connected",
+    "Tomb Raider frame and FPS remain unproven"
+  ]
+}

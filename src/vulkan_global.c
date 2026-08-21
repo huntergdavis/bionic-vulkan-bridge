@@ -23,7 +23,7 @@
 #include <linux/memfd.h>
 
 enum {
-    BVB_GLOBAL_OBJECT_CAPACITY = 64,
+    BVB_GLOBAL_OBJECT_CAPACITY = 4096,
     BVB_EXPOSED_INSTANCE_EXTENSION_CAPACITY = 3,
 };
 
@@ -82,6 +82,7 @@ struct bvb_vulkan_global_context {
     uint64_t next_buffer_serial;
     uint64_t next_memory_serial;
     uint64_t next_fence_serial;
+    uint64_t next_semaphore_serial;
     uint64_t next_swapchain_serial;
     uint64_t next_image_serial;
     struct bvb_device_metadata device_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
@@ -183,6 +184,14 @@ static VkFence fence_from_bits(uint64_t bits) {
                    "VkFence exceeds bridge handle width");
     memcpy(&fence, &bits, sizeof(fence));
     return fence;
+}
+
+static VkSemaphore semaphore_from_bits(uint64_t bits) {
+    VkSemaphore semaphore = VK_NULL_HANDLE;
+    _Static_assert(sizeof(semaphore) <= sizeof(bits),
+                   "VkSemaphore exceeds bridge handle width");
+    memcpy(&semaphore, &bits, sizeof(semaphore));
+    return semaphore;
 }
 
 static int resolve_physical_device(
@@ -340,6 +349,7 @@ int bvb_vulkan_global_context_create(
     context->next_buffer_serial = 1U;
     context->next_memory_serial = 1U;
     context->next_fence_serial = 1U;
+    context->next_semaphore_serial = 1U;
     context->next_swapchain_serial = 1U;
     context->next_image_serial = 1U;
     *output = context;
@@ -1599,6 +1609,15 @@ int bvb_vulkan_global_context_destroy_device(
     }
     for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
         const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_SEMAPHORE &&
+            entry->parent_id == device_id) {
+            result = bvb_vulkan_global_context_destroy_semaphore(
+                context, entry->wire_id, NULL, 0U);
+            if (result != 0) return result;
+        }
+    }
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
         if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_QUEUE &&
             entry->parent_id == device_id) {
             result = bvb_handle_table_remove(
@@ -2832,6 +2851,180 @@ int bvb_vulkan_global_context_reset_fence(
     if (reset == NULL) return -ENOSYS;
     const VkFence fence = fence_from_bits(fence_bits);
     *vulkan_result = reset(device, 1U, &fence);
+    return 0;
+}
+
+int bvb_vulkan_global_context_create_semaphore(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_semaphore_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL) return -EINVAL;
+    *response = (struct bvb_vulkan_object_create_response){0};
+    if (request->flags != 0U ||
+        (request->semaphore_type != VK_SEMAPHORE_TYPE_BINARY &&
+         request->semaphore_type != VK_SEMAPHORE_TYPE_TIMELINE) ||
+        (request->semaphore_type == VK_SEMAPHORE_TYPE_BINARY &&
+         request->initial_value != 0U)) {
+        response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    uint64_t device_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE, NULL,
+        &device_bits);
+    if (result != 0) return result;
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkCreateSemaphore create =
+        (PFN_vkCreateSemaphore)context->get_device_proc_addr(
+            device, "vkCreateSemaphore");
+    PFN_vkDestroySemaphore destroy =
+        (PFN_vkDestroySemaphore)context->get_device_proc_addr(
+            device, "vkDestroySemaphore");
+    if (create == NULL || destroy == NULL) return -ENOSYS;
+    const VkSemaphoreTypeCreateInfo type_info = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+        .semaphoreType = (VkSemaphoreType)request->semaphore_type,
+        .initialValue = request->initial_value,
+    };
+    const VkSemaphoreCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = request->semaphore_type == VK_SEMAPHORE_TYPE_TIMELINE
+                     ? &type_info : NULL,
+        .flags = request->flags,
+    };
+    VkSemaphore semaphore = VK_NULL_HANDLE;
+    response->vulkan_result = create(device, &create_info, NULL, &semaphore);
+    if (response->vulkan_result != VK_SUCCESS) return 0;
+    const uint64_t wire_id = bvb_handle_id(
+        BVB_OBJECT_SEMAPHORE, context->next_semaphore_serial++);
+    result = bvb_handle_table_insert(
+        &context->objects, wire_id, request->device_id,
+        handle_bits(&semaphore, sizeof(semaphore)));
+    if (result != 0) {
+        destroy(device, semaphore, NULL);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    response->object_id = wire_id;
+    return 0;
+}
+
+int bvb_vulkan_global_context_destroy_semaphore(
+    struct bvb_vulkan_global_context *context, uint64_t semaphore_id,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    uint64_t device_id = 0U, semaphore_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, semaphore_id, BVB_OBJECT_SEMAPHORE, &device_id, &device,
+        &semaphore_bits);
+    if (result != 0) return result;
+    PFN_vkDestroySemaphore destroy =
+        (PFN_vkDestroySemaphore)context->get_device_proc_addr(
+            device, "vkDestroySemaphore");
+    if (destroy == NULL) return -ENOSYS;
+    result = bvb_handle_table_remove(
+        &context->objects, semaphore_id, BVB_OBJECT_SEMAPHORE, NULL);
+    if (result == 0)
+        destroy(device, semaphore_from_bits(semaphore_bits), NULL);
+    return result;
+}
+
+int bvb_vulkan_global_context_get_semaphore_counter(
+    const struct bvb_vulkan_global_context *context, uint64_t semaphore_id,
+    struct bvb_vulkan_semaphore_counter_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (response == NULL) return -EINVAL;
+    *response = (struct bvb_vulkan_semaphore_counter_response){
+        .vulkan_result = VK_ERROR_INITIALIZATION_FAILED,
+    };
+    uint64_t device_id = 0U, semaphore_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, semaphore_id, BVB_OBJECT_SEMAPHORE, &device_id, &device,
+        &semaphore_bits);
+    if (result != 0) return result;
+    PFN_vkGetSemaphoreCounterValue get_counter =
+        (PFN_vkGetSemaphoreCounterValue)context->get_device_proc_addr(
+            device, "vkGetSemaphoreCounterValue");
+    if (get_counter == NULL) return -ENOSYS;
+    response->vulkan_result = get_counter(
+        device, semaphore_from_bits(semaphore_bits), &response->value);
+    return 0;
+}
+
+int bvb_vulkan_global_context_wait_semaphores(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_semaphore_wait_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || vulkan_result == NULL ||
+        request->semaphore_count == 0U ||
+        request->semaphore_count > BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT ||
+        (request->flags & ~VK_SEMAPHORE_WAIT_ANY_BIT) != 0U) return -EINVAL;
+    uint64_t device_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE, NULL,
+        &device_bits);
+    if (result != 0) return result;
+    const VkDevice device = device_from_bits(device_bits);
+    VkSemaphore semaphores[BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT];
+    uint64_t values[BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT];
+    for (uint32_t index = 0U; index < request->semaphore_count; ++index) {
+        uint64_t parent_id = 0U, semaphore_bits = 0U;
+        result = bvb_handle_table_lookup(
+            &context->objects, request->semaphores[index].semaphore_id,
+            BVB_OBJECT_SEMAPHORE, &parent_id, &semaphore_bits);
+        if (result != 0 || parent_id != request->device_id) return -EPROTO;
+        semaphores[index] = semaphore_from_bits(semaphore_bits);
+        values[index] = request->semaphores[index].value;
+    }
+    PFN_vkWaitSemaphores wait =
+        (PFN_vkWaitSemaphores)context->get_device_proc_addr(
+            device, "vkWaitSemaphores");
+    if (wait == NULL) return -ENOSYS;
+    const VkSemaphoreWaitInfo wait_info = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+        .flags = request->flags,
+        .semaphoreCount = request->semaphore_count,
+        .pSemaphores = semaphores,
+        .pValues = values,
+    };
+    *vulkan_result = wait(device, &wait_info, request->timeout);
+    return 0;
+}
+
+int bvb_vulkan_global_context_signal_semaphore(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_semaphore_signal_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || vulkan_result == NULL)
+        return -EINVAL;
+    uint64_t parent_id = 0U, semaphore_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, request->semaphore_id, BVB_OBJECT_SEMAPHORE,
+        &parent_id, &semaphore_bits);
+    if (result != 0 || parent_id != request->device_id) return -EPROTO;
+    uint64_t device_bits = 0U;
+    result = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE, NULL,
+        &device_bits);
+    if (result != 0) return result;
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkSignalSemaphore signal =
+        (PFN_vkSignalSemaphore)context->get_device_proc_addr(
+            device, "vkSignalSemaphore");
+    if (signal == NULL) return -ENOSYS;
+    const VkSemaphoreSignalInfo signal_info = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO,
+        .semaphore = semaphore_from_bits(semaphore_bits),
+        .value = request->value,
+    };
+    *vulkan_result = signal(device, &signal_info);
     return 0;
 }
 

@@ -81,7 +81,7 @@ int main(void) {
     };
     CHECK(bvb_protocol_encode_header(wire, &last_opcode_header) == 0);
     CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
-    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_SWAPCHAIN_DESTROY);
+    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_SEMAPHORE_SIGNAL);
 
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
@@ -1026,6 +1026,69 @@ int main(void) {
     CHECK(bvb_protocol_decode_vulkan_queue_submit_command_fence_request(
               fenced_submit_wire, &fenced_submit_decoded) == 0);
     CHECK(fenced_submit_decoded.fence_id == fenced_submit.fence_id);
+
+    const struct bvb_vulkan_semaphore_create_request semaphore_create = {
+        .device_id = UINT64_C(0x0300000000000001),
+        .initial_value = UINT64_C(7),
+        .semaphore_type = 1U,
+    };
+    uint8_t semaphore_create_wire[
+        BVB_VULKAN_SEMAPHORE_CREATE_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_semaphore_create_request(
+              semaphore_create_wire, &semaphore_create) == 0);
+    struct bvb_vulkan_semaphore_create_request semaphore_create_decoded;
+    CHECK(bvb_protocol_decode_vulkan_semaphore_create_request(
+              semaphore_create_wire, &semaphore_create_decoded) == 0);
+    CHECK(semaphore_create_decoded.initial_value == UINT64_C(7));
+    CHECK(semaphore_create_decoded.semaphore_type == 1U);
+    const struct bvb_vulkan_semaphore_signal_request semaphore_signal = {
+        .device_id = semaphore_create.device_id,
+        .semaphore_id = UINT64_C(0x1100000000000001),
+        .value = UINT64_C(11),
+    };
+    uint8_t semaphore_signal_wire[
+        BVB_VULKAN_SEMAPHORE_SIGNAL_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_semaphore_signal_request(
+              semaphore_signal_wire, &semaphore_signal) == 0);
+    struct bvb_vulkan_semaphore_signal_request semaphore_signal_decoded;
+    CHECK(bvb_protocol_decode_vulkan_semaphore_signal_request(
+              semaphore_signal_wire, &semaphore_signal_decoded) == 0);
+    CHECK(semaphore_signal_decoded.value == UINT64_C(11));
+    const struct bvb_vulkan_semaphore_wait_request semaphore_wait = {
+        .device_id = semaphore_create.device_id,
+        .timeout = UINT64_C(1234),
+        .flags = 1U,
+        .semaphore_count = 2U,
+        .semaphores = {
+            {UINT64_C(0x1100000000000001), UINT64_C(11)},
+            {UINT64_C(0x1100000000000002), UINT64_C(13)},
+        },
+    };
+    uint8_t semaphore_wait_wire[BVB_VULKAN_SEMAPHORE_WAIT_MAX_SIZE];
+    uint32_t semaphore_wait_length = 0U;
+    CHECK(bvb_protocol_encode_vulkan_semaphore_wait_request(
+              semaphore_wait_wire, &semaphore_wait,
+              &semaphore_wait_length) == 0);
+    CHECK(semaphore_wait_length ==
+          BVB_VULKAN_SEMAPHORE_WAIT_PREFIX_SIZE +
+              2U * BVB_VULKAN_SEMAPHORE_WAIT_RECORD_SIZE);
+    struct bvb_vulkan_semaphore_wait_request semaphore_wait_decoded;
+    CHECK(bvb_protocol_decode_vulkan_semaphore_wait_request(
+              semaphore_wait_wire, semaphore_wait_length,
+              &semaphore_wait_decoded) == 0);
+    CHECK(semaphore_wait_decoded.semaphore_count == 2U);
+    CHECK(semaphore_wait_decoded.semaphores[1].value == UINT64_C(13));
+    struct bvb_vulkan_semaphore_counter_response counter_response = {
+        .vulkan_result = 0,
+        .value = UINT64_C(13),
+    };
+    uint8_t counter_wire[BVB_VULKAN_SEMAPHORE_COUNTER_RESPONSE_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_semaphore_counter_response(
+              counter_wire, &counter_response) == 0);
+    struct bvb_vulkan_semaphore_counter_response counter_decoded;
+    CHECK(bvb_protocol_decode_vulkan_semaphore_counter_response(
+              counter_wire, &counter_decoded) == 0);
+    CHECK(counter_decoded.value == UINT64_C(13));
 
     uint8_t memory_bytes[BVB_VULKAN_MEMORY_IO_MAX_BYTES];
     for (size_t index = 0U; index < sizeof(memory_bytes); ++index) {

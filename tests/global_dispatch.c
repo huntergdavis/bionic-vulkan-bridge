@@ -642,6 +642,11 @@ int main(void) {
     PFN_vkGetFenceStatus get_fence_status = NULL;
     PFN_vkWaitForFences wait_for_fences = NULL;
     PFN_vkResetFences reset_fences = NULL;
+    PFN_vkCreateSemaphore create_semaphore = NULL;
+    PFN_vkDestroySemaphore destroy_semaphore = NULL;
+    PFN_vkGetSemaphoreCounterValue get_semaphore_counter = NULL;
+    PFN_vkWaitSemaphores wait_semaphores = NULL;
+    PFN_vkSignalSemaphore signal_semaphore = NULL;
     erased = vkGetDeviceProcAddr(device, "vkGetDeviceQueue");
     CHECK(erased != NULL);
     memcpy(&get_device_queue, &erased, sizeof(get_device_queue));
@@ -730,6 +735,25 @@ int main(void) {
     erased = vkGetDeviceProcAddr(device, "vkResetFences");
     CHECK(erased != NULL);
     memcpy(&reset_fences, &erased, sizeof(reset_fences));
+    erased = vkGetDeviceProcAddr(device, "vkCreateSemaphore");
+    CHECK(erased != NULL);
+    memcpy(&create_semaphore, &erased, sizeof(create_semaphore));
+    erased = vkGetDeviceProcAddr(device, "vkDestroySemaphore");
+    CHECK(erased != NULL);
+    memcpy(&destroy_semaphore, &erased, sizeof(destroy_semaphore));
+    erased = vkGetDeviceProcAddr(device, "vkGetSemaphoreCounterValue");
+    CHECK(erased != NULL);
+    memcpy(&get_semaphore_counter, &erased, sizeof(get_semaphore_counter));
+    CHECK(vkGetDeviceProcAddr(device, "vkGetSemaphoreCounterValueKHR") ==
+          erased);
+    erased = vkGetDeviceProcAddr(device, "vkWaitSemaphores");
+    CHECK(erased != NULL);
+    memcpy(&wait_semaphores, &erased, sizeof(wait_semaphores));
+    CHECK(vkGetDeviceProcAddr(device, "vkWaitSemaphoresKHR") == erased);
+    erased = vkGetDeviceProcAddr(device, "vkSignalSemaphore");
+    CHECK(erased != NULL);
+    memcpy(&signal_semaphore, &erased, sizeof(signal_semaphore));
+    CHECK(vkGetDeviceProcAddr(device, "vkSignalSemaphoreKHR") == erased);
     CHECK(vkGetDeviceProcAddr(device, "vkCmdDraw") != NULL);
     PFN_vkCreateSwapchainKHR create_swapchain = NULL;
     PFN_vkDestroySwapchainKHR destroy_swapchain = NULL;
@@ -939,6 +963,46 @@ int main(void) {
     CHECK(mismatched_words == 0U);
     CHECK(reset_fences(device, 1U, &fence) == VK_SUCCESS);
     CHECK(get_fence_status(device, fence) == VK_NOT_READY);
+    const VkSemaphoreTypeCreateInfo timeline_type = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+        .semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+        .initialValue = UINT64_C(7),
+    };
+    const VkSemaphoreCreateInfo semaphore_create_info = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = &timeline_type,
+    };
+    VkSemaphore timeline = VK_NULL_HANDLE;
+    CHECK(create_semaphore(device, &semaphore_create_info, NULL, &timeline) ==
+          VK_SUCCESS);
+    uint64_t timeline_id = 0U;
+    memcpy(&timeline_id, &timeline, sizeof(timeline));
+    CHECK(bvb_handle_type(timeline_id) == BVB_OBJECT_SEMAPHORE);
+    CHECK(bvb_handle_serial(timeline_id) == 1U);
+    uint64_t timeline_value = 0U;
+    CHECK(get_semaphore_counter(device, timeline, &timeline_value) ==
+          VK_SUCCESS);
+    CHECK(timeline_value == UINT64_C(7));
+    const VkSemaphoreSignalInfo signal_info = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO,
+        .semaphore = timeline,
+        .value = UINT64_C(11),
+    };
+    CHECK(signal_semaphore(device, &signal_info) == VK_SUCCESS);
+    CHECK(get_semaphore_counter(device, timeline, &timeline_value) ==
+          VK_SUCCESS);
+    CHECK(timeline_value == UINT64_C(11));
+    uint64_t wait_value = UINT64_C(11);
+    const VkSemaphoreWaitInfo wait_info = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO,
+        .semaphoreCount = 1U,
+        .pSemaphores = &timeline,
+        .pValues = &wait_value,
+    };
+    CHECK(wait_semaphores(device, &wait_info, 0U) == VK_SUCCESS);
+    wait_value = UINT64_C(12);
+    CHECK(wait_semaphores(device, &wait_info, 0U) == VK_TIMEOUT);
+    destroy_semaphore(device, timeline, NULL);
     CHECK(reset_command_pool(device, command_pool, 0U) == VK_SUCCESS);
     free_command_buffers(device, command_pool, 1U, &command_buffer);
     destroy_command_pool(device, command_pool, NULL);

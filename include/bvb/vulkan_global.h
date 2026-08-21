@@ -199,6 +199,26 @@ int bvb_vulkan_global_context_wait_fence(
 int bvb_vulkan_global_context_reset_fence(
     const struct bvb_vulkan_global_context *context, uint64_t fence_id,
     int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_create_semaphore(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_semaphore_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_destroy_semaphore(
+    struct bvb_vulkan_global_context *context, uint64_t semaphore_id,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_get_semaphore_counter(
+    const struct bvb_vulkan_global_context *context, uint64_t semaphore_id,
+    struct bvb_vulkan_semaphore_counter_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_wait_semaphores(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_semaphore_wait_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_signal_semaphore(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_semaphore_signal_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size);
 int bvb_vulkan_global_context_queue_submit_command_fence(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_queue_submit_command_fence_request *request,

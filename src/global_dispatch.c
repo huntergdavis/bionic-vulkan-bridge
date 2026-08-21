@@ -3946,6 +3946,188 @@ static void VKAPI_CALL bvb_bridge_vkDestroyFence(
         BVB_OBJECT_FENCE, BVB_OPCODE_VULKAN_FENCE_DESTROY, allocator);
 }
 
+static VkResult VKAPI_CALL bvb_bridge_vkCreateSemaphore(
+    VkDevice device, const VkSemaphoreCreateInfo *create_info,
+    const VkAllocationCallbacks *allocator, VkSemaphore *semaphore) {
+    if (semaphore != NULL) *semaphore = VK_NULL_HANDLE;
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || create_info == NULL || semaphore == NULL ||
+        allocator != NULL ||
+        create_info->sType != VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO ||
+        create_info->flags != 0U)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    VkSemaphoreType semaphore_type = VK_SEMAPHORE_TYPE_BINARY;
+    uint64_t initial_value = 0U;
+    if (create_info->pNext != NULL) {
+        const VkSemaphoreTypeCreateInfo *type_info = create_info->pNext;
+        if (type_info->sType !=
+                VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO ||
+            type_info->pNext != NULL ||
+            (type_info->semaphoreType != VK_SEMAPHORE_TYPE_BINARY &&
+             type_info->semaphoreType != VK_SEMAPHORE_TYPE_TIMELINE) ||
+            (type_info->semaphoreType == VK_SEMAPHORE_TYPE_BINARY &&
+             type_info->initialValue != 0U))
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        semaphore_type = type_info->semaphoreType;
+        initial_value = type_info->initialValue;
+    }
+    struct bvb_resource_proxy *state = calloc(1, sizeof(*state));
+    if (state == NULL) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    const struct bvb_vulkan_semaphore_create_request decoded = {
+        .device_id = device_state->wire_id,
+        .initial_value = initial_value,
+        .semaphore_type = semaphore_type,
+        .flags = create_info->flags,
+    };
+    uint8_t payload[BVB_VULKAN_SEMAPHORE_CREATE_REQUEST_SIZE];
+    int result = bvb_protocol_encode_vulkan_semaphore_create_request(
+        payload, &decoded);
+    if (result != 0 || pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        free(state);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    uint64_t wire_id = 0U;
+    VkResult vulkan_result = create_resource_locked(
+        BVB_OPCODE_VULKAN_SEMAPHORE_CREATE, payload, sizeof(payload),
+        BVB_OBJECT_SEMAPHORE, device_state->wire_id, state, &wire_id);
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (vulkan_result != VK_SUCCESS) {
+        free(state);
+        return vulkan_result;
+    }
+    memcpy(semaphore, &wire_id, sizeof(*semaphore));
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL bvb_bridge_vkDestroySemaphore(
+    VkDevice device, VkSemaphore semaphore,
+    const VkAllocationCallbacks *allocator) {
+    destroy_resource(
+        device, non_dispatchable_wire_id(&semaphore, sizeof(semaphore)),
+        BVB_OBJECT_SEMAPHORE, BVB_OPCODE_VULKAN_SEMAPHORE_DESTROY, allocator);
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkGetSemaphoreCounterValue(
+    VkDevice device, VkSemaphore semaphore, uint64_t *value) {
+    if (value != NULL) *value = 0U;
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    const uint64_t wire_id = non_dispatchable_wire_id(
+        &semaphore, sizeof(semaphore));
+    if (device_state == NULL || value == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    struct bvb_resource_proxy *state =
+        resource_proxy_locked(wire_id, BVB_OBJECT_SEMAPHORE);
+    int result = state != NULL && state->parent_id == device_state->wire_id
+                     ? connect_locked() : -EINVAL;
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_SEMAPHORE_COUNTER,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_OBJECT_ID_SIZE,
+    };
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_object_id(
+            request.payload, wire_id, BVB_OBJECT_SEMAPHORE);
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) result = exchange_locked(&request, &response);
+    if (result == 0 &&
+        (response.header.status != 0 || response.header.payload_length !=
+            BVB_VULKAN_SEMAPHORE_COUNTER_RESPONSE_SIZE)) result = -EPROTO;
+    struct bvb_vulkan_semaphore_counter_response decoded = {
+        .vulkan_result = VK_ERROR_INITIALIZATION_FAILED,
+    };
+    if (result == 0)
+        result = bvb_protocol_decode_vulkan_semaphore_counter_response(
+            response.payload, &decoded);
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result == 0 && decoded.vulkan_result == VK_SUCCESS)
+        *value = decoded.value;
+    return result == 0 ? (VkResult)decoded.vulkan_result
+                       : VK_ERROR_INITIALIZATION_FAILED;
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkSignalSemaphore(
+    VkDevice device, const VkSemaphoreSignalInfo *signal_info) {
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || signal_info == NULL ||
+        signal_info->sType != VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO ||
+        signal_info->pNext != NULL)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    const uint64_t wire_id = non_dispatchable_wire_id(
+        &signal_info->semaphore, sizeof(signal_info->semaphore));
+    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    struct bvb_resource_proxy *state =
+        resource_proxy_locked(wire_id, BVB_OBJECT_SEMAPHORE);
+    int result = state != NULL && state->parent_id == device_state->wire_id
+                     ? 0 : -EINVAL;
+    const struct bvb_vulkan_semaphore_signal_request decoded = {
+        .device_id = device_state->wire_id,
+        .semaphore_id = wire_id,
+        .value = signal_info->value,
+    };
+    uint8_t payload[BVB_VULKAN_SEMAPHORE_SIGNAL_REQUEST_SIZE];
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_semaphore_signal_request(
+            payload, &decoded);
+    VkResult vulkan_result = result == 0
+        ? result_request_locked(BVB_OPCODE_VULKAN_SEMAPHORE_SIGNAL,
+                                payload, sizeof(payload))
+        : VK_ERROR_INITIALIZATION_FAILED;
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return vulkan_result;
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkWaitSemaphores(
+    VkDevice device, const VkSemaphoreWaitInfo *wait_info, uint64_t timeout) {
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || wait_info == NULL ||
+        wait_info->sType != VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO ||
+        wait_info->pNext != NULL || wait_info->semaphoreCount == 0U ||
+        wait_info->semaphoreCount > BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT ||
+        wait_info->pSemaphores == NULL || wait_info->pValues == NULL ||
+        (wait_info->flags & ~VK_SEMAPHORE_WAIT_ANY_BIT) != 0U)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    struct bvb_vulkan_semaphore_wait_request decoded = {
+        .device_id = device_state->wire_id,
+        .timeout = timeout,
+        .flags = wait_info->flags,
+        .semaphore_count = wait_info->semaphoreCount,
+    };
+    int result = 0;
+    for (uint32_t index = 0U; index < wait_info->semaphoreCount; ++index) {
+        const uint64_t wire_id = non_dispatchable_wire_id(
+            &wait_info->pSemaphores[index], sizeof(VkSemaphore));
+        struct bvb_resource_proxy *state =
+            resource_proxy_locked(wire_id, BVB_OBJECT_SEMAPHORE);
+        if (state == NULL || state->parent_id != device_state->wire_id) {
+            result = -EINVAL;
+            break;
+        }
+        decoded.semaphores[index] =
+            (struct bvb_vulkan_semaphore_wait_record){
+                .semaphore_id = wire_id,
+                .value = wait_info->pValues[index],
+            };
+    }
+    uint8_t payload[BVB_VULKAN_SEMAPHORE_WAIT_MAX_SIZE];
+    uint32_t payload_length = 0U;
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_semaphore_wait_request(
+            payload, &decoded, &payload_length);
+    VkResult vulkan_result = result == 0
+        ? result_request_locked(BVB_OPCODE_VULKAN_SEMAPHORE_WAIT,
+                                payload, payload_length)
+        : VK_ERROR_INITIALIZATION_FAILED;
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return vulkan_result;
+}
+
 static VkResult fence_result_operation(
     VkDevice device, VkFence fence, uint16_t opcode) {
     struct bvb_device_proxy *device_state = device_proxy(device);
@@ -4394,6 +4576,16 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     BVB_DEVICE_MATCH("vkGetFenceStatus", bvb_bridge_vkGetFenceStatus)
     BVB_DEVICE_MATCH("vkWaitForFences", bvb_bridge_vkWaitForFences)
     BVB_DEVICE_MATCH("vkResetFences", bvb_bridge_vkResetFences)
+    BVB_DEVICE_MATCH("vkCreateSemaphore", bvb_bridge_vkCreateSemaphore)
+    BVB_DEVICE_MATCH("vkDestroySemaphore", bvb_bridge_vkDestroySemaphore)
+    BVB_DEVICE_MATCH("vkGetSemaphoreCounterValue",
+                     bvb_bridge_vkGetSemaphoreCounterValue)
+    BVB_DEVICE_MATCH("vkGetSemaphoreCounterValueKHR",
+                     bvb_bridge_vkGetSemaphoreCounterValue)
+    BVB_DEVICE_MATCH("vkWaitSemaphores", bvb_bridge_vkWaitSemaphores)
+    BVB_DEVICE_MATCH("vkWaitSemaphoresKHR", bvb_bridge_vkWaitSemaphores)
+    BVB_DEVICE_MATCH("vkSignalSemaphore", bvb_bridge_vkSignalSemaphore)
+    BVB_DEVICE_MATCH("vkSignalSemaphoreKHR", bvb_bridge_vkSignalSemaphore)
 #undef BVB_DEVICE_MATCH
     return NULL;
 }

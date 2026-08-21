@@ -81,7 +81,12 @@ enum {
     BVB_OPCODE_VULKAN_DEVICE_CREATE_PACKED = 63,
     BVB_OPCODE_VULKAN_SWAPCHAIN_PREPARE = 64,
     BVB_OPCODE_VULKAN_SWAPCHAIN_DESTROY = 65,
-    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_SWAPCHAIN_DESTROY,
+    BVB_OPCODE_VULKAN_SEMAPHORE_CREATE = 80,
+    BVB_OPCODE_VULKAN_SEMAPHORE_DESTROY = 81,
+    BVB_OPCODE_VULKAN_SEMAPHORE_COUNTER = 82,
+    BVB_OPCODE_VULKAN_SEMAPHORE_WAIT = 83,
+    BVB_OPCODE_VULKAN_SEMAPHORE_SIGNAL = 84,
+    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_SEMAPHORE_SIGNAL,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -148,6 +153,16 @@ enum {
     BVB_VULKAN_FENCE_CREATE_REQUEST_SIZE = 16,
     BVB_VULKAN_FENCE_WAIT_REQUEST_SIZE = 24,
     BVB_VULKAN_QUEUE_SUBMIT_COMMAND_FENCE_REQUEST_SIZE = 24,
+    BVB_VULKAN_SEMAPHORE_CREATE_REQUEST_SIZE = 24,
+    BVB_VULKAN_SEMAPHORE_COUNTER_RESPONSE_SIZE = 16,
+    BVB_VULKAN_SEMAPHORE_SIGNAL_REQUEST_SIZE = 24,
+    BVB_VULKAN_SEMAPHORE_WAIT_PREFIX_SIZE = 24,
+    BVB_VULKAN_SEMAPHORE_WAIT_RECORD_SIZE = 16,
+    BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT = 16,
+    BVB_VULKAN_SEMAPHORE_WAIT_MAX_SIZE =
+        BVB_VULKAN_SEMAPHORE_WAIT_PREFIX_SIZE +
+        BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT *
+            BVB_VULKAN_SEMAPHORE_WAIT_RECORD_SIZE,
     BVB_VULKAN_MEMORY_IO_PREFIX_SIZE = 24,
     BVB_VULKAN_MEMORY_IO_RESPONSE_PREFIX_SIZE = 8,
     BVB_EXTERNAL_MEMORY_IMPORT_REQUEST_SIZE = 16,
@@ -572,6 +587,38 @@ struct bvb_vulkan_queue_submit_command_fence_request {
     uint64_t fence_id;
 };
 
+struct bvb_vulkan_semaphore_create_request {
+    uint64_t device_id;
+    uint64_t initial_value;
+    uint32_t semaphore_type;
+    uint32_t flags;
+};
+
+struct bvb_vulkan_semaphore_counter_response {
+    int32_t vulkan_result;
+    uint64_t value;
+};
+
+struct bvb_vulkan_semaphore_signal_request {
+    uint64_t device_id;
+    uint64_t semaphore_id;
+    uint64_t value;
+};
+
+struct bvb_vulkan_semaphore_wait_record {
+    uint64_t semaphore_id;
+    uint64_t value;
+};
+
+struct bvb_vulkan_semaphore_wait_request {
+    uint64_t device_id;
+    uint64_t timeout;
+    uint32_t flags;
+    uint32_t semaphore_count;
+    struct bvb_vulkan_semaphore_wait_record
+        semaphores[BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT];
+};
+
 struct bvb_vulkan_memory_io_request {
     uint64_t memory_id;
     uint64_t offset;
@@ -962,6 +1009,31 @@ int bvb_protocol_encode_vulkan_queue_submit_command_fence_request(
 int bvb_protocol_decode_vulkan_queue_submit_command_fence_request(
     const uint8_t input[BVB_VULKAN_QUEUE_SUBMIT_COMMAND_FENCE_REQUEST_SIZE],
     struct bvb_vulkan_queue_submit_command_fence_request *request);
+int bvb_protocol_encode_vulkan_semaphore_create_request(
+    uint8_t output[BVB_VULKAN_SEMAPHORE_CREATE_REQUEST_SIZE],
+    const struct bvb_vulkan_semaphore_create_request *request);
+int bvb_protocol_decode_vulkan_semaphore_create_request(
+    const uint8_t input[BVB_VULKAN_SEMAPHORE_CREATE_REQUEST_SIZE],
+    struct bvb_vulkan_semaphore_create_request *request);
+int bvb_protocol_encode_vulkan_semaphore_counter_response(
+    uint8_t output[BVB_VULKAN_SEMAPHORE_COUNTER_RESPONSE_SIZE],
+    const struct bvb_vulkan_semaphore_counter_response *response);
+int bvb_protocol_decode_vulkan_semaphore_counter_response(
+    const uint8_t input[BVB_VULKAN_SEMAPHORE_COUNTER_RESPONSE_SIZE],
+    struct bvb_vulkan_semaphore_counter_response *response);
+int bvb_protocol_encode_vulkan_semaphore_signal_request(
+    uint8_t output[BVB_VULKAN_SEMAPHORE_SIGNAL_REQUEST_SIZE],
+    const struct bvb_vulkan_semaphore_signal_request *request);
+int bvb_protocol_decode_vulkan_semaphore_signal_request(
+    const uint8_t input[BVB_VULKAN_SEMAPHORE_SIGNAL_REQUEST_SIZE],
+    struct bvb_vulkan_semaphore_signal_request *request);
+int bvb_protocol_encode_vulkan_semaphore_wait_request(
+    uint8_t output[BVB_VULKAN_SEMAPHORE_WAIT_MAX_SIZE],
+    const struct bvb_vulkan_semaphore_wait_request *request,
+    uint32_t *output_length);
+int bvb_protocol_decode_vulkan_semaphore_wait_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_semaphore_wait_request *request);
 int bvb_protocol_encode_vulkan_memory_write_request(
     uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
     const struct bvb_vulkan_memory_io_request *request,

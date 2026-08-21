@@ -42,6 +42,25 @@ static int fake_fence_signaled;
 static const VkFence fake_fence_handle =
     (VkFence)(uintptr_t)UINT64_C(0x9000);
 
+enum { BVB_FAKE_SEMAPHORE_CAPACITY = 32 };
+
+struct bvb_fake_semaphore_record {
+    VkSemaphore handle;
+    VkSemaphoreType type;
+    uint64_t value;
+};
+
+static struct bvb_fake_semaphore_record
+    fake_semaphores[BVB_FAKE_SEMAPHORE_CAPACITY];
+
+static struct bvb_fake_semaphore_record *fake_semaphore_record(
+    VkSemaphore semaphore) {
+    for (size_t index = 0U; index < BVB_FAKE_SEMAPHORE_CAPACITY; ++index)
+        if (fake_semaphores[index].handle == semaphore)
+            return &fake_semaphores[index];
+    return NULL;
+}
+
 enum { BVB_FAKE_MEMORY_CAPACITY = 8 };
 
 struct bvb_fake_memory_record {
@@ -787,11 +806,38 @@ static VkResult VKAPI_CALL fake_create_semaphore(
     const VkAllocationCallbacks *allocator, VkSemaphore *semaphore) {
     static uintptr_t next_semaphore = 0x8000U;
     (void)device;
-    (void)allocator;
-    if (create_info == NULL || semaphore == NULL) {
+    if (create_info == NULL || semaphore == NULL || allocator != NULL ||
+        create_info->sType != VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO ||
+        create_info->flags != 0U) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
+    VkSemaphoreType type = VK_SEMAPHORE_TYPE_BINARY;
+    uint64_t initial_value = 0U;
+    if (create_info->pNext != NULL) {
+        const VkSemaphoreTypeCreateInfo *type_info = create_info->pNext;
+        if (type_info->sType !=
+                VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO ||
+            type_info->pNext != NULL ||
+            (type_info->semaphoreType != VK_SEMAPHORE_TYPE_BINARY &&
+             type_info->semaphoreType != VK_SEMAPHORE_TYPE_TIMELINE))
+            return VK_ERROR_INITIALIZATION_FAILED;
+        type = type_info->semaphoreType;
+        initial_value = type_info->initialValue;
+    }
+    struct bvb_fake_semaphore_record *record = NULL;
+    for (size_t index = 0U; index < BVB_FAKE_SEMAPHORE_CAPACITY; ++index) {
+        if (fake_semaphores[index].handle == VK_NULL_HANDLE) {
+            record = &fake_semaphores[index];
+            break;
+        }
+    }
+    if (record == NULL) return VK_ERROR_TOO_MANY_OBJECTS;
     *semaphore = (VkSemaphore)next_semaphore++;
+    *record = (struct bvb_fake_semaphore_record){
+        .handle = *semaphore,
+        .type = type,
+        .value = initial_value,
+    };
     return VK_SUCCESS;
 }
 
@@ -799,8 +845,64 @@ static void VKAPI_CALL fake_destroy_semaphore(
     VkDevice device, VkSemaphore semaphore,
     const VkAllocationCallbacks *allocator) {
     (void)device;
-    (void)semaphore;
     (void)allocator;
+    struct bvb_fake_semaphore_record *record =
+        fake_semaphore_record(semaphore);
+    if (record != NULL)
+        *record = (struct bvb_fake_semaphore_record){0};
+}
+
+static VkResult VKAPI_CALL fake_get_semaphore_counter_value(
+    VkDevice device, VkSemaphore semaphore, uint64_t *value) {
+    (void)device;
+    struct bvb_fake_semaphore_record *record =
+        fake_semaphore_record(semaphore);
+    if (record == NULL || record->type != VK_SEMAPHORE_TYPE_TIMELINE ||
+        value == NULL) return VK_ERROR_INITIALIZATION_FAILED;
+    *value = record->value;
+    return VK_SUCCESS;
+}
+
+static VkResult VKAPI_CALL fake_wait_semaphores(
+    VkDevice device, const VkSemaphoreWaitInfo *wait_info, uint64_t timeout) {
+    (void)device;
+    (void)timeout;
+    if (wait_info == NULL ||
+        wait_info->sType != VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO ||
+        wait_info->pNext != NULL || wait_info->semaphoreCount == 0U ||
+        wait_info->pSemaphores == NULL || wait_info->pValues == NULL ||
+        (wait_info->flags & ~VK_SEMAPHORE_WAIT_ANY_BIT) != 0U)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    bool any = false;
+    bool all = true;
+    for (uint32_t index = 0U; index < wait_info->semaphoreCount; ++index) {
+        struct bvb_fake_semaphore_record *record =
+            fake_semaphore_record(wait_info->pSemaphores[index]);
+        if (record == NULL || record->type != VK_SEMAPHORE_TYPE_TIMELINE)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        const bool ready = record->value >= wait_info->pValues[index];
+        any = any || ready;
+        all = all && ready;
+    }
+    const bool ready = (wait_info->flags & VK_SEMAPHORE_WAIT_ANY_BIT) != 0U
+                           ? any : all;
+    return ready ? VK_SUCCESS : VK_TIMEOUT;
+}
+
+static VkResult VKAPI_CALL fake_signal_semaphore(
+    VkDevice device, const VkSemaphoreSignalInfo *signal_info) {
+    (void)device;
+    if (signal_info == NULL ||
+        signal_info->sType != VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO ||
+        signal_info->pNext != NULL)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    struct bvb_fake_semaphore_record *record =
+        fake_semaphore_record(signal_info->semaphore);
+    if (record == NULL || record->type != VK_SEMAPHORE_TYPE_TIMELINE ||
+        signal_info->value <= record->value)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    record->value = signal_info->value;
+    return VK_SUCCESS;
 }
 
 static VkResult VKAPI_CALL fake_import_semaphore_fd(
@@ -1413,6 +1515,10 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkGetSwapchainImagesKHR", fake_get_swapchain_images)
     BVB_DEVICE_MATCH("vkCreateSemaphore", fake_create_semaphore)
     BVB_DEVICE_MATCH("vkDestroySemaphore", fake_destroy_semaphore)
+    BVB_DEVICE_MATCH("vkGetSemaphoreCounterValue",
+                     fake_get_semaphore_counter_value)
+    BVB_DEVICE_MATCH("vkWaitSemaphores", fake_wait_semaphores)
+    BVB_DEVICE_MATCH("vkSignalSemaphore", fake_signal_semaphore)
     BVB_DEVICE_MATCH("vkImportSemaphoreFdKHR", fake_import_semaphore_fd)
     BVB_DEVICE_MATCH("vkCreateFence", fake_create_fence)
     BVB_DEVICE_MATCH("vkDestroyFence", fake_destroy_fence)

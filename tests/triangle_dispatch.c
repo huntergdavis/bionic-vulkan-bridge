@@ -127,7 +127,17 @@ int main(void) {
                         strcmp(entry->name, "vkDestroyFence") == 0 ||
                         strcmp(entry->name, "vkGetFenceStatus") == 0 ||
                         strcmp(entry->name, "vkWaitForFences") == 0 ||
-                        strcmp(entry->name, "vkResetFences") == 0)) {
+                        strcmp(entry->name, "vkResetFences") == 0 ||
+                        strcmp(entry->name, "vkCreateSemaphore") == 0 ||
+                        strcmp(entry->name, "vkDestroySemaphore") == 0 ||
+                        strcmp(entry->name,
+                               "vkGetSemaphoreCounterValue") == 0 ||
+                        strcmp(entry->name,
+                               "vkGetSemaphoreCounterValueKHR") == 0 ||
+                        strcmp(entry->name, "vkWaitSemaphores") == 0 ||
+                        strcmp(entry->name, "vkWaitSemaphoresKHR") == 0 ||
+                        strcmp(entry->name, "vkSignalSemaphore") == 0 ||
+                        strcmp(entry->name, "vkSignalSemaphoreKHR") == 0)) {
                 CHECK(resolved == NULL);
             } else {
                 CHECK(resolved != NULL);
@@ -147,8 +157,8 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 54U);
-    CHECK(required_count == 386U);
+    CHECK(executable_count == 62U);
+    CHECK(required_count == 378U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");
