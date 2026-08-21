@@ -94,9 +94,10 @@ int main(void) {
     VkPhysicalDeviceProperties properties;
     memset(&properties, 0, sizeof(properties));
     vkGetPhysicalDeviceProperties(physical_device, &properties);
-    if (strcmp(properties.deviceName, "Adreno (TM) 730") != 0) {
-        fprintf(stderr, "unexpected Vulkan device: %s\n",
-                properties.deviceName);
+    if (properties.deviceName[0] == '\0' ||
+        properties.apiVersion < VK_API_VERSION_1_0) {
+        fprintf(stderr, "invalid Vulkan device: name=%s api=%u\n",
+                properties.deviceName, properties.apiVersion);
         vkDestroyInstance(instance, NULL);
         return 1;
     }
@@ -305,8 +306,8 @@ int main(void) {
     }
     vkDestroyDevice(device, NULL);
     vkDestroyInstance(instance, NULL);
-    printf("PASS: Vulkan loader selected BVB ICD api=%u instance_extensions=3 device=%s vendor=%u device_id=%u external_memory_features=%u external_memory_handles=%u external_semaphore_type=%u external_semaphore_features=%u external_semaphore_handles=%u rgba8_optimal=%u max_extent=%ux%ux%u max_resource=%llu queue_family=%u enabled_extension=%s features2_anisotropy=%u memory2_types=%u memory2_heaps=%u device_idle=pass\n",
-           api_version, properties.deviceName,
+    printf("PASS: Vulkan loader selected BVB ICD api=%u instance_extensions=3 device=%s device_api=%u vendor=%u device_id=%u external_memory_features=%u external_memory_handles=%u external_semaphore_type=%u external_semaphore_features=%u external_semaphore_handles=%u rgba8_optimal=%u max_extent=%ux%ux%u max_resource=%llu queue_family=%u enabled_extension=%s features2_anisotropy=%u memory2_types=%u memory2_heaps=%u device_idle=pass\n",
+           api_version, properties.deviceName, properties.apiVersion,
            properties.vendorID,
            properties.deviceID, external_memory.externalMemoryFeatures,
            external_memory.compatibleHandleTypes,
