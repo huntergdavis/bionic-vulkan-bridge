@@ -49,6 +49,7 @@ LIFECYCLE_RECORD = struct.Struct("<IHHIIIIQ32s")
 LIFECYCLE_ACK = struct.Struct("<IHHIi")
 E057_IMPORT_MARKER = "E057_FRAME_TRANSPORT_IMPORTED"
 E057_PRESENT_MARKER = "E057_FRAME_PRESENTED"
+E057_CONSUMER_FAIL_MARKER = "E057_FRAME_CONSUMER_FAIL"
 E076_EXPECTED_MARKER = "E076_FRAME_EXPECTED"
 NATIVE_LIBRARY = "lib/arm64-v8a/libbvb-visible-host.so"
 
@@ -428,6 +429,50 @@ def validate_runtime_client(client: pathlib.Path, animated_rgbw: bool = False) -
                 )
 
 
+def validate_client_bridge_icd(
+    client: pathlib.Path,
+    bridge_icd: pathlib.Path,
+    readelf: str,
+    timeout: float,
+) -> None:
+    dynamic = run_text([readelf, "-d", str(client)], timeout=timeout).stdout
+    needed = "Shared library: [libvulkan-bvb-glibc.so]"
+    if dynamic.count(needed) != 1:
+        raise GateFailure("producer does not need exactly one BVB glibc ICD")
+    runpath_match = re.search(
+        r"\((?:RUNPATH|RPATH)\).*Library (?:runpath|rpath): \[([^]]+)\]",
+        dynamic,
+    )
+    if runpath_match is None:
+        raise GateFailure("producer has no bounded RUNPATH for the BVB glibc ICD")
+    runpaths = [
+        pathlib.Path(item.replace("$ORIGIN", str(client.parent))).resolve()
+        for item in runpath_match.group(1).split(":")
+        if item
+    ]
+    if bridge_icd.parent != client.parent or client.parent not in runpaths:
+        raise GateFailure(
+            "producer RUNPATH does not select the pinned adjacent BVB glibc ICD"
+        )
+    adjacent = resolve_regular_file(client.parent / bridge_icd.name)
+    if not adjacent.samefile(bridge_icd):
+        raise GateFailure("producer-adjacent BVB glibc ICD is not the pinned artifact")
+
+
+def validate_frame_document(document: Any, animated_rgbw: bool) -> None:
+    if not isinstance(document, dict) or document.get("result") != "pass":
+        raise GateFailure(f"Activity frame helper did not import: {document}")
+    for name in ("generation", "image_count", "per_frame_java_calls", "per_frame_binder_calls"):
+        if type(document.get(name)) is not int:
+            raise GateFailure(f"Activity frame helper field is not an integer: {name}")
+    if document["generation"] <= 0 or not 2 <= document["image_count"] <= 4:
+        raise GateFailure("Activity frame helper generation/image count is invalid")
+    if animated_rgbw and document["image_count"] != 3:
+        raise GateFailure("RGBW proof requires the exact three-image ring")
+    if document["per_frame_java_calls"] != 0 or document["per_frame_binder_calls"] != 0:
+        raise GateFailure("Activity frame helper reported per-frame Java/Binder work")
+
+
 def parse_arguments() -> argparse.Namespace:
     project = pathlib.Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
@@ -439,6 +484,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--service", default=str(pathlib.Path.home() / "steam-arm64" / "bvb" / "bin" / "bvb-bridge-service"))
     parser.add_argument("--bridge-client", default=str(pathlib.Path.home() / "steam-arm64" / "bvb" / "bin" / "bvb-bridge-client"))
     parser.add_argument("--client")
+    parser.add_argument("--bridge-icd")
     parser.add_argument("--output-root", default=str(project / "out" / "activity-frame-v40"))
     parser.add_argument("--runtime-parent", default=os.environ.get("TMPDIR", "/tmp"))
     parser.add_argument("--timeout", type=float, default=60.0)
@@ -458,6 +504,13 @@ def parse_arguments() -> argparse.Namespace:
             "global-dispatch producer client"
         ),
     )
+    parser.add_argument(
+        "--expected-icd-sha256",
+        help=(
+            "required with --animated-rgbw; exact SHA-256 of the BVB glibc "
+            "ICD linked by the producer"
+        ),
+    )
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--am", default=os.environ.get("BVB_ACTIVITY_LAUNCHER", "am"))
@@ -466,6 +519,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--apksigner", default=os.environ.get("BVB_APKSIGNER", "apksigner"))
     parser.add_argument("--app-process", default=os.environ.get("BVB_APP_PROCESS", "/system/bin/app_process"))
     parser.add_argument("--logcat", default=os.environ.get("BVB_LOGCAT", "logcat"))
+    parser.add_argument("--readelf", default=os.environ.get("BVB_READELF", "readelf"))
     parser.add_argument("--pidof", default=os.environ.get("BVB_PIDOF", "pidof"))
     parser.add_argument("--grun", default=os.environ.get("BVB_GRUN", "grun"))
     parser.add_argument("--proc-net-unix", default="/proc/net/unix")
@@ -477,16 +531,19 @@ def parse_arguments() -> argparse.Namespace:
     for label, value in (
         ("--expected-service-sha256", arguments.expected_service_sha256),
         ("--expected-client-sha256", arguments.expected_client_sha256),
+        ("--expected-icd-sha256", arguments.expected_icd_sha256),
     ):
         if value is not None and re.fullmatch(r"[0-9a-f]{64}", value) is None:
             parser.error(f"{label} must be 64 lowercase hex digits")
     if arguments.animated_rgbw and (
         arguments.expected_service_sha256 is None
         or arguments.expected_client_sha256 is None
+        or arguments.bridge_icd is None
+        or arguments.expected_icd_sha256 is None
     ):
         parser.error(
-            "--animated-rgbw requires --expected-service-sha256 and "
-            "--expected-client-sha256"
+            "--animated-rgbw requires --expected-service-sha256, "
+            "--expected-client-sha256, --bridge-icd, and --expected-icd-sha256"
         )
     arguments.project = project
     return arguments
@@ -546,7 +603,7 @@ def run(arguments: argparse.Namespace) -> int:
     open_handles: list[Any] = []
     failure: BaseException | None = None
     sensitive_values: list[str] = []
-    am = pm = aapt = apksigner = app_process = logcat = pidof = grun = ""
+    am = pm = aapt = apksigner = app_process = logcat = readelf = pidof = grun = ""
 
     try:
         pm = resolve_executable(arguments.pm)
@@ -580,6 +637,7 @@ def run(arguments: argparse.Namespace) -> int:
         am = resolve_executable(arguments.am)
         app_process = resolve_executable(arguments.app_process)
         logcat = resolve_executable(arguments.logcat)
+        readelf = resolve_executable(arguments.readelf)
         pidof = resolve_executable(arguments.pidof)
         grun = resolve_executable(arguments.grun)
 
@@ -615,17 +673,25 @@ def run(arguments: argparse.Namespace) -> int:
         if not service.is_file() or service.is_symlink() or not os.access(service, os.X_OK):
             raise GateFailure(f"bridge service is unavailable or unsafe: {service}")
         validate_runtime_client(client, arguments.animated_rgbw)
+        bridge_icd: pathlib.Path | None = None
         if arguments.animated_rgbw:
             client = require_artifact_sha256(
                 client, arguments.expected_client_sha256,
                 "E076-or-newer global-dispatch producer client", executable=True,
             )
+            bridge_icd = require_artifact_sha256(
+                pathlib.Path(arguments.bridge_icd), arguments.expected_icd_sha256,
+                "BVB glibc ICD linked by the producer",
+            )
+            validate_client_bridge_icd(client, bridge_icd, readelf, arguments.timeout)
         result["artifacts"] = {
             "service": artifact(service),
             "installed_bridge_client": artifact(installed_bridge_client),
             "client": artifact(client),
             "service_loader": artifact(loader),
         }
+        if bridge_icd is not None:
+            result["artifacts"]["bridge_icd"] = artifact(bridge_icd)
 
         runtime_parent_candidate = pathlib.Path(arguments.runtime_parent)
         if runtime_parent_candidate.is_symlink():
@@ -685,7 +751,7 @@ def run(arguments: argparse.Namespace) -> int:
         activity_log_handle = activity_log.open("wb")
         open_handles.append(activity_log_handle)
         logcat_process = subprocess.Popen(
-            [logcat, "--pid", str(activity_pid), "-v", "threadtime"],
+            [logcat, "-T", "1", "--pid", str(activity_pid), "-v", "threadtime"],
             stdout=activity_log_handle,
             stderr=subprocess.STDOUT,
         )
@@ -714,6 +780,8 @@ def run(arguments: argparse.Namespace) -> int:
         client_err_handle = client_stderr.open("wb")
         open_handles.extend((client_out_handle, client_err_handle))
         client_environment = os.environ.copy()
+        for variable in ("LD_LIBRARY_PATH", "LD_PRELOAD", "LD_AUDIT"):
+            client_environment.pop(variable, None)
         client_environment["BVB_BRIDGE_SOCKET"] = str(control_socket)
         client_environment["BVB_GLOBAL_DISPATCH_HARDWARE"] = "1"
         client_environment["BVB_GLOBAL_DISPATCH_WSI_WIDTH"] = str(width)
@@ -740,8 +808,7 @@ def run(arguments: argparse.Namespace) -> int:
             handle.flush()
 
         frame_document = json.loads(helper_result.read_text())
-        if frame_document.get("result") != "pass":
-            raise GateFailure(f"Activity frame helper did not import: {frame_document}")
+        validate_frame_document(frame_document, arguments.animated_rgbw)
         client_text = client_stdout.read_text(errors="replace")
         if not client_text.startswith("PASS: global Vulkan discovery validation_mode=hardware"):
             raise GateFailure("global WSI client did not report its hardware PASS record")
@@ -753,10 +820,10 @@ def run(arguments: argparse.Namespace) -> int:
             if path.stat().st_size != 0:
                 raise GateFailure(f"{label} emitted stderr; see {path}")
         app_text = activity_log.read_text(errors="replace")
-        import_match = re.search(
+        import_matches = list(re.finditer(
             rf"{E057_IMPORT_MARKER} generation=(\d+) images=(\d+) "
             rf"width=(\d+) height=(\d+) format=(-?\d+)", app_text,
-        )
+        ))
         present_matches = list(re.finditer(
             rf"{E057_PRESENT_MARKER} generation=(\d+) sequence=(\d+) slot=(\d+)",
             app_text,
@@ -766,14 +833,21 @@ def run(arguments: argparse.Namespace) -> int:
             client_text,
         ))
         required_present_count = 4 if arguments.animated_rgbw else 1
-        if import_match is None or len(present_matches) < required_present_count:
-            raise GateFailure("Activity log is missing E057 import or present completion marker")
+        if len(import_matches) != 1 or len(present_matches) != required_present_count:
+            raise GateFailure(
+                "Activity log must contain exactly one E057 import and the exact "
+                "number of present completion markers"
+            )
+        if E057_CONSUMER_FAIL_MARKER in app_text:
+            raise GateFailure("Activity log contains E057 frame-consumer failure")
+        import_match = import_matches[0]
         import_generation = int(import_match.group(1))
         selected_presents = present_matches[:required_present_count]
         present_match = selected_presents[0]
         present_generation = int(present_match.group(1))
         if (
             import_generation != int(frame_document["generation"])
+            or int(import_match.group(2)) != int(frame_document["image_count"])
             or present_generation != import_generation
             or int(present_match.group(2)) < 1
             or int(import_match.group(3)) != width
@@ -783,6 +857,7 @@ def run(arguments: argparse.Namespace) -> int:
         correlations: list[dict[str, Any]] = []
         if arguments.animated_rgbw:
             expected_colors = ["red", "green", "blue", "white"]
+            expected_slots = [0, 1, 2, 0]
             if len(expected_matches) != 4:
                 raise GateFailure("producer log is missing four E076 expected-color markers")
             for index, (expected, presented) in enumerate(
@@ -793,6 +868,7 @@ def run(arguments: argparse.Namespace) -> int:
                 if (
                     sequence != index
                     or expected.group(2) != expected_colors[index - 1]
+                    or expected_slot != expected_slots[index - 1]
                     or int(presented.group(1)) != import_generation
                     or int(presented.group(2)) != sequence
                     or int(presented.group(3)) != expected_slot
@@ -812,11 +888,6 @@ def run(arguments: argparse.Namespace) -> int:
                         "activity_marker": presented.group(0),
                     }
                 )
-        first_failure = app_text.find("E057_FRAME_CONSUMER_FAIL")
-        first_present = app_text.find(E057_PRESENT_MARKER)
-        if first_failure >= 0 and first_failure < first_present:
-            raise GateFailure("E057 consumer failed before its first native present")
-
         result.update(
             {
                 "result": "pass",

@@ -176,7 +176,12 @@ import, tablet-visible pixels, Tomb Raider's first frame, or FPS.
 The bounded `test-rich-frame-animation-v40-termux.sh` handoff reuses the
 installed byte-identical v40 Activity without an APK change. Its default paths
 and immutable hashes select the isolated E077 candidate service and producer
-client, so the gate does not replace the installed bridge. It correlates each producer
+client plus the adjacent glibc ICD, so the gate does not replace the installed
+bridge. The producer's NEEDED/RUNPATH is checked against that exact ICD and
+inherited loader overrides are removed. The helper must report a positive
+generation, an exact three-image ring, and zero per-frame Java/Binder calls.
+One import and exactly four presents must match RGBW slots 0,1,2,0; any native
+consumer-failure marker rejects the proof. The gate correlates each producer
 `E076_FRAME_EXPECTED` RGBW sequence/slot with the Activity's
 `E057_FRAME_PRESENTED` generation/sequence/slot, and still leaves visual
 confirmation and screenshot status explicitly pending.

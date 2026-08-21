@@ -107,7 +107,16 @@ def main() -> int:
     assert 'parser.add_argument("--animated-rgbw", action="store_true")' in activity_runner
     assert '"--expected-service-sha256"' in activity_runner
     assert '"--expected-client-sha256"' in activity_runner
+    assert '"--expected-icd-sha256"' in activity_runner
+    assert '"--bridge-icd"' in activity_runner
     assert '"E076-or-newer global-dispatch producer client"' in activity_runner
+    assert "validate_client_bridge_icd" in activity_runner
+    assert "validate_frame_document" in activity_runner
+    assert "expected_slots = [0, 1, 2, 0]" in activity_runner
+    assert "len(import_matches) != 1" in activity_runner
+    assert "len(present_matches) != required_present_count" in activity_runner
+    assert "E057_CONSUMER_FAIL_MARKER in app_text" in activity_runner
+    assert '[logcat, "-T", "1"' in activity_runner
     assert '"BVB_TEST_ANIMATED_WSI"' in activity_runner
     assert '"expected_frame_correlations": correlations' in activity_runner
     assert "E076_VISUAL_CONFIRMATION_REQUIRED" in activity_runner
@@ -120,10 +129,13 @@ def main() -> int:
     assert "BVB_V40_STAGED_APK" in wrapper
     assert "BVB_E077_SERVICE" in wrapper
     assert "BVB_E077_CLIENT" in wrapper
+    assert "BVB_E077_ICD" in wrapper
     assert "214e8b112ade7a727af6748c8e4cd029f4f273ca38fef018613ca6481773a9a8" in wrapper
     assert "50a2589e2b166e8e3b796eda7839fb49c78a23a8506f357d553710fd44819024" in wrapper
+    assert "e6479b4abb15cca258a44d72a674c93900ea716e7030a1643409e8bcc7049d2f" in wrapper
     assert wrapper.index('"$@"') < wrapper.index("--expected-service-sha256")
     assert wrapper.index('"$@"') < wrapper.index("--expected-client-sha256")
+    assert wrapper.index('"$@"') < wrapper.index("--expected-icd-sha256")
     print("PASS: E076 rich command stream animation architecture")
     return 0
 

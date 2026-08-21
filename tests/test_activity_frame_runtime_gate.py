@@ -85,6 +85,41 @@ def main() -> int:
         assert staged_identity.version_code == 40
         assert staged_identity.sha256 == installed_identity.sha256
 
+        valid_frame = {
+            "result": "pass",
+            "generation": 7,
+            "image_count": 3,
+            "per_frame_java_calls": 0,
+            "per_frame_binder_calls": 0,
+        }
+        gate.validate_frame_document(valid_frame, True)
+        for field, value in (
+            ("generation", 0),
+            ("image_count", 4),
+            ("per_frame_java_calls", 1),
+            ("per_frame_binder_calls", True),
+        ):
+            invalid_frame = dict(valid_frame)
+            invalid_frame[field] = value
+            try:
+                gate.validate_frame_document(invalid_frame, True)
+            except gate.GateFailure:
+                pass
+            else:
+                raise AssertionError(f"invalid helper field was accepted: {field}")
+
+        producer = root / "bvb-global-dispatch-test-glibc"
+        bridge_icd = root / "libvulkan-bvb-glibc.so"
+        producer.write_bytes(b"producer")
+        producer.chmod(0o700)
+        bridge_icd.write_bytes(b"icd")
+        readelf = write_tool(
+            root / "readelf",
+            "print(' 0x1 (NEEDED) Shared library: [libvulkan-bvb-glibc.so]')\n"
+            f"print(' 0x1d (RUNPATH) Library runpath: [{root}]')\n",
+        )
+        gate.validate_client_bridge_icd(producer, bridge_icd, str(readelf), 2.0)
+
         pm = write_tool(
             root / "pm",
             f"print('package:{installed}')\n",
@@ -186,6 +221,8 @@ def main() -> int:
     assert help_result.returncode == 0, help_result.stderr
     assert "--preflight-only" in help_result.stdout
     assert "--present-hold-ms" in help_result.stdout
+    assert "--expected-icd-sha256" in help_result.stdout
+    assert "--bridge-icd" in help_result.stdout
 
     source = script_path.read_text()
     for required in (
@@ -193,6 +230,7 @@ def main() -> int:
         "versionCode 39 is explicitly refused",
         "E057_FRAME_TRANSPORT_IMPORTED",
         "E057_FRAME_PRESENTED",
+        "E057_FRAME_CONSUMER_FAIL",
         "prove_wrong_token_rejection",
         "FrameTransportClient",
         "force-stop",
@@ -201,6 +239,10 @@ def main() -> int:
         "EXPECTED_BRIDGE_CLIENT_SHA256",
         "EXPECTED_BRIDGE_SERVICE_SHA256",
         "EXPECTED_PRIVATE_TURNIP_SHA256",
+        "validate_client_bridge_icd",
+        "validate_frame_document",
+        'logcat, "-T", "1"',
+        'for variable in ("LD_LIBRARY_PATH", "LD_PRELOAD", "LD_AUDIT")',
     ):
         assert required in source
     assert "pkill" not in source

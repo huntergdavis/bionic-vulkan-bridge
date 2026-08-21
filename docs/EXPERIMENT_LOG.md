@@ -3210,9 +3210,20 @@ run reused the E034/E014/E042/E060/E075/E075a contracts already cited above.
 The next v40 animation gate was then reduced to one fail-closed command. From
 the exact E077 tablet candidate, `scripts/test-rich-frame-animation-v40-termux.sh`
 selects the candidate service SHA-256 `214e8b11...9a8`, producer-client SHA-256
-`50a2589e...024`, and staged v40 APK path by default, while still accepting
+`50a2589e...024`, glibc ICD SHA-256 `e6479b4a...9d2f`, and staged v40 APK path by default, while still accepting
 explicit environment/path overrides that must satisfy those immutable hashes.
 It runs the candidate in isolation and therefore does not replace installed
 E073. The Activity update remains a user-confirmed Android action, and the
 gate continues to stop at correlated RGBW metadata until a human confirms the
 changing colors and captures a screenshot.
+
+A read-only adversarial audit caught that service/client hashes alone did not
+prove which glibc ICD the dynamically linked producer loaded. The hardened
+runner now requires the adjacent ICD's exact hash, checks the producer's one
+`NEEDED` entry and RUNPATH, strips inherited `LD_LIBRARY_PATH`, `LD_PRELOAD`,
+and `LD_AUDIT`, and records the ICD artifact. It parses exactly one helper JSON
+document with positive generation, exactly three images, and zero per-frame
+Java/Binder calls; requires one import plus exactly four presents; requires
+slots 0,1,2,0; and rejects any `E057_FRAME_CONSUMER_FAIL`. Logcat starts with a
+bounded tail to exclude recycled-PID history. The exact integration `deja`
+query returned no hit; this hardening reused E057/E060/E074/E076/E077 evidence.
