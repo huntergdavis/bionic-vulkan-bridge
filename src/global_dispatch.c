@@ -86,6 +86,12 @@ struct bvb_resource_proxy {
     struct bvb_resource_proxy *next;
 };
 
+struct bvb_surface_proxy {
+    uint64_t wire_id;
+    uint64_t parent_id;
+    struct bvb_surface_proxy *next;
+};
+
 struct bvb_global_client_state {
     pthread_mutex_t mutex;
     int socket_fd;
@@ -98,6 +104,8 @@ struct bvb_global_client_state {
     struct bvb_command_pool_proxy *command_pools;
     struct bvb_command_buffer_proxy *command_buffers;
     struct bvb_resource_proxy *resources;
+    struct bvb_surface_proxy *surfaces;
+    uint64_t next_surface_serial;
 };
 
 static const uint64_t bvb_dispatch_anchor = UINT64_C(0x4256424449535030);
@@ -106,6 +114,7 @@ static struct bvb_global_client_state bvb_global_client = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
     .socket_fd = -1,
     .next_request_id = UINT32_C(0x42565000),
+    .next_surface_serial = 1U,
 };
 
 static const void *initial_dispatch_word(void) {
@@ -418,6 +427,52 @@ static uint64_t non_dispatchable_wire_id(const void *handle, size_t size) {
     return wire_id;
 }
 
+static VkSurfaceKHR surface_from_wire_id(uint64_t wire_id) {
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    _Static_assert(sizeof(surface) <= sizeof(wire_id),
+                   "VkSurfaceKHR exceeds bridge handle width");
+    memcpy(&surface, &wire_id, sizeof(surface));
+    return surface;
+}
+
+static struct bvb_surface_proxy *surface_proxy_locked(VkSurfaceKHR surface) {
+    const uint64_t wire_id = non_dispatchable_wire_id(&surface, sizeof(surface));
+    if (bvb_handle_expect(wire_id, BVB_OBJECT_SURFACE) != 0) {
+        return NULL;
+    }
+    for (struct bvb_surface_proxy *proxy = bvb_global_client.surfaces;
+         proxy != NULL; proxy = proxy->next) {
+        if (proxy->wire_id == wire_id) return proxy;
+    }
+    return NULL;
+}
+
+static void remove_surface_proxy_locked(struct bvb_surface_proxy *target) {
+    struct bvb_surface_proxy **cursor = &bvb_global_client.surfaces;
+    while (*cursor != NULL) {
+        struct bvb_surface_proxy *proxy = *cursor;
+        if (proxy == target) {
+            *cursor = proxy->next;
+            free(proxy);
+            return;
+        }
+        cursor = &proxy->next;
+    }
+}
+
+static void remove_surfaces_for_instance_locked(uint64_t parent_id) {
+    struct bvb_surface_proxy **cursor = &bvb_global_client.surfaces;
+    while (*cursor != NULL) {
+        struct bvb_surface_proxy *proxy = *cursor;
+        if (proxy->parent_id == parent_id) {
+            *cursor = proxy->next;
+            free(proxy);
+        } else {
+            cursor = &proxy->next;
+        }
+    }
+}
+
 static struct bvb_resource_proxy *resource_proxy_locked(
     uint64_t wire_id, enum bvb_object_type type) {
     if (bvb_handle_expect(wire_id, type) != 0) return NULL;
@@ -655,10 +710,17 @@ static VkResult VKAPI_CALL bvb_bridge_vkEnumerateInstanceVersion(
     return VK_SUCCESS;
 }
 
+static bool is_virtual_wsi_extension(const char *name) {
+    return strcmp(name, "VK_KHR_surface") == 0 ||
+           strcmp(name, "VK_KHR_xlib_surface") == 0 ||
+           strcmp(name, "VK_KHR_xcb_surface") == 0 ||
+           strcmp(name, "VK_KHR_wayland_surface") == 0;
+}
+
 static VkResult VKAPI_CALL bvb_bridge_vkEnumerateInstanceExtensionProperties(
     const char *layer_name, uint32_t *property_count,
     VkExtensionProperties *properties) {
-    static const VkExtensionProperties probe_wsi_extensions[] = {
+    static const VkExtensionProperties virtual_wsi_extensions[] = {
         {{"VK_KHR_surface"}, 25U},
         {{"VK_KHR_xlib_surface"}, 6U},
         {{"VK_KHR_xcb_surface"}, 6U},
@@ -704,15 +766,12 @@ static VkResult VKAPI_CALL bvb_bridge_vkEnumerateInstanceExtensionProperties(
     if (page.first != 0U || page.count != page.total_count) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    const bool probe_wsi = getenv("BVB_ICD_PROBE_WSI") != NULL &&
-                           strcmp(getenv("BVB_ICD_PROBE_WSI"), "1") == 0;
-    const uint32_t probe_count =
-        probe_wsi ? (uint32_t)(sizeof(probe_wsi_extensions) /
-                               sizeof(probe_wsi_extensions[0]))
-                  : 0U;
-    const uint32_t total_count = page.total_count + probe_count;
-    if (probe_wsi && getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
-        fprintf(stderr, "BVB_ICD_WSI_PROBE advertised=%u\n", probe_count);
+    const uint32_t virtual_count =
+        (uint32_t)(sizeof(virtual_wsi_extensions) /
+                   sizeof(virtual_wsi_extensions[0]));
+    const uint32_t total_count = page.total_count + virtual_count;
+    if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        fprintf(stderr, "BVB_ICD_WSI_READY advertised=%u\n", virtual_count);
     }
     const uint32_t capacity = properties == NULL ? 0U : *property_count;
     if (properties == NULL) {
@@ -725,8 +784,8 @@ static VkResult VKAPI_CALL bvb_bridge_vkEnumerateInstanceExtensionProperties(
                written * sizeof(*properties));
     }
     for (uint32_t index = 0U;
-         index < probe_count && written < capacity; ++index) {
-        properties[written++] = probe_wsi_extensions[index];
+         index < virtual_count && written < capacity; ++index) {
+        properties[written++] = virtual_wsi_extensions[index];
     }
     *property_count = written;
     return capacity < total_count ? VK_INCOMPLETE : VK_SUCCESS;
@@ -811,6 +870,9 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateInstance(
     for (uint32_t index = 0U;
          index < create_info->enabledExtensionCount; ++index) {
         const char *name = create_info->ppEnabledExtensionNames[index];
+        if (is_virtual_wsi_extension(name)) {
+            continue;
+        }
         bool duplicate = false;
         for (uint32_t prior = 0U; prior < unique_extension_count; ++prior) {
             if (strcmp(name, unique_extensions[prior]) == 0) {
@@ -962,6 +1024,7 @@ static void VKAPI_CALL bvb_bridge_vkDestroyInstance(
         result = -EPROTO;
     }
     if (result == 0) {
+        remove_surfaces_for_instance_locked(proxy->wire_id);
         remove_physical_proxies_locked(proxy->wire_id);
         proxy->magic = 0U;
     }
@@ -969,6 +1032,277 @@ static void VKAPI_CALL bvb_bridge_vkDestroyInstance(
     if (result == 0) {
         free(proxy);
     }
+}
+
+static int activity_status_locked(struct bvb_activity_status *status) {
+    if (status == NULL) return -EINVAL;
+    int result = connect_locked();
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_ACTIVITY_STATUS,
+        .request_id = next_request_id_locked(),
+    };
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) result = exchange_locked(&request, &response);
+    if (result == 0 &&
+        (response.header.status != 0 ||
+         response.header.payload_length != BVB_ACTIVITY_STATUS_SIZE)) {
+        result = response.header.status != 0 ? response.header.status : -EPROTO;
+    }
+    if (result == 0) {
+        result = bvb_protocol_decode_activity_status(response.payload, status);
+    }
+    return result;
+}
+
+static int ready_activity_status_locked(struct bvb_activity_status *status) {
+    int result = activity_status_locked(status);
+    const uint32_t required = BVB_ACTIVITY_WINDOW_PRESENT |
+                              BVB_ACTIVITY_RENDERER_READY;
+    if (result == 0 &&
+        (status->ingress_configured == 0U || status->width == 0U ||
+         status->height == 0U ||
+         (status->state_flags & required) != required)) {
+        result = -ENODEV;
+    }
+    return result;
+}
+
+static VkResult create_virtual_surface(
+    VkInstance instance, const void *create_info,
+    const VkAllocationCallbacks *allocator, VkSurfaceKHR *surface) {
+    (void)allocator;
+    if (surface != NULL) *surface = VK_NULL_HANDLE;
+    struct bvb_instance_proxy *instance_state = instance_proxy(instance);
+    if (instance_state == NULL || create_info == NULL || surface == NULL) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    struct bvb_surface_proxy *proxy = calloc(1, sizeof(*proxy));
+    if (proxy == NULL) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        free(proxy);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    VkResult result = VK_SUCCESS;
+    if (bvb_global_client.next_surface_serial == 0U ||
+        bvb_global_client.next_surface_serial > BVB_HANDLE_SERIAL_MASK) {
+        result = VK_ERROR_TOO_MANY_OBJECTS;
+    } else {
+        proxy->wire_id = bvb_handle_id(
+            BVB_OBJECT_SURFACE, bvb_global_client.next_surface_serial++);
+        proxy->parent_id = instance_state->wire_id;
+        proxy->next = bvb_global_client.surfaces;
+        bvb_global_client.surfaces = proxy;
+        *surface = surface_from_wire_id(proxy->wire_id);
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result != VK_SUCCESS) free(proxy);
+    return result;
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkCreateXlibSurfaceKHR(
+    VkInstance instance, const void *create_info,
+    const VkAllocationCallbacks *allocator, VkSurfaceKHR *surface) {
+    return create_virtual_surface(instance, create_info, allocator, surface);
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkCreateXcbSurfaceKHR(
+    VkInstance instance, const void *create_info,
+    const VkAllocationCallbacks *allocator, VkSurfaceKHR *surface) {
+    return create_virtual_surface(instance, create_info, allocator, surface);
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkCreateWaylandSurfaceKHR(
+    VkInstance instance, const void *create_info,
+    const VkAllocationCallbacks *allocator, VkSurfaceKHR *surface) {
+    return create_virtual_surface(instance, create_info, allocator, surface);
+}
+
+static void VKAPI_CALL bvb_bridge_vkDestroySurfaceKHR(
+    VkInstance instance, VkSurfaceKHR surface,
+    const VkAllocationCallbacks *allocator) {
+    (void)allocator;
+    struct bvb_instance_proxy *instance_state = instance_proxy(instance);
+    if (instance_state == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return;
+    }
+    struct bvb_surface_proxy *proxy = surface_proxy_locked(surface);
+    if (proxy != NULL && proxy->parent_id == instance_state->wire_id) {
+        remove_surface_proxy_locked(proxy);
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceSurfaceSupportKHR(
+    VkPhysicalDevice physical_device, uint32_t queue_family_index,
+    VkSurfaceKHR surface, VkBool32 *supported) {
+    if (supported == NULL) return VK_ERROR_INITIALIZATION_FAILED;
+    *supported = VK_FALSE;
+    struct bvb_physical_device_proxy *physical =
+        physical_device_proxy(physical_device);
+    if (physical == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    struct bvb_surface_proxy *surface_state = surface_proxy_locked(surface);
+    struct bvb_activity_status activity = {0};
+    int result = surface_state == NULL ||
+                         surface_state->parent_id != physical->parent_id
+                     ? -EINVAL
+                     : ready_activity_status_locked(&activity);
+    if (result == 0 && queue_family_index == 0U) *supported = VK_TRUE;
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return result == 0 ? VK_SUCCESS : VK_ERROR_SURFACE_LOST_KHR;
+}
+
+static VkBool32 virtual_presentation_support(
+    VkPhysicalDevice physical_device, uint32_t queue_family_index) {
+    struct bvb_physical_device_proxy *physical =
+        physical_device_proxy(physical_device);
+    if (physical == NULL || queue_family_index != 0U ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return VK_FALSE;
+    }
+    struct bvb_activity_status activity = {0};
+    const int result = ready_activity_status_locked(&activity);
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return result == 0 ? VK_TRUE : VK_FALSE;
+}
+
+static VkBool32 VKAPI_CALL
+bvb_bridge_vkGetPhysicalDeviceXlibPresentationSupportKHR(
+    VkPhysicalDevice physical_device, uint32_t queue_family_index,
+    void *display, unsigned long visual_id) {
+    (void)display;
+    (void)visual_id;
+    return virtual_presentation_support(physical_device, queue_family_index);
+}
+
+static VkBool32 VKAPI_CALL
+bvb_bridge_vkGetPhysicalDeviceXcbPresentationSupportKHR(
+    VkPhysicalDevice physical_device, uint32_t queue_family_index,
+    void *connection, uint32_t visual_id) {
+    (void)connection;
+    (void)visual_id;
+    return virtual_presentation_support(physical_device, queue_family_index);
+}
+
+static VkBool32 VKAPI_CALL
+bvb_bridge_vkGetPhysicalDeviceWaylandPresentationSupportKHR(
+    VkPhysicalDevice physical_device, uint32_t queue_family_index,
+    void *display) {
+    (void)display;
+    return virtual_presentation_support(physical_device, queue_family_index);
+}
+
+static VkResult VKAPI_CALL
+bvb_bridge_vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+    VkPhysicalDevice physical_device, VkSurfaceKHR surface,
+    VkSurfaceCapabilitiesKHR *capabilities) {
+    if (capabilities == NULL) return VK_ERROR_INITIALIZATION_FAILED;
+    memset(capabilities, 0, sizeof(*capabilities));
+    struct bvb_physical_device_proxy *physical =
+        physical_device_proxy(physical_device);
+    if (physical == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    struct bvb_surface_proxy *surface_state = surface_proxy_locked(surface);
+    struct bvb_activity_status activity = {0};
+    int result = surface_state == NULL ||
+                         surface_state->parent_id != physical->parent_id
+                     ? -EINVAL
+                     : ready_activity_status_locked(&activity);
+    if (result == 0) {
+        *capabilities = (VkSurfaceCapabilitiesKHR){
+            .minImageCount = 2U,
+            .maxImageCount = 3U,
+            .currentExtent = {activity.width, activity.height},
+            .minImageExtent = {activity.width, activity.height},
+            .maxImageExtent = {activity.width, activity.height},
+            .maxImageArrayLayers = 1U,
+            .supportedTransforms = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
+            .currentTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
+            .supportedCompositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+            .supportedUsageFlags = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                                   VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
+                                   VK_IMAGE_USAGE_TRANSFER_DST_BIT |
+                                   VK_IMAGE_USAGE_SAMPLED_BIT,
+        };
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return result == 0 ? VK_SUCCESS : VK_ERROR_SURFACE_LOST_KHR;
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceSurfaceFormatsKHR(
+    VkPhysicalDevice physical_device, VkSurfaceKHR surface,
+    uint32_t *format_count, VkSurfaceFormatKHR *formats) {
+    static const VkSurfaceFormatKHR virtual_formats[] = {
+        {VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
+        {VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
+        {VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
+        {VK_FORMAT_R8G8B8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
+    };
+    if (format_count == NULL) return VK_ERROR_INITIALIZATION_FAILED;
+    struct bvb_physical_device_proxy *physical =
+        physical_device_proxy(physical_device);
+    if (physical == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    struct bvb_surface_proxy *surface_state = surface_proxy_locked(surface);
+    struct bvb_activity_status activity = {0};
+    int result = surface_state == NULL ||
+                         surface_state->parent_id != physical->parent_id
+                     ? -EINVAL
+                     : ready_activity_status_locked(&activity);
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result != 0) return VK_ERROR_SURFACE_LOST_KHR;
+    const uint32_t available =
+        (uint32_t)(sizeof(virtual_formats) / sizeof(virtual_formats[0]));
+    if (formats == NULL) {
+        *format_count = available;
+        return VK_SUCCESS;
+    }
+    const uint32_t capacity = *format_count;
+    const uint32_t written = capacity < available ? capacity : available;
+    if (written != 0U) {
+        memcpy(formats, virtual_formats, written * sizeof(*formats));
+    }
+    *format_count = written;
+    return capacity < available ? VK_INCOMPLETE : VK_SUCCESS;
+}
+
+static VkResult VKAPI_CALL
+bvb_bridge_vkGetPhysicalDeviceSurfacePresentModesKHR(
+    VkPhysicalDevice physical_device, VkSurfaceKHR surface,
+    uint32_t *present_mode_count, VkPresentModeKHR *present_modes) {
+    if (present_mode_count == NULL) return VK_ERROR_INITIALIZATION_FAILED;
+    struct bvb_physical_device_proxy *physical =
+        physical_device_proxy(physical_device);
+    if (physical == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    struct bvb_surface_proxy *surface_state = surface_proxy_locked(surface);
+    struct bvb_activity_status activity = {0};
+    int result = surface_state == NULL ||
+                         surface_state->parent_id != physical->parent_id
+                     ? -EINVAL
+                     : ready_activity_status_locked(&activity);
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result != 0) return VK_ERROR_SURFACE_LOST_KHR;
+    if (present_modes == NULL) {
+        *present_mode_count = 1U;
+        return VK_SUCCESS;
+    }
+    if (*present_mode_count == 0U) return VK_INCOMPLETE;
+    present_modes[0] = VK_PRESENT_MODE_FIFO_KHR;
+    *present_mode_count = 1U;
+    return VK_SUCCESS;
 }
 
 static VkResult VKAPI_CALL bvb_bridge_vkEnumeratePhysicalDevices(
@@ -3278,6 +3612,29 @@ vkGetInstanceProcAddr(VkInstance instance, const char *name) {
         BVB_INSTANCE_MATCH(
             "vkGetPhysicalDeviceExternalSemaphorePropertiesKHR",
             bvb_bridge_vkGetPhysicalDeviceExternalSemaphoreProperties)
+        BVB_INSTANCE_MATCH("vkCreateXlibSurfaceKHR",
+                           bvb_bridge_vkCreateXlibSurfaceKHR)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceXlibPresentationSupportKHR",
+                           bvb_bridge_vkGetPhysicalDeviceXlibPresentationSupportKHR)
+        BVB_INSTANCE_MATCH("vkCreateXcbSurfaceKHR",
+                           bvb_bridge_vkCreateXcbSurfaceKHR)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceXcbPresentationSupportKHR",
+                           bvb_bridge_vkGetPhysicalDeviceXcbPresentationSupportKHR)
+        BVB_INSTANCE_MATCH("vkCreateWaylandSurfaceKHR",
+                           bvb_bridge_vkCreateWaylandSurfaceKHR)
+        BVB_INSTANCE_MATCH(
+            "vkGetPhysicalDeviceWaylandPresentationSupportKHR",
+            bvb_bridge_vkGetPhysicalDeviceWaylandPresentationSupportKHR)
+        BVB_INSTANCE_MATCH("vkDestroySurfaceKHR",
+                           bvb_bridge_vkDestroySurfaceKHR)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceSurfaceSupportKHR",
+                           bvb_bridge_vkGetPhysicalDeviceSurfaceSupportKHR)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceSurfaceCapabilitiesKHR",
+                           bvb_bridge_vkGetPhysicalDeviceSurfaceCapabilitiesKHR)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceSurfaceFormatsKHR",
+                           bvb_bridge_vkGetPhysicalDeviceSurfaceFormatsKHR)
+        BVB_INSTANCE_MATCH("vkGetPhysicalDeviceSurfacePresentModesKHR",
+                           bvb_bridge_vkGetPhysicalDeviceSurfacePresentModesKHR)
         BVB_INSTANCE_MATCH("vkCreateDevice",
                            bvb_bridge_vkCreateDevice)
 #undef BVB_INSTANCE_MATCH

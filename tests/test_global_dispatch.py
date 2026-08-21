@@ -2,6 +2,8 @@
 
 import os
 import pathlib
+import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -18,6 +20,10 @@ def main() -> int:
     )
     with tempfile.TemporaryDirectory(prefix="bvb-e034-") as temporary:
         socket_path = pathlib.Path(temporary) / "runtime" / "bridge.sock"
+        token = bytes.fromhex(
+            "00112233445566778899aabbccddeeff"
+            "fedcba98765432100123456789abcdef"
+        )
         server = subprocess.Popen(
             [
                 service,
@@ -25,6 +31,10 @@ def main() -> int:
                 str(socket_path),
                 "--loader",
                 loader,
+                "--activity-port",
+                "0",
+                "--activity-token",
+                token.hex(),
                 "--once",
             ],
             stdout=subprocess.PIPE,
@@ -40,6 +50,43 @@ def main() -> int:
             assert socket_path.exists(), server.communicate(timeout=1.0)
             ready = server.stdout.readline()
             assert "ready socket=" in ready
+            activity_port = int(ready.split("activity_port=", 1)[1].strip())
+            assert 0 < activity_port <= 65535
+
+            def send_event(event: int, sequence: int,
+                           width: int = 0, height: int = 0) -> None:
+                record = struct.pack(
+                    "<IHHIIIIQ32s",
+                    0x314C5642,
+                    1,
+                    event,
+                    sequence,
+                    width,
+                    height,
+                    12345,
+                    9876543210 + sequence,
+                    token,
+                )
+                with socket.create_connection(
+                    ("127.0.0.1", activity_port), timeout=1.0
+                ) as connection:
+                    connection.sendall(record)
+                    ack = connection.recv(16)
+                magic, version, reserved, accepted_sequence, status = (
+                    struct.unpack("<IHHIi", ack)
+                )
+                assert magic == 0x314C5642
+                assert version == 1
+                assert reserved == 0
+                assert accepted_sequence == sequence
+                assert status == 0
+
+            send_event(1, 1)
+            send_event(2, 2)
+            send_event(3, 3)
+            send_event(7, 4, 2800, 1752)
+            send_event(11, 5, 2800, 1752)
+            send_event(9, 6)
             environment = os.environ.copy()
             environment["BVB_BRIDGE_SOCKET"] = str(socket_path)
             completed = subprocess.run(
@@ -54,7 +101,7 @@ def main() -> int:
             assert completed.stderr == ""
             assert completed.stdout.startswith("PASS: global Vulkan discovery")
             assert f"api={0x00400000 | (4 << 12) | 354}" in completed.stdout
-            assert "exposed_extensions=3 exposed_layers=0" in completed.stdout
+            assert "exposed_extensions=7 exposed_layers=0" in completed.stdout
             assert 'device=BVB Fake Adreno 730 "quoted"' in completed.stdout
             assert f"device_api={0x00400000 | (3 << 12) | 275}" in completed.stdout
             assert "driver=16909060 vendor=20803 device_id=1840" in completed.stdout
@@ -75,7 +122,20 @@ def main() -> int:
             assert "fence_wait=0 fence_reset=0 fence_after_reset=1" in completed.stdout
             server_stdout, server_stderr = server.communicate(timeout=5.0)
             assert server.returncode == 0, server_stderr
-            assert server_stdout == ""
+            assert server_stdout.splitlines() == [
+                "bvb-bridge-service: activity_event=1 sequence=1 "
+                "pid=12345 width=0 height=0",
+                "bvb-bridge-service: activity_event=2 sequence=2 "
+                "pid=12345 width=0 height=0",
+                "bvb-bridge-service: activity_event=3 sequence=3 "
+                "pid=12345 width=0 height=0",
+                "bvb-bridge-service: activity_event=7 sequence=4 "
+                "pid=12345 width=2800 height=1752",
+                "bvb-bridge-service: activity_event=11 sequence=5 "
+                "pid=12345 width=2800 height=1752",
+                "bvb-bridge-service: activity_event=9 sequence=6 "
+                "pid=12345 width=0 height=0",
+            ]
             assert server_stderr == ""
             assert not socket_path.exists()
         finally:

@@ -25,6 +25,13 @@ vkGetInstanceProcAddr(VkInstance instance, const char *name);
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
 vkGetDeviceProcAddr(VkDevice device, const char *name);
 
+typedef VkResult(VKAPI_PTR *bvb_create_platform_surface_fn)(
+    VkInstance instance, const void *create_info,
+    const VkAllocationCallbacks *allocator, VkSurfaceKHR *surface);
+typedef VkBool32(VKAPI_PTR *bvb_xlib_presentation_support_fn)(
+    VkPhysicalDevice physical_device, uint32_t queue_family_index,
+    void *display, unsigned long visual_id);
+
 #define RESOLVE_GLOBAL(name)                                                   \
     PFN_##name name = NULL;                                                    \
     do {                                                                       \
@@ -62,12 +69,12 @@ int main(void) {
     uint32_t extension_count = 99U;
     CHECK(vkEnumerateInstanceExtensionProperties(
               NULL, &extension_count, NULL) == VK_SUCCESS);
-    CHECK(extension_count == 3U);
-    VkExtensionProperties extensions[3] = {0};
-    extension_count = 3U;
+    CHECK(extension_count == 7U);
+    VkExtensionProperties extensions[7] = {0};
+    extension_count = 7U;
     CHECK(vkEnumerateInstanceExtensionProperties(
               NULL, &extension_count, extensions) == VK_SUCCESS);
-    CHECK(extension_count == 3U);
+    CHECK(extension_count == 7U);
     CHECK(strcmp(extensions[0].extensionName,
                  VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) ==
           0);
@@ -76,31 +83,13 @@ int main(void) {
     CHECK(strcmp(extensions[2].extensionName,
                  VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME) ==
           0);
-    CHECK(setenv("BVB_ICD_PROBE_WSI", "1", 1) == 0);
-    extension_count = 0U;
-    CHECK(vkEnumerateInstanceExtensionProperties(
-              NULL, &extension_count, NULL) == VK_SUCCESS);
-    CHECK(extension_count == 7U);
-    VkExtensionProperties probe_extensions[7] = {0};
-    CHECK(vkEnumerateInstanceExtensionProperties(
-              NULL, &extension_count, probe_extensions) == VK_SUCCESS);
-    CHECK(extension_count == 7U);
-    CHECK(strcmp(probe_extensions[0].extensionName,
-                 VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) ==
-          0);
-    CHECK(strcmp(probe_extensions[1].extensionName,
-                 VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME) == 0);
-    CHECK(strcmp(probe_extensions[2].extensionName,
-                 VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME) ==
-          0);
-    CHECK(strcmp(probe_extensions[3].extensionName, "VK_KHR_surface") == 0);
-    CHECK(strcmp(probe_extensions[4].extensionName,
+    CHECK(strcmp(extensions[3].extensionName, "VK_KHR_surface") == 0);
+    CHECK(strcmp(extensions[4].extensionName,
                  "VK_KHR_xlib_surface") == 0);
-    CHECK(strcmp(probe_extensions[5].extensionName,
+    CHECK(strcmp(extensions[5].extensionName,
                  "VK_KHR_xcb_surface") == 0);
-    CHECK(strcmp(probe_extensions[6].extensionName,
+    CHECK(strcmp(extensions[6].extensionName,
                  "VK_KHR_wayland_surface") == 0);
-    CHECK(unsetenv("BVB_ICD_PROBE_WSI") == 0);
     CHECK(vkEnumerateInstanceExtensionProperties(
               "VK_LAYER_BVB_fake_native_only", &extension_count,
               NULL) == VK_ERROR_LAYER_NOT_PRESENT);
@@ -119,7 +108,7 @@ int main(void) {
         .pApplicationName = "bvb-e025-test",
         .apiVersion = VK_API_VERSION_1_1,
     };
-    const char *unsupported_extension = "VK_KHR_surface";
+    const char *unsupported_extension = "VK_EXT_debug_utils";
     VkInstanceCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &application_info,
@@ -131,13 +120,15 @@ int main(void) {
           VK_ERROR_EXTENSION_NOT_PRESENT);
     CHECK(instance_one == VK_NULL_HANDLE);
 
-    const char *enabled_instance_extensions[4] = {
+    const char *enabled_instance_extensions[6] = {
         extensions[0].extensionName,
         extensions[1].extensionName,
         extensions[2].extensionName,
         extensions[0].extensionName,
+        extensions[3].extensionName,
+        extensions[4].extensionName,
     };
-    create_info.enabledExtensionCount = 4U;
+    create_info.enabledExtensionCount = 6U;
     create_info.ppEnabledExtensionNames = enabled_instance_extensions;
     const uint32_t loader_private_chain_marker = UINT32_C(0x7ffffffe);
     create_info.pNext = &loader_private_chain_marker;
@@ -188,6 +179,70 @@ int main(void) {
     CHECK(enumerate_physical_devices(instance_one, &physical_count,
                                      &repeated_device) == VK_SUCCESS);
     CHECK(repeated_device == physical_device);
+
+    bvb_create_platform_surface_fn create_xlib_surface = NULL;
+    PFN_vkDestroySurfaceKHR destroy_surface = NULL;
+    PFN_vkGetPhysicalDeviceSurfaceSupportKHR get_surface_support = NULL;
+    PFN_vkGetPhysicalDeviceSurfaceCapabilitiesKHR get_surface_capabilities =
+        NULL;
+    PFN_vkGetPhysicalDeviceSurfaceFormatsKHR get_surface_formats = NULL;
+    PFN_vkGetPhysicalDeviceSurfacePresentModesKHR get_present_modes = NULL;
+    bvb_xlib_presentation_support_fn get_xlib_presentation_support = NULL;
+#define RESOLVE_INSTANCE(name, output)                                        \
+    do {                                                                       \
+        erased = vkGetInstanceProcAddr(instance_one, (name));                 \
+        CHECK(erased != NULL);                                                 \
+        _Static_assert(sizeof(output) == sizeof(erased),                       \
+                       "Vulkan function pointer width mismatch");             \
+        memcpy(&(output), &erased, sizeof(output));                            \
+    } while (0)
+    RESOLVE_INSTANCE("vkCreateXlibSurfaceKHR", create_xlib_surface);
+    RESOLVE_INSTANCE("vkDestroySurfaceKHR", destroy_surface);
+    RESOLVE_INSTANCE("vkGetPhysicalDeviceSurfaceSupportKHR",
+                     get_surface_support);
+    RESOLVE_INSTANCE("vkGetPhysicalDeviceSurfaceCapabilitiesKHR",
+                     get_surface_capabilities);
+    RESOLVE_INSTANCE("vkGetPhysicalDeviceSurfaceFormatsKHR",
+                     get_surface_formats);
+    RESOLVE_INSTANCE("vkGetPhysicalDeviceSurfacePresentModesKHR",
+                     get_present_modes);
+    RESOLVE_INSTANCE("vkGetPhysicalDeviceXlibPresentationSupportKHR",
+                     get_xlib_presentation_support);
+#undef RESOLVE_INSTANCE
+    const uint32_t platform_create_info = UINT32_C(0xe051c0de);
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
+    CHECK(create_xlib_surface(instance_one, &platform_create_info, NULL,
+                              &surface) == VK_SUCCESS);
+    CHECK(surface != VK_NULL_HANDLE);
+    VkBool32 surface_supported = VK_FALSE;
+    CHECK(get_surface_support(physical_device, 0U, surface,
+                              &surface_supported) == VK_SUCCESS);
+    CHECK(surface_supported == VK_TRUE);
+    CHECK(get_xlib_presentation_support(physical_device, 0U, NULL, 0U) ==
+          VK_TRUE);
+    VkSurfaceCapabilitiesKHR surface_capabilities = {0};
+    CHECK(get_surface_capabilities(physical_device, surface,
+                                   &surface_capabilities) == VK_SUCCESS);
+    CHECK(surface_capabilities.currentExtent.width == 2800U);
+    CHECK(surface_capabilities.currentExtent.height == 1752U);
+    CHECK(surface_capabilities.minImageCount == 2U);
+    uint32_t surface_format_count = 0U;
+    CHECK(get_surface_formats(physical_device, surface,
+                              &surface_format_count, NULL) == VK_SUCCESS);
+    CHECK(surface_format_count == 4U);
+    VkSurfaceFormatKHR surface_formats[4] = {0};
+    CHECK(get_surface_formats(physical_device, surface,
+                              &surface_format_count,
+                              surface_formats) == VK_SUCCESS);
+    CHECK(surface_formats[0].format == VK_FORMAT_B8G8R8A8_UNORM);
+    uint32_t present_mode_count = 0U;
+    CHECK(get_present_modes(physical_device, surface, &present_mode_count,
+                            NULL) == VK_SUCCESS);
+    CHECK(present_mode_count == 1U);
+    VkPresentModeKHR present_mode = VK_PRESENT_MODE_MAX_ENUM_KHR;
+    CHECK(get_present_modes(physical_device, surface, &present_mode_count,
+                            &present_mode) == VK_SUCCESS);
+    CHECK(present_mode == VK_PRESENT_MODE_FIFO_KHR);
 
     PFN_vkGetPhysicalDeviceProperties get_physical_device_properties = NULL;
     PFN_vkGetPhysicalDeviceQueueFamilyProperties get_queue_properties = NULL;
@@ -750,6 +805,7 @@ int main(void) {
     free_memory(device, device_memory, NULL);
     destroy_fence(device, fence, NULL);
     destroy_device(device, NULL);
+    destroy_surface(instance_one, surface, NULL);
 
     VkInstance instance_two = VK_NULL_HANDLE;
     create_info.pApplicationInfo = NULL;
@@ -768,7 +824,7 @@ int main(void) {
     destroy_instance_two(instance_two, NULL);
 
     printf("PASS: global Vulkan discovery api=%u "
-           "exposed_extensions=3 exposed_layers=0 "
+           "exposed_extensions=7 exposed_layers=0 "
            "instance_one=%llu instance_two=%llu physical_device=%llu "
            "device=%s device_api=%u driver=%u vendor=%u device_id=%u "
            "queues=%u memory_types=%u memory_heaps=%u device_extensions=%u "
