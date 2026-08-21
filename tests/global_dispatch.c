@@ -423,8 +423,8 @@ int main(void) {
     VkSurfaceCapabilitiesKHR surface_capabilities = {0};
     CHECK(get_surface_capabilities(physical_device, surface,
                                    &surface_capabilities) == VK_SUCCESS);
-    CHECK(surface_capabilities.currentExtent.width == 2800U);
-    CHECK(surface_capabilities.currentExtent.height == 1752U);
+    CHECK(surface_capabilities.currentExtent.width == wsi_width);
+    CHECK(surface_capabilities.currentExtent.height == wsi_height);
     CHECK(surface_capabilities.minImageCount == 2U);
     uint32_t surface_format_count = 0U;
     CHECK(get_surface_formats(physical_device, surface,

@@ -303,6 +303,8 @@ def main() -> int:
         "BVB_GLOBAL_DISPATCH_PRESENT_HOLD_MS",
     ):
         assert variable in global_source
+    assert "surface_capabilities.currentExtent.width == wsi_width" in global_source
+    assert "surface_capabilities.currentExtent.height == wsi_height" in global_source
     assert "30000U" in global_source
 
     evidence = json.loads(evidence_path.read_text())
