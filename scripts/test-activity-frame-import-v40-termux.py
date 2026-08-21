@@ -526,6 +526,15 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--preflight-only", action="store_true")
+    parser.add_argument(
+        "--adb-serial",
+        default=os.environ.get("BVB_ADB_SERIAL"),
+        help=(
+            "route Activity launch, PID checks, and logcat through an already "
+            "authorized adb device serial"
+        ),
+    )
+    parser.add_argument("--adb", default=os.environ.get("BVB_ADB", "adb"))
     parser.add_argument("--am", default=os.environ.get("BVB_ACTIVITY_LAUNCHER", "am"))
     parser.add_argument("--pm", default=os.environ.get("BVB_PACKAGE_MANAGER", "pm"))
     parser.add_argument("--aapt", default=os.environ.get("BVB_AAPT", "aapt"))
@@ -616,7 +625,7 @@ def run(arguments: argparse.Namespace) -> int:
     open_handles: list[Any] = []
     failure: BaseException | None = None
     sensitive_values: list[str] = []
-    am = pm = aapt = apksigner = app_process = logcat = readelf = pidof = grun = ""
+    adb = am = pm = aapt = apksigner = app_process = logcat = readelf = pidof = grun = ""
 
     try:
         pm = resolve_executable(arguments.pm)
@@ -647,14 +656,27 @@ def run(arguments: argparse.Namespace) -> int:
             )
             return 0
 
-        am = resolve_executable(arguments.am)
+        if arguments.adb_serial:
+            adb = resolve_executable(arguments.adb)
+        else:
+            am = resolve_executable(arguments.am)
         app_process = resolve_executable(arguments.app_process)
-        logcat = resolve_executable(arguments.logcat)
+        if not arguments.adb_serial:
+            logcat = resolve_executable(arguments.logcat)
         readelf = resolve_executable(arguments.readelf)
-        pidof = resolve_executable(arguments.pidof)
+        if not arguments.adb_serial:
+            pidof = resolve_executable(arguments.pidof)
         grun = resolve_executable(arguments.grun)
 
-        running = run_text([pidof, PACKAGE], timeout=5.0, check=False)
+        android_shell_prefix = (
+            [adb, "-s", arguments.adb_serial, "shell"]
+            if arguments.adb_serial else []
+        )
+        pid_command = (
+            android_shell_prefix + ["pidof", PACKAGE]
+            if arguments.adb_serial else [pidof, PACKAGE]
+        )
+        running = run_text(pid_command, timeout=5.0, check=False)
         if running.stdout.strip():
             raise GateFailure(
                 f"refusing to disturb an existing {PACKAGE} process: {running.stdout.strip()}"
@@ -739,9 +761,13 @@ def run(arguments: argparse.Namespace) -> int:
         )
         rejected_status = prove_wrong_token_rejection(port, min(arguments.timeout, 5.0))
 
+        launch_command = (
+            android_shell_prefix + ["am"]
+            if arguments.adb_serial else [am]
+        )
         launch_result = run_text(
-            [
-                am, "start", "-S", "--user", "0", "-W", "-n", ACTIVITY,
+            launch_command + [
+                "start", "-S", "--user", "0", "-W", "-n", ACTIVITY,
                 "--ei", "bvb_activity_port", str(port),
                 "--es", "bvb_activity_token", token,
                 "--ei", "bvb_retain_external_renderer", "1",
@@ -758,14 +784,18 @@ def run(arguments: argparse.Namespace) -> int:
         activity_pid, width, height, events = wait_for_renderer(
             service_process, service_stdout, arguments.timeout
         )
-        running_after_launch = run_text([pidof, PACKAGE], timeout=5.0, check=False)
+        running_after_launch = run_text(pid_command, timeout=5.0, check=False)
         if str(activity_pid) not in running_after_launch.stdout.split():
             raise GateFailure("authenticated Activity PID does not match installed package process")
 
         activity_log_handle = activity_log.open("wb")
         open_handles.append(activity_log_handle)
+        logcat_command = (
+            [adb, "-s", arguments.adb_serial, "logcat"]
+            if arguments.adb_serial else [logcat]
+        )
         logcat_process = subprocess.Popen(
-            [logcat, "-T", "1", "--pid", str(activity_pid), "-v", "threadtime"],
+            logcat_command + ["-T", "1", "--pid", str(activity_pid), "-v", "threadtime"],
             stdout=activity_log_handle,
             stderr=subprocess.STDOUT,
         )

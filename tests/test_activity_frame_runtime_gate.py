@@ -262,6 +262,7 @@ def main() -> int:
     assert "--present-hold-ms" in help_result.stdout
     assert "--expected-icd-sha256" in help_result.stdout
     assert "--bridge-icd" in help_result.stdout
+    assert "--adb-serial" in help_result.stdout
 
     source = script_path.read_text()
     for required in (
@@ -272,7 +273,9 @@ def main() -> int:
         "E057_FRAME_CONSUMER_FAIL",
         "prove_wrong_token_rejection",
         "FrameTransportClient",
-        'am, "start", "-S"',
+        'android_shell_prefix + ["am"]',
+        '[adb, "-s", arguments.adb_serial, "logcat"]',
+        'android_shell_prefix + ["pidof", PACKAGE]',
         "remains visible for human confirmation",
         "visible_game_claim",
         "fps_claim",
@@ -283,7 +286,7 @@ def main() -> int:
         "installed E073 baseline glibc ICD",
         "validate_client_bridge_icd",
         "validate_frame_document",
-        'logcat, "-T", "1"',
+        'logcat_command + ["-T", "1"',
         'for variable in ("LD_LIBRARY_PATH", "LD_PRELOAD", "LD_AUDIT")',
     ):
         assert required in source

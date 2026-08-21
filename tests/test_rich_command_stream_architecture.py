@@ -116,7 +116,8 @@ def main() -> int:
     assert "len(import_matches) != 1" in activity_runner
     assert "len(present_matches) != required_present_count" in activity_runner
     assert "E057_CONSUMER_FAIL_MARKER in app_text" in activity_runner
-    assert '[logcat, "-T", "1"' in activity_runner
+    assert 'logcat_command + ["-T", "1"' in activity_runner
+    assert '[adb, "-s", arguments.adb_serial, "logcat"]' in activity_runner
     assert '"BVB_TEST_ANIMATED_WSI"' in activity_runner
     assert '"expected_frame_correlations": correlations' in activity_runner
     assert "E076_VISUAL_CONFIRMATION_REQUIRED" in activity_runner
