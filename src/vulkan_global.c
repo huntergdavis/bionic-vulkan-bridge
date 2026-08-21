@@ -2621,6 +2621,25 @@ static struct bvb_memory_metadata *memory_metadata_slot(
     return empty;
 }
 
+static bool core_descriptor_type_supported(uint32_t descriptor_type) {
+    switch ((VkDescriptorType)descriptor_type) {
+    case VK_DESCRIPTOR_TYPE_SAMPLER:
+    case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+    case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+    case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+    case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+    case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+    case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+    case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+    case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
+    case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+        return true;
+    default:
+        return false;
+    }
+}
+
 int bvb_vulkan_global_context_create_descriptor_set_layout(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_descriptor_set_layout_create_request *request,
@@ -2648,7 +2667,7 @@ int bvb_vulkan_global_context_create_descriptor_set_layout(
     for (uint32_t index = 0U; index < request->binding_count; ++index) {
         const struct bvb_vulkan_descriptor_layout_binding *wire =
             &request->bindings[index];
-        if (wire->descriptor_type != VK_DESCRIPTOR_TYPE_SAMPLER ||
+        if (!core_descriptor_type_supported(wire->descriptor_type) ||
             wire->descriptor_count == 0U ||
             wire->descriptor_count > (1U << 20) ||
             wire->stage_flags == 0U ||
@@ -2755,8 +2774,8 @@ int bvb_vulkan_global_context_create_descriptor_pool(
     }
     VkDescriptorPoolSize sizes[BVB_VULKAN_MAX_DESCRIPTOR_POOL_SIZES] = {0};
     for (uint32_t index = 0U; index < request->pool_size_count; ++index) {
-        if (request->pool_sizes[index].descriptor_type !=
-                VK_DESCRIPTOR_TYPE_SAMPLER ||
+        if (!core_descriptor_type_supported(
+                request->pool_sizes[index].descriptor_type) ||
             request->pool_sizes[index].descriptor_count == 0U ||
             request->pool_sizes[index].descriptor_count > (1U << 20)) {
             response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;

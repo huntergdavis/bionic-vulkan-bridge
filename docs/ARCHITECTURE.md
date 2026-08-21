@@ -310,3 +310,10 @@ shared ring: there is no per-frame Java, Binder, socket, or FD transport. The
 Activity copies the imported producer image into its Android swapchain, so the
 remaining steady-state performance cost is one consumer-side GPU copy/blit and
 the current synchronization boundary, not an additional Linux graphics stack.
+
+E093 retains E056's pointer-free descriptor wire and typed native ownership,
+but removes its sampler-only layout/pool bootstrap restriction. Layout and pool
+creation now accept Vulkan's eleven core descriptor types; immutable samplers,
+extension-only descriptor types, unsupported flags/pNext shapes, and malformed
+counts remain fail-closed. Descriptor writes are deliberately unchanged, so
+this gate does not imply that arbitrary game descriptor updates are executable.

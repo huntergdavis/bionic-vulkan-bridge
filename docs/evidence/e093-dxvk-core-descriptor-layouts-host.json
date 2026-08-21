@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "gate": "E093",
+  "result": "pass_host_contract",
+  "objective": "remove the first measured Tomb Raider DXVK device-initialization rejection by forwarding core non-sampler descriptor-set layouts and pools to private Turnip",
+  "measured_input": {
+    "run_boundary": "Tomb Raider created three Vulkan logical devices and their queues, then DXVK logged DxvkDescriptorSetLayout: Failed to create descriptor set layout",
+    "prior_bridge_limit": "E056 accepted only VK_DESCRIPTOR_TYPE_SAMPLER in the Bionic layout and pool validators",
+    "dxvk_commit": "a6764047e587178283fcde4073ae6e1410af594f",
+    "source_paths": [
+      "src/dxvk/dxvk_pipelayout.cpp",
+      "src/dxvk/dxvk_descriptor_pool.cpp",
+      "src/dxvk/dxvk_shader_ir.cpp"
+    ]
+  },
+  "implementation": {
+    "wire_changed": false,
+    "opcodes_changed": false,
+    "native_validation": "the service accepts the eleven Vulkan core descriptor types for layout and pool creation while retaining bounded counts, typed device ownership, binding flags, local Bionic reconstruction, and native VkResult authority",
+    "dxvk_legacy_pool_types_proven": [
+      "VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE",
+      "VK_DESCRIPTOR_TYPE_STORAGE_IMAGE",
+      "VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER",
+      "VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER",
+      "VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER",
+      "VK_DESCRIPTOR_TYPE_STORAGE_BUFFER"
+    ],
+    "diagnostic": "BVB_ICD_DIAGNOSTICS now records bounded layout headers, each bounded binding shape, and the returned VkResult without dereferencing or transmitting application pointers"
+  },
+  "fail_closed": [
+    "extension-only descriptor types",
+    "immutable samplers",
+    "unknown pNext chains",
+    "unsupported layout or binding flags",
+    "zero or excessive descriptor counts",
+    "zero shader stage masks",
+    "cross-device and wrong-type bridge IDs"
+  ],
+  "verification": {
+    "host_contracts": "58/58 passed",
+    "cross_process_fake_driver": "passed the exact six-type 1024-set DXVK legacy pool counts and matching non-sampler layout bindings through the real client, socket service, Bionic reconstruction, native create, typed proxy return, and destroy path",
+    "negative": "VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR remained rejected with a null output handle",
+    "tablet_or_game_after_change": false,
+    "game_frame": false,
+    "fps": false
+  },
+  "next_boundary": "Build and deploy this exact bridge, rerun one bounded diagnostic Tomb Raider launch, and use the returned layout trace or first-rejection record as authority. Pinned DXVK calls vkCreateDescriptorUpdateTemplate immediately after any successful nonempty legacy layout, so that is the source-derived likely next gate, not yet a tablet observation.",
+  "reuse": "The required deja query returned no indexed implementation. Reused E053's bounded Wine/DXVK trace method and E056's pointer-free typed descriptor wire, object ownership, and native reconstruction rather than replacing the protocol.",
+  "scope": "Host bridge proof only; no post-change Android deployment, Tomb Raider frame, benchmark, or FPS claim."
+}

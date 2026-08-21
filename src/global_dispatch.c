@@ -4294,6 +4294,29 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDescriptorSetLayout(
             return VK_ERROR_FEATURE_NOT_PRESENT;
         }
     }
+    if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        fprintf(stderr,
+                "BVB_ICD_DESCRIPTOR_LAYOUT flags=%u bindings=%u "
+                "binding_flags=%u\n",
+                (unsigned int)create_info->flags,
+                (unsigned int)create_info->bindingCount,
+                flags_info != NULL ? 1U : 0U);
+        for (uint32_t index = 0U; index < create_info->bindingCount; ++index) {
+            const VkDescriptorSetLayoutBinding *binding =
+                &create_info->pBindings[index];
+            fprintf(stderr,
+                    "BVB_ICD_DESCRIPTOR_BINDING index=%u binding=%u type=%u "
+                    "count=%u stages=%u flags=%u immutable=%u\n",
+                    (unsigned int)index, (unsigned int)binding->binding,
+                    (unsigned int)binding->descriptorType,
+                    (unsigned int)binding->descriptorCount,
+                    (unsigned int)binding->stageFlags,
+                    flags_info == NULL
+                        ? 0U
+                        : (unsigned int)flags_info->pBindingFlags[index],
+                    binding->pImmutableSamplers != NULL ? 1U : 0U);
+        }
+    }
     struct bvb_vulkan_descriptor_set_layout_create_request decoded = {
         .device_id = device_state->wire_id,
         .flags = create_info->flags,
@@ -4333,6 +4356,10 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDescriptorSetLayout(
         payload, payload_length, BVB_OBJECT_DESCRIPTOR_SET_LAYOUT,
         device_state->wire_id, state, &wire_id);
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        fprintf(stderr, "BVB_ICD_DESCRIPTOR_LAYOUT_RESULT result=%d\n",
+                (int)vulkan_result);
+    }
     if (vulkan_result != VK_SUCCESS) {
         free(state);
         return vulkan_result;

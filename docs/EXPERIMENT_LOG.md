@@ -3673,3 +3673,36 @@ implementation. E092 reuses E025/E052, E035, E057, E076, and E091 as listed in
 intended visible zero-copy presentation transport, not a Tomb Raider frame or
 FPS improvement. The next gate is a bounded Tomb Raider run through this exact
 Activity transport with E079a first-rejection diagnostics enabled.
+
+## E093 — DXVK core descriptor layouts and pools (2026-08-21)
+
+Status: 58/58 host contracts pass; tablet deployment and rerun pending. The
+first bounded Tomb Raider run through E092 reached DXVK, created three logical
+devices and their queues, then stopped at `DxvkDescriptorSetLayout: Failed to
+create descriptor set layout`. This is later than E053's old queue-return
+crash. The optional missing `amdxcffx64.dll` message was reused from prior
+successful Proton runs and was not treated as the cause.
+
+E056's wire records were already generic, but its Bionic layout and pool
+validators intentionally accepted only samplers. E093 preserves that
+pointer-free wire and typed ownership while allowing Vulkan's eleven core
+descriptor types. The cross-process fake driver proves DXVK's exact six-type
+legacy resource-pool family and counts: sampled/storage images, uniform/storage
+texel buffers, and uniform/storage buffers. An extension-only acceleration
+structure type remains rejected. Descriptor updates stay sampler-only until a
+real call shape is measured.
+
+`BVB_ICD_DIAGNOSTICS` now emits a bounded header, one bounded record per layout
+binding, and the native result. The next tablet run can therefore identify an
+unsupported shape directly. Pinned DXVK source calls
+`vkCreateDescriptorUpdateTemplate` immediately after a successful nonempty
+legacy layout; that is the likely next gate, not yet a runtime claim.
+
+The required `deja "DxvkDescriptorSetLayout Failed to create descriptor set
+layout BVB E056"` search returned no indexed implementation. E093 reuses E053's
+bounded trace method and E056's descriptor wire/native reconstruction. Compact
+host evidence is
+`docs/evidence/e093-dxvk-core-descriptor-layouts-host.json` (SHA-256
+`33b3f87f3439dcab583279f65a5085f04360d4ce62855208a4f84388b25ebbf2`).
+No post-change tablet execution, game frame, benchmark, or FPS result is
+claimed.

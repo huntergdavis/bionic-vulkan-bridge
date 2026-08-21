@@ -85,6 +85,10 @@ static const VkPipelineLayout fake_pipeline_layout =
     (VkPipelineLayout)(uintptr_t)UINT64_C(0xa600);
 static const VkPipeline fake_graphics_pipeline =
     (VkPipeline)(uintptr_t)UINT64_C(0xa700);
+static const VkDescriptorSetLayout fake_core_descriptor_layout =
+    (VkDescriptorSetLayout)(uintptr_t)UINT64_C(0xa800);
+static const VkDescriptorPool fake_core_descriptor_pool =
+    (VkDescriptorPool)(uintptr_t)UINT64_C(0xa900);
 static const uint32_t fake_dxvk_dummy_frag[] = {
     UINT32_C(0x07230203), UINT32_C(0x00010600), UINT32_C(0x0008000b),
     UINT32_C(0x00000006), UINT32_C(0x00000000), UINT32_C(0x00020011),
@@ -996,6 +1000,34 @@ static VkResult VKAPI_CALL fake_create_descriptor_set_layout(
     const VkAllocationCallbacks *allocator,
     VkDescriptorSetLayout *set_layout) {
     (void)device;
+    static const VkDescriptorType core_types[] = {
+        VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,
+        VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,
+        VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+    };
+    if (fake_descriptor_step == 0U && allocator == NULL &&
+        create_info != NULL && set_layout != NULL &&
+        create_info->sType ==
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO &&
+        create_info->pNext == NULL && create_info->flags == 0U &&
+        create_info->bindingCount == 6U && create_info->pBindings != NULL) {
+        for (uint32_t index = 0U; index < 6U; ++index) {
+            const VkDescriptorSetLayoutBinding *binding =
+                &create_info->pBindings[index];
+            if (binding->binding != index ||
+                binding->descriptorType != core_types[index] ||
+                binding->descriptorCount != 1U ||
+                binding->stageFlags != VK_SHADER_STAGE_COMPUTE_BIT ||
+                binding->pImmutableSamplers != NULL) {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+        }
+        *set_layout = fake_core_descriptor_layout;
+        return VK_SUCCESS;
+    }
     if (fake_descriptor_step == 5U && allocator == NULL &&
         create_info != NULL && set_layout != NULL &&
         create_info->sType ==
@@ -1043,6 +1075,33 @@ static VkResult VKAPI_CALL fake_create_descriptor_pool(
     VkDevice device, const VkDescriptorPoolCreateInfo *create_info,
     const VkAllocationCallbacks *allocator, VkDescriptorPool *pool) {
     (void)device;
+    static const VkDescriptorType core_types[] = {
+        VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,
+        VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,
+        VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+    };
+    if (fake_descriptor_step == 0U && allocator == NULL &&
+        create_info != NULL && pool != NULL &&
+        create_info->sType == VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO &&
+        create_info->pNext == NULL && create_info->flags == 0U &&
+        create_info->maxSets == 1024U && create_info->poolSizeCount == 6U &&
+        create_info->pPoolSizes != NULL) {
+        static const uint32_t core_counts[] = {
+            512U, 16U, 512U, 16U, 2048U, 512U,
+        };
+        for (uint32_t index = 0U; index < 6U; ++index) {
+            if (create_info->pPoolSizes[index].type != core_types[index] ||
+                create_info->pPoolSizes[index].descriptorCount !=
+                    core_counts[index]) {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+        }
+        *pool = fake_core_descriptor_pool;
+        return VK_SUCCESS;
+    }
     if (fake_descriptor_step != 1U || allocator != NULL ||
         create_info == NULL || pool == NULL ||
         create_info->sType != VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO ||
@@ -1300,6 +1359,10 @@ static void VKAPI_CALL fake_destroy_descriptor_pool(
     VkDevice device, VkDescriptorPool pool,
     const VkAllocationCallbacks *allocator) {
     (void)device;
+    if (fake_descriptor_step == 0U && pool == fake_core_descriptor_pool &&
+        allocator == NULL) {
+        return;
+    }
     if (fake_descriptor_step == 12U && pool == fake_descriptor_pool &&
         allocator == NULL) {
         fake_descriptor_step = 13U;
@@ -1311,6 +1374,10 @@ static void VKAPI_CALL fake_destroy_descriptor_set_layout(
     const VkAllocationCallbacks *allocator) {
     (void)device;
     if (allocator != NULL) return;
+    if (fake_descriptor_step == 0U &&
+        set_layout == fake_core_descriptor_layout) {
+        return;
+    }
     if (fake_descriptor_step == 10U &&
         set_layout == fake_empty_descriptor_layout) {
         fake_descriptor_step = 11U;

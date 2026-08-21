@@ -1359,6 +1359,59 @@ int main(void) {
     CHECK(queue_wait_idle(queue) == VK_SUCCESS);
     CHECK(device_wait_idle(device) == VK_SUCCESS);
 
+    const VkDescriptorType core_descriptor_types[] = {
+        VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+        VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+        VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,
+        VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER,
+        VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+    };
+    VkDescriptorSetLayoutBinding core_bindings[6] = {0};
+    VkDescriptorPoolSize core_pool_sizes[6] = {0};
+    const uint32_t core_pool_counts[] = {
+        512U, 16U, 512U, 16U, 2048U, 512U,
+    };
+    for (uint32_t index = 0U; index < 6U; ++index) {
+        core_bindings[index] = (VkDescriptorSetLayoutBinding){
+            .binding = index,
+            .descriptorType = core_descriptor_types[index],
+            .descriptorCount = 1U,
+            .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
+        };
+        core_pool_sizes[index] = (VkDescriptorPoolSize){
+            .type = core_descriptor_types[index],
+            .descriptorCount = core_pool_counts[index],
+        };
+    }
+    const VkDescriptorSetLayoutCreateInfo core_layout_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .bindingCount = 6U,
+        .pBindings = core_bindings,
+    };
+    VkDescriptorSetLayout core_layout = VK_NULL_HANDLE;
+    CHECK(create_descriptor_set_layout(
+              device, &core_layout_info, NULL, &core_layout) == VK_SUCCESS);
+    const VkDescriptorPoolCreateInfo core_pool_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .maxSets = 1024U,
+        .poolSizeCount = 6U,
+        .pPoolSizes = core_pool_sizes,
+    };
+    VkDescriptorPool core_pool = VK_NULL_HANDLE;
+    CHECK(create_descriptor_pool(
+              device, &core_pool_info, NULL, &core_pool) == VK_SUCCESS);
+    destroy_descriptor_pool(device, core_pool, NULL);
+    destroy_descriptor_set_layout(device, core_layout, NULL);
+
+    core_bindings[0].descriptorType =
+        VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+    core_layout = (VkDescriptorSetLayout)(uintptr_t)1U;
+    CHECK(create_descriptor_set_layout(
+              device, &core_layout_info, NULL, &core_layout) ==
+          VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(core_layout == VK_NULL_HANDLE);
+
     const VkDescriptorBindingFlags sampler_binding_flags =
         VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT |
         VK_DESCRIPTOR_BINDING_UPDATE_UNUSED_WHILE_PENDING_BIT |
