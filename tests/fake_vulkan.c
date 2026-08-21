@@ -40,6 +40,8 @@ static VkDeviceMemory fake_bound_memory = VK_NULL_HANDLE;
 static VkDeviceMemory fake_upload_memory = VK_NULL_HANDLE;
 static VkDeviceMemory fake_bound_image_memory = VK_NULL_HANDLE;
 static VkDeviceSize fake_buffer_size = 4096U;
+static VkDeviceSize fake_image_allocation_size =
+    64U * 64U * sizeof(uint32_t);
 static uintptr_t fake_next_buffer_handle = UINT64_C(0x4000);
 static const VkDeviceSize fake_native_image_allocation_size = UINT64_C(19623936);
 
@@ -1846,8 +1848,7 @@ static VkResult VKAPI_CALL fake_allocate_memory(
          dedicated_info->buffer != VK_NULL_HANDLE ||
          dedicated_info->image !=
              (VkImage)(uintptr_t)UINT64_C(0xa000) ||
-         allocate_info->allocationSize !=
-             64U * 64U * sizeof(uint32_t))) {
+         allocate_info->allocationSize != fake_image_allocation_size)) {
         return VK_ERROR_INVALID_EXTERNAL_HANDLE;
     }
 #endif
@@ -1917,7 +1918,7 @@ static VkResult VKAPI_CALL fake_get_android_hardware_buffer_properties(
         properties->pNext != NULL) {
         return VK_ERROR_INVALID_EXTERNAL_HANDLE;
     }
-    properties->allocationSize = 64U * 64U * sizeof(uint32_t);
+    properties->allocationSize = fake_image_allocation_size;
     properties->memoryTypeBits = 1U;
     return VK_SUCCESS;
 }
@@ -2058,6 +2059,9 @@ static VkResult VKAPI_CALL fake_create_image(
         return VK_ERROR_FORMAT_NOT_SUPPORTED;
     }
     *image = (VkImage)(uintptr_t)UINT64_C(0xa000);
+    fake_image_allocation_size =
+        (VkDeviceSize)create_info->extent.width *
+        (VkDeviceSize)create_info->extent.height * sizeof(uint32_t);
     ++fake_live_images;
     return VK_SUCCESS;
 }
@@ -2075,7 +2079,7 @@ static void VKAPI_CALL fake_get_image_memory_requirements(
     (void)device;
     (void)image;
     *requirements = (VkMemoryRequirements){
-        .size = 64U * 64U * sizeof(uint32_t),
+        .size = fake_image_allocation_size,
         .alignment = 4096U,
         .memoryTypeBits = 1U,
     };

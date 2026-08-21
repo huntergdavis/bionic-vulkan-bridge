@@ -240,13 +240,16 @@ def main() -> int:
             )
             status, prepared, descriptors = receive_fd_response(connection, 64, 5)
             assert status == 0 and len(prepared) == 128
-            vulkan_result, image_count, swapchain_id, returned_generation, control_bytes, reserved = struct.unpack_from(
+            vulkan_result, image_count, swapchain_id, returned_generation, control_bytes, prepared_flags = struct.unpack_from(
                 "<iIQQII", prepared
             )
             assert vulkan_result == 0 and image_count == 3
             assert swapchain_id >> 56 == 6
             assert returned_generation == generation
-            assert control_bytes == 4096 and reserved == 0
+            assert control_bytes == 4096
+            assert prepared_flags == (
+                1 if hardware_buffer_api is not None else 0
+            )
             assert len(descriptors) == (
                 1 if hardware_buffer_api is not None else image_count + 1
             )
