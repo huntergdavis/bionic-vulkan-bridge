@@ -5,8 +5,11 @@
 from __future__ import annotations
 
 import ctypes
+import errno
 import pathlib
+import select
 import socket
+import time
 
 
 SYSTEM_ANDROID_LIBRARY = pathlib.Path("/system/lib64/libandroid.so")
@@ -26,14 +29,34 @@ class AndroidHardwareBufferApi:
         self, connection: socket.socket, count: int
     ) -> list[ctypes.c_void_p]:
         buffers: list[ctypes.c_void_p] = []
+        timeout = connection.gettimeout()
+        deadline = None if timeout is None else time.monotonic() + timeout
         try:
             for _ in range(count):
-                buffer = ctypes.c_void_p()
-                result = self.receive(connection.fileno(), ctypes.byref(buffer))
-                if result != 0 or not buffer.value:
-                    raise RuntimeError(
-                        f"AHardwareBuffer receive failed: result={result}"
+                while True:
+                    buffer = ctypes.c_void_p()
+                    result = self.receive(
+                        connection.fileno(), ctypes.byref(buffer)
                     )
+                    if result == 0 and buffer.value:
+                        break
+                    if result not in (-errno.EAGAIN, -errno.EWOULDBLOCK):
+                        raise RuntimeError(
+                            "AHardwareBuffer receive failed: "
+                            f"result={result}"
+                        )
+                    remaining = (
+                        None
+                        if deadline is None
+                        else max(0.0, deadline - time.monotonic())
+                    )
+                    readable, _, _ = select.select(
+                        [connection], [], [], remaining
+                    )
+                    if not readable:
+                        raise TimeoutError(
+                            "timed out receiving AHardwareBuffer handle"
+                        )
                 buffers.append(buffer)
         except BaseException:
             self.release_many(buffers)

@@ -483,6 +483,13 @@ def run(arguments: argparse.Namespace) -> int:
         except subprocess.TimeoutExpired as error:
             raise HarnessFailure("global-dispatch client timed out") from error
         if result["client_exit"] != 0:
+            try:
+                frame_sink.wait()
+            except HarnessFailure as frame_error:
+                raise HarnessFailure(
+                    f"global-dispatch client exited {result['client_exit']}; "
+                    f"Activity frame setup failed: {frame_error}"
+                ) from frame_error
             raise HarnessFailure(
                 f"global-dispatch client exited {result['client_exit']}"
             )

@@ -322,5 +322,8 @@ E094 keeps the same AHardwareBuffer production path on Android and extends the
 cross-process fake-driver contracts to execute that platform branch. Android
 test sinks receive and retain the native handles with
 `AHardwareBuffer_recvHandleFromUnixSocket`, then release them after the service
-and client finish. Non-Android hosts retain the original DMA-BUF/FD contracts;
-no production transport selector or runtime fallback is added.
+and client finish. Python timeout sockets are nonblocking at the descriptor
+level, so the adapter treats `EAGAIN` as a bounded readiness/retry condition;
+other native-handle errors still fail immediately. Non-Android hosts retain the
+original DMA-BUF/FD contracts; no production transport selector or runtime
+fallback is added.

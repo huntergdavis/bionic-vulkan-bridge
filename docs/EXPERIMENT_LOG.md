@@ -3709,7 +3709,7 @@ claimed.
 
 ## E094 — Android-native AHardwareBuffer contract parity (2026-08-21)
 
-Status: 58/58 host contracts pass; tablet rerun pending. The first exact E093
+Status: 58/58 host and 56/56 Android/Termux contracts pass. The first exact E093
 Termux build compiled successfully, but 13 tests failed before exercising E093
 because the Android-compiled E092 service required
 `vkGetAndroidHardwareBufferPropertiesANDROID` while the fake Vulkan driver and
@@ -3723,6 +3723,16 @@ control FD plus three native handles, receive those handles through
 `AHardwareBuffer_recvHandleFromUnixSocket`, keep them alive through the test,
 and release them deterministically. Non-Android tests retain their original
 four-FD path and all 58 host contracts remain green.
+
+The first native-resolution `2800x1752` Activity harness run then exposed a
+timing-dependent test bug that the `64x64` transport case did not: Python
+timeout mode makes the socket descriptor nonblocking, and the native Android
+receiver returned `-EAGAIN` while a large handle was still arriving. The
+adapter now waits and retries only `EAGAIN`/`EWOULDBLOCK` within the original
+deadline. A host fake proves that exact retry, the native-resolution tablet
+harness passes, and the complete tablet suite passes 56/56. The retained
+client and bridge path remained fail-closed throughout; production transport
+code was unchanged.
 
 The required `deja "Termux Android build fake Vulkan missing
 vkGetAndroidHardwareBufferPropertiesANDROID E092 swapchain tests"` search found

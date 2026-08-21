@@ -1,13 +1,43 @@
 #!/usr/bin/env python3
 
+import errno
 import json
 import os
 import pathlib
+import socket
 import subprocess
 import sys
 import tempfile
 
-from android_hardware_buffer import load_android_hardware_buffer_api
+from android_hardware_buffer import (
+    AndroidHardwareBufferApi,
+    load_android_hardware_buffer_api,
+)
+
+
+def prove_nonblocking_hardware_buffer_retry() -> None:
+    api = AndroidHardwareBufferApi.__new__(AndroidHardwareBufferApi)
+    attempts = 0
+
+    def receive(_descriptor, output):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return -errno.EAGAIN
+        output._obj.value = 0x1234
+        return 0
+
+    api.receive = receive
+    left, right = socket.socketpair()
+    try:
+        left.settimeout(0.2)
+        right.sendall(b"x")
+        buffers = api.receive_many(left, 1)
+        assert [buffer.value for buffer in buffers] == [0x1234]
+        assert attempts == 2
+    finally:
+        left.close()
+        right.close()
 
 
 def main() -> int:
@@ -19,6 +49,7 @@ def main() -> int:
     harness, service, client, loader, evidence_path, termux_gate_path = map(
         lambda value: str(pathlib.Path(value).resolve()), sys.argv[1:]
     )
+    prove_nonblocking_hardware_buffer_retry()
     hardware_buffer_api = load_android_hardware_buffer_api()
     expected_frame_fds = 1 if hardware_buffer_api is not None else 4
     expected_hardware_buffers = 3 if hardware_buffer_api is not None else 0
