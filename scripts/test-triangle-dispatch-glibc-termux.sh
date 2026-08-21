@@ -7,6 +7,8 @@ out_dir="$project_dir/out/triangle-dispatch-glibc"
 generated_dir="$out_dir/generated"
 registry="$build_dir/_deps/vulkanheaders-src/registry/vk.xml"
 manifest="$project_dir/docs/evidence/e011-tombraider-vulkan-dispatch-manifest.json"
+additional_dispatch="$project_dir/config/e065-image-allocation-dispatch.txt"
+dispatch_gate=E065
 
 for command_name in cmake cp grun gcc python readelf; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
@@ -34,8 +36,8 @@ python "$project_dir/scripts/generate-dxvk-dispatch-policy.py" \
     "$generated_dir/bvb_dxvk_dispatch_policy.inc" \
     "$generated_dir/bvb_dxvk_dispatch_policy.json" \
     --additional-executable \
-    "$project_dir/config/e034-mapped-memory-dispatch.txt" \
-    --gate E034
+    "$additional_dispatch" \
+    --gate "$dispatch_gate"
 python "$project_dir/scripts/generate-vulkan-discovery-wire.py" \
     "$registry" \
     "$generated_dir/bvb_vulkan_discovery_wire.inc"
@@ -49,10 +51,13 @@ grun -s gcc -std=c17 -O3 -DNDEBUG -fPIC -fvisibility=hidden \
     -I"$project_dir/include" -I"$generated_dir" \
     -I"$build_dir/_deps/vulkanheaders-src/include" \
     "$project_dir/src/protocol.c" \
+    "$project_dir/src/vulkan_descriptor_wire.c" \
+    "$project_dir/src/vulkan_pipeline_wire.c" \
     "$project_dir/src/transport.c" \
     "$project_dir/src/handle.c" \
     "$project_dir/src/command_batch.c" \
     "$project_dir/src/vulkan_discovery.c" \
+    "$project_dir/src/wsi_frame_ring.c" \
     "$project_dir/src/dxvk_dispatch_policy.c" \
     "$project_dir/src/global_dispatch.c" \
     "$project_dir/src/triangle_dispatch.c" \
