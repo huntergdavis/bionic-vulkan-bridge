@@ -21,6 +21,9 @@ For a real Vulkan driver, pass `--hardware-validation` and an absolute
 private Turnip ICD and accepts `BVB_VULKAN_SERVICE_LOADER` as an explicit
 override; it refuses a missing or symlinked file. This prevents a hardware run
 from silently testing Android's system driver instead of the game-path driver.
+On a tracked-dirty deployment tree, the gate also requires the exact pushed
+commit through `BVB_SOURCE_COMMIT`; a clean checkout records its own `HEAD`.
+The evidence identifies which provenance route was used.
 The harness sets
 `BVB_GLOBAL_DISPATCH_HARDWARE=1` only in the client child and records
 `client_validation_mode: hardware` in its JSON. This preserves exact fake

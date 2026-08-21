@@ -69,10 +69,31 @@ python3 "$harness" \
     --result-json "$harness_result" \
     -- grun "$client"
 
-source_commit=$(git -C "$project_dir" rev-parse HEAD)
+if [ -n "${BVB_SOURCE_COMMIT:-}" ]; then
+    source_commit=$BVB_SOURCE_COMMIT
+    source_commit_provenance=environment_override
+elif git -C "$project_dir" diff --quiet -- &&
+    git -C "$project_dir" diff --cached --quiet --; then
+    source_commit=$(git -C "$project_dir" rev-parse HEAD)
+    source_commit_provenance=clean_git_head
+else
+    printf 'tracked source is dirty; set BVB_SOURCE_COMMIT to the exact deployed commit\n' >&2
+    exit 3
+fi
+case "$source_commit" in
+    *[!0-9a-f]*|'')
+        printf 'invalid BVB source commit: %s\n' "$source_commit" >&2
+        exit 3
+        ;;
+esac
+if [ "${#source_commit}" -ne 40 ]; then
+    printf 'BVB source commit must contain exactly 40 lowercase hex characters\n' >&2
+    exit 3
+fi
 python3 - "$policy_json" "$library" "$client" "$service" \
     "$client_stdout" "$service_stdout" "$harness_result" \
-    "$source_commit" "$evidence" "$service_loader" <<'PY'
+    "$source_commit" "$evidence" "$service_loader" \
+    "$source_commit_provenance" <<'PY'
 import hashlib
 import json
 import pathlib
@@ -95,6 +116,7 @@ import sys
     pathlib.Path(sys.argv[9]),
 ]
 service_loader_path = pathlib.Path(sys.argv[10])
+source_commit_provenance = sys.argv[11]
 
 
 def artifact(path):
@@ -393,6 +415,7 @@ document = {
     "gate": "E071-current-global",
     "result": "pass",
     "source_commit": source_commit,
+    "source_commit_provenance": source_commit_provenance,
     "target": "Galaxy Tab S8+ Termux ARM64 glibc to Android Bionic",
     "glibc_interpreter":
         "/data/data/com.termux/files/usr/glibc/lib/ld-linux-aarch64.so.1",

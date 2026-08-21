@@ -35,6 +35,9 @@ def main() -> int:
     termux_gate = pathlib.Path(termux_gate_path).read_text()
     assert 'python3 "$harness"' in termux_gate
     assert "BVB_VULKAN_SERVICE_LOADER" in termux_gate
+    assert "BVB_SOURCE_COMMIT" in termux_gate
+    assert 'source_commit_provenance=environment_override' in termux_gate
+    assert 'source_commit_provenance=clean_git_head' in termux_gate
     assert '--service-loader "$service_loader"' in termux_gate
     assert '--activity-frame-socket' not in termux_gate
     assert '--result-json "$harness_result"' in termux_gate

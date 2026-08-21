@@ -182,7 +182,8 @@ int main(void) {
     const VkApplicationInfo application_info = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
         .pApplicationName = "bvb-e025-test",
-        .apiVersion = VK_API_VERSION_1_1,
+        .apiVersion = hardware_mode ? VK_API_VERSION_1_3
+                                    : VK_API_VERSION_1_1,
     };
     const char *unsupported_extension = "VK_EXT_debug_utils";
     VkInstanceCreateInfo create_info = {
