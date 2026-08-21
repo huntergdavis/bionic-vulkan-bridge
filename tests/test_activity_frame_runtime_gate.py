@@ -2,7 +2,10 @@
 
 import importlib.util
 import json
+import os
 import pathlib
+import shlex
+import shutil
 import socket
 import struct
 import subprocess
@@ -21,9 +24,19 @@ def load_gate(path: pathlib.Path):
     return module
 
 
-def write_tool(path: pathlib.Path, body: str) -> pathlib.Path:
-    path.write_text("#!/usr/bin/env python3\n" + body)
+def write_tool(path: pathlib.Path, stdout: str) -> pathlib.Path:
+    shell = shutil.which("sh")
+    assert shell is not None
+    shell_path = pathlib.Path(shell).resolve(strict=True)
+    assert shell_path.is_absolute() and os.access(shell_path, os.X_OK)
+    path.write_text(
+        f"#!{shell_path}\n"
+        "set -eu\n"
+        f"printf '%s' {shlex.quote(stdout)}\n"
+    )
     path.chmod(0o700)
+    assert path.read_text().splitlines()[0] == f"#!{shell_path}"
+    assert "python" not in path.read_text().splitlines()[0]
     return path
 
 
@@ -72,12 +85,12 @@ def main() -> int:
         installed.write_bytes(staged.read_bytes())
         aapt = write_tool(
             root / "aapt",
-            "print(\"package: name='io.github.huntergdavis.bvb.visiblehost' "
-            "versionCode='40' versionName='0.1.39'\")\n",
+            "package: name='io.github.huntergdavis.bvb.visiblehost' "
+            "versionCode='40' versionName='0.1.39'\n",
         )
         apksigner = write_tool(
             root / "apksigner",
-            "print('Signer #1 certificate SHA-256 digest: " + "cd" * 32 + "')\n",
+            "Signer #1 certificate SHA-256 digest: " + "cd" * 32 + "\n",
         )
         staged_identity, installed_identity = gate.validate_apk_pair(
             manifest, staged, installed, str(aapt), str(apksigner), 2.0
@@ -115,8 +128,8 @@ def main() -> int:
         bridge_icd.write_bytes(b"icd")
         readelf = write_tool(
             root / "readelf",
-            "print(' 0x1 (NEEDED) Shared library: [libvulkan-bvb-glibc.so]')\n"
-            f"print(' 0x1d (RUNPATH) Library runpath: [{root}]')\n",
+            " 0x1 (NEEDED) Shared library: [libvulkan-bvb-glibc.so]\n"
+            f" 0x1d (RUNPATH) Library runpath: [{root}]\n",
         )
         gate.validate_client_bridge_icd(producer, bridge_icd, str(readelf), 2.0)
 
@@ -134,8 +147,8 @@ def main() -> int:
         (shadow / "libvulkan-bvb-glibc.so").write_bytes(b"shadow")
         shadow_readelf = write_tool(
             root / "readelf-shadow",
-            "print(' 0x1 (NEEDED) Shared library: [libvulkan-bvb-glibc.so]')\n"
-            f"print(' 0x1d (RUNPATH) Library runpath: [{shadow}:{root}]')\n",
+            " 0x1 (NEEDED) Shared library: [libvulkan-bvb-glibc.so]\n"
+            f" 0x1d (RUNPATH) Library runpath: [{shadow}:{root}]\n",
         )
         try:
             gate.validate_client_bridge_icd(
@@ -148,7 +161,7 @@ def main() -> int:
 
         pm = write_tool(
             root / "pm",
-            f"print('package:{installed}')\n",
+            f"package:{installed}\n",
         )
         preflight_output = root / "preflight-output"
         preflight = subprocess.run(

@@ -3444,3 +3444,35 @@ fill never reached native replay. Compact evidence is
 `docs/evidence/e080-command-ownership-cache-host.json`. These observations
 prove only fewer client lookups; they do not count native validation, establish
 FPS, or claim deployment.
+
+## E081 — Termux Python mock-process cleanup compatibility (2026-08-21)
+
+Status: the repaired E074 contract passes three consecutive focused host runs,
+13/13 focused Termux Python 3.14.6 runs including a final consecutive ten-run
+stress set, the complete 58/58 host suite, and the complete 56/56 Termux suite.
+The required `deja "Termux Python 3.14
+Scudo corrupted chunk activity frame runtime gate E074 preflight subprocess
+temporary mock"` query returned no indexed hit. This repair reuses E074's real
+preflight-only runner and all of its fail-closed assertions.
+
+The smallest tablet reproducer contains no bridge code: a stdlib-only parent
+creates a temporary ZIP and executes 64 temporary `#!/usr/bin/env python3`
+mocks. Each of three runs printed its PASS line and then aborted during Python
+finalization with status 134; logcat attributed every abort to a Scudo corrupted
+zero chunk header in Termux's `libpython3.14.so`. The byte-identical workload
+using an absolute resolved POSIX-shell shebang passed three of three times.
+This separates the failure from the bridge C code, Vulkan, concurrent server
+teardown, and the Activity runtime.
+
+The contract's fake `pm`, `aapt`, `apksigner`, and `readelf` tools are now
+small shell executables whose literal stdout is quoted with `shlex.quote` and
+emitted by `printf`. The test asserts that their interpreter is the absolute,
+executable `sh` selected on that platform and is not Python, so reintroducing
+the old nested-interpreter pattern fails the contract. The real
+`test-activity-frame-import-v40-termux.py --preflight-only` subprocess still
+runs. V39 rejection, APK byte and certificate identity, literal ICD NEEDED and
+non-shadowed RUNPATH, native markers, frame-document validation, and wrong-token
+authentication rejection remain unchanged. Compact evidence is
+`docs/evidence/e081-termux-python-mock-cleanup.json`. No runtime bridge source,
+active tablet artifact, APK, UI, Steam, or X process was changed; there is no
+visible-frame, Tomb Raider, benchmark, or FPS claim.

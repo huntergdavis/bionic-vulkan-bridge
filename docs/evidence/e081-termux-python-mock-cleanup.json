@@ -1,0 +1,65 @@
+{
+  "gate": "E081",
+  "base": "b522c57ee7489ea95a0cf26ff87742c4c3cd2053",
+  "objective": "keep the real E074 Activity preflight contract executable under Termux Python 3.14 without weakening its fail-closed checks",
+  "deja": {
+    "query": "Termux Python 3.14 Scudo corrupted chunk activity frame runtime gate E074 preflight subprocess temporary mock",
+    "result": "no indexed hit",
+    "reuse": [
+      "E074 real preflight-only runner and fail-closed APK/runtime contract"
+    ]
+  },
+  "reduction": {
+    "bridge_code_loaded": false,
+    "common_workload": "stdlib-only temporary ZIP plus 64 captured temporary executable subprocesses",
+    "python_shebang_mock": {
+      "runs": 3,
+      "pass_line_before_abort": true,
+      "exit_status_each": 134,
+      "scudo_failure": "corrupted chunk header; zero header may indicate memory corruption or double free"
+    },
+    "resolved_posix_shell_mock": {
+      "runs": 3,
+      "exit_status_each": 0
+    },
+    "termux_python": "3.14.6",
+    "retained_tablet_reproducer": "/data/data/com.termux/files/usr/tmp/bvb-e081-python-mock-repro.py",
+    "retained_tablet_reproducer_sha256": "f291d6f35d69856185685b843b29311d244cfa3354efd83e3764a6c9b5b9a048"
+  },
+  "fix": {
+    "scope": "test harness only",
+    "mock_interpreter": "absolute executable resolved from sh on PATH",
+    "mock_output_encoding": "shlex.quote plus printf %s",
+    "real_preflight_script_still_runs": true,
+    "preexec_fn_used": false,
+    "bridge_runtime_changed": false
+  },
+  "preserved_contracts": [
+    "v39 rejection",
+    "staged and installed APK byte identity",
+    "certificate identity",
+    "literal ICD NEEDED and non-shadowed RUNPATH",
+    "native markers",
+    "frame document shape",
+    "wrong-token authentication rejection"
+  ],
+  "validation": {
+    "focused_host_real_preflight": "3/3 passed",
+    "focused_termux_real_preflight": "13/13 passed under Python 3.14.6, including one final consecutive 10-run stress set",
+    "full_host_suite": "58/58 passed",
+    "full_termux_suite": "56/56 passed",
+    "termux_full_log": "/data/data/com.termux/files/home/steam-arm64/bvb-candidates/e081-harness-test-working/full-tablet-suite.log",
+    "termux_full_log_sha256": "ad9a8e007fd7bcc212eef5f6c65dcc7978d16af93c271a3beb054b9c67df0f15",
+    "tested_contract_sha256": "1ee78d45fcb0ad0a3fc01cf704c460bc0d723405ba4a7a6174a457f212c4d0c5",
+    "scudo_errors_after_final_stress_started": 0
+  },
+  "claims": {
+    "test_harness_compatibility": true,
+    "active_artifacts_installed": false,
+    "apk_changed": false,
+    "tablet_ui_touched": false,
+    "visible_frame": false,
+    "tomb_raider_run": false,
+    "fps": null
+  }
+}
