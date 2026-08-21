@@ -905,6 +905,82 @@ static int answer_vulkan_image_format_properties(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_external_buffer_properties(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_EXTERNAL_BUFFER_QUERY_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_external_buffer_query query;
+    int result = bvb_protocol_decode_vulkan_external_buffer_query(
+        request->payload, &query);
+    struct bvb_vulkan_external_buffer_properties properties;
+    char diagnostic[512];
+    if (result == 0) {
+        result = bvb_vulkan_global_context_get_external_buffer_properties(
+            context, &query, &properties, diagnostic, sizeof(diagnostic));
+        if (result != 0) {
+            fprintf(stderr, "bvb: external-buffer properties failed: %s\n",
+                    diagnostic);
+        }
+    }
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_external_buffer_properties(
+            response.payload, &properties);
+    }
+    if (result == 0) {
+        response.header.payload_length =
+            BVB_VULKAN_EXTERNAL_BUFFER_PROPERTIES_SIZE;
+    } else {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_external_semaphore_properties(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_EXTERNAL_SEMAPHORE_QUERY_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_external_semaphore_query query;
+    int result = bvb_protocol_decode_vulkan_external_semaphore_query(
+        request->payload, &query);
+    struct bvb_vulkan_external_semaphore_properties properties;
+    char diagnostic[512];
+    if (result == 0) {
+        result = bvb_vulkan_global_context_get_external_semaphore_properties(
+            context, &query, &properties, diagnostic, sizeof(diagnostic));
+        if (result != 0) {
+            fprintf(
+                stderr,
+                "bvb: external-semaphore properties failed: %s\n",
+                diagnostic);
+        }
+    }
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_external_semaphore_properties(
+            response.payload, &properties);
+    }
+    if (result == 0) {
+        response.header.payload_length =
+            BVB_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES_SIZE;
+    } else {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_device_create(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context) {
@@ -2017,6 +2093,14 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_IMAGE_FORMAT_PROPERTIES) {
             result = answer_vulkan_image_format_properties(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_EXTERNAL_BUFFER_PROPERTIES) {
+            result = answer_vulkan_external_buffer_properties(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES) {
+            result = answer_vulkan_external_semaphore_properties(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
                        BVB_OPCODE_VULKAN_DEVICE_CREATE ||

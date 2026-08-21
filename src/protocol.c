@@ -490,6 +490,126 @@ int bvb_protocol_decode_vulkan_image_format_properties(
     return 0;
 }
 
+int bvb_protocol_encode_vulkan_external_buffer_query(
+    uint8_t output[BVB_VULKAN_EXTERNAL_BUFFER_QUERY_SIZE],
+    const struct bvb_vulkan_external_buffer_query *query) {
+    if (output == NULL || query == NULL ||
+        !wire_id_is_type(query->physical_device_id, 2U)) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_EXTERNAL_BUFFER_QUERY_SIZE);
+    bvb_wire_put_u64(output, query->physical_device_id);
+    bvb_wire_put_u32(output + 8, query->flags);
+    bvb_wire_put_u32(output + 12, query->usage);
+    bvb_wire_put_u32(output + 16, query->handle_type);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_external_buffer_query(
+    const uint8_t input[BVB_VULKAN_EXTERNAL_BUFFER_QUERY_SIZE],
+    struct bvb_vulkan_external_buffer_query *query) {
+    if (input == NULL || query == NULL) {
+        return -EINVAL;
+    }
+    const struct bvb_vulkan_external_buffer_query decoded = {
+        .physical_device_id = bvb_wire_get_u64(input),
+        .flags = bvb_wire_get_u32(input + 8),
+        .usage = bvb_wire_get_u32(input + 12),
+        .handle_type = bvb_wire_get_u32(input + 16),
+    };
+    if (!wire_id_is_type(decoded.physical_device_id, 2U) ||
+        bvb_wire_get_u32(input + 20) != 0U) {
+        return -EPROTO;
+    }
+    *query = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_external_buffer_properties(
+    uint8_t output[BVB_VULKAN_EXTERNAL_BUFFER_PROPERTIES_SIZE],
+    const struct bvb_vulkan_external_buffer_properties *properties) {
+    if (output == NULL || properties == NULL) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u32(output, properties->external_memory_features);
+    bvb_wire_put_u32(output + 4,
+                     properties->export_from_imported_handle_types);
+    bvb_wire_put_u32(output + 8, properties->compatible_handle_types);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_external_buffer_properties(
+    const uint8_t input[BVB_VULKAN_EXTERNAL_BUFFER_PROPERTIES_SIZE],
+    struct bvb_vulkan_external_buffer_properties *properties) {
+    if (input == NULL || properties == NULL) {
+        return -EINVAL;
+    }
+    *properties = (struct bvb_vulkan_external_buffer_properties){
+        .external_memory_features = bvb_wire_get_u32(input),
+        .export_from_imported_handle_types = bvb_wire_get_u32(input + 4),
+        .compatible_handle_types = bvb_wire_get_u32(input + 8),
+    };
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_external_semaphore_query(
+    uint8_t output[BVB_VULKAN_EXTERNAL_SEMAPHORE_QUERY_SIZE],
+    const struct bvb_vulkan_external_semaphore_query *query) {
+    if (output == NULL || query == NULL ||
+        !wire_id_is_type(query->physical_device_id, 2U)) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_EXTERNAL_SEMAPHORE_QUERY_SIZE);
+    bvb_wire_put_u64(output, query->physical_device_id);
+    bvb_wire_put_u32(output + 8, query->handle_type);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_external_semaphore_query(
+    const uint8_t input[BVB_VULKAN_EXTERNAL_SEMAPHORE_QUERY_SIZE],
+    struct bvb_vulkan_external_semaphore_query *query) {
+    if (input == NULL || query == NULL) {
+        return -EINVAL;
+    }
+    const struct bvb_vulkan_external_semaphore_query decoded = {
+        .physical_device_id = bvb_wire_get_u64(input),
+        .handle_type = bvb_wire_get_u32(input + 8),
+    };
+    if (!wire_id_is_type(decoded.physical_device_id, 2U) ||
+        bvb_wire_get_u32(input + 12) != 0U) {
+        return -EPROTO;
+    }
+    *query = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_external_semaphore_properties(
+    uint8_t output[BVB_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES_SIZE],
+    const struct bvb_vulkan_external_semaphore_properties *properties) {
+    if (output == NULL || properties == NULL) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u32(output,
+                     properties->export_from_imported_handle_types);
+    bvb_wire_put_u32(output + 4, properties->compatible_handle_types);
+    bvb_wire_put_u32(output + 8, properties->external_semaphore_features);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_external_semaphore_properties(
+    const uint8_t input[BVB_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES_SIZE],
+    struct bvb_vulkan_external_semaphore_properties *properties) {
+    if (input == NULL || properties == NULL) {
+        return -EINVAL;
+    }
+    *properties = (struct bvb_vulkan_external_semaphore_properties){
+        .export_from_imported_handle_types = bvb_wire_get_u32(input),
+        .compatible_handle_types = bvb_wire_get_u32(input + 4),
+        .external_semaphore_features = bvb_wire_get_u32(input + 8),
+    };
+    return 0;
+}
+
 int bvb_protocol_encode_vulkan_device_extension_query(
     uint8_t output[BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE],
     const struct bvb_vulkan_device_extension_query *query) {

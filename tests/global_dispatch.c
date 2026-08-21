@@ -62,33 +62,43 @@ int main(void) {
     uint32_t extension_count = 99U;
     CHECK(vkEnumerateInstanceExtensionProperties(
               NULL, &extension_count, NULL) == VK_SUCCESS);
-    CHECK(extension_count == 1U);
-    VkExtensionProperties extension = {{0}, 0U};
-    extension_count = 1U;
+    CHECK(extension_count == 3U);
+    VkExtensionProperties extensions[3] = {0};
+    extension_count = 3U;
     CHECK(vkEnumerateInstanceExtensionProperties(
-              NULL, &extension_count, &extension) == VK_SUCCESS);
-    CHECK(extension_count == 1U);
-    CHECK(strcmp(extension.extensionName,
+              NULL, &extension_count, extensions) == VK_SUCCESS);
+    CHECK(extension_count == 3U);
+    CHECK(strcmp(extensions[0].extensionName,
                  VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) ==
+          0);
+    CHECK(strcmp(extensions[1].extensionName,
+                 VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME) == 0);
+    CHECK(strcmp(extensions[2].extensionName,
+                 VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME) ==
           0);
     CHECK(setenv("BVB_ICD_PROBE_WSI", "1", 1) == 0);
     extension_count = 0U;
     CHECK(vkEnumerateInstanceExtensionProperties(
               NULL, &extension_count, NULL) == VK_SUCCESS);
-    CHECK(extension_count == 5U);
-    VkExtensionProperties probe_extensions[5] = {0};
+    CHECK(extension_count == 7U);
+    VkExtensionProperties probe_extensions[7] = {0};
     CHECK(vkEnumerateInstanceExtensionProperties(
               NULL, &extension_count, probe_extensions) == VK_SUCCESS);
-    CHECK(extension_count == 5U);
+    CHECK(extension_count == 7U);
     CHECK(strcmp(probe_extensions[0].extensionName,
                  VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) ==
           0);
-    CHECK(strcmp(probe_extensions[1].extensionName, "VK_KHR_surface") == 0);
+    CHECK(strcmp(probe_extensions[1].extensionName,
+                 VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME) == 0);
     CHECK(strcmp(probe_extensions[2].extensionName,
-                 "VK_KHR_xlib_surface") == 0);
-    CHECK(strcmp(probe_extensions[3].extensionName,
-                 "VK_KHR_xcb_surface") == 0);
+                 VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME) ==
+          0);
+    CHECK(strcmp(probe_extensions[3].extensionName, "VK_KHR_surface") == 0);
     CHECK(strcmp(probe_extensions[4].extensionName,
+                 "VK_KHR_xlib_surface") == 0);
+    CHECK(strcmp(probe_extensions[5].extensionName,
+                 "VK_KHR_xcb_surface") == 0);
+    CHECK(strcmp(probe_extensions[6].extensionName,
                  "VK_KHR_wayland_surface") == 0);
     CHECK(unsetenv("BVB_ICD_PROBE_WSI") == 0);
     CHECK(vkEnumerateInstanceExtensionProperties(
@@ -121,9 +131,13 @@ int main(void) {
           VK_ERROR_EXTENSION_NOT_PRESENT);
     CHECK(instance_one == VK_NULL_HANDLE);
 
-    const char *enabled_instance_extension = extension.extensionName;
-    create_info.enabledExtensionCount = 1U;
-    create_info.ppEnabledExtensionNames = &enabled_instance_extension;
+    const char *enabled_instance_extensions[3] = {
+        extensions[0].extensionName,
+        extensions[1].extensionName,
+        extensions[2].extensionName,
+    };
+    create_info.enabledExtensionCount = 3U;
+    create_info.ppEnabledExtensionNames = enabled_instance_extensions;
     const uint32_t loader_private_chain_marker = UINT32_C(0x7ffffffe);
     create_info.pNext = &loader_private_chain_marker;
     const VkAllocationCallbacks loader_private_allocator = {0};
@@ -188,6 +202,9 @@ int main(void) {
     PFN_vkGetPhysicalDeviceMemoryProperties2 get_memory_properties2 = NULL;
     PFN_vkGetPhysicalDeviceSparseImageFormatProperties2 get_sparse_properties2 =
         NULL;
+    PFN_vkGetPhysicalDeviceExternalBufferProperties get_external_buffer = NULL;
+    PFN_vkGetPhysicalDeviceExternalSemaphoreProperties get_external_semaphore =
+        NULL;
     PFN_vkEnumerateDeviceExtensionProperties enumerate_device_extensions =
         NULL;
 #define RESOLVE_INSTANCE(entry_name, variable)                                \
@@ -218,6 +235,10 @@ int main(void) {
                      get_memory_properties2);
     RESOLVE_INSTANCE(vkGetPhysicalDeviceSparseImageFormatProperties2,
                      get_sparse_properties2);
+    RESOLVE_INSTANCE(vkGetPhysicalDeviceExternalBufferProperties,
+                     get_external_buffer);
+    RESOLVE_INSTANCE(vkGetPhysicalDeviceExternalSemaphoreProperties,
+                     get_external_semaphore);
     RESOLVE_INSTANCE(vkEnumerateDeviceExtensionProperties,
                      enumerate_device_extensions);
 #undef RESOLVE_INSTANCE
@@ -287,6 +308,41 @@ int main(void) {
               physical_device, &image_info2, &image_properties2) ==
           VK_SUCCESS);
     CHECK(image_properties2.imageFormatProperties.maxExtent.width == 4096U);
+    const VkPhysicalDeviceExternalBufferInfo external_buffer_info = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_BUFFER_INFO,
+        .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
+    VkExternalBufferProperties external_buffer_properties = {
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_BUFFER_PROPERTIES,
+    };
+    get_external_buffer(
+        physical_device, &external_buffer_info, &external_buffer_properties);
+    CHECK((external_buffer_properties.externalMemoryProperties
+               .externalMemoryFeatures &
+           VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT) != 0U);
+    CHECK((external_buffer_properties.externalMemoryProperties
+               .externalMemoryFeatures &
+           VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) != 0U);
+    CHECK((external_buffer_properties.externalMemoryProperties
+               .compatibleHandleTypes &
+           VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT) != 0U);
+    const VkPhysicalDeviceExternalSemaphoreInfo external_semaphore_info = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO,
+        .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
+    VkExternalSemaphoreProperties external_semaphore_properties = {
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES,
+    };
+    get_external_semaphore(
+        physical_device, &external_semaphore_info,
+        &external_semaphore_properties);
+    CHECK((external_semaphore_properties.externalSemaphoreFeatures &
+           VK_EXTERNAL_SEMAPHORE_FEATURE_EXPORTABLE_BIT) != 0U);
+    CHECK((external_semaphore_properties.externalSemaphoreFeatures &
+           VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT) != 0U);
+    CHECK((external_semaphore_properties.compatibleHandleTypes &
+           VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT) != 0U);
     const VkPhysicalDeviceSparseImageFormatInfo2 sparse_info2 = {
         .sType =
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SPARSE_IMAGE_FORMAT_INFO_2,
@@ -711,7 +767,7 @@ int main(void) {
     destroy_instance_two(instance_two, NULL);
 
     printf("PASS: global Vulkan discovery api=%u "
-           "exposed_extensions=1 exposed_layers=0 "
+           "exposed_extensions=3 exposed_layers=0 "
            "instance_one=%llu instance_two=%llu physical_device=%llu "
            "device=%s device_api=%u driver=%u vendor=%u device_id=%u "
            "queues=%u memory_types=%u memory_heaps=%u device_extensions=%u "

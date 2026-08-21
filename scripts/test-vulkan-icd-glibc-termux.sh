@@ -23,7 +23,7 @@ cleanup() {
     if [ -n "$runtime_dir" ] && [ -d "$runtime_dir" ] &&
         [ ! -L "$runtime_dir" ]; then
         case "$runtime_dir" in
-            "$runtime_parent"/bvb-e048.*) rmdir "$runtime_dir" 2>/dev/null || true ;;
+            "$runtime_parent"/bvb-e050.*) rmdir "$runtime_dir" 2>/dev/null || true ;;
         esac
     fi
 }
@@ -61,7 +61,7 @@ if ! readelf --wide --dyn-syms "$library" | \
     exit 3
 fi
 
-runtime_dir=$(mktemp -d "$runtime_parent/bvb-e048.XXXXXX")
+runtime_dir=$(mktemp -d "$runtime_parent/bvb-e050.XXXXXX")
 control_socket="$runtime_dir/bridge.sock"
 client_stdout="$out_dir/e048-icd-client.stdout"
 client_stderr="$out_dir/e048-icd-client.stderr"
@@ -86,13 +86,13 @@ VK_DRIVER_FILES="$icd_manifest" VK_ICD_FILENAMES="$icd_manifest" \
 wait "$service_pid"
 service_pid=
 if [ -s "$client_stderr" ] || [ -s "$service_stderr" ]; then
-    printf 'E048 emitted unexpected stderr\n' >&2
+    printf 'E050 emitted unexpected stderr\n' >&2
     sed -n '1,160p' "$client_stderr" >&2
     sed -n '1,160p' "$service_stderr" >&2
     exit 5
 fi
 grep -q '^PASS: Vulkan loader selected BVB ICD ' "$client_stdout" || {
-    printf 'E048 loader result is missing\n' >&2
+    printf 'E050 loader result is missing\n' >&2
     exit 5
 }
 cat "$client_stdout"

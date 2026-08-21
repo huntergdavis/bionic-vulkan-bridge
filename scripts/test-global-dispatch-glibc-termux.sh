@@ -128,11 +128,11 @@ def artifact(path):
 policy = json.loads(policy_path.read_text())
 assert policy["gate"] == "E034"
 assert policy["summary"]["command_count"] == 742
-assert policy["summary"]["executable_name_count"] == 50
+assert policy["summary"]["executable_name_count"] == 54
 assert policy["summary"]["support_counts"] == {
     "probed_null": 302,
-    "required_unimplemented": 390,
-    "executable": 50,
+    "required_unimplemented": 386,
+    "executable": 54,
 }
 client_stdout = client_stdout_path.read_text().strip()
 match = re.fullmatch(

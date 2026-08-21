@@ -64,6 +64,16 @@ int bvb_vulkan_global_context_get_image_format_properties(
     const struct bvb_vulkan_image_format_query *query,
     struct bvb_vulkan_image_format_properties *properties,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_get_external_buffer_properties(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_external_buffer_query *query,
+    struct bvb_vulkan_external_buffer_properties *properties,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_get_external_semaphore_properties(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_external_semaphore_query *query,
+    struct bvb_vulkan_external_semaphore_properties *properties,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_create_device(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_device_create_request *request,

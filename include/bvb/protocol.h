@@ -74,7 +74,9 @@ enum {
     BVB_OPCODE_VULKAN_DEVICE_CREATE_EXTENDED = 57,
     BVB_OPCODE_VULKAN_INSTANCE_EXTENSIONS = 58,
     BVB_OPCODE_VULKAN_INSTANCE_CREATE_EXTENDED = 59,
-    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_INSTANCE_CREATE_EXTENDED,
+    BVB_OPCODE_VULKAN_EXTERNAL_BUFFER_PROPERTIES = 60,
+    BVB_OPCODE_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES = 61,
+    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -99,6 +101,10 @@ enum {
     BVB_VULKAN_FORMAT_PROPERTIES_SIZE = 12,
     BVB_VULKAN_IMAGE_FORMAT_QUERY_SIZE = 32,
     BVB_VULKAN_IMAGE_FORMAT_PROPERTIES_SIZE = 40,
+    BVB_VULKAN_EXTERNAL_BUFFER_QUERY_SIZE = 24,
+    BVB_VULKAN_EXTERNAL_BUFFER_PROPERTIES_SIZE = 12,
+    BVB_VULKAN_EXTERNAL_SEMAPHORE_QUERY_SIZE = 16,
+    BVB_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES_SIZE = 12,
     BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE = 16,
     BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE = 32,
     BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE = 128,
@@ -278,6 +284,30 @@ struct bvb_vulkan_image_format_properties {
     uint32_t max_array_layers;
     uint32_t sample_counts;
     uint64_t max_resource_size;
+};
+
+struct bvb_vulkan_external_buffer_query {
+    uint64_t physical_device_id;
+    uint32_t flags;
+    uint32_t usage;
+    uint32_t handle_type;
+};
+
+struct bvb_vulkan_external_buffer_properties {
+    uint32_t external_memory_features;
+    uint32_t export_from_imported_handle_types;
+    uint32_t compatible_handle_types;
+};
+
+struct bvb_vulkan_external_semaphore_query {
+    uint64_t physical_device_id;
+    uint32_t handle_type;
+};
+
+struct bvb_vulkan_external_semaphore_properties {
+    uint32_t export_from_imported_handle_types;
+    uint32_t compatible_handle_types;
+    uint32_t external_semaphore_features;
 };
 
 struct bvb_vulkan_device_extension_query {
@@ -587,6 +617,30 @@ int bvb_protocol_encode_vulkan_image_format_properties(
 int bvb_protocol_decode_vulkan_image_format_properties(
     const uint8_t input[BVB_VULKAN_IMAGE_FORMAT_PROPERTIES_SIZE],
     struct bvb_vulkan_image_format_properties *properties);
+int bvb_protocol_encode_vulkan_external_buffer_query(
+    uint8_t output[BVB_VULKAN_EXTERNAL_BUFFER_QUERY_SIZE],
+    const struct bvb_vulkan_external_buffer_query *query);
+int bvb_protocol_decode_vulkan_external_buffer_query(
+    const uint8_t input[BVB_VULKAN_EXTERNAL_BUFFER_QUERY_SIZE],
+    struct bvb_vulkan_external_buffer_query *query);
+int bvb_protocol_encode_vulkan_external_buffer_properties(
+    uint8_t output[BVB_VULKAN_EXTERNAL_BUFFER_PROPERTIES_SIZE],
+    const struct bvb_vulkan_external_buffer_properties *properties);
+int bvb_protocol_decode_vulkan_external_buffer_properties(
+    const uint8_t input[BVB_VULKAN_EXTERNAL_BUFFER_PROPERTIES_SIZE],
+    struct bvb_vulkan_external_buffer_properties *properties);
+int bvb_protocol_encode_vulkan_external_semaphore_query(
+    uint8_t output[BVB_VULKAN_EXTERNAL_SEMAPHORE_QUERY_SIZE],
+    const struct bvb_vulkan_external_semaphore_query *query);
+int bvb_protocol_decode_vulkan_external_semaphore_query(
+    const uint8_t input[BVB_VULKAN_EXTERNAL_SEMAPHORE_QUERY_SIZE],
+    struct bvb_vulkan_external_semaphore_query *query);
+int bvb_protocol_encode_vulkan_external_semaphore_properties(
+    uint8_t output[BVB_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES_SIZE],
+    const struct bvb_vulkan_external_semaphore_properties *properties);
+int bvb_protocol_decode_vulkan_external_semaphore_properties(
+    const uint8_t input[BVB_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES_SIZE],
+    struct bvb_vulkan_external_semaphore_properties *properties);
 int bvb_protocol_encode_vulkan_device_extension_query(
     uint8_t output[BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE],
     const struct bvb_vulkan_device_extension_query *query);

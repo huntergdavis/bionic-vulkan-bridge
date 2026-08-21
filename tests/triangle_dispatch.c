@@ -84,6 +84,14 @@ int main(void) {
                              "vkGetPhysicalDeviceProperties") == 0 ||
                       strcmp(entry->name,
                              "vkGetPhysicalDeviceQueueFamilyProperties") == 0 ||
+                      strcmp(entry->name,
+                             "vkGetPhysicalDeviceExternalBufferProperties") == 0 ||
+                      strcmp(entry->name,
+                             "vkGetPhysicalDeviceExternalBufferPropertiesKHR") == 0 ||
+                      strcmp(entry->name,
+                             "vkGetPhysicalDeviceExternalSemaphoreProperties") == 0 ||
+                      strcmp(entry->name,
+                             "vkGetPhysicalDeviceExternalSemaphorePropertiesKHR") == 0 ||
                       strcmp(entry->name, "vkCreateDevice") == 0 ||
                       strcmp(entry->name,
                              "vkGetPhysicalDeviceFeatures") == 0);
@@ -139,8 +147,8 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 50U);
-    CHECK(required_count == 390U);
+    CHECK(executable_count == 54U);
+    CHECK(required_count == 386U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");

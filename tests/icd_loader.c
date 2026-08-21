@@ -14,7 +14,7 @@ int main(void) {
     }
     const VkApplicationInfo application = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-        .pApplicationName = "bvb-e048-icd-loader",
+        .pApplicationName = "bvb-e050-icd-loader",
         .applicationVersion = 1U,
         .pEngineName = "bvb",
         .engineVersion = 1U,
@@ -34,24 +34,37 @@ int main(void) {
     result = vkEnumerateInstanceExtensionProperties(
         NULL, &instance_extension_count, instance_extensions);
     int properties2_advertised = 0;
+    int external_memory_advertised = 0;
+    int external_semaphore_advertised = 0;
     if (result == VK_SUCCESS) {
         for (uint32_t index = 0U; index < instance_extension_count; ++index) {
             properties2_advertised |= strcmp(
                 instance_extensions[index].extensionName,
                 VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) == 0;
+            external_memory_advertised |= strcmp(
+                instance_extensions[index].extensionName,
+                VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME) == 0;
+            external_semaphore_advertised |= strcmp(
+                instance_extensions[index].extensionName,
+                VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME) == 0;
         }
     }
-    if (result != VK_SUCCESS || properties2_advertised == 0) {
+    if (result != VK_SUCCESS || properties2_advertised == 0 ||
+        external_memory_advertised == 0 ||
+        external_semaphore_advertised == 0) {
         fputs("required instance extension unavailable\n", stderr);
         return 1;
     }
-    const char *enabled_instance_extension =
-        VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
+    const char *enabled_instance_extensions[3] = {
+        VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
+        VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME,
+        VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
+    };
     const VkInstanceCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
         .pApplicationInfo = &application,
-        .enabledExtensionCount = 1U,
-        .ppEnabledExtensionNames = &enabled_instance_extension,
+        .enabledExtensionCount = 3U,
+        .ppEnabledExtensionNames = enabled_instance_extensions,
     };
     VkInstance instance = VK_NULL_HANDLE;
     result = vkCreateInstance(&create_info, NULL, &instance);
@@ -104,6 +117,44 @@ int main(void) {
         memory2.memoryProperties.memoryTypeCount == 0U ||
         memory2.memoryProperties.memoryHeapCount == 0U) {
         fputs("Vulkan 1.1 physical-device discovery failed\n", stderr);
+        vkDestroyInstance(instance, NULL);
+        return 1;
+    }
+    const VkPhysicalDeviceExternalBufferInfo external_buffer_info = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_BUFFER_INFO,
+        .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
+    VkExternalBufferProperties external_buffer_properties = {
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_BUFFER_PROPERTIES,
+    };
+    vkGetPhysicalDeviceExternalBufferProperties(
+        physical_device, &external_buffer_info, &external_buffer_properties);
+    const VkExternalMemoryProperties external_memory =
+        external_buffer_properties.externalMemoryProperties;
+    if ((external_memory.externalMemoryFeatures &
+         VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT) == 0U ||
+        (external_memory.compatibleHandleTypes &
+         VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT) == 0U) {
+        fputs("external-buffer capability query failed\n", stderr);
+        vkDestroyInstance(instance, NULL);
+        return 1;
+    }
+    const VkPhysicalDeviceExternalSemaphoreInfo external_semaphore_info = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO,
+        .handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
+    VkExternalSemaphoreProperties external_semaphore_properties = {
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES,
+    };
+    vkGetPhysicalDeviceExternalSemaphoreProperties(
+        physical_device, &external_semaphore_info,
+        &external_semaphore_properties);
+    if ((external_semaphore_properties.externalSemaphoreFeatures &
+         VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT) == 0U ||
+        (external_semaphore_properties.compatibleHandleTypes &
+         VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT) == 0U) {
+        fputs("external-semaphore capability query failed\n", stderr);
         vkDestroyInstance(instance, NULL);
         return 1;
     }
@@ -235,10 +286,14 @@ int main(void) {
     }
     vkDestroyDevice(device, NULL);
     vkDestroyInstance(instance, NULL);
-    printf("PASS: Vulkan loader selected BVB ICD api=%u instance_extension=%s device=%s vendor=%u device_id=%u rgba8_optimal=%u max_extent=%ux%ux%u max_resource=%llu queue_family=%u enabled_extension=%s features2_anisotropy=%u memory2_types=%u memory2_heaps=%u device_idle=pass\n",
-           api_version, enabled_instance_extension, properties.deviceName,
+    printf("PASS: Vulkan loader selected BVB ICD api=%u instance_extensions=3 device=%s vendor=%u device_id=%u external_memory_features=%u external_memory_handles=%u external_semaphore_features=%u external_semaphore_handles=%u rgba8_optimal=%u max_extent=%ux%ux%u max_resource=%llu queue_family=%u enabled_extension=%s features2_anisotropy=%u memory2_types=%u memory2_heaps=%u device_idle=pass\n",
+           api_version, properties.deviceName,
            properties.vendorID,
-           properties.deviceID, format_properties.optimalTilingFeatures,
+           properties.deviceID, external_memory.externalMemoryFeatures,
+           external_memory.compatibleHandleTypes,
+           external_semaphore_properties.externalSemaphoreFeatures,
+           external_semaphore_properties.compatibleHandleTypes,
+           format_properties.optimalTilingFeatures,
            image_properties.maxExtent.width,
            image_properties.maxExtent.height,
            image_properties.maxExtent.depth,

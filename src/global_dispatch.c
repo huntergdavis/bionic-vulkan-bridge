@@ -1381,6 +1381,143 @@ bvb_bridge_vkGetPhysicalDeviceImageFormatProperties(
 }
 
 static void VKAPI_CALL
+bvb_bridge_vkGetPhysicalDeviceExternalBufferProperties(
+    VkPhysicalDevice physical_device,
+    const VkPhysicalDeviceExternalBufferInfo *info,
+    VkExternalBufferProperties *properties) {
+    if (info == NULL || properties == NULL ||
+        info->sType !=
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_BUFFER_INFO ||
+        properties->sType != VK_STRUCTURE_TYPE_EXTERNAL_BUFFER_PROPERTIES) {
+        return;
+    }
+    properties->externalMemoryProperties = (VkExternalMemoryProperties){0};
+    struct bvb_physical_device_proxy *proxy =
+        physical_device_proxy(physical_device);
+    if (proxy == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return;
+    }
+    int result = connect_locked();
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_EXTERNAL_BUFFER_PROPERTIES,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_EXTERNAL_BUFFER_QUERY_SIZE,
+    };
+    const struct bvb_vulkan_external_buffer_query query = {
+        .physical_device_id = proxy->wire_id,
+        .flags = (uint32_t)info->flags,
+        .usage = (uint32_t)info->usage,
+        .handle_type = (uint32_t)info->handleType,
+    };
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_external_buffer_query(
+            request.payload, &query);
+    }
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        result = exchange_locked(&request, &response);
+    }
+    if (result == 0 && response.header.status != 0) {
+        result = response.header.status;
+    }
+    struct bvb_vulkan_external_buffer_properties decoded = {0};
+    if (result == 0 && response.header.payload_length !=
+                           BVB_VULKAN_EXTERNAL_BUFFER_PROPERTIES_SIZE) {
+        result = -EPROTO;
+    }
+    if (result == 0) {
+        result = bvb_protocol_decode_vulkan_external_buffer_properties(
+            response.payload, &decoded);
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result == 0) {
+        properties->externalMemoryProperties = (VkExternalMemoryProperties){
+            .externalMemoryFeatures =
+                (VkExternalMemoryFeatureFlags)
+                    decoded.external_memory_features,
+            .exportFromImportedHandleTypes =
+                (VkExternalMemoryHandleTypeFlags)
+                    decoded.export_from_imported_handle_types,
+            .compatibleHandleTypes =
+                (VkExternalMemoryHandleTypeFlags)
+                    decoded.compatible_handle_types,
+        };
+    }
+}
+
+static void VKAPI_CALL
+bvb_bridge_vkGetPhysicalDeviceExternalSemaphoreProperties(
+    VkPhysicalDevice physical_device,
+    const VkPhysicalDeviceExternalSemaphoreInfo *info,
+    VkExternalSemaphoreProperties *properties) {
+    if (info == NULL || properties == NULL ||
+        info->sType !=
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO ||
+        properties->sType !=
+            VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES) {
+        return;
+    }
+    properties->exportFromImportedHandleTypes = 0U;
+    properties->compatibleHandleTypes = 0U;
+    properties->externalSemaphoreFeatures = 0U;
+    struct bvb_physical_device_proxy *proxy =
+        physical_device_proxy(physical_device);
+    if (proxy == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return;
+    }
+    int result = connect_locked();
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_EXTERNAL_SEMAPHORE_QUERY_SIZE,
+    };
+    const struct bvb_vulkan_external_semaphore_query query = {
+        .physical_device_id = proxy->wire_id,
+        .handle_type = (uint32_t)info->handleType,
+    };
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_external_semaphore_query(
+            request.payload, &query);
+    }
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        result = exchange_locked(&request, &response);
+    }
+    if (result == 0 && response.header.status != 0) {
+        result = response.header.status;
+    }
+    struct bvb_vulkan_external_semaphore_properties decoded = {0};
+    if (result == 0 && response.header.payload_length !=
+                           BVB_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES_SIZE) {
+        result = -EPROTO;
+    }
+    if (result == 0) {
+        result = bvb_protocol_decode_vulkan_external_semaphore_properties(
+            response.payload, &decoded);
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result == 0) {
+        properties->exportFromImportedHandleTypes =
+            (VkExternalSemaphoreHandleTypeFlags)
+                decoded.export_from_imported_handle_types;
+        properties->compatibleHandleTypes =
+            (VkExternalSemaphoreHandleTypeFlags)
+                decoded.compatible_handle_types;
+        properties->externalSemaphoreFeatures =
+            (VkExternalSemaphoreFeatureFlags)
+                decoded.external_semaphore_features;
+    }
+}
+
+static void VKAPI_CALL
 bvb_bridge_vkGetPhysicalDeviceSparseImageFormatProperties(
     VkPhysicalDevice physical_device, VkFormat format, VkImageType type,
     VkSampleCountFlagBits samples, VkImageUsageFlags usage,
@@ -3111,6 +3248,18 @@ vkGetInstanceProcAddr(VkInstance instance, const char *name) {
         BVB_INSTANCE_MATCH(
             "vkGetPhysicalDeviceSparseImageFormatProperties2KHR",
             bvb_bridge_vkGetPhysicalDeviceSparseImageFormatProperties2)
+        BVB_INSTANCE_MATCH(
+            "vkGetPhysicalDeviceExternalBufferProperties",
+            bvb_bridge_vkGetPhysicalDeviceExternalBufferProperties)
+        BVB_INSTANCE_MATCH(
+            "vkGetPhysicalDeviceExternalBufferPropertiesKHR",
+            bvb_bridge_vkGetPhysicalDeviceExternalBufferProperties)
+        BVB_INSTANCE_MATCH(
+            "vkGetPhysicalDeviceExternalSemaphoreProperties",
+            bvb_bridge_vkGetPhysicalDeviceExternalSemaphoreProperties)
+        BVB_INSTANCE_MATCH(
+            "vkGetPhysicalDeviceExternalSemaphorePropertiesKHR",
+            bvb_bridge_vkGetPhysicalDeviceExternalSemaphoreProperties)
         BVB_INSTANCE_MATCH("vkCreateDevice",
                            bvb_bridge_vkCreateDevice)
 #undef BVB_INSTANCE_MATCH

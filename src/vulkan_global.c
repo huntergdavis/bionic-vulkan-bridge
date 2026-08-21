@@ -8,6 +8,7 @@
 #include <dlfcn.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +16,14 @@
 
 enum {
     BVB_GLOBAL_OBJECT_CAPACITY = 64,
+    BVB_EXPOSED_INSTANCE_EXTENSION_CAPACITY = 3,
+};
+
+static const char *const bvb_instance_extension_allowlist[
+    BVB_EXPOSED_INSTANCE_EXTENSION_CAPACITY] = {
+    VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
+    VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
+    VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME,
 };
 
 struct bvb_device_metadata {
@@ -36,7 +45,8 @@ struct bvb_vulkan_global_context {
     PFN_vkDestroyInstance destroy_instance;
     PFN_vkGetDeviceProcAddr get_device_proc_addr;
     struct bvb_vulkan_global_info info;
-    VkExtensionProperties exposed_instance_extension;
+    VkExtensionProperties exposed_instance_extensions[
+        BVB_EXPOSED_INSTANCE_EXTENSION_CAPACITY];
     struct bvb_handle_entry object_entries[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_handle_table objects;
     uint64_t next_instance_serial;
@@ -246,14 +256,19 @@ int bvb_vulkan_global_context_create(
             uint32_t returned = available;
             result = enumerate_extensions(NULL, &returned, extensions);
             if (result == VK_SUCCESS) {
-                for (uint32_t index = 0U; index < returned; ++index) {
-                    if (strcmp(
-                            extensions[index].extensionName,
-                            VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) ==
-                        0) {
-                        context->exposed_instance_extension = extensions[index];
-                        context->info.exposed_extension_count = 1U;
-                        break;
+                for (uint32_t allowed = 0U;
+                     allowed < BVB_EXPOSED_INSTANCE_EXTENSION_CAPACITY;
+                     ++allowed) {
+                    for (uint32_t index = 0U; index < returned; ++index) {
+                        if (strcmp(
+                                extensions[index].extensionName,
+                                bvb_instance_extension_allowlist[allowed]) ==
+                            0) {
+                            context->exposed_instance_extensions[
+                                context->info.exposed_extension_count++] =
+                                extensions[index];
+                            break;
+                        }
                     }
                 }
             }
@@ -350,8 +365,9 @@ int bvb_vulkan_global_context_enumerate_instance_extensions(
         .total_count = context->info.exposed_extension_count,
         .count = context->info.exposed_extension_count,
     };
-    if (page->count != 0U) {
-        page->properties[0] = context->exposed_instance_extension;
+    for (uint32_t index = 0U; index < page->count; ++index) {
+        page->properties[index] =
+            context->exposed_instance_extensions[index];
     }
     return 0;
 }
@@ -377,7 +393,8 @@ int bvb_vulkan_global_context_create_instance(
         response->vulkan_result = VK_ERROR_LAYER_NOT_PRESENT;
         return 0;
     }
-    if (request->enabled_extension_count > 1U ||
+    if (request->enabled_extension_count >
+            BVB_EXPOSED_INSTANCE_EXTENSION_CAPACITY ||
         (request->enabled_extension_count != 0U &&
          enabled_extensions == NULL)) {
         response->vulkan_result = VK_ERROR_EXTENSION_NOT_PRESENT;
@@ -385,9 +402,18 @@ int bvb_vulkan_global_context_create_instance(
     }
     for (uint32_t index = 0U;
          index < request->enabled_extension_count; ++index) {
-        if (context->info.exposed_extension_count == 0U ||
-            strcmp(enabled_extensions[index],
-                   context->exposed_instance_extension.extensionName) != 0) {
+        bool supported = false;
+        for (uint32_t exposed = 0U;
+             exposed < context->info.exposed_extension_count; ++exposed) {
+            if (strcmp(
+                    enabled_extensions[index],
+                    context->exposed_instance_extensions[exposed]
+                        .extensionName) == 0) {
+                supported = true;
+                break;
+            }
+        }
+        if (!supported) {
             response->vulkan_result = VK_ERROR_EXTENSION_NOT_PRESENT;
             return 0;
         }
@@ -898,6 +924,114 @@ int bvb_vulkan_global_context_get_image_format_properties(
         properties->sample_counts = native.sampleCounts;
         properties->max_resource_size = native.maxResourceSize;
     }
+    return 0;
+}
+
+int bvb_vulkan_global_context_get_external_buffer_properties(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_external_buffer_query *query,
+    struct bvb_vulkan_external_buffer_properties *properties,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (query == NULL || properties == NULL) {
+        return -EINVAL;
+    }
+    *properties = (struct bvb_vulkan_external_buffer_properties){0};
+    VkInstance instance = VK_NULL_HANDLE;
+    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+    int result = resolve_physical_device(
+        context, query->physical_device_id, &instance, &physical_device);
+    if (result != 0) {
+        set_error(error, error_size, "unknown physical-device handle");
+        return result;
+    }
+    PFN_vkGetPhysicalDeviceExternalBufferProperties get_properties =
+        (PFN_vkGetPhysicalDeviceExternalBufferProperties)
+            context->get_instance_proc_addr(
+                instance, "vkGetPhysicalDeviceExternalBufferProperties");
+    if (get_properties == NULL) {
+        get_properties = (PFN_vkGetPhysicalDeviceExternalBufferProperties)
+            context->get_instance_proc_addr(
+                instance,
+                "vkGetPhysicalDeviceExternalBufferPropertiesKHR");
+    }
+    if (get_properties == NULL) {
+        set_error(error, error_size,
+                  "instance has no external-buffer capability query");
+        return -ENOSYS;
+    }
+    const VkPhysicalDeviceExternalBufferInfo info = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_BUFFER_INFO,
+        .flags = (VkBufferCreateFlags)query->flags,
+        .usage = (VkBufferUsageFlags)query->usage,
+        .handleType = (VkExternalMemoryHandleTypeFlagBits)query->handle_type,
+    };
+    VkExternalBufferProperties native = {
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_BUFFER_PROPERTIES,
+    };
+    get_properties(physical_device, &info, &native);
+    properties->external_memory_features =
+        native.externalMemoryProperties.externalMemoryFeatures;
+    properties->export_from_imported_handle_types =
+        native.externalMemoryProperties.exportFromImportedHandleTypes;
+    properties->compatible_handle_types =
+        native.externalMemoryProperties.compatibleHandleTypes;
+    return 0;
+}
+
+int bvb_vulkan_global_context_get_external_semaphore_properties(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_external_semaphore_query *query,
+    struct bvb_vulkan_external_semaphore_properties *properties,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) {
+        error[0] = '\0';
+    }
+    if (query == NULL || properties == NULL) {
+        return -EINVAL;
+    }
+    *properties = (struct bvb_vulkan_external_semaphore_properties){0};
+    VkInstance instance = VK_NULL_HANDLE;
+    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+    int result = resolve_physical_device(
+        context, query->physical_device_id, &instance, &physical_device);
+    if (result != 0) {
+        set_error(error, error_size, "unknown physical-device handle");
+        return result;
+    }
+    PFN_vkGetPhysicalDeviceExternalSemaphoreProperties get_properties =
+        (PFN_vkGetPhysicalDeviceExternalSemaphoreProperties)
+            context->get_instance_proc_addr(
+                instance,
+                "vkGetPhysicalDeviceExternalSemaphoreProperties");
+    if (get_properties == NULL) {
+        get_properties =
+            (PFN_vkGetPhysicalDeviceExternalSemaphoreProperties)
+                context->get_instance_proc_addr(
+                    instance,
+                    "vkGetPhysicalDeviceExternalSemaphorePropertiesKHR");
+    }
+    if (get_properties == NULL) {
+        set_error(error, error_size,
+                  "instance has no external-semaphore capability query");
+        return -ENOSYS;
+    }
+    const VkPhysicalDeviceExternalSemaphoreInfo info = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO,
+        .handleType =
+            (VkExternalSemaphoreHandleTypeFlagBits)query->handle_type,
+    };
+    VkExternalSemaphoreProperties native = {
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES,
+    };
+    get_properties(physical_device, &info, &native);
+    properties->export_from_imported_handle_types =
+        native.exportFromImportedHandleTypes;
+    properties->compatible_handle_types = native.compatibleHandleTypes;
+    properties->external_semaphore_features =
+        native.externalSemaphoreFeatures;
     return 0;
 }
 

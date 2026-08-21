@@ -54,7 +54,7 @@ def main() -> int:
             assert completed.stderr == ""
             assert completed.stdout.startswith("PASS: global Vulkan discovery")
             assert f"api={0x00400000 | (4 << 12) | 354}" in completed.stdout
-            assert "exposed_extensions=1 exposed_layers=0" in completed.stdout
+            assert "exposed_extensions=3 exposed_layers=0" in completed.stdout
             assert 'device=BVB Fake Adreno 730 "quoted"' in completed.stdout
             assert f"device_api={0x00400000 | (3 << 12) | 275}" in completed.stdout
             assert "driver=16909060 vendor=20803 device_id=1840" in completed.stdout
