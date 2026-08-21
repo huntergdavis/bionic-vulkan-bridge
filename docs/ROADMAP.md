@@ -31,6 +31,8 @@
 - [x] Submit, wait for, map, and verify a native GPU buffer operation
 - [x] Trigger the same operation from glibc and compare deterministic fields
 - [x] Inventory Android WSI and AHardwareBuffer/FD interop support
+- [x] Import and bind one native-resolution AHardwareBuffer simultaneously in
+  Samsung Vulkan and private Turnip
 - [x] Create and query an Android Vulkan surface backed by a controlled
   `ANativeWindow`
 - [x] Add a dedicated visible Android native-window host without taking over

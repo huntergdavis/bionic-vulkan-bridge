@@ -2,7 +2,7 @@
   "schema_version": 1,
   "gate": "E090",
   "date": "2026-08-21",
-  "result": "pass",
+  "result": "host_pass_tablet_incompatible",
   "source_base_commit": "a35e4cf4eec08607f5aeef22863cca10948d28f1",
   "host_contracts": {
     "passed": 58,
@@ -51,7 +51,24 @@
     "query": "BVB Vulkan DMA_BUF external image private Turnip system Android driver frame transport",
     "indexed_implementation_found": false
   },
-  "tablet_dma_buf_run": "pending",
+  "tablet_dma_buf_run": {
+    "result": "fail_closed_before_frame_transport",
+    "installed_apk_sha256": "19b356d960fe73b1f1edba6a81f5f1cfc7f6db8a331157dc15d05984d73cf4dc",
+    "service_sha256": "cf413994669d7e94ff80ff2d6893c565c93be98b4fd6f690bd7b948fc31204a6",
+    "glibc_client_sha256": "ded0ebd631579a9cdbb32fa1eec364f9f2e61c94b2e4b455f88fa5bfbd286138",
+    "private_turnip_enumerates_dma_buf": true,
+    "private_turnip_export_proven": true,
+    "samsung_system_vulkan_enumerates_dma_buf": false,
+    "activity_failure_marker": "E016_FAIL required_device_extension",
+    "authenticated_extents_seen": [
+      "1514x1138",
+      "2800x1586",
+      "2800x1752"
+    ],
+    "evidence_path": "$HOME/steam-arm64/bvb-candidates/e090-1d998b3-dmabuf/out/e090-rgbw/20260821T192457Z-28413/evidence.json",
+    "screenshot_sha256": "139ff94064ee13a35e8491f1bd1434b85722c27b146788fd2a5620bc9f46c583",
+    "installed_apk_restored_to_e089_sha256": "69b87452fb75703a9900ec9c96ad150019b401be8453975ebe694b302a96a812"
+  },
   "visible_rgbw": false,
   "tomb_raider_frame": false,
   "fps_claim": false

@@ -3590,3 +3590,49 @@ the preceding tablet session (maximize at `2550,535`, then immersive at
 `2800x1752` renderer event arrives. Default/non-ADB runs are unchanged. This
 prevents a freeform-window extent from being mistaken for the native-resolution
 RGBW proof; the tablet screenshot is still required.
+
+Tablet result: private Turnip enumerated the DMA-BUF device extension and the
+producer-side full-resolution export path had already passed, but Samsung's
+system Vulkan device does not enumerate `VK_EXT_external_memory_dma_buf`.
+The Activity therefore failed closed at device-extension validation with
+`E016_FAIL required_device_extension`, before importing an image or presenting
+a pixel. Authenticated lifecycle callbacks still measured the intended
+`2800x1752` extent. The installed E090 APK, service, and glibc client hashes are
+retained in `docs/evidence/e090-dma-buf-frame-transport-host.json`; the APK was
+then restored byte-for-byte to the preceding E089 build. The screenshot showed
+Settings rather than the BVB Activity and is explicitly not visual proof.
+
+## E091 — cross-driver Android Hardware Buffer import (2026-08-21)
+
+Status: passed on the Galaxy Tab S8+ at native `2800x1752`. The required
+`deja "BVB AHardwareBuffer Vulkan private Turnip Android system driver cross
+process frame transport"` query returned no indexed implementation. E091
+reuses E025/E052's raw private-driver loader fallback, E035's external-image
+and dedicated-allocation checks, E057's setup-only native-handle lifecycle,
+and E090's exact Samsung DMA-BUF rejection.
+
+The new Android/Bionic probe allocates one
+`AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM` buffer with GPU sample and color-output
+usage, forks before loading either Vulkan driver, and passes the same Android
+native buffer once over a Unix socket. The parent loads Samsung's system
+Vulkan; the child loads the exact private Turnip artifact through
+`vk_icdGetInstanceProcAddr`. Each independently enumerates
+`VK_ANDROID_external_memory_android_hardware_buffer`, proves the external image
+importable and dedicated-only, creates a matching image, queries the native
+buffer's Vulkan properties, allocates imported dedicated memory, and binds the
+image. The child holds its import until the parent has also completed, proving
+that both driver stacks own live Vulkan images backed by the same allocation.
+
+At `2800x1752`, both drivers reported the same 19,734,528-byte native
+allocation. Samsung exposed memory-type mask `0x2`; private Turnip exposed
+`0x7`. Both allocation and bind calls returned `VK_SUCCESS`. The executable
+loads `/system/lib64/libandroid.so` explicitly, so the proof passes without an
+`LD_LIBRARY_PATH` override even though Termux provides a different compatibility
+library with the same soname. Compact evidence is
+`docs/evidence/e091-ahardwarebuffer-cross-driver-import-tablet.json`.
+
+This is the first truthful zero-copy allocation compatibility proof for the
+intended game-to-Activity driver pair. It does not yet prove synchronization,
+ring reuse, visible pixels, Tomb Raider, or FPS. The next gate replaces the
+three DMA-BUF frame images with three AHardwareBuffers, relays each setup handle
+once, and reruns the fullscreen red/green/blue/white sequence.

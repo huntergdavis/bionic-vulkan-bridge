@@ -391,6 +391,22 @@ target_link_libraries(
 bvb_enable_warnings(bvb-external-image-direct)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Android")
+  add_executable(
+    bvb-ahardwarebuffer-vulkan-probe src/ahardwarebuffer_vulkan_probe.c
+  )
+  target_link_libraries(
+    bvb-ahardwarebuffer-vulkan-probe
+    PRIVATE Vulkan::Headers ${CMAKE_DL_LIBS}
+  )
+  target_compile_options(
+    bvb-ahardwarebuffer-vulkan-probe PRIVATE --target=aarch64-linux-android29
+  )
+  target_link_options(
+    bvb-ahardwarebuffer-vulkan-probe PRIVATE --target=aarch64-linux-android29
+  )
+  bvb_enable_warnings(bvb-ahardwarebuffer-vulkan-probe)
+  install(TARGETS bvb-ahardwarebuffer-vulkan-probe RUNTIME DESTINATION bin)
+
   add_executable(bvb-external-image-binder src/external_image_binder.c)
   target_link_libraries(
     bvb-external-image-binder

@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "gate": "E091",
+  "date": "2026-08-21",
+  "result": "pass",
+  "source_base_commit": "66f12d79fc2ceb0c943acd370ed252206af9b1ed",
+  "target": "Samsung Galaxy Tab S8+ / Adreno 730",
+  "probe": {
+    "binary_sha256": "41fa22bc6c015c072f3f54ecbe9996bbb0c32e68cbe77bed455aded4b44fd4cd",
+    "abi": "Android Bionic AArch64",
+    "system_loader": "/system/lib64/libvulkan.so",
+    "private_loader": "$HOME/steam-arm64/bvb/driver/libvulkan_freedreno.so",
+    "private_loader_sha256": "8ac6ef78c3c92998aa46c59fd0081edcba82756f5bad561d1b24a57684874a45",
+    "environment_override_required": false
+  },
+  "allocation": {
+    "transport": "AHardwareBuffer",
+    "format": "AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM",
+    "width": 2800,
+    "height": 1752,
+    "allocation_size": 19734528,
+    "usage": [
+      "AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE",
+      "AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT"
+    ],
+    "sent_once_over_unix_socket": true
+  },
+  "system_vulkan": {
+    "extension_seen": true,
+    "external_image_importable": true,
+    "dedicated_only": true,
+    "memory_type_bits": 2,
+    "image_created": true,
+    "hardware_buffer_properties_queried": true,
+    "memory_allocated": true,
+    "image_bound": true
+  },
+  "private_turnip": {
+    "extension_seen": true,
+    "external_image_importable": true,
+    "dedicated_only": true,
+    "memory_type_bits": 7,
+    "image_created": true,
+    "hardware_buffer_properties_queried": true,
+    "memory_allocated": true,
+    "image_bound": true
+  },
+  "proof": {
+    "separate_processes": true,
+    "simultaneous_live_import": true,
+    "same_native_buffer_handle": true,
+    "both_bind_results": "VK_SUCCESS",
+    "cross_driver_zero_copy_allocation_path": true
+  },
+  "reuse": [
+    "E025/E052 private Vulkan loader fallback to vk_icdGetInstanceProcAddr",
+    "E035 external-image capability and dedicated-allocation validation",
+    "E057 setup-only handle transport and long-lived image lifecycle",
+    "E090 exact Samsung DMA-BUF extension failure"
+  ],
+  "recall": {
+    "query": "BVB AHardwareBuffer Vulkan private Turnip Android system driver cross process frame transport",
+    "indexed_implementation_found": false
+  },
+  "visible_pixels": false,
+  "frame_ring": false,
+  "tomb_raider_frame": false,
+  "fps_claim": false
+}
