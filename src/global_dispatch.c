@@ -717,6 +717,22 @@ static struct bvb_resource_proxy *resource_proxy_locked(
     return NULL;
 }
 
+static bool image_owned_by_device_locked(uint64_t image_id,
+                                         uint64_t device_id) {
+    struct bvb_resource_proxy *resource =
+        resource_proxy_locked(image_id, BVB_OBJECT_IMAGE);
+    if (resource != NULL) return resource->parent_id == device_id;
+    if (bvb_handle_expect(image_id, BVB_OBJECT_IMAGE) != 0) return false;
+    for (struct bvb_swapchain_proxy *swapchain =
+             bvb_global_client.swapchains;
+         swapchain != NULL; swapchain = swapchain->next) {
+        if (swapchain->parent_id != device_id) continue;
+        for (uint32_t index = 0U; index < swapchain->image_count; ++index)
+            if (swapchain->image_ids[index] == image_id) return true;
+    }
+    return false;
+}
+
 BVB_GLOBAL_EXPORT uint64_t bvb_buffer_proxy_id(VkBuffer buffer) {
     const uint64_t wire_id = non_dispatchable_wire_id(&buffer, sizeof(buffer));
     uint64_t result = 0U;
@@ -5740,6 +5756,71 @@ static int init_image_barrier_supported(
                &barrier->subresourceRange);
 }
 
+static int command_image_barrier_range_supported(
+    const VkImageSubresourceRange *range) {
+    const VkImageAspectFlags supported_aspects =
+        VK_IMAGE_ASPECT_COLOR_BIT | VK_IMAGE_ASPECT_DEPTH_BIT |
+        VK_IMAGE_ASPECT_STENCIL_BIT | VK_IMAGE_ASPECT_METADATA_BIT |
+        VK_IMAGE_ASPECT_PLANE_0_BIT | VK_IMAGE_ASPECT_PLANE_1_BIT |
+        VK_IMAGE_ASPECT_PLANE_2_BIT |
+        VK_IMAGE_ASPECT_MEMORY_PLANE_0_BIT_EXT |
+        VK_IMAGE_ASPECT_MEMORY_PLANE_1_BIT_EXT |
+        VK_IMAGE_ASPECT_MEMORY_PLANE_2_BIT_EXT |
+        VK_IMAGE_ASPECT_MEMORY_PLANE_3_BIT_EXT;
+    return range != NULL && range->aspectMask != 0U &&
+           (range->aspectMask & ~supported_aspects) == 0U &&
+           range->levelCount != 0U && range->layerCount != 0U;
+}
+
+static int command_clear_color_range_supported(
+    const VkImageSubresourceRange *range) {
+    return command_image_barrier_range_supported(range) &&
+           range->aspectMask == VK_IMAGE_ASPECT_COLOR_BIT;
+}
+
+static int command_image_layout_supported(VkImageLayout layout) {
+    switch (layout) {
+        case VK_IMAGE_LAYOUT_UNDEFINED:
+        case VK_IMAGE_LAYOUT_GENERAL:
+        case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+        case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+        case VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL:
+        case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+        case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+        case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+        case VK_IMAGE_LAYOUT_PREINITIALIZED:
+        case VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL:
+        case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL:
+        case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL:
+        case VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL:
+        case VK_IMAGE_LAYOUT_STENCIL_ATTACHMENT_OPTIMAL:
+        case VK_IMAGE_LAYOUT_STENCIL_READ_ONLY_OPTIMAL:
+        case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR:
+        case VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR:
+        case VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL:
+        case VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL:
+        case VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ:
+        case VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT:
+        case VK_IMAGE_LAYOUT_FRAGMENT_SHADING_RATE_ATTACHMENT_OPTIMAL_KHR:
+        case VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT:
+        case VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
+static struct bvb_vulkan_image_subresource_range command_image_range(
+    const VkImageSubresourceRange *range) {
+    return (struct bvb_vulkan_image_subresource_range){
+        .aspect_mask = range->aspectMask,
+        .base_mip_level = range->baseMipLevel,
+        .level_count = range->levelCount,
+        .base_array_layer = range->baseArrayLayer,
+        .layer_count = range->layerCount,
+    };
+}
+
 static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
     VkCommandBuffer command_buffer, const VkDependencyInfo *dependency_info) {
     struct bvb_command_buffer_proxy *command_state =
@@ -5759,45 +5840,77 @@ static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
         poison_shared_command_stream(command_state);
         return;
     }
+    struct bvb_vulkan_image_barrier_2_command general = {
+        .dependency_flags = dependency_info->dependencyFlags,
+        .image_count = dependency_info->imageMemoryBarrierCount,
+    };
     struct bvb_vulkan_command_buffer_image_barrier_request decoded = {
         .command_buffer_id = command_state->wire_id,
         .image_count = dependency_info->imageMemoryBarrierCount,
     };
+    bool fixed_init_shape = true;
     for (uint32_t index = 0U; index < decoded.image_count; ++index) {
         const VkImageMemoryBarrier2 *barrier =
             &dependency_info->pImageMemoryBarriers[index];
-        if (!init_image_barrier_supported(barrier)) {
+        if (barrier->sType != VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 ||
+            barrier->pNext != NULL ||
+            !command_image_layout_supported(barrier->oldLayout) ||
+            !command_image_layout_supported(barrier->newLayout) ||
+            barrier->newLayout == VK_IMAGE_LAYOUT_UNDEFINED ||
+            barrier->newLayout == VK_IMAGE_LAYOUT_PREINITIALIZED ||
+            !command_image_barrier_range_supported(
+                &barrier->subresourceRange)) {
             poison_shared_command_stream(command_state);
             return;
         }
+        fixed_init_shape &= init_image_barrier_supported(barrier) != 0;
         decoded.image_ids[index] =
             non_dispatchable_wire_id(&barrier->image, sizeof(barrier->image));
-        for (uint32_t earlier = 0U; earlier < index; ++earlier)
-            if (decoded.image_ids[earlier] == decoded.image_ids[index]) {
-                poison_shared_command_stream(command_state);
-                return;
+        general.images[index] = (struct bvb_vulkan_image_barrier_2){
+            .source_stage_mask = barrier->srcStageMask,
+            .source_access_mask = barrier->srcAccessMask,
+            .destination_stage_mask = barrier->dstStageMask,
+            .destination_access_mask = barrier->dstAccessMask,
+            .old_layout = barrier->oldLayout,
+            .new_layout = barrier->newLayout,
+            .source_queue_family_index = barrier->srcQueueFamilyIndex,
+            .destination_queue_family_index = barrier->dstQueueFamilyIndex,
+            .image_id = decoded.image_ids[index],
+            .range = command_image_range(&barrier->subresourceRange),
+        };
+        if (fixed_init_shape) {
+            for (uint32_t earlier = 0U; earlier < index; ++earlier) {
+                if (decoded.image_ids[earlier] == decoded.image_ids[index]) {
+                    fixed_init_shape = false;
+                    break;
+                }
             }
+        }
     }
+    if (!fixed_init_shape && !bvb_global_client.command_stream_enabled) return;
     if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) return;
     int result = 0;
     for (uint32_t index = 0U; result == 0 && index < decoded.image_count;
          ++index) {
-        struct bvb_resource_proxy *image_state = resource_proxy_locked(
-            decoded.image_ids[index], BVB_OBJECT_IMAGE);
-        if (image_state == NULL ||
-            image_state->parent_id != command_state->device_id)
+        if (!image_owned_by_device_locked(decoded.image_ids[index],
+                                          command_state->device_id))
             result = -EINVAL;
     }
     if (bvb_global_client.command_stream_enabled) {
         if (result == 0 && command_state->stream_recording &&
             !command_state->stream_error) {
-            struct bvb_vulkan_init_image_barrier_command command = {
-                .image_count = decoded.image_count,
-            };
-            memcpy(command.image_ids, decoded.image_ids,
-                   decoded.image_count * sizeof(decoded.image_ids[0]));
-            result = bvb_command_batch_append_vulkan_init_image_barrier(
-                &command_state->stream_builder, &command);
+            if (fixed_init_shape) {
+                struct bvb_vulkan_init_image_barrier_command command = {
+                    .image_count = decoded.image_count,
+                };
+                memcpy(command.image_ids, decoded.image_ids,
+                       decoded.image_count * sizeof(decoded.image_ids[0]));
+                result = bvb_command_batch_append_vulkan_init_image_barrier(
+                    &command_state->stream_builder, &command);
+            } else {
+                result = bvb_command_batch_append_vulkan_image_barrier_2(
+                    &command_state->stream_builder, &general);
+            }
         } else {
             result = -EINVAL;
         }
@@ -5840,29 +5953,58 @@ static void VKAPI_CALL bvb_bridge_vkCmdClearColorImage(
     uint32_t color_words[4] = {0};
     if (color != NULL) memcpy(color_words, color, sizeof(color_words));
     if (command_state == NULL || color == NULL ||
-        image_layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ||
-        color_words[0] != 0U || color_words[1] != 0U ||
-        color_words[2] != 0U || color_words[3] != 0U || range_count != 1U ||
-        !init_image_subresource_range_supported(ranges)) {
+        (image_layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+         image_layout != VK_IMAGE_LAYOUT_GENERAL) ||
+        range_count == 0U ||
+        range_count > BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES || ranges == NULL) {
         poison_shared_command_stream(command_state);
         return;
     }
+    bool ranges_supported = true;
+    for (uint32_t index = 0U; index < range_count; ++index) {
+        ranges_supported &=
+            command_clear_color_range_supported(&ranges[index]) != 0;
+    }
+    if (!ranges_supported) {
+        poison_shared_command_stream(command_state);
+        return;
+    }
+    const bool fixed_clear_shape =
+        image_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+        color_words[0] == 0U && color_words[1] == 0U &&
+        color_words[2] == 0U && color_words[3] == 0U && range_count == 1U &&
+        init_image_subresource_range_supported(ranges);
+    if (!fixed_clear_shape && !bvb_global_client.command_stream_enabled) return;
     const uint64_t image_id =
         non_dispatchable_wire_id(&image, sizeof(image));
     if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) return;
-    struct bvb_resource_proxy *image_state =
-        resource_proxy_locked(image_id, BVB_OBJECT_IMAGE);
-    int result = image_state != NULL &&
-                         image_state->parent_id == command_state->device_id
+    int result = image_owned_by_device_locked(image_id,
+                                              command_state->device_id)
                      ? 0 : -EINVAL;
     if (bvb_global_client.command_stream_enabled) {
         if (result == 0 && command_state->stream_recording &&
             !command_state->stream_error) {
-            result = bvb_command_batch_append_vulkan_clear_color_image(
-                &command_state->stream_builder,
-                &(const struct bvb_vulkan_clear_color_image_command){
+            if (fixed_clear_shape) {
+                result = bvb_command_batch_append_vulkan_clear_color_image(
+                    &command_state->stream_builder,
+                    &(const struct bvb_vulkan_clear_color_image_command){
+                        .image_id = image_id,
+                    });
+            } else {
+                struct bvb_vulkan_clear_color_image_general_command command = {
                     .image_id = image_id,
-                });
+                    .image_layout = image_layout,
+                    .range_count = range_count,
+                };
+                memcpy(command.color_words, color_words,
+                       sizeof(command.color_words));
+                for (uint32_t index = 0U; index < range_count; ++index) {
+                    command.ranges[index] = command_image_range(&ranges[index]);
+                }
+                result =
+                    bvb_command_batch_append_vulkan_clear_color_image_general(
+                        &command_state->stream_builder, &command);
+            }
         } else {
             result = -EINVAL;
         }

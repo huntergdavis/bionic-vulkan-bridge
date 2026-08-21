@@ -52,6 +52,14 @@ static uint32_t fake_descriptor_step;
 static uint32_t fake_init_image_step;
 static VkCommandBuffer fake_init_image_command = VK_NULL_HANDLE;
 static int fake_init_image_violation;
+static uint32_t fake_animation_frame_count;
+static uint32_t fake_animation_step;
+static uint32_t fake_animation_submit_count;
+static int fake_animation_violation;
+
+static bool fake_animation_enabled(void) {
+    return getenv("BVB_FAKE_REQUIRE_ANIMATED_WSI") != NULL;
+}
 static const VkDescriptorSetLayout fake_descriptor_layout =
     (VkDescriptorSetLayout)(uintptr_t)UINT64_C(0xa100);
 static const VkDescriptorPool fake_descriptor_pool =
@@ -1933,7 +1941,8 @@ static VkResult VKAPI_CALL fake_allocate_command_buffers(
          ++index)
         command_buffers[index] =
             (VkCommandBuffer)(uintptr_t)(0x5100U + index);
-    if (getenv("BVB_FAKE_REQUIRE_INIT_IMAGE_COMMANDS") != NULL)
+    if (getenv("BVB_FAKE_REQUIRE_INIT_IMAGE_COMMANDS") != NULL &&
+        (!fake_animation_enabled() || fake_animation_frame_count >= 4U))
         fake_init_image_command = allocate_info->commandBufferCount == 1U
             ? command_buffers[0] : VK_NULL_HANDLE;
     return VK_SUCCESS;
@@ -1962,7 +1971,13 @@ static VkResult VKAPI_CALL fake_begin_command_buffer(
 
 static VkResult VKAPI_CALL fake_end_command_buffer(
     VkCommandBuffer command_buffer) {
-    (void)command_buffer;
+    if (fake_animation_enabled() && fake_animation_step != 0U) {
+        if (fake_animation_step != 3U || fake_animation_violation != 0 ||
+            fake_animation_frame_count >= 4U)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        ++fake_animation_frame_count;
+        fake_animation_step = 0U;
+    }
     if (command_buffer == fake_init_image_command) {
         if (fake_init_image_step != 3U || fake_init_image_violation != 0)
             return VK_ERROR_INITIALIZATION_FAILED;
@@ -2049,6 +2064,32 @@ static void VKAPI_CALL fake_cmd_clear_color_image(
         else
             fake_init_image_violation = 1;
     }
+    if (fake_animation_enabled() && fake_animation_step == 1U) {
+        const float expected_colors[4][4] = {
+            {1.0F, 0.0F, 0.0F, 1.0F},
+            {0.0F, 1.0F, 0.0F, 1.0F},
+            {0.0F, 0.0F, 1.0F, 1.0F},
+            {1.0F, 1.0F, 1.0F, 1.0F},
+        };
+        bool exact_animation_clear =
+            fake_animation_frame_count < 4U &&
+            image == (VkImage)(uintptr_t)UINT64_C(0xa000) &&
+            image_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+            color != NULL && range_count == 1U && ranges != NULL &&
+            ranges[0].aspectMask == VK_IMAGE_ASPECT_COLOR_BIT &&
+            ranges[0].baseMipLevel == 0U && ranges[0].levelCount == 1U &&
+            ranges[0].baseArrayLayer == 0U && ranges[0].layerCount == 1U;
+        for (uint32_t component = 0U;
+             exact_animation_clear && component < 4U; ++component) {
+            exact_animation_clear =
+                color->float32[component] ==
+                expected_colors[fake_animation_frame_count][component];
+        }
+        if (exact_animation_clear)
+            fake_animation_step = 2U;
+        else
+            fake_animation_violation = 1;
+    }
     if (fake_image_acquired != 0 && fake_to_clear_barrier != 0 &&
         image_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
         color != NULL && color->float32[0] == 1.0F &&
@@ -2061,6 +2102,76 @@ static void VKAPI_CALL fake_cmd_clear_color_image(
 static void VKAPI_CALL fake_cmd_pipeline_barrier_2(
     VkCommandBuffer command_buffer,
     const VkDependencyInfo *dependency_info) {
+    if (fake_animation_enabled() && dependency_info != NULL &&
+        dependency_info->sType == VK_STRUCTURE_TYPE_DEPENDENCY_INFO &&
+        dependency_info->pNext == NULL &&
+        dependency_info->dependencyFlags == 0U &&
+        dependency_info->memoryBarrierCount == 0U &&
+        dependency_info->pMemoryBarriers == NULL &&
+        dependency_info->bufferMemoryBarrierCount == 0U &&
+        dependency_info->pBufferMemoryBarriers == NULL &&
+        dependency_info->imageMemoryBarrierCount == 1U &&
+        dependency_info->pImageMemoryBarriers != NULL) {
+        const VkImageMemoryBarrier2 *animation_barrier =
+            &dependency_info->pImageMemoryBarriers[0];
+        const bool exact_common =
+            animation_barrier->sType ==
+                VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 &&
+            animation_barrier->pNext == NULL &&
+            animation_barrier->srcQueueFamilyIndex ==
+                VK_QUEUE_FAMILY_IGNORED &&
+            animation_barrier->dstQueueFamilyIndex ==
+                VK_QUEUE_FAMILY_IGNORED &&
+            animation_barrier->image ==
+                (VkImage)(uintptr_t)UINT64_C(0xa000) &&
+            animation_barrier->subresourceRange.aspectMask ==
+                VK_IMAGE_ASPECT_COLOR_BIT &&
+            animation_barrier->subresourceRange.baseMipLevel == 0U &&
+            animation_barrier->subresourceRange.levelCount == 1U &&
+            animation_barrier->subresourceRange.baseArrayLayer == 0U &&
+            animation_barrier->subresourceRange.layerCount == 1U;
+        if (fake_animation_step == 0U &&
+            fake_animation_frame_count < 4U) {
+            const VkImageLayout expected_old_layout =
+                fake_animation_frame_count < 3U
+                    ? VK_IMAGE_LAYOUT_UNDEFINED
+                    : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+            if (exact_common &&
+                animation_barrier->srcStageMask ==
+                    VK_PIPELINE_STAGE_2_NONE &&
+                animation_barrier->srcAccessMask == VK_ACCESS_2_NONE &&
+                animation_barrier->dstStageMask ==
+                    VK_PIPELINE_STAGE_2_TRANSFER_BIT &&
+                animation_barrier->dstAccessMask ==
+                    VK_ACCESS_2_TRANSFER_WRITE_BIT &&
+                animation_barrier->oldLayout == expected_old_layout &&
+                animation_barrier->newLayout ==
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+                fake_animation_step = 1U;
+                return;
+            }
+        } else if (fake_animation_step == 2U) {
+            if (exact_common &&
+                animation_barrier->srcStageMask ==
+                    VK_PIPELINE_STAGE_2_TRANSFER_BIT &&
+                animation_barrier->srcAccessMask ==
+                    VK_ACCESS_2_TRANSFER_WRITE_BIT &&
+                animation_barrier->dstStageMask ==
+                    VK_PIPELINE_STAGE_2_NONE &&
+                animation_barrier->dstAccessMask == VK_ACCESS_2_NONE &&
+                animation_barrier->oldLayout ==
+                    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+                animation_barrier->newLayout ==
+                    VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
+                fake_animation_step = 3U;
+                return;
+            }
+        }
+        if (fake_animation_step != 0U || fake_animation_frame_count < 4U) {
+            fake_animation_violation = 1;
+            return;
+        }
+    }
     if (fake_init_image_step != 2U ||
         command_buffer != fake_init_image_command ||
         dependency_info == NULL ||
@@ -2132,6 +2243,50 @@ static VkResult VKAPI_CALL fake_queue_submit(
             return VK_ERROR_INITIALIZATION_FAILED;
         fake_fence_signaled = 1;
     }
+    if (fake_animation_enabled()) {
+        for (uint32_t submit_index = 0U; submit_index < submit_count;
+             ++submit_index) {
+            const VkSubmitInfo *submit = &submits[submit_index];
+            if (submit->sType != VK_STRUCTURE_TYPE_SUBMIT_INFO ||
+                submit->pNext != NULL ||
+                (submit->waitSemaphoreCount != 0U &&
+                 (submit->pWaitSemaphores == NULL ||
+                  submit->pWaitDstStageMask == NULL)) ||
+                (submit->signalSemaphoreCount != 0U &&
+                 submit->pSignalSemaphores == NULL))
+                return VK_ERROR_INITIALIZATION_FAILED;
+            for (uint32_t index = 0U; index < submit->waitSemaphoreCount;
+                 ++index) {
+                const struct bvb_fake_semaphore_record *record =
+                    fake_semaphore_record(submit->pWaitSemaphores[index]);
+                if (record == NULL ||
+                    record->type != VK_SEMAPHORE_TYPE_BINARY ||
+                    record->value != 1U)
+                    return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            for (uint32_t index = 0U; index < submit->signalSemaphoreCount;
+                 ++index) {
+                const struct bvb_fake_semaphore_record *record =
+                    fake_semaphore_record(submit->pSignalSemaphores[index]);
+                if (record == NULL ||
+                    record->type != VK_SEMAPHORE_TYPE_BINARY ||
+                    record->value != 0U)
+                    return VK_ERROR_INITIALIZATION_FAILED;
+            }
+        }
+        for (uint32_t submit_index = 0U; submit_index < submit_count;
+             ++submit_index) {
+            const VkSubmitInfo *submit = &submits[submit_index];
+            for (uint32_t index = 0U; index < submit->waitSemaphoreCount;
+                 ++index)
+                fake_semaphore_record(
+                    submit->pWaitSemaphores[index])->value = 0U;
+            for (uint32_t index = 0U; index < submit->signalSemaphoreCount;
+                 ++index)
+                fake_semaphore_record(
+                    submit->pSignalSemaphores[index])->value = 1U;
+        }
+    }
     if (fake_swapchain_created != 0) {
         if (submit_count != 1U || submits == NULL ||
             submits[0].waitSemaphoreCount != 1U ||
@@ -2159,6 +2314,13 @@ static VkResult VKAPI_CALL fake_queue_submit_2(
         strtoul(fail_at_text, NULL, 10) == fake_queue_submit_2_calls) {
         return VK_ERROR_OUT_OF_DEVICE_MEMORY;
     }
+    if ((submits[0].waitSemaphoreInfoCount != 0U &&
+         submits[0].pWaitSemaphoreInfos == NULL) ||
+        (submits[0].commandBufferInfoCount != 0U &&
+         submits[0].pCommandBufferInfos == NULL) ||
+        (submits[0].signalSemaphoreInfoCount != 0U &&
+         submits[0].pSignalSemaphoreInfos == NULL))
+        return VK_ERROR_INITIALIZATION_FAILED;
     for (uint32_t index = 0U;
          index < submits[0].waitSemaphoreInfoCount; ++index) {
         const VkSemaphoreSubmitInfo *info =
@@ -2167,8 +2329,10 @@ static VkResult VKAPI_CALL fake_queue_submit_2(
             fake_semaphore_record(info->semaphore);
         if (info->sType != VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO ||
             info->pNext != NULL || info->deviceIndex != 0U ||
-            record == NULL || record->type != VK_SEMAPHORE_TYPE_TIMELINE ||
-            record->value < info->value)
+            info->stageMask == VK_PIPELINE_STAGE_2_NONE || record == NULL ||
+            (record->type == VK_SEMAPHORE_TYPE_TIMELINE
+                 ? record->value < info->value
+                 : info->value != 0U || record->value != 1U))
             return VK_ERROR_INITIALIZATION_FAILED;
     }
     for (uint32_t index = 0U;
@@ -2188,10 +2352,46 @@ static VkResult VKAPI_CALL fake_queue_submit_2(
             fake_semaphore_record(info->semaphore);
         if (info->sType != VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO ||
             info->pNext != NULL || info->deviceIndex != 0U ||
-            record == NULL || record->type != VK_SEMAPHORE_TYPE_TIMELINE ||
-            record->value >= info->value)
+            info->stageMask == VK_PIPELINE_STAGE_2_NONE || record == NULL ||
+            (record->type == VK_SEMAPHORE_TYPE_TIMELINE
+                 ? record->value >= info->value
+                 : info->value != 0U || record->value != 0U))
             return VK_ERROR_INITIALIZATION_FAILED;
-        record->value = info->value;
+    }
+    for (uint32_t index = 0U;
+         index < submits[0].waitSemaphoreInfoCount; ++index) {
+        struct bvb_fake_semaphore_record *record = fake_semaphore_record(
+            submits[0].pWaitSemaphoreInfos[index].semaphore);
+        if (record->type == VK_SEMAPHORE_TYPE_BINARY) record->value = 0U;
+    }
+    for (uint32_t index = 0U;
+         index < submits[0].signalSemaphoreInfoCount; ++index) {
+        const VkSemaphoreSubmitInfo *info =
+            &submits[0].pSignalSemaphoreInfos[index];
+        struct bvb_fake_semaphore_record *record =
+            fake_semaphore_record(info->semaphore);
+        record->value = record->type == VK_SEMAPHORE_TYPE_BINARY
+                            ? 1U : info->value;
+    }
+    if (fake_animation_enabled() &&
+        submits[0].waitSemaphoreInfoCount == 1U &&
+        submits[0].commandBufferInfoCount == 1U &&
+        submits[0].signalSemaphoreInfoCount == 1U) {
+        const struct bvb_fake_semaphore_record *wait_record =
+            fake_semaphore_record(
+                submits[0].pWaitSemaphoreInfos[0].semaphore);
+        const struct bvb_fake_semaphore_record *signal_record =
+            fake_semaphore_record(
+                submits[0].pSignalSemaphoreInfos[0].semaphore);
+        if (wait_record != NULL && signal_record != NULL &&
+            wait_record->type == VK_SEMAPHORE_TYPE_BINARY &&
+            signal_record->type == VK_SEMAPHORE_TYPE_BINARY) {
+            if (fake_animation_frame_count !=
+                    fake_animation_submit_count + 1U ||
+                fake_animation_submit_count >= 4U)
+                return VK_ERROR_INITIALIZATION_FAILED;
+            ++fake_animation_submit_count;
+        }
     }
     if (fence != VK_NULL_HANDLE) {
         if (fake_fence_created == 0 || fence != fake_fence_handle)
@@ -2239,6 +2439,17 @@ static VkResult VKAPI_CALL fake_device_wait_idle(VkDevice device) {
     if (fake_descriptor_step != 0U && fake_descriptor_step != 14U) {
         fprintf(stderr, "fake Vulkan descriptor sequence stopped at step %u\n",
                 fake_descriptor_step);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (fake_animation_enabled() &&
+        (fake_animation_frame_count != 4U ||
+         fake_animation_submit_count != 4U ||
+         fake_animation_step != 0U || fake_animation_violation != 0)) {
+        fprintf(stderr,
+                "fake Vulkan animation stopped at frame=%u step=%u "
+                "submits=%u violation=%d\n",
+                fake_animation_frame_count, fake_animation_step,
+                fake_animation_submit_count, fake_animation_violation);
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     return VK_SUCCESS;

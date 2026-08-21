@@ -17,6 +17,13 @@ enum {
     BVB_VULKAN_BEGIN_SIZE = 8,
     BVB_VULKAN_CLEAR_COLOR_IMAGE_SIZE = 16,
     BVB_VULKAN_INIT_IMAGE_BARRIER_SIZE = 40,
+    BVB_VULKAN_IMAGE_RANGE_SIZE = 24,
+    BVB_VULKAN_IMAGE_BARRIER_2_RECORD_SIZE = 80,
+    BVB_VULKAN_IMAGE_BARRIER_2_SIZE = 8 +
+        BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS *
+            BVB_VULKAN_IMAGE_BARRIER_2_RECORD_SIZE,
+    BVB_VULKAN_CLEAR_COLOR_IMAGE_GENERAL_SIZE = 32 +
+        BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES * BVB_VULKAN_IMAGE_RANGE_SIZE,
 };
 
 _Static_assert(sizeof(float) == sizeof(uint32_t),
@@ -38,6 +45,51 @@ static float get_float(const uint8_t *input) {
 static int float_bits_are_finite(const uint8_t *input) {
     return (bvb_wire_get_u32(input) & UINT32_C(0x7f800000)) !=
            UINT32_C(0x7f800000);
+}
+
+static int image_range_is_valid(
+    const struct bvb_vulkan_image_subresource_range *range) {
+    return range != NULL && range->aspect_mask != 0U &&
+           range->level_count != 0U && range->layer_count != 0U;
+}
+
+static void encode_image_range(
+    uint8_t output[BVB_VULKAN_IMAGE_RANGE_SIZE],
+    const struct bvb_vulkan_image_subresource_range *range) {
+    bvb_wire_put_u32(output, range->aspect_mask);
+    bvb_wire_put_u32(output + 4, range->base_mip_level);
+    bvb_wire_put_u32(output + 8, range->level_count);
+    bvb_wire_put_u32(output + 12, range->base_array_layer);
+    bvb_wire_put_u32(output + 16, range->layer_count);
+    bvb_wire_put_u32(output + 20, 0U);
+}
+
+static int validate_image_range_wire(const uint8_t *input) {
+    return bvb_wire_get_u32(input) == 0U ||
+                   bvb_wire_get_u32(input + 8) == 0U ||
+                   bvb_wire_get_u32(input + 16) == 0U ||
+                   bvb_wire_get_u32(input + 20) != 0U
+               ? -EPROTO
+               : 0;
+}
+
+static int image_range_wire_is_zero(const uint8_t *input) {
+    for (size_t offset = 0U; offset < BVB_VULKAN_IMAGE_RANGE_SIZE;
+         offset += sizeof(uint32_t)) {
+        if (bvb_wire_get_u32(input + offset) != 0U) return 0;
+    }
+    return 1;
+}
+
+static struct bvb_vulkan_image_subresource_range decode_image_range(
+    const uint8_t input[BVB_VULKAN_IMAGE_RANGE_SIZE]) {
+    return (struct bvb_vulkan_image_subresource_range){
+        .aspect_mask = bvb_wire_get_u32(input),
+        .base_mip_level = bvb_wire_get_u32(input + 4),
+        .level_count = bvb_wire_get_u32(input + 8),
+        .base_array_layer = bvb_wire_get_u32(input + 12),
+        .layer_count = bvb_wire_get_u32(input + 16),
+    };
 }
 
 static int append_record(struct bvb_command_batch_builder *builder,
@@ -304,6 +356,73 @@ int bvb_command_batch_append_vulkan_init_image_barrier(
                          payload, sizeof(payload));
 }
 
+int bvb_command_batch_append_vulkan_image_barrier_2(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_image_barrier_2_command *command) {
+    if (command == NULL || command->dependency_flags != 0U ||
+        command->image_count == 0U ||
+        command->image_count > BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS) {
+        return -EINVAL;
+    }
+    uint8_t payload[BVB_VULKAN_IMAGE_BARRIER_2_SIZE];
+    memset(payload, 0, sizeof(payload));
+    bvb_wire_put_u32(payload, command->dependency_flags);
+    bvb_wire_put_u32(payload + 4, command->image_count);
+    for (uint32_t index = 0U; index < command->image_count; ++index) {
+        const struct bvb_vulkan_image_barrier_2 *barrier =
+            &command->images[index];
+        if (bvb_handle_expect(barrier->image_id, BVB_OBJECT_IMAGE) != 0 ||
+            !image_range_is_valid(&barrier->range)) {
+            return -EINVAL;
+        }
+        uint8_t *record = payload + 8U +
+            index * BVB_VULKAN_IMAGE_BARRIER_2_RECORD_SIZE;
+        bvb_wire_put_u64(record, barrier->source_stage_mask);
+        bvb_wire_put_u64(record + 8, barrier->source_access_mask);
+        bvb_wire_put_u64(record + 16, barrier->destination_stage_mask);
+        bvb_wire_put_u64(record + 24, barrier->destination_access_mask);
+        bvb_wire_put_u32(record + 32, barrier->old_layout);
+        bvb_wire_put_u32(record + 36, barrier->new_layout);
+        bvb_wire_put_u32(record + 40,
+                         barrier->source_queue_family_index);
+        bvb_wire_put_u32(record + 44,
+                         barrier->destination_queue_family_index);
+        bvb_wire_put_u64(record + 48, barrier->image_id);
+        encode_image_range(record + 56, &barrier->range);
+    }
+    return append_record(builder, BVB_COMMAND_VULKAN_IMAGE_BARRIER_2,
+                         payload, sizeof(payload));
+}
+
+int bvb_command_batch_append_vulkan_clear_color_image_general(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_clear_color_image_general_command *command) {
+    if (command == NULL || command->image_layout == 0U ||
+        command->range_count == 0U ||
+        command->range_count > BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES ||
+        bvb_handle_expect(command->image_id, BVB_OBJECT_IMAGE) != 0) {
+        return -EINVAL;
+    }
+    uint8_t payload[BVB_VULKAN_CLEAR_COLOR_IMAGE_GENERAL_SIZE];
+    memset(payload, 0, sizeof(payload));
+    bvb_wire_put_u64(payload, command->image_id);
+    bvb_wire_put_u32(payload + 8, command->image_layout);
+    bvb_wire_put_u32(payload + 12, command->range_count);
+    for (size_t index = 0U; index < 4U; ++index) {
+        bvb_wire_put_u32(payload + 16U + index * sizeof(uint32_t),
+                         command->color_words[index]);
+    }
+    for (uint32_t index = 0U; index < command->range_count; ++index) {
+        if (!image_range_is_valid(&command->ranges[index])) return -EINVAL;
+        encode_image_range(
+            payload + 32U + index * BVB_VULKAN_IMAGE_RANGE_SIZE,
+            &command->ranges[index]);
+    }
+    return append_record(builder,
+                         BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE_GENERAL,
+                         payload, sizeof(payload));
+}
+
 int bvb_command_batch_append_vulkan_end(
     struct bvb_command_batch_builder *builder) {
     return append_record(builder, BVB_COMMAND_VULKAN_END, NULL, 0U);
@@ -360,6 +479,12 @@ static int expected_payload_size(uint16_t opcode, uint32_t *payload_size) {
             return 0;
         case BVB_COMMAND_PUSH_ROTATION:
             *payload_size = BVB_PUSH_ROTATION_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_IMAGE_BARRIER_2:
+            *payload_size = BVB_VULKAN_IMAGE_BARRIER_2_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE_GENERAL:
+            *payload_size = BVB_VULKAN_CLEAR_COLOR_IMAGE_GENERAL_SIZE;
             return 0;
         case BVB_COMMAND_VULKAN_BEGIN:
             *payload_size = BVB_VULKAN_BEGIN_SIZE;
@@ -455,6 +580,54 @@ static int validate_payload(uint16_t opcode, const uint8_t *payload) {
                            get_float(payload + 12) <= 0.0F
                        ? -EPROTO
                        : 0;
+        case BVB_COMMAND_VULKAN_IMAGE_BARRIER_2: {
+            const uint32_t count = bvb_wire_get_u32(payload + 4);
+            if (bvb_wire_get_u32(payload) != 0U || count == 0U ||
+                count > BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS) {
+                return -EPROTO;
+            }
+            for (uint32_t index = 0U;
+                 index < BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS; ++index) {
+                const uint8_t *barrier = payload + 8U +
+                    index * BVB_VULKAN_IMAGE_BARRIER_2_RECORD_SIZE;
+                if (index >= count) {
+                    for (size_t offset = 0U;
+                         offset < BVB_VULKAN_IMAGE_BARRIER_2_RECORD_SIZE;
+                         offset += sizeof(uint32_t)) {
+                        if (bvb_wire_get_u32(barrier + offset) != 0U) {
+                            return -EPROTO;
+                        }
+                    }
+                    continue;
+                }
+                if (bvb_handle_expect(bvb_wire_get_u64(barrier + 48),
+                                      BVB_OBJECT_IMAGE) != 0 ||
+                    validate_image_range_wire(barrier + 56) != 0) {
+                    return -EPROTO;
+                }
+            }
+            return 0;
+        }
+        case BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE_GENERAL: {
+            const uint32_t count = bvb_wire_get_u32(payload + 12);
+            if (bvb_handle_expect(bvb_wire_get_u64(payload),
+                                  BVB_OBJECT_IMAGE) != 0 ||
+                bvb_wire_get_u32(payload + 8) == 0U || count == 0U ||
+                count > BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES) {
+                return -EPROTO;
+            }
+            for (uint32_t index = 0U;
+                 index < BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES; ++index) {
+                const uint8_t *range = payload + 32U +
+                    index * BVB_VULKAN_IMAGE_RANGE_SIZE;
+                if (index < count) {
+                    if (validate_image_range_wire(range) != 0) return -EPROTO;
+                } else if (!image_range_wire_is_zero(range)) {
+                    return -EPROTO;
+                }
+            }
+            return 0;
+        }
         case BVB_COMMAND_VULKAN_BEGIN:
             return (bvb_wire_get_u32(payload) & ~1U) != 0U ||
                            bvb_wire_get_u32(payload + 4) != 0U
@@ -876,6 +1049,60 @@ int bvb_command_decode_vulkan_init_image_barrier(
     for (uint32_t index = 0U; index < command->image_count; ++index) {
         command->image_ids[index] = bvb_wire_get_u64(
             record->payload + 8U + index * sizeof(uint64_t));
+    }
+    return 0;
+}
+
+int bvb_command_decode_vulkan_image_barrier_2(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_image_barrier_2_command *command) {
+    if (record == NULL || command == NULL ||
+        record->opcode != BVB_COMMAND_VULKAN_IMAGE_BARRIER_2 ||
+        record->payload_length != BVB_VULKAN_IMAGE_BARRIER_2_SIZE) {
+        return -EINVAL;
+    }
+    memset(command, 0, sizeof(*command));
+    command->dependency_flags = bvb_wire_get_u32(record->payload);
+    command->image_count = bvb_wire_get_u32(record->payload + 4);
+    for (uint32_t index = 0U; index < command->image_count; ++index) {
+        const uint8_t *input = record->payload + 8U +
+            index * BVB_VULKAN_IMAGE_BARRIER_2_RECORD_SIZE;
+        command->images[index] = (struct bvb_vulkan_image_barrier_2){
+            .source_stage_mask = bvb_wire_get_u64(input),
+            .source_access_mask = bvb_wire_get_u64(input + 8),
+            .destination_stage_mask = bvb_wire_get_u64(input + 16),
+            .destination_access_mask = bvb_wire_get_u64(input + 24),
+            .old_layout = bvb_wire_get_u32(input + 32),
+            .new_layout = bvb_wire_get_u32(input + 36),
+            .source_queue_family_index = bvb_wire_get_u32(input + 40),
+            .destination_queue_family_index = bvb_wire_get_u32(input + 44),
+            .image_id = bvb_wire_get_u64(input + 48),
+            .range = decode_image_range(input + 56),
+        };
+    }
+    return 0;
+}
+
+int bvb_command_decode_vulkan_clear_color_image_general(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_clear_color_image_general_command *command) {
+    if (record == NULL || command == NULL ||
+        record->opcode != BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE_GENERAL ||
+        record->payload_length !=
+            BVB_VULKAN_CLEAR_COLOR_IMAGE_GENERAL_SIZE) {
+        return -EINVAL;
+    }
+    memset(command, 0, sizeof(*command));
+    command->image_id = bvb_wire_get_u64(record->payload);
+    command->image_layout = bvb_wire_get_u32(record->payload + 8);
+    command->range_count = bvb_wire_get_u32(record->payload + 12);
+    for (size_t index = 0U; index < 4U; ++index) {
+        command->color_words[index] = bvb_wire_get_u32(
+            record->payload + 16U + index * sizeof(uint32_t));
+    }
+    for (uint32_t index = 0U; index < command->range_count; ++index) {
+        command->ranges[index] = decode_image_range(
+            record->payload + 32U + index * BVB_VULKAN_IMAGE_RANGE_SIZE);
     }
     return 0;
 }

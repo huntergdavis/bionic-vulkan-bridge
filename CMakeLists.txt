@@ -699,6 +699,23 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_vulkan.c"
   )
   add_test(
+    NAME rich-command-stream-animation-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_rich_command_stream_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e076-rich-command-stream-animation-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/command_batch.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/command_batch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_vulkan.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-activity-frame-import-v40-termux.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-rich-frame-animation-v40-termux.sh"
+  )
+  add_test(
     NAME global-activity-harness-contract
     COMMAND
       "${Python3_EXECUTABLE}"

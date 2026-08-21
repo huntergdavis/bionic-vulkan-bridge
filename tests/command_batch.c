@@ -249,7 +249,7 @@ static int test_transfer_batch(void) {
 }
 
 static int test_vulkan_command_stream(void) {
-    uint8_t bytes[512];
+    uint8_t bytes[2048];
     const uint64_t command_buffer =
         bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 7U);
     const uint64_t buffer = bvb_handle_id(BVB_OBJECT_BUFFER, 8U);
@@ -279,12 +279,53 @@ static int test_vulkan_command_stream(void) {
                   .image_count = 2U,
                   .image_ids = {image_one, image_two},
               }) == 0);
+    CHECK(bvb_command_batch_append_vulkan_image_barrier_2(
+              &builder,
+              &(const struct bvb_vulkan_image_barrier_2_command){
+                  .image_count = 1U,
+                  .images = {{
+                      .source_stage_mask = UINT64_C(0x1000),
+                      .source_access_mask = UINT64_C(0x1000),
+                      .destination_stage_mask = UINT64_C(0x2000),
+                      .destination_access_mask = UINT64_C(0x2000),
+                      .old_layout = 7U,
+                      .new_layout = UINT32_C(1000001002),
+                      .source_queue_family_index = UINT32_MAX,
+                      .destination_queue_family_index = UINT32_MAX,
+                      .image_id = image_one,
+                      .range = {
+                          .aspect_mask = 1U,
+                          .level_count = 1U,
+                          .layer_count = 1U,
+                      },
+                  }},
+              }) == 0);
+    CHECK(bvb_command_batch_append_vulkan_clear_color_image_general(
+              &builder,
+              &(const struct bvb_vulkan_clear_color_image_general_command){
+                  .image_id = image_two,
+                  .image_layout = 7U,
+                  .color_words = {UINT32_C(0x3f800000), 0U, 0U,
+                                  UINT32_C(0x3f800000)},
+                  .range_count = 2U,
+                  .ranges = {{
+                                 .aspect_mask = 1U,
+                                 .level_count = 1U,
+                                 .layer_count = 1U,
+                             },
+                             {
+                                 .aspect_mask = 1U,
+                                 .base_mip_level = 1U,
+                                 .level_count = 1U,
+                                 .layer_count = 1U,
+                             }},
+              }) == 0);
     CHECK(bvb_command_batch_append_vulkan_end(&builder) == 0);
     size_t length = 0U;
     CHECK(bvb_command_batch_finish(&builder, &length) == 0);
     struct bvb_command_batch_info info;
     CHECK(bvb_command_batch_validate(bytes, length, &info) == 0);
-    CHECK(info.command_count == 5U);
+    CHECK(info.command_count == 7U);
     CHECK(info.command_buffer_id == command_buffer);
     CHECK(info.sequence == 17U);
 
@@ -311,6 +352,29 @@ static int test_vulkan_command_stream(void) {
     CHECK(barrier.image_ids[0] == image_one);
     CHECK(barrier.image_ids[1] == image_two);
     CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    const size_t rich_barrier_payload_offset =
+        (size_t)(record.payload - bytes);
+    struct bvb_vulkan_image_barrier_2_command rich_barrier;
+    CHECK(bvb_command_decode_vulkan_image_barrier_2(&record, &rich_barrier) ==
+          0);
+    CHECK(rich_barrier.image_count == 1U);
+    CHECK(rich_barrier.images[0].image_id == image_one);
+    CHECK(rich_barrier.images[0].old_layout == 7U);
+    CHECK(rich_barrier.images[0].new_layout == UINT32_C(1000001002));
+    CHECK(rich_barrier.images[0].source_queue_family_index == UINT32_MAX);
+    CHECK(rich_barrier.images[0].range.level_count == 1U);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    const size_t rich_clear_payload_offset = (size_t)(record.payload - bytes);
+    struct bvb_vulkan_clear_color_image_general_command rich_clear;
+    CHECK(bvb_command_decode_vulkan_clear_color_image_general(
+              &record, &rich_clear) == 0);
+    CHECK(rich_clear.image_id == image_two);
+    CHECK(rich_clear.image_layout == 7U);
+    CHECK(rich_clear.color_words[0] == UINT32_C(0x3f800000));
+    CHECK(rich_clear.color_words[3] == UINT32_C(0x3f800000));
+    CHECK(rich_clear.range_count == 2U);
+    CHECK(rich_clear.ranges[1].base_mip_level == 1U);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
     CHECK(record.opcode == BVB_COMMAND_VULKAN_END);
     CHECK(bvb_command_batch_next(&iterator, &record) == 1);
 
@@ -328,6 +392,19 @@ static int test_vulkan_command_stream(void) {
     bvb_wire_put_u32(corrupted + BVB_COMMAND_BATCH_HEADER_SIZE +
                          BVB_COMMAND_RECORD_HEADER_SIZE,
                      2U);
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+    memcpy(corrupted, bytes, length);
+    /* The second fixed barrier slot must remain an all-zero inactive slot. */
+    bvb_wire_put_u64(corrupted + rich_barrier_payload_offset + 8U + 80U,
+                     1U);
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+    memcpy(corrupted, bytes, length);
+    /* The third fixed clear range must remain an all-zero inactive slot. */
+    bvb_wire_put_u32(corrupted + rich_clear_payload_offset + 32U + 48U, 1U);
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+    memcpy(corrupted, bytes, length);
+    bvb_wire_put_u64(corrupted + rich_clear_payload_offset,
+                     bvb_handle_id(BVB_OBJECT_BUFFER, 12U));
     CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
 
     uint8_t *snapshot = NULL;

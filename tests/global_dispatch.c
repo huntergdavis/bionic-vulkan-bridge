@@ -158,6 +158,8 @@ static VkResult VKAPI_CALL test_set_device_loader_data(
 int main(void) {
     const bool hardware_mode = bvb_hardware_validation_enabled();
     const bool shared_command_stream = bvb_shared_command_stream_enabled();
+    const bool animated_wsi =
+        shared_command_stream && getenv("BVB_TEST_ANIMATED_WSI") != NULL;
     uint32_t wsi_width = 2800U;
     uint32_t wsi_height = 1752U;
     uint32_t present_hold_ms = 0U;
@@ -1042,7 +1044,8 @@ int main(void) {
         .imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
         .imageExtent = {wsi_width, wsi_height},
         .imageArrayLayers = 1U,
-        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT |
+                      VK_IMAGE_USAGE_TRANSFER_DST_BIT,
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
         .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
@@ -1071,13 +1074,13 @@ int main(void) {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
     };
     VkSemaphore acquire_semaphore = VK_NULL_HANDLE;
+    VkSemaphore render_semaphore = VK_NULL_HANDLE;
     CHECK(create_semaphore(device, &binary_semaphore_info, NULL,
                            &acquire_semaphore) == VK_SUCCESS);
+    if (animated_wsi)
+        CHECK(create_semaphore(device, &binary_semaphore_info, NULL,
+                               &render_semaphore) == VK_SUCCESS);
     uint32_t virtual_image_index = UINT32_MAX;
-    CHECK(acquire_next_image(device, virtual_swapchain, UINT64_MAX,
-                             acquire_semaphore, VK_NULL_HANDLE,
-                             &virtual_image_index) == VK_SUCCESS);
-    CHECK(virtual_image_index < virtual_image_count);
     const VkAcquireNextImageInfoKHR unsupported_acquire_info = {
         .sType = VK_STRUCTURE_TYPE_ACQUIRE_NEXT_IMAGE_INFO_KHR,
         .swapchain = virtual_swapchain,
@@ -1098,20 +1101,188 @@ int main(void) {
     VkQueue repeated_queue = VK_NULL_HANDLE;
     get_device_queue(device, queue_family_index, 0U, &repeated_queue);
     CHECK(repeated_queue == queue);
-    VkResult per_swapchain_result = VK_ERROR_UNKNOWN;
-    const VkPresentInfoKHR virtual_present = {
-        .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-        .waitSemaphoreCount = 1U,
-        .pWaitSemaphores = &acquire_semaphore,
-        .swapchainCount = 1U,
-        .pSwapchains = &virtual_swapchain,
-        .pImageIndices = &virtual_image_index,
-        .pResults = &per_swapchain_result,
-    };
-    CHECK(queue_present(queue, &virtual_present) == VK_SUCCESS);
-    CHECK(per_swapchain_result == VK_SUCCESS);
+    uint32_t animated_frame_count = 0U;
+    bool animated_reused_image = false;
+    uint64_t animated_recording_rtts = 0U;
+    uint32_t animated_image_indices[4] = {0U, 0U, 0U, 0U};
+    if (animated_wsi) {
+        const VkCommandPoolCreateInfo animation_pool_info = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+            .queueFamilyIndex = queue_family_index,
+        };
+        VkCommandPool animation_pool = VK_NULL_HANDLE;
+        CHECK(create_command_pool(device, &animation_pool_info, NULL,
+                                  &animation_pool) == VK_SUCCESS);
+        const VkCommandBufferAllocateInfo animation_command_info = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = animation_pool,
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1U,
+        };
+        VkCommandBuffer animation_command = VK_NULL_HANDLE;
+        CHECK(allocate_command_buffers(device, &animation_command_info,
+                                       &animation_command) == VK_SUCCESS);
+        bool image_was_presented[3] = {false, false, false};
+        const VkClearColorValue frame_colors[4] = {
+            {.float32 = {1.0F, 0.0F, 0.0F, 1.0F}},
+            {.float32 = {0.0F, 1.0F, 0.0F, 1.0F}},
+            {.float32 = {0.0F, 0.0F, 1.0F, 1.0F}},
+            {.float32 = {1.0F, 1.0F, 1.0F, 1.0F}},
+        };
+        const VkImageSubresourceRange animation_range = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .levelCount = 1U,
+            .layerCount = 1U,
+        };
+        for (uint32_t frame = 0U; frame < 4U; ++frame) {
+            VkResult acquire_result = VK_NOT_READY;
+            for (uint32_t attempt = 0U;
+                 attempt < 5000U && acquire_result == VK_NOT_READY;
+                 ++attempt) {
+                acquire_result = acquire_next_image(
+                    device, virtual_swapchain, 0U, acquire_semaphore,
+                    VK_NULL_HANDLE, &virtual_image_index);
+                if (acquire_result == VK_NOT_READY)
+                    CHECK(bvb_sleep_milliseconds(1U));
+            }
+            CHECK(acquire_result == VK_SUCCESS);
+            CHECK(virtual_image_index < virtual_image_count);
+            animated_image_indices[frame] = virtual_image_index;
+            if (image_was_presented[virtual_image_index])
+                animated_reused_image = true;
+            CHECK(reset_command_pool(device, animation_pool, 0U) ==
+                  VK_SUCCESS);
+            const VkCommandBufferBeginInfo animation_begin = {
+                .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+                .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+            };
+            const uint64_t exchanges_before_animation =
+                bvb_global_dispatch_exchange_count();
+            CHECK(begin_command_buffer(animation_command, &animation_begin) ==
+                  VK_SUCCESS);
+            const VkImageMemoryBarrier2 to_transfer = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_NONE,
+                .srcAccessMask = VK_ACCESS_2_NONE,
+                .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                .oldLayout = image_was_presented[virtual_image_index]
+                                 ? VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
+                                 : VK_IMAGE_LAYOUT_UNDEFINED,
+                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = virtual_images[virtual_image_index],
+                .subresourceRange = animation_range,
+            };
+            const VkDependencyInfo to_transfer_dependency = {
+                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                .imageMemoryBarrierCount = 1U,
+                .pImageMemoryBarriers = &to_transfer,
+            };
+            cmd_pipeline_barrier_2(animation_command,
+                                   &to_transfer_dependency);
+            cmd_clear_color_image(animation_command,
+                                  virtual_images[virtual_image_index],
+                                  VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                  &frame_colors[frame], 1U,
+                                  &animation_range);
+            const VkImageMemoryBarrier2 to_present = {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                .dstStageMask = VK_PIPELINE_STAGE_2_NONE,
+                .dstAccessMask = VK_ACCESS_2_NONE,
+                .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = virtual_images[virtual_image_index],
+                .subresourceRange = animation_range,
+            };
+            const VkDependencyInfo to_present_dependency = {
+                .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+                .imageMemoryBarrierCount = 1U,
+                .pImageMemoryBarriers = &to_present,
+            };
+            cmd_pipeline_barrier_2(animation_command,
+                                   &to_present_dependency);
+            CHECK(end_command_buffer(animation_command) == VK_SUCCESS);
+            const uint64_t exchanges_after_animation =
+                bvb_global_dispatch_exchange_count();
+            CHECK(exchanges_after_animation == exchanges_before_animation);
+            animated_recording_rtts +=
+                exchanges_after_animation - exchanges_before_animation;
+
+            const VkSemaphoreSubmitInfo acquire_wait = {
+                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+                .semaphore = acquire_semaphore,
+                .stageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+            };
+            const VkCommandBufferSubmitInfo animation_command_submit = {
+                .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+                .commandBuffer = animation_command,
+            };
+            const VkSemaphoreSubmitInfo render_signal = {
+                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+                .semaphore = render_semaphore,
+                .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+            };
+            const VkSubmitInfo2 animation_submit = {
+                .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+                .waitSemaphoreInfoCount = 1U,
+                .pWaitSemaphoreInfos = &acquire_wait,
+                .commandBufferInfoCount = 1U,
+                .pCommandBufferInfos = &animation_command_submit,
+                .signalSemaphoreInfoCount = 1U,
+                .pSignalSemaphoreInfos = &render_signal,
+            };
+            CHECK(queue_submit_2(queue, 1U, &animation_submit,
+                                 VK_NULL_HANDLE) == VK_SUCCESS);
+            VkResult per_swapchain_result = VK_ERROR_UNKNOWN;
+            const VkPresentInfoKHR virtual_present = {
+                .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+                .waitSemaphoreCount = 1U,
+                .pWaitSemaphores = &render_semaphore,
+                .swapchainCount = 1U,
+                .pSwapchains = &virtual_swapchain,
+                .pImageIndices = &virtual_image_index,
+                .pResults = &per_swapchain_result,
+            };
+            CHECK(queue_present(queue, &virtual_present) == VK_SUCCESS);
+            CHECK(per_swapchain_result == VK_SUCCESS);
+            image_was_presented[virtual_image_index] = true;
+            ++animated_frame_count;
+        }
+        CHECK(animated_frame_count == 4U);
+        CHECK(animated_reused_image);
+        CHECK(animated_recording_rtts == 0U);
+        free_command_buffers(device, animation_pool, 1U,
+                             &animation_command);
+        destroy_command_pool(device, animation_pool, NULL);
+    } else {
+        CHECK(acquire_next_image(device, virtual_swapchain, UINT64_MAX,
+                                 acquire_semaphore, VK_NULL_HANDLE,
+                                 &virtual_image_index) == VK_SUCCESS);
+        CHECK(virtual_image_index < virtual_image_count);
+        VkResult per_swapchain_result = VK_ERROR_UNKNOWN;
+        const VkPresentInfoKHR virtual_present = {
+            .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .waitSemaphoreCount = 1U,
+            .pWaitSemaphores = &acquire_semaphore,
+            .swapchainCount = 1U,
+            .pSwapchains = &virtual_swapchain,
+            .pImageIndices = &virtual_image_index,
+            .pResults = &per_swapchain_result,
+        };
+        CHECK(queue_present(queue, &virtual_present) == VK_SUCCESS);
+        CHECK(per_swapchain_result == VK_SUCCESS);
+    }
     CHECK(bvb_sleep_milliseconds(present_hold_ms));
     destroy_swapchain(device, virtual_swapchain, NULL);
+    if (render_semaphore != VK_NULL_HANDLE)
+        destroy_semaphore(device, render_semaphore, NULL);
     destroy_semaphore(device, acquire_semaphore, NULL);
     CHECK(queue_submit(queue, 0U, NULL, VK_NULL_HANDLE) == VK_SUCCESS);
     const VkSubmitInfo unsupported_submit = {
@@ -1399,7 +1570,8 @@ int main(void) {
         bvb_command_pool_proxy_id(command_pool);
     CHECK(bvb_handle_type(command_pool_id) == BVB_OBJECT_COMMAND_POOL);
     if (!hardware_mode) {
-        CHECK(bvb_handle_serial(command_pool_id) == 1U);
+        CHECK(bvb_handle_serial(command_pool_id) ==
+              (animated_wsi ? 2U : 1U));
     }
     const VkCommandBufferAllocateInfo allocate_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -1415,7 +1587,8 @@ int main(void) {
         bvb_command_buffer_proxy_id(command_buffer);
     CHECK(bvb_handle_type(command_buffer_id) == BVB_OBJECT_COMMAND_BUFFER);
     if (!hardware_mode) {
-        CHECK(bvb_handle_serial(command_buffer_id) == 1U);
+        CHECK(bvb_handle_serial(command_buffer_id) ==
+              (animated_wsi ? 2U : 1U));
     }
     const VkBufferCreateInfo device_buffer_create_info = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -1892,7 +2065,7 @@ int main(void) {
             .layerCount = 1U,
         };
         cmd_clear_color_image(command_buffer, image,
-                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                               &unsupported_color, 1U, &poison_range);
         CHECK(end_command_buffer(command_buffer) ==
               VK_ERROR_INITIALIZATION_FAILED);
@@ -1906,6 +2079,17 @@ int main(void) {
         CHECK(end_command_buffer(command_buffer) ==
               VK_ERROR_INITIALIZATION_FAILED);
         destroy_buffer(ownership_device, ownership_buffer, NULL);
+
+        VkImage ownership_image = VK_NULL_HANDLE;
+        CHECK(create_image(ownership_device, &image_create_info, NULL,
+                           &ownership_image) == VK_SUCCESS);
+        CHECK(begin_command_buffer(command_buffer, &begin_info) == VK_SUCCESS);
+        cmd_clear_color_image(command_buffer, ownership_image,
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              &unsupported_color, 1U, &poison_range);
+        CHECK(end_command_buffer(command_buffer) ==
+              VK_ERROR_INITIALIZATION_FAILED);
+        destroy_image(ownership_device, ownership_image, NULL);
     }
     const uint64_t exchanges_before_recording =
         bvb_global_dispatch_exchange_count();
@@ -2011,7 +2195,8 @@ int main(void) {
     memcpy(&timeline_id, &timeline, sizeof(timeline));
     CHECK(bvb_handle_type(timeline_id) == BVB_OBJECT_SEMAPHORE);
     if (!hardware_mode) {
-        CHECK(bvb_handle_serial(timeline_id) == 2U);
+        CHECK(bvb_handle_serial(timeline_id) ==
+              (animated_wsi ? 3U : 2U));
     }
     uint64_t timeline_value = 0U;
     CHECK(get_semaphore_counter(device, timeline, &timeline_value) ==
@@ -2309,6 +2494,8 @@ int main(void) {
            "queues=%u memory_types=%u memory_heaps=%u device_extensions=%u "
            "sampler_anisotropy=%u logical_device=%llu queue=%llu "
            "empty_submit=0 queue_wait=0 device_wait=0 "
+           "animated_frames=%u animated_reused_image=%u "
+           "animated_recording_rtts=%llu "
            "command_pool=%llu command_buffer=%llu recording_rtts=%llu "
            "command_submit=0 "
            "pool_reset=0 buffer=%llu memory=%llu memory_type=%u "
@@ -2336,6 +2523,8 @@ int main(void) {
            features.samplerAnisotropy,
            (unsigned long long)device_id,
            (unsigned long long)queue_id,
+           animated_frame_count, animated_reused_image ? 1U : 0U,
+           (unsigned long long)animated_recording_rtts,
            (unsigned long long)command_pool_id,
            (unsigned long long)command_buffer_id,
            (unsigned long long)recording_rtts,
@@ -2354,5 +2543,14 @@ int main(void) {
            dedicated_requirements.requiresDedicatedAllocation,
            mapped_mismatches, mismatched_words,
            (unsigned long long)fence_id);
+    if (animated_wsi) {
+        static const char *const colors[4] = {
+            "red", "green", "blue", "white",
+        };
+        for (uint32_t frame = 0U; frame < 4U; ++frame) {
+            printf("E076_FRAME_EXPECTED sequence=%u color=%s slot=%u\n",
+                   frame + 1U, colors[frame], animated_image_indices[frame]);
+        }
+    }
     return 0;
 }

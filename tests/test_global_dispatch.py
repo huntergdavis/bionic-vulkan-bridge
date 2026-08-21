@@ -2,6 +2,7 @@
 
 import os
 import array
+import mmap
 import pathlib
 import re
 import socket
@@ -9,6 +10,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 
@@ -43,6 +45,8 @@ def main() -> int:
         server_environment = os.environ.copy()
         server_environment["BVB_FAKE_HIDE_SWAPCHAIN"] = "1"
         server_environment["BVB_FAKE_REQUIRE_INIT_IMAGE_COMMANDS"] = "1"
+        if validation_mode == "shared-command-stream":
+            server_environment["BVB_FAKE_REQUIRE_ANIMATED_WSI"] = "1"
         if validation_mode == "hardware":
             server_environment["BVB_FAKE_REAL_HARDWARE_VALUES"] = "1"
         if validation_mode == "shared-command-stream-non-success":
@@ -128,6 +132,102 @@ def main() -> int:
                 environment.pop("BVB_COMMAND_STREAM", None)
             if validation_mode == "shared-command-stream-non-success":
                 environment["BVB_EXPECT_STREAM_SUBMIT_FAILURE"] = "1"
+            if validation_mode == "shared-command-stream":
+                environment["BVB_TEST_ANIMATED_WSI"] = "1"
+
+            sink_result = {}
+
+            def consume_activity_frames(expected_frames: int) -> None:
+                received_fds = array.array("i")
+                ring_mapping = None
+                try:
+                    frame_connection, _ = activity_frame_listener.accept()
+                    with frame_connection:
+                        setup, ancillary, _, _ = frame_connection.recvmsg(
+                            128, socket.CMSG_SPACE(4 * struct.calcsize("i"))
+                        )
+                    assert len(setup) == 128
+                    for level, kind, value in ancillary:
+                        if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
+                            received_fds.frombytes(
+                                value[
+                                    : len(value)
+                                    - len(value) % received_fds.itemsize
+                                ]
+                            )
+                    magic, version, header_bytes, image_count = struct.unpack_from(
+                        "<IHHI", setup
+                    )
+                    assert magic == 0x31544642
+                    assert version == 1
+                    assert header_bytes == 128
+                    assert image_count == 3
+                    assert len(received_fds) == image_count + 1
+                    ring_mapping = mmap.mmap(
+                        received_fds[-1], 4096, access=mmap.ACCESS_WRITE
+                    )
+                    ring_magic, ring_version, control_bytes, slot_count = (
+                        struct.unpack_from("<IHHI", ring_mapping)
+                    )
+                    assert ring_magic == 0x31525742
+                    assert ring_version == 1
+                    assert control_bytes == 128
+                    assert slot_count == image_count
+                    observed_slots = []
+                    for expected_sequence in range(1, expected_frames + 1):
+                        deadline = time.monotonic() + 5.0
+                        selected_slot = None
+                        while selected_slot is None and time.monotonic() < deadline:
+                            for slot in range(slot_count):
+                                state = struct.unpack_from(
+                                    "<I", ring_mapping, 44 + slot * 4
+                                )[0]
+                                sequence = struct.unpack_from(
+                                    "<I", ring_mapping, 60 + slot * 4
+                                )[0]
+                                if state == 2 and sequence == expected_sequence:
+                                    selected_slot = slot
+                                    break
+                            if selected_slot is None:
+                                producer_status, consumer_status = (
+                                    struct.unpack_from("<ii", ring_mapping, 36)
+                                )
+                                assert producer_status >= 0
+                                assert consumer_status >= 0
+                                time.sleep(0.001)
+                        assert selected_slot is not None
+                        observed_slots.append(selected_slot)
+                        # Mirror bvb_wsi_frame_ring_release publication order:
+                        # retire the sequence, release the slot, then advance the
+                        # ordered consumer sequence observed by the producer.
+                        struct.pack_into(
+                            "<I", ring_mapping, 60 + selected_slot * 4, 0
+                        )
+                        struct.pack_into(
+                            "<I", ring_mapping, 44 + selected_slot * 4, 0
+                        )
+                        struct.pack_into(
+                            "<I", ring_mapping, 32, expected_sequence
+                        )
+                    sink_result["setup"] = setup
+                    sink_result["slots"] = observed_slots
+                except BaseException as error:
+                    sink_result["error"] = error
+                finally:
+                    if ring_mapping is not None:
+                        ring_mapping.close()
+                    for descriptor in received_fds:
+                        os.close(descriptor)
+
+            expected_frame_count = (
+                4 if validation_mode == "shared-command-stream" else 1
+            )
+            sink_thread = threading.Thread(
+                target=consume_activity_frames,
+                args=(expected_frame_count,),
+                daemon=True,
+            )
+            sink_thread.start()
             completed = subprocess.run(
                 [client],
                 check=False,
@@ -136,11 +236,21 @@ def main() -> int:
                 timeout=5.0,
                 env=environment,
             )
+            sink_thread.join(timeout=5.0)
+            assert not sink_thread.is_alive()
             if completed.returncode != 0:
                 _, service_stderr = server.communicate(timeout=5.0)
                 raise AssertionError(
                     f"{completed.stderr}service stderr: {service_stderr}"
                 )
+            if "error" in sink_result:
+                raise sink_result["error"]
+            assert len(sink_result["setup"]) == 128
+            assert sink_result["slots"] == (
+                [0, 1, 2, 0]
+                if validation_mode == "shared-command-stream"
+                else [0]
+            )
             assert completed.stderr == ""
             assert completed.stdout.startswith("PASS: global Vulkan discovery")
             expected_client_mode = (
@@ -156,6 +266,24 @@ def main() -> int:
                 "recording_rtts=0" if shared_command_stream
                 else "recording_rtts=5"
             ) in completed.stdout
+            assert (
+                "animated_frames=4 animated_reused_image=1 "
+                "animated_recording_rtts=0"
+                if validation_mode == "shared-command-stream"
+                else "animated_frames=0 animated_reused_image=0 "
+                     "animated_recording_rtts=0"
+            ) in completed.stdout
+            if validation_mode == "shared-command-stream":
+                for sequence, color, slot in (
+                    (1, "red", 0),
+                    (2, "green", 1),
+                    (3, "blue", 2),
+                    (4, "white", 0),
+                ):
+                    assert (
+                        f"E076_FRAME_EXPECTED sequence={sequence} "
+                        f"color={color} slot={slot}"
+                    ) in completed.stdout
             image_match = re.search(r"\bimage=(\d+)\b", completed.stdout)
             assert image_match is not None
             assert int(image_match.group(1)) >> 56 == 7
@@ -173,8 +301,17 @@ def main() -> int:
                 assert "queues=2 memory_types=1 memory_heaps=2 device_extensions=7" in completed.stdout
                 assert f"logical_device={0x0300000000000001}" in completed.stdout
                 assert f"queue={0x0400000000000001}" in completed.stdout
-                assert f"command_pool={0x0A00000000000001}" in completed.stdout
-                assert f"command_buffer={0x0B00000000000001}" in completed.stdout
+                command_serial = (
+                    2 if validation_mode == "shared-command-stream" else 1
+                )
+                assert (
+                    f"command_pool={0x0A00000000000000 | command_serial}"
+                    in completed.stdout
+                )
+                assert (
+                    f"command_buffer={0x0B00000000000000 | command_serial}"
+                    in completed.stdout
+                )
                 assert f"buffer={0x1300000000000001}" in completed.stdout
                 assert f"memory={0x0900000000000001}" in completed.stdout
                 assert "buffer_requirements2=4096,256,1" in completed.stdout
@@ -207,21 +344,6 @@ def main() -> int:
                     )
                     assert field_match is not None
                     assert int(field_match.group(1)) >> 56 == object_type
-            frame_connection, _ = activity_frame_listener.accept()
-            with frame_connection:
-                setup, ancillary, _, _ = frame_connection.recvmsg(
-                    128, socket.CMSG_SPACE(4 * struct.calcsize("i"))
-                )
-            assert len(setup) == 128
-            received_fds = array.array("i")
-            for level, kind, value in ancillary:
-                if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
-                    received_fds.frombytes(
-                        value[: len(value) - len(value) % received_fds.itemsize]
-                    )
-            assert len(received_fds) == 4
-            for descriptor in received_fds:
-                os.close(descriptor)
             server_stdout, server_stderr = server.communicate(timeout=5.0)
             assert server.returncode == 0, server_stderr
             assert server_stdout.splitlines() == [

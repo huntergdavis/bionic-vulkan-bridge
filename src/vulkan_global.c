@@ -4296,6 +4296,118 @@ int bvb_vulkan_global_context_command_buffer_clear_color_image(
     return 0;
 }
 
+static int replay_command_stream_image_barrier_2(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t command_buffer_id,
+    const struct bvb_vulkan_image_barrier_2_command *command) {
+    uint64_t command_device_id = 0U;
+    VkDevice command_device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    int result = resolve_command_buffer(
+        context, command_buffer_id, &command_device_id, &command_device,
+        &command_pool, &command_buffer);
+    VkImageMemoryBarrier2 barriers[BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS];
+    memset(barriers, 0, sizeof(barriers));
+    for (uint32_t index = 0U;
+         result == 0 && index < command->image_count; ++index) {
+        uint64_t image_device_id = 0U;
+        uint64_t image_bits = 0U;
+        VkDevice image_device = VK_NULL_HANDLE;
+        result = resolve_device_child(
+            context, command->images[index].image_id, BVB_OBJECT_IMAGE,
+            &image_device_id, &image_device, &image_bits);
+        if (result == 0 &&
+            (image_device_id != command_device_id ||
+             image_device != command_device)) {
+            result = -EPROTO;
+        }
+        if (result == 0) {
+            const struct bvb_vulkan_image_barrier_2 *source =
+                &command->images[index];
+            barriers[index] = (VkImageMemoryBarrier2){
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .srcStageMask = source->source_stage_mask,
+                .srcAccessMask = source->source_access_mask,
+                .dstStageMask = source->destination_stage_mask,
+                .dstAccessMask = source->destination_access_mask,
+                .oldLayout = (VkImageLayout)source->old_layout,
+                .newLayout = (VkImageLayout)source->new_layout,
+                .srcQueueFamilyIndex = source->source_queue_family_index,
+                .dstQueueFamilyIndex = source->destination_queue_family_index,
+                .image = image_from_bits(image_bits),
+                .subresourceRange = {
+                    .aspectMask = source->range.aspect_mask,
+                    .baseMipLevel = source->range.base_mip_level,
+                    .levelCount = source->range.level_count,
+                    .baseArrayLayer = source->range.base_array_layer,
+                    .layerCount = source->range.layer_count,
+                },
+            };
+        }
+    }
+    if (result != 0) return result;
+    PFN_vkCmdPipelineBarrier2 barrier =
+        (PFN_vkCmdPipelineBarrier2)context->get_device_proc_addr(
+            command_device, "vkCmdPipelineBarrier2");
+    if (barrier == NULL) return -ENOSYS;
+    const VkDependencyInfo dependency = {
+        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .dependencyFlags = command->dependency_flags,
+        .imageMemoryBarrierCount = command->image_count,
+        .pImageMemoryBarriers = barriers,
+    };
+    barrier(command_buffer, &dependency);
+    return 0;
+}
+
+static int replay_command_stream_clear_color_image_general(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t command_buffer_id,
+    const struct bvb_vulkan_clear_color_image_general_command *command) {
+    uint64_t command_device_id = 0U;
+    VkDevice command_device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    int result = resolve_command_buffer(
+        context, command_buffer_id, &command_device_id, &command_device,
+        &command_pool, &command_buffer);
+    uint64_t image_device_id = 0U;
+    uint64_t image_bits = 0U;
+    VkDevice image_device = VK_NULL_HANDLE;
+    if (result == 0) {
+        result = resolve_device_child(
+            context, command->image_id, BVB_OBJECT_IMAGE, &image_device_id,
+            &image_device, &image_bits);
+    }
+    if (result == 0 &&
+        (image_device_id != command_device_id || image_device != command_device)) {
+        result = -EPROTO;
+    }
+    if (result != 0) return result;
+    PFN_vkCmdClearColorImage clear =
+        (PFN_vkCmdClearColorImage)context->get_device_proc_addr(
+            command_device, "vkCmdClearColorImage");
+    if (clear == NULL) return -ENOSYS;
+    VkClearColorValue color;
+    memcpy(color.uint32, command->color_words, sizeof(command->color_words));
+    VkImageSubresourceRange ranges[BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES];
+    memset(ranges, 0, sizeof(ranges));
+    for (uint32_t index = 0U; index < command->range_count; ++index) {
+        ranges[index] = (VkImageSubresourceRange){
+            .aspectMask = command->ranges[index].aspect_mask,
+            .baseMipLevel = command->ranges[index].base_mip_level,
+            .levelCount = command->ranges[index].level_count,
+            .baseArrayLayer = command->ranges[index].base_array_layer,
+            .layerCount = command->ranges[index].layer_count,
+        };
+    }
+    clear(command_buffer, image_from_bits(image_bits),
+          (VkImageLayout)command->image_layout, &color,
+          command->range_count, ranges);
+    return 0;
+}
+
 int bvb_vulkan_global_context_validate_queue_submit_2(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_queue_submit_2_request *request,
@@ -4397,6 +4509,60 @@ static int command_stream_child_matches_device(
                        : child_device_id == expected_device_id ? 0 : -EPROTO;
 }
 
+static int command_stream_image_barrier_range_supported(
+    const struct bvb_vulkan_image_subresource_range *range) {
+    const VkImageAspectFlags supported_aspects =
+        VK_IMAGE_ASPECT_COLOR_BIT | VK_IMAGE_ASPECT_DEPTH_BIT |
+        VK_IMAGE_ASPECT_STENCIL_BIT | VK_IMAGE_ASPECT_METADATA_BIT |
+        VK_IMAGE_ASPECT_PLANE_0_BIT | VK_IMAGE_ASPECT_PLANE_1_BIT |
+        VK_IMAGE_ASPECT_PLANE_2_BIT |
+        VK_IMAGE_ASPECT_MEMORY_PLANE_0_BIT_EXT |
+        VK_IMAGE_ASPECT_MEMORY_PLANE_1_BIT_EXT |
+        VK_IMAGE_ASPECT_MEMORY_PLANE_2_BIT_EXT |
+        VK_IMAGE_ASPECT_MEMORY_PLANE_3_BIT_EXT;
+    return range != NULL && range->aspect_mask != 0U &&
+           (range->aspect_mask & ~supported_aspects) == 0U &&
+           range->level_count != 0U && range->layer_count != 0U;
+}
+
+static int command_stream_clear_color_range_supported(
+    const struct bvb_vulkan_image_subresource_range *range) {
+    return command_stream_image_barrier_range_supported(range) &&
+           range->aspect_mask == VK_IMAGE_ASPECT_COLOR_BIT;
+}
+
+static int command_stream_image_layout_supported(uint32_t layout) {
+    switch ((VkImageLayout)layout) {
+        case VK_IMAGE_LAYOUT_UNDEFINED:
+        case VK_IMAGE_LAYOUT_GENERAL:
+        case VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL:
+        case VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL:
+        case VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL:
+        case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
+        case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
+        case VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL:
+        case VK_IMAGE_LAYOUT_PREINITIALIZED:
+        case VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL:
+        case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL:
+        case VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL:
+        case VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL:
+        case VK_IMAGE_LAYOUT_STENCIL_ATTACHMENT_OPTIMAL:
+        case VK_IMAGE_LAYOUT_STENCIL_READ_ONLY_OPTIMAL:
+        case VK_IMAGE_LAYOUT_PRESENT_SRC_KHR:
+        case VK_IMAGE_LAYOUT_SHARED_PRESENT_KHR:
+        case VK_IMAGE_LAYOUT_READ_ONLY_OPTIMAL:
+        case VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL:
+        case VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ:
+        case VK_IMAGE_LAYOUT_FRAGMENT_DENSITY_MAP_OPTIMAL_EXT:
+        case VK_IMAGE_LAYOUT_FRAGMENT_SHADING_RATE_ATTACHMENT_OPTIMAL_KHR:
+        case VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT:
+        case VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT:
+            return 1;
+        default:
+            return 0;
+    }
+}
+
 int bvb_vulkan_global_context_validate_command_stream(
     const struct bvb_vulkan_global_context *context,
     const uint8_t *batch, size_t batch_length, uint64_t expected_device_id,
@@ -4449,6 +4615,53 @@ int bvb_vulkan_global_context_validate_command_stream(
             if (result == 0) {
                 result = command_stream_child_matches_device(
                     context, fill.buffer_id, BVB_OBJECT_BUFFER,
+                    expected_device_id);
+            }
+        } else if (record.opcode ==
+                   BVB_COMMAND_VULKAN_IMAGE_BARRIER_2) {
+            struct bvb_vulkan_image_barrier_2_command barrier;
+            result = bvb_command_decode_vulkan_image_barrier_2(
+                &record, &barrier);
+            if (result == 0 && barrier.dependency_flags != 0U) {
+                result = -EPROTO;
+            }
+            for (uint32_t image = 0U;
+                 result == 0 && image < barrier.image_count; ++image) {
+                const struct bvb_vulkan_image_barrier_2 *entry =
+                    &barrier.images[image];
+                if (!command_stream_image_layout_supported(entry->old_layout) ||
+                    !command_stream_image_layout_supported(entry->new_layout) ||
+                    entry->new_layout == VK_IMAGE_LAYOUT_UNDEFINED ||
+                    entry->new_layout == VK_IMAGE_LAYOUT_PREINITIALIZED ||
+                    !command_stream_image_barrier_range_supported(
+                        &entry->range)) {
+                    result = -EPROTO;
+                    break;
+                }
+                result = command_stream_child_matches_device(
+                    context, entry->image_id, BVB_OBJECT_IMAGE,
+                    expected_device_id);
+            }
+        } else if (record.opcode ==
+                   BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE_GENERAL) {
+            struct bvb_vulkan_clear_color_image_general_command clear;
+            result = bvb_command_decode_vulkan_clear_color_image_general(
+                &record, &clear);
+            if (result == 0 &&
+                clear.image_layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+                clear.image_layout != VK_IMAGE_LAYOUT_GENERAL) {
+                result = -EPROTO;
+            }
+            for (uint32_t range = 0U;
+                 result == 0 && range < clear.range_count; ++range) {
+                if (!command_stream_clear_color_range_supported(
+                        &clear.ranges[range])) {
+                    result = -EPROTO;
+                }
+            }
+            if (result == 0) {
+                result = command_stream_child_matches_device(
+                    context, clear.image_id, BVB_OBJECT_IMAGE,
                     expected_device_id);
             }
         } else if (record.opcode ==
@@ -4535,6 +4748,24 @@ int bvb_vulkan_global_context_replay_command_stream(
                         .data = fill.data,
                     },
                     error, error_size);
+            }
+        } else if (record.opcode ==
+                   BVB_COMMAND_VULKAN_IMAGE_BARRIER_2) {
+            struct bvb_vulkan_image_barrier_2_command barrier;
+            result = bvb_command_decode_vulkan_image_barrier_2(
+                &record, &barrier);
+            if (result == 0) {
+                result = replay_command_stream_image_barrier_2(
+                    context, info.command_buffer_id, &barrier);
+            }
+        } else if (record.opcode ==
+                   BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE_GENERAL) {
+            struct bvb_vulkan_clear_color_image_general_command clear;
+            result = bvb_command_decode_vulkan_clear_color_image_general(
+                &record, &clear);
+            if (result == 0) {
+                result = replay_command_stream_clear_color_image_general(
+                    context, info.command_buffer_id, &clear);
             }
         } else if (record.opcode ==
                    BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE) {

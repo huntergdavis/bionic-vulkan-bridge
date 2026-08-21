@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 
-"""Run the installed v40 Activity against one real BVB virtual WSI frame.
+"""Run the installed v40 Activity against real BVB virtual WSI frames.
 
 This is intentionally independent of Steam and Termux:X11.  It verifies that
 the installed APK is byte-for-byte the staged versionCode 40 APK containing the
 E057 native consumer, proves lifecycle-token rejection, launches the Activity,
 and drives the existing global-dispatch WSI smoke client through import and one
-native present.  Passing this gate is not visible-game or FPS evidence.
+native present.  ``--animated-rgbw`` reuses that same v40 Activity and bounded
+cleanup path for four E076 red/green/blue/white producer frames. Passing either
+mode is not visual pixel, visible-game, or FPS evidence.
 """
 
 from __future__ import annotations
@@ -47,6 +49,7 @@ LIFECYCLE_RECORD = struct.Struct("<IHHIIIIQ32s")
 LIFECYCLE_ACK = struct.Struct("<IHHIi")
 E057_IMPORT_MARKER = "E057_FRAME_TRANSPORT_IMPORTED"
 E057_PRESENT_MARKER = "E057_FRAME_PRESENTED"
+E076_EXPECTED_MARKER = "E076_FRAME_EXPECTED"
 NATIVE_LIBRARY = "lib/arm64-v8a/libbvb-visible-host.so"
 
 
@@ -406,7 +409,7 @@ def prepare_artifacts(
     return client.resolve(strict=True)
 
 
-def validate_runtime_client(client: pathlib.Path) -> None:
+def validate_runtime_client(client: pathlib.Path, animated_rgbw: bool = False) -> None:
     if not client.is_file() or client.is_symlink() or not os.access(client, os.X_OK):
         raise GateFailure(f"global WSI client is unavailable or unsafe: {client}")
     content = client.read_bytes()
@@ -417,6 +420,12 @@ def validate_runtime_client(client: pathlib.Path) -> None:
     ):
         if variable not in content:
             raise GateFailure("global WSI client is stale; rerun without --skip-build")
+    if animated_rgbw:
+        for marker in (b"BVB_TEST_ANIMATED_WSI", E076_EXPECTED_MARKER.encode()):
+            if marker not in content:
+                raise GateFailure(
+                    "global WSI client lacks E076 animation support; rerun without --skip-build"
+                )
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -434,6 +443,21 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--runtime-parent", default=os.environ.get("TMPDIR", "/tmp"))
     parser.add_argument("--timeout", type=float, default=60.0)
     parser.add_argument("--present-hold-ms", type=int, default=5000)
+    parser.add_argument("--animated-rgbw", action="store_true")
+    parser.add_argument(
+        "--expected-service-sha256",
+        help=(
+            "required with --animated-rgbw; exact SHA-256 of the deployed "
+            "E076 bridge service"
+        ),
+    )
+    parser.add_argument(
+        "--expected-client-sha256",
+        help=(
+            "required with --animated-rgbw; exact SHA-256 of the E076 "
+            "global-dispatch producer client"
+        ),
+    )
     parser.add_argument("--skip-build", action="store_true")
     parser.add_argument("--preflight-only", action="store_true")
     parser.add_argument("--am", default=os.environ.get("BVB_ACTIVITY_LAUNCHER", "am"))
@@ -450,6 +474,20 @@ def parse_arguments() -> argparse.Namespace:
         parser.error("--timeout must be positive")
     if not 1 <= arguments.present_hold_ms <= 30000:
         parser.error("--present-hold-ms must be between 1 and 30000")
+    for label, value in (
+        ("--expected-service-sha256", arguments.expected_service_sha256),
+        ("--expected-client-sha256", arguments.expected_client_sha256),
+    ):
+        if value is not None and re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            parser.error(f"{label} must be 64 lowercase hex digits")
+    if arguments.animated_rgbw and (
+        arguments.expected_service_sha256 is None
+        or arguments.expected_client_sha256 is None
+    ):
+        parser.error(
+            "--animated-rgbw requires --expected-service-sha256 and "
+            "--expected-client-sha256"
+        )
     arguments.project = project
     return arguments
 
@@ -477,13 +515,22 @@ def run(arguments: argparse.Namespace) -> int:
     cleanup_log = run_directory / "cleanup.log"
     result: dict[str, Any] = {
         "schema_version": 1,
-        "gate": "E074-activity-frame-import-v40-runtime",
+        "gate": (
+            "E076-rich-frame-animation-v40-runtime"
+            if arguments.animated_rgbw
+            else "E074-activity-frame-import-v40-runtime"
+        ),
         "result": "fail",
         "expected_version_code": EXPECTED_VERSION_CODE,
         "steam_started": False,
         "termux_x11_started": False,
         "visible_game_claim": False,
         "fps_claim": False,
+        "visual_confirmation": {
+            "required": arguments.animated_rgbw,
+            "status": "pending" if arguments.animated_rgbw else "not_applicable",
+            "screenshot": None,
+        },
         "visibility_boundary": (
             "pending: requires authenticated Activity import and native present markers; "
             "never claims visually inspected or game-produced pixels"
@@ -546,7 +593,8 @@ def run(arguments: argparse.Namespace) -> int:
             "installed private Turnip",
         )
         service = require_artifact_sha256(
-            pathlib.Path(arguments.service), EXPECTED_BRIDGE_SERVICE_SHA256,
+            pathlib.Path(arguments.service),
+            arguments.expected_service_sha256 or EXPECTED_BRIDGE_SERVICE_SHA256,
             "installed bridge service", executable=True,
         )
         installed_bridge_client = require_artifact_sha256(
@@ -566,7 +614,12 @@ def run(arguments: argparse.Namespace) -> int:
             )
         if not service.is_file() or service.is_symlink() or not os.access(service, os.X_OK):
             raise GateFailure(f"bridge service is unavailable or unsafe: {service}")
-        validate_runtime_client(client)
+        validate_runtime_client(client, arguments.animated_rgbw)
+        if arguments.animated_rgbw:
+            client = require_artifact_sha256(
+                client, arguments.expected_client_sha256,
+                "E076 global-dispatch producer client", executable=True,
+            )
         result["artifacts"] = {
             "service": artifact(service),
             "installed_bridge_client": artifact(installed_bridge_client),
@@ -612,7 +665,8 @@ def run(arguments: argparse.Namespace) -> int:
                 "--ei", "bvb_activity_port", str(port),
                 "--es", "bvb_activity_token", token,
                 "--ei", "bvb_retain_external_renderer", "1",
-                "--ei", "bvb_visible_frames", "1",
+                "--ei", "bvb_visible_frames",
+                "4" if arguments.animated_rgbw else "1",
             ],
             timeout=arguments.timeout,
         )
@@ -667,6 +721,9 @@ def run(arguments: argparse.Namespace) -> int:
         client_environment["BVB_GLOBAL_DISPATCH_PRESENT_HOLD_MS"] = str(
             arguments.present_hold_ms
         )
+        if arguments.animated_rgbw:
+            client_environment["BVB_COMMAND_STREAM"] = "shared"
+            client_environment["BVB_TEST_ANIMATED_WSI"] = "1"
         client_process = subprocess.Popen(
             [grun, str(client)],
             stdout=client_out_handle,
@@ -700,13 +757,20 @@ def run(arguments: argparse.Namespace) -> int:
             rf"{E057_IMPORT_MARKER} generation=(\d+) images=(\d+) "
             rf"width=(\d+) height=(\d+) format=(-?\d+)", app_text,
         )
-        present_match = re.search(
+        present_matches = list(re.finditer(
             rf"{E057_PRESENT_MARKER} generation=(\d+) sequence=(\d+) slot=(\d+)",
             app_text,
-        )
-        if import_match is None or present_match is None:
+        ))
+        expected_matches = list(re.finditer(
+            rf"{E076_EXPECTED_MARKER} sequence=(\d+) color=(\w+) slot=(\d+)",
+            client_text,
+        ))
+        required_present_count = 4 if arguments.animated_rgbw else 1
+        if import_match is None or len(present_matches) < required_present_count:
             raise GateFailure("Activity log is missing E057 import or present completion marker")
         import_generation = int(import_match.group(1))
+        selected_presents = present_matches[:required_present_count]
+        present_match = selected_presents[0]
         present_generation = int(present_match.group(1))
         if (
             import_generation != int(frame_document["generation"])
@@ -716,6 +780,38 @@ def run(arguments: argparse.Namespace) -> int:
             or int(import_match.group(4)) != height
         ):
             raise GateFailure("E057 import/present metadata does not match the setup bundle")
+        correlations: list[dict[str, Any]] = []
+        if arguments.animated_rgbw:
+            expected_colors = ["red", "green", "blue", "white"]
+            if len(expected_matches) != 4:
+                raise GateFailure("producer log is missing four E076 expected-color markers")
+            for index, (expected, presented) in enumerate(
+                zip(expected_matches, selected_presents), start=1
+            ):
+                sequence = int(expected.group(1))
+                expected_slot = int(expected.group(3))
+                if (
+                    sequence != index
+                    or expected.group(2) != expected_colors[index - 1]
+                    or int(presented.group(1)) != import_generation
+                    or int(presented.group(2)) != sequence
+                    or int(presented.group(3)) != expected_slot
+                ):
+                    raise GateFailure(
+                        "E076 producer expectation does not correlate with "
+                        "E057_FRAME_PRESENTED generation/sequence/slot"
+                    )
+                correlations.append(
+                    {
+                        "generation": import_generation,
+                        "sequence": sequence,
+                        "expected_color": expected.group(2),
+                        "producer_slot": expected_slot,
+                        "activity_presented_slot": int(presented.group(3)),
+                        "producer_marker": expected.group(0),
+                        "activity_marker": presented.group(0),
+                    }
+                )
         first_failure = app_text.find("E057_FRAME_CONSUMER_FAIL")
         first_present = app_text.find(E057_PRESENT_MARKER)
         if first_failure >= 0 and first_failure < first_present:
@@ -739,6 +835,10 @@ def run(arguments: argparse.Namespace) -> int:
                     "helper": frame_document,
                     "import_marker": import_match.group(0),
                     "present_marker": present_match.group(0),
+                    "present_markers": [
+                        match.group(0) for match in selected_presents
+                    ],
+                    "expected_frame_correlations": correlations,
                     "native_import": True,
                     "native_present": True,
                     "per_frame_java_calls": 0,
@@ -746,9 +846,10 @@ def run(arguments: argparse.Namespace) -> int:
                 },
                 "visibility_boundary": (
                     "the installed v40 Activity authenticated, imported the one-time "
-                    "image/control FD bundle, and completed one native copy-or-blit/present; "
-                    "the producer is the global-dispatch smoke client and no screenshot, "
-                    "changing game frame, Tomb Raider output, or FPS is claimed"
+                    "image/control FD bundle, and completed correlated native presents; "
+                    "RGBW producer metadata still requires user visual confirmation and "
+                    "a screenshot before any changing-pixel claim; no Tomb Raider output "
+                    "or FPS is claimed"
                 ),
             }
         )
@@ -826,6 +927,12 @@ def run(arguments: argparse.Namespace) -> int:
         f"activity_frame_import_v40={result['result']} evidence={evidence_path} "
         "visible_game_claim=false fps_claim=false"
     )
+    if arguments.animated_rgbw and failure is None:
+        print(
+            "E076_VISUAL_CONFIRMATION_REQUIRED: verify red/green/blue/white "
+            "on the tablet and capture a screenshot; metadata correlation "
+            "alone is not pixel proof"
+        )
     if failure is not None:
         print(f"activity frame import v40 gate: {failure}", file=sys.stderr)
         return 1

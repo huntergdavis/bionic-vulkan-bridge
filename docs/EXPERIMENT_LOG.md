@@ -3088,3 +3088,45 @@ the audit's verified strict opcode-85 compatibility. Mapped-memory flush fan-out
 and global recording-mutex scalability are recorded as E077 follow-up work.
 This gate has no tablet deployment, visible-frame, Tomb Raider, benchmark, or
 FPS claim.
+
+## E076 — rich shared records and four-frame producer (2026-08-21)
+
+Status: 43/43 host contracts pass; host-only producer gate. Shared record 10
+now carries one to four image barriers with the original stage, access, layout,
+queue-family, typed image, and bounded image-range fields. Shared record 11
+carries an arbitrary four-word clear color and one to four color ranges. Both
+are fixed width, pointer-free, and require zeroed inactive slots. Memory and buffer
+barrier arrays remain rejected because this gate does not implement or claim
+them. Exact E069 zero-clear and initialization-barrier records remain valid,
+and the strict socket path still uses legacy RPC 102/103.
+
+The synthetic virtual-swapchain producer runs four frames so the three-image
+ring must be reused. Each frame acquires an image, resets and begins a command
+buffer, transitions `UNDEFINED` (or `PRESENT_SRC_KHR` on reuse) to
+`TRANSFER_DST_OPTIMAL`, clears red/green/blue/white, transitions to
+`PRESENT_SRC_KHR`, ends, submits with acquire/render binary semaphores, and
+presents. A concurrent host sink observes and releases slots 0,1,2,0 in ABI
+order. The strict fake driver confirms all four native command sequences and
+binary semaphore transitions. Recording the commands adds zero socket round
+trips.
+
+E076 rebases on E075a: every rich decode consumes the same private immutable
+snapshot used for validation, and all stream generations are applied as one
+transaction before replay. Unit corruption tests reject nonzero inactive
+payload slots and wrong handle types; integration tests poison invalid layouts
+and a rich clear against an image owned by another logical device. The prior
+exact `deja` query found no indexed first-frame sequence. This gate reuses
+E060's typed frame ring, E069's fixed command compatibility, E073's three-image
+virtual WSI, E075's zero-RTT stream, and E075a's replay correctness.
+
+The exact next visible boundary is deployment with the v40 Activity importer
+and observation of the four changing colors on the tablet. The bounded
+`scripts/test-rich-frame-animation-v40-termux.sh` runner needs no APK change:
+it reuses the installed byte-identical v40 Activity, requires the exact
+deployed E076 service and producer-client SHA-256 values, rejects a producer
+without the E076 controls/markers, emits `E076_FRAME_EXPECTED` records, and
+correlates all four with one Activity import generation and matching
+`E057_FRAME_PRESENTED` sequence/slot markers. It prints a separate visual
+confirmation request and leaves screenshot status pending because metadata is
+not pixel proof. No Activity import, tablet-visible frame, Tomb Raider first
+frame, benchmark, or FPS is claimed by this host gate.

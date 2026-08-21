@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "gate": "E076",
+  "result": "host_contract_pass",
+  "source_base_commit": "5b272e4b714d9bbf56b401aa66031d1c8d4786be",
+  "objective": "carry the minimum animated virtual-swapchain producer through the immutable shared command stream and native Vulkan replay",
+  "records": {
+    "10": "general Barrier2",
+    "11": "general ClearColor",
+    "maximum_image_barriers": 4,
+    "maximum_clear_ranges": 4,
+    "pointer_free_fixed_width": true
+  },
+  "barrier_fields": [
+    "source and destination stage masks",
+    "source and destination access masks",
+    "old and new image layouts",
+    "source and destination queue-family indices",
+    "typed image ID",
+    "bounded image subresource range"
+  ],
+  "clear_fields": [
+    "typed image ID",
+    "TRANSFER_DST or GENERAL layout",
+    "four raw color words",
+    "one to four color subresource ranges"
+  ],
+  "synthetic_producer": {
+    "frames": 4,
+    "colors": ["red", "green", "blue", "white"],
+    "ring_slots": [0, 1, 2, 0],
+    "first_layout": "UNDEFINED",
+    "reused_layout": "PRESENT_SRC_KHR",
+    "render_layout": "TRANSFER_DST_OPTIMAL",
+    "submit": "Submit2 waits on the acquire binary semaphore and signals the render-complete binary semaphore",
+    "host_sink": "releases each published slot in frame-ring ABI order after native present completion",
+    "command_recording_rtts": 0
+  },
+  "integrity": {
+    "source": "E075a private immutable snapshots",
+    "whole_batch_prevalidated_before_replay": true,
+    "generation_updates_transactional": true,
+    "typed_same_device_validation": true,
+    "unused_fixed_payload_slots_must_be_zero": true,
+    "invalid_void_command_poisons_recording": true,
+    "cross_device_image_poisoned": true,
+    "legacy_rpc_102_103_preserved": true
+  },
+  "activity_handoff": {
+    "runner": "scripts/test-rich-frame-animation-v40-termux.sh",
+    "apk_change_required": false,
+    "required_apk": "installed byte-identical v40 Activity",
+    "required_bridge": "deployed E076 service whose SHA-256 is supplied explicitly",
+    "required_client": "E076 global-dispatch producer client whose SHA-256 is supplied explicitly and whose binary contains the animation controls/markers",
+    "producer_logs": "E076_FRAME_EXPECTED sequence=1..4 color=red/green/blue/white slot=N",
+    "activity_logs": "E057_FRAME_PRESENTED generation=G sequence=1..4 slot=N",
+    "correlation": "runner requires one common imported generation and exact sequence/slot agreement for all four frames",
+    "visual_confirmation_hook": "runner prints E076_VISUAL_CONFIRMATION_REQUIRED and leaves screenshot/status pending",
+    "metadata_is_pixel_proof": false
+  },
+  "tests": {
+    "full_host_suite": "43/43 passed",
+    "native_animation_observer": "strict fake validates four ordered pre-barrier, color clear, post-barrier, End, and binary-synchronized Submit2 sequences",
+    "ring_reuse": "concurrent host sink observes slots 0,1,2,0 and releases in sequence",
+    "corruption": "unit mutations reject a nonzero inactive barrier slot, nonzero inactive clear range, and wrong typed image handle",
+    "cross_device": "shared recording with an image owned by a second logical device poisons EndCommandBuffer",
+    "ab": "strict legacy recording remains five socket exchanges; shared recording remains zero"
+  },
+  "reuse": "The prior exact deja query for the post-E073 DXVK/Tomb Raider first-frame sequence found no indexed hit. E076 reuses E060 typed virtual-swapchain ownership and frame ring, E069 fixed clear/barrier RPC compatibility, E073 three-image acquire/present export, E075 zero-RTT shared recording, and E075a immutable snapshots plus transactional generation and opcode-105 acknowledgement semantics.",
+  "claims": {
+    "native_replay": true,
+    "activity_import": false,
+    "tablet_visible_pixels": false,
+    "tomb_raider_first_frame": false,
+    "fps": null
+  },
+  "remaining_visible_boundary": "deploy the E076 bridge, run scripts/test-rich-frame-animation-v40-termux.sh with the exact deployed service and producer-client SHA-256 values, then visually confirm RGBW and capture a screenshot; correlated producer/E057 metadata alone is not pixel proof, and only after that proof should the still-missing DXVK command families expand toward Tomb Raider's first frame",
+  "scope": "Host-only gate; no push, merge, APK change, tablet deployment, UI launch, Steam/X action, visible-frame claim, Tomb Raider run, benchmark, or FPS claim"
+}

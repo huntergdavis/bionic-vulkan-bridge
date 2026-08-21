@@ -160,3 +160,22 @@ than resending an already-consumed stream. The 5-to-0 recording exchange A/B
 result is unchanged. Per-submit mapped-memory flush fan-out and the global
 recording mutex remain later performance/scalability work (E077); E075a makes
 no FPS or visible-frame claim.
+
+E076 adds two bounded pointer-free shared records without changing the legacy
+RPC path: record 10 carries up to four general image `Barrier2` entries and
+record 11 carries four raw clear-color words plus up to four color ranges.
+The client accepts only typed same-device images (including virtual-swapchain
+images), poisons invalid void-command shapes, and retains RPC 102/103 for the
+strict A/B path. The service decodes only E075a's private snapshots,
+prevalidates the complete batch, then reconstructs native Vulkan structures.
+The host proof produces red, green, blue, and white through four acquire,
+record, binary-synchronized Submit2, and present cycles; the concurrent sink
+releases slots in the observed order 0,1,2,0, proving three-image reuse and
+zero command-recording RTT. This proves native producer replay, not Activity
+import, tablet-visible pixels, Tomb Raider's first frame, or FPS.
+The bounded `test-rich-frame-animation-v40-termux.sh` handoff reuses the
+installed byte-identical v40 Activity without an APK change. It requires the
+exact deployed E076 service and producer-client hashes, correlates each producer
+`E076_FRAME_EXPECTED` RGBW sequence/slot with the Activity's
+`E057_FRAME_PRESENTED` generation/sequence/slot, and still leaves visual
+confirmation and screenshot status explicitly pending.

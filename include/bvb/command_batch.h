@@ -23,12 +23,14 @@ enum {
     BVB_COMMAND_FILL_BUFFER = 7,
     BVB_COMMAND_BUFFER_HOST_READ_BARRIER = 8,
     BVB_COMMAND_PUSH_ROTATION = 9,
-    /* 10-11 are reserved for E076's general Barrier2/ClearColor records. */
+    BVB_COMMAND_VULKAN_IMAGE_BARRIER_2 = 10,
+    BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE_GENERAL = 11,
     BVB_COMMAND_VULKAN_BEGIN = 20,
     BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE = 21,
     BVB_COMMAND_VULKAN_INIT_IMAGE_BARRIER = 22,
     BVB_COMMAND_VULKAN_END = 23,
     BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS = 4,
+    BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES = 4,
 };
 
 struct bvb_begin_rendering_command {
@@ -99,6 +101,43 @@ struct bvb_vulkan_clear_color_image_command {
 struct bvb_vulkan_init_image_barrier_command {
     uint32_t image_count;
     uint64_t image_ids[BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS];
+};
+
+struct bvb_vulkan_image_subresource_range {
+    uint32_t aspect_mask;
+    uint32_t base_mip_level;
+    uint32_t level_count;
+    uint32_t base_array_layer;
+    uint32_t layer_count;
+};
+
+struct bvb_vulkan_image_barrier_2 {
+    uint64_t source_stage_mask;
+    uint64_t source_access_mask;
+    uint64_t destination_stage_mask;
+    uint64_t destination_access_mask;
+    uint32_t old_layout;
+    uint32_t new_layout;
+    uint32_t source_queue_family_index;
+    uint32_t destination_queue_family_index;
+    uint64_t image_id;
+    struct bvb_vulkan_image_subresource_range range;
+};
+
+struct bvb_vulkan_image_barrier_2_command {
+    uint32_t dependency_flags;
+    uint32_t image_count;
+    struct bvb_vulkan_image_barrier_2
+        images[BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS];
+};
+
+struct bvb_vulkan_clear_color_image_general_command {
+    uint64_t image_id;
+    uint32_t image_layout;
+    uint32_t range_count;
+    uint32_t color_words[4];
+    struct bvb_vulkan_image_subresource_range
+        ranges[BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES];
 };
 
 struct bvb_command_batch_builder {
@@ -183,6 +222,12 @@ int bvb_command_batch_append_vulkan_init_image_barrier(
     const struct bvb_vulkan_init_image_barrier_command *command);
 int bvb_command_batch_append_vulkan_end(
     struct bvb_command_batch_builder *builder);
+int bvb_command_batch_append_vulkan_image_barrier_2(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_image_barrier_2_command *command);
+int bvb_command_batch_append_vulkan_clear_color_image_general(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_clear_color_image_general_command *command);
 int bvb_command_batch_finish(struct bvb_command_batch_builder *builder,
                              size_t *output_length);
 
@@ -237,5 +282,11 @@ int bvb_command_decode_vulkan_clear_color_image(
 int bvb_command_decode_vulkan_init_image_barrier(
     const struct bvb_command_record *record,
     struct bvb_vulkan_init_image_barrier_command *command);
+int bvb_command_decode_vulkan_image_barrier_2(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_image_barrier_2_command *command);
+int bvb_command_decode_vulkan_clear_color_image_general(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_clear_color_image_general_command *command);
 
 #endif
