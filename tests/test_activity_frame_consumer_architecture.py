@@ -48,6 +48,8 @@ def main() -> int:
     for primitive in (
         "VkImportMemoryFdInfoKHR",
         "vkGetMemoryFdPropertiesKHR",
+        "state.get_memory_fd_properties",
+        'vkGetDeviceProcAddr(\n            state.device, "vkGetMemoryFdPropertiesKHR")',
         "bvb_wsi_frame_ring_wait_present",
         "vkAcquireNextImageKHR",
         "vkCmdCopyImage",

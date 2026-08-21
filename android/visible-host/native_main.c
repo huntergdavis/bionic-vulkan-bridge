@@ -94,6 +94,7 @@ struct bvb_visible_state {
     VkDeviceSize external_image_allocation_size;
     uint32_t external_image_memory_type_index;
     PFN_vkGetMemoryFdKHR get_memory_fd;
+    PFN_vkGetMemoryFdPropertiesKHR get_memory_fd_properties;
     PFN_vkGetSemaphoreFdKHR get_semaphore_fd;
 };
 
@@ -2332,7 +2333,7 @@ static int import_game_frame_transport(
             .sType = VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR,
         };
         if (result == VK_SUCCESS) {
-            result = vkGetMemoryFdPropertiesKHR(
+            result = state.get_memory_fd_properties(
                 state.device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
                 descriptors[index], &fd_properties);
         }
@@ -2703,9 +2704,13 @@ static bool create_external_memory(VkPhysicalDevice physical_device) {
     }
     state.get_memory_fd = (PFN_vkGetMemoryFdKHR)vkGetDeviceProcAddr(
         state.device, "vkGetMemoryFdKHR");
+    state.get_memory_fd_properties =
+        (PFN_vkGetMemoryFdPropertiesKHR)vkGetDeviceProcAddr(
+            state.device, "vkGetMemoryFdPropertiesKHR");
     state.get_semaphore_fd = (PFN_vkGetSemaphoreFdKHR)vkGetDeviceProcAddr(
         state.device, "vkGetSemaphoreFdKHR");
     if (query == NULL || state.get_memory_fd == NULL ||
+        state.get_memory_fd_properties == NULL ||
         state.get_semaphore_fd == NULL) {
         BVB_LOGE("E036_FAIL missing_external_memory_entry_points");
         return false;
