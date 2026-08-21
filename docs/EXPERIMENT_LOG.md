@@ -3476,3 +3476,30 @@ authentication rejection remain unchanged. Compact evidence is
 `docs/evidence/e081-termux-python-mock-cleanup.json`. No runtime bridge source,
 active tablet artifact, APK, UI, Steam, or X process was changed; there is no
 visible-frame, Tomb Raider, benchmark, or FPS claim.
+
+## E088 — Android game-frame import boundary diagnostics (2026-08-21)
+
+Status: bounded diagnostic instrumentation prepared for the next tablet RGBW
+run. E087's real producer reached three successful virtual-swapchain acquires;
+the fourth returned `VK_NOT_READY` because the three-slot Activity ring had not
+released a slot. The authenticated frame helper reported
+`native install failed: -95`, so the exact blocking boundary is the Android
+consumer's fail-closed `ENOTSUP` image-import result—not swapchain production,
+shared command recording, or fullscreen presentation.
+
+E088 adds one bounded `E088_IMPORT_FAIL` record at each meaningful import
+boundary: renderer/extent readiness, source/destination blit-format support,
+image allocation-size compatibility, opaque-FD memory-type intersection,
+native memory allocation, and image binding. The FD record includes the native
+Vulkan result plus the consumer image bits, imported FD bits, their
+intersection, producer memory type, and allocation sizes. It contains no file
+descriptor value or pointer. Successful behavior and every existing fail-closed
+return are unchanged.
+
+The required `deja "E057 native frame import ENOTSUP
+vkGetMemoryFdPropertiesKHR compatible memory type opaque fd Turnip system
+Vulkan"` query returned no indexed implementation. E088 therefore reuses
+E035's measured external-memory validation and E057's authenticated,
+setup-only FD import contract. The next tablet run must identify the exact
+stage before any transport redesign. This preparation alone makes no RGBW,
+Tomb Raider, benchmark, or FPS claim.

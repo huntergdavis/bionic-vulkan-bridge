@@ -61,6 +61,12 @@ def main() -> int:
         "VK_QUEUE_FAMILY_EXTERNAL",
         "activity_resumed",
         "activity_window_present",
+        'E088_IMPORT_FAIL stage=renderer_ready',
+        'E088_IMPORT_FAIL stage=format_blit',
+        'E088_IMPORT_FAIL stage=allocation_size',
+        'E088_IMPORT_FAIL stage=fd_compatibility',
+        'E088_IMPORT_FAIL stage=allocate',
+        'E088_IMPORT_FAIL stage=bind',
     ):
         assert primitive in native
     assert "E057_FRAME_TRANSPORT_IMPORTED" in native

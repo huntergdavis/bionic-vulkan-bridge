@@ -2236,14 +2236,27 @@ static int import_game_frame_transport(
     int status = 0;
     (void)pthread_mutex_lock(&renderer_device_mutex);
     (void)pthread_mutex_lock(&renderer.mutex);
+    const uint32_t renderer_width = renderer.width;
+    const uint32_t renderer_height = renderer.height;
+    const bool renderer_retained = atomic_load(&retain_external_renderer);
     const bool renderer_ready = renderer.ready &&
-                                renderer.width == setup->width &&
-                                renderer.height == setup->height &&
-                                atomic_load(&retain_external_renderer);
+                                renderer_width == setup->width &&
+                                renderer_height == setup->height &&
+                                renderer_retained;
     (void)pthread_mutex_unlock(&renderer.mutex);
     if (!renderer_ready || state.device == VK_NULL_HANDLE ||
         state.physical_device == VK_NULL_HANDLE ||
         state.swapchain == VK_NULL_HANDLE) {
+        BVB_LOGE("E088_IMPORT_FAIL stage=renderer_ready ready=%u "
+                 "renderer_width=%u renderer_height=%u setup_width=%u "
+                 "setup_height=%u retained=%u device=%u physical=%u "
+                 "swapchain=%u",
+                 renderer_ready ? 1U : 0U, renderer_width, renderer_height,
+                 setup->width, setup->height,
+                 renderer_retained ? 1U : 0U,
+                 state.device != VK_NULL_HANDLE ? 1U : 0U,
+                 state.physical_device != VK_NULL_HANDLE ? 1U : 0U,
+                 state.swapchain != VK_NULL_HANDLE ? 1U : 0U);
         status = -EAGAIN;
         goto done;
     }
@@ -2267,6 +2280,14 @@ static int import_game_frame_transport(
              VK_FORMAT_FEATURE_BLIT_SRC_BIT) == 0U ||
             (destination_properties.optimalTilingFeatures &
              VK_FORMAT_FEATURE_BLIT_DST_BIT) == 0U) {
+            BVB_LOGE("E088_IMPORT_FAIL stage=format_blit source_format=%d "
+                     "destination_format=%d source_features=0x%llx "
+                     "destination_features=0x%llx",
+                     (int)setup->format, (int)state.swapchain_format,
+                     (unsigned long long)
+                         source_properties.optimalTilingFeatures,
+                     (unsigned long long)
+                         destination_properties.optimalTilingFeatures);
             status = -ENOTSUP;
             goto done;
         }
@@ -2325,6 +2346,13 @@ static int import_game_frame_transport(
             vkGetImageMemoryRequirements(state.device, imported.images[index],
                                          &requirements);
             if (requirements.size > setup->allocation_sizes[index]) {
+                BVB_LOGE("E088_IMPORT_FAIL stage=allocation_size image=%u "
+                         "required=%llu exported=%llu alignment=%llu "
+                         "image_type_bits=0x%x",
+                         index, (unsigned long long)requirements.size,
+                         (unsigned long long)setup->allocation_sizes[index],
+                         (unsigned long long)requirements.alignment,
+                         requirements.memoryTypeBits);
                 status = -EPROTO;
                 goto import_failed;
             }
@@ -2367,6 +2395,16 @@ static int import_game_frame_transport(
             }
         }
         if (result != VK_SUCCESS || consumer_memory_type == UINT32_MAX) {
+            BVB_LOGE("E088_IMPORT_FAIL stage=fd_compatibility image=%u "
+                     "vk_result=%d image_type_bits=0x%x fd_type_bits=0x%x "
+                     "compatible_type_bits=0x%x producer_type=%u "
+                     "consumer_type_count=%u required=%llu exported=%llu",
+                     index, (int)result, requirements.memoryTypeBits,
+                     fd_properties.memoryTypeBits, compatible_types,
+                     setup->memory_type_indices[index],
+                     consumer_memory_properties.memoryTypeCount,
+                     (unsigned long long)requirements.size,
+                     (unsigned long long)setup->allocation_sizes[index]);
             status = -ENOTSUP;
             goto import_failed;
         }
@@ -2390,10 +2428,23 @@ static int import_game_frame_transport(
             result = vkAllocateMemory(state.device, &allocation, NULL,
                                       &imported.memories[index]);
             if (result == VK_SUCCESS) descriptors[index] = -1;
+            if (result != VK_SUCCESS) {
+                BVB_LOGE("E088_IMPORT_FAIL stage=allocate image=%u "
+                         "vk_result=%d allocation=%llu consumer_type=%u "
+                         "compatible_type_bits=0x%x",
+                         index, (int)result,
+                         (unsigned long long)allocation.allocationSize,
+                         consumer_memory_type, compatible_types);
+            }
         }
         if (result == VK_SUCCESS) {
             result = vkBindImageMemory(state.device, imported.images[index],
                                        imported.memories[index], 0U);
+            if (result != VK_SUCCESS) {
+                BVB_LOGE("E088_IMPORT_FAIL stage=bind image=%u vk_result=%d "
+                         "consumer_type=%u",
+                         index, (int)result, consumer_memory_type);
+            }
         }
         if (result != VK_SUCCESS) {
             status = -EIO;
