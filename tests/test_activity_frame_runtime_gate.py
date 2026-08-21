@@ -272,7 +272,8 @@ def main() -> int:
         "E057_FRAME_CONSUMER_FAIL",
         "prove_wrong_token_rejection",
         "FrameTransportClient",
-        "force-stop",
+        'am, "start", "-S"',
+        "remains visible for human confirmation",
         "visible_game_claim",
         "fps_claim",
         "EXPECTED_INSTALLED_GLIBC_ICD_SHA256",
@@ -287,6 +288,7 @@ def main() -> int:
     ):
         assert required in source
     assert "pkill" not in source
+    assert '[am, "force-stop"' not in source
     assert "start-steam" not in source
     assert "Termux:X11" in source
 

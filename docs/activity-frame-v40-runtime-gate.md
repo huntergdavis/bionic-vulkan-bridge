@@ -17,14 +17,17 @@ does not launch the Activity.
 
 The runtime is deliberately independent of Steam and Termux:X11. It starts one
 ephemeral Bionic service, proves a wrong 256-bit lifecycle capability receives
-`-EACCES`, launches the installed Activity with the real capability and
+`-EACCES`, launches the installed Activity with the real capability using the
+previously proven `am start -S` reset and
 `bvb_retain_external_renderer=1`, then starts the same-UID
 `FrameTransportClient` used by the Tomb Raider launch wiring. The current glibc
 global-dispatch smoke client creates the three-image virtual swapchain,
 acquires, and presents once. A bounded post-present hold keeps the ring alive
 long enough for the Activity to log both E057 completion markers. Cleanup
-targets only child PIDs, the exact BVB package launched by the script, and its
-private runtime directory; it never signals Steam or X11.
+targets only child PIDs and its private runtime directory; it never signals
+Steam or X11. Termux's `am` wrapper has no standalone `force-stop` command, so
+the Activity remains visible for human confirmation. The next invocation's
+`start -S` resets that exact package and its native state.
 
 Before the Activity gate, the installed bridge payload was updated and checked:
 the bridge client is

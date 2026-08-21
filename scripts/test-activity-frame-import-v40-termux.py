@@ -741,7 +741,7 @@ def run(arguments: argparse.Namespace) -> int:
 
         launch_result = run_text(
             [
-                am, "start", "--user", "0", "-W", "-n", ACTIVITY,
+                am, "start", "-S", "--user", "0", "-W", "-n", ACTIVITY,
                 "--ei", "bvb_activity_port", str(port),
                 "--es", "bvb_activity_token", token,
                 "--ei", "bvb_retain_external_renderer", "1",
@@ -962,18 +962,11 @@ def run(arguments: argparse.Namespace) -> int:
             except OSError:
                 pass
         if activity_started and am:
-            try:
-                cleanup = run_text(
-                    [am, "force-stop", "--user", "0", PACKAGE],
-                    timeout=5.0, check=False,
-                )
-                cleanup_log.write_text(cleanup.stdout + cleanup.stderr)
-                if cleanup.returncode != 0:
-                    cleanup_errors.append(
-                        f"Activity force-stop exited {cleanup.returncode}"
-                    )
-            except (OSError, subprocess.SubprocessError) as error:
-                cleanup_errors.append(f"Activity force-stop: {error}")
+            cleanup_log.write_text(
+                "Termux am has no standalone force-stop command; the tested "
+                "Activity remains visible for human confirmation. The next "
+                "gate starts with am start -S, which resets this exact package.\n"
+            )
         if runtime_directory is not None and runtime_directory.exists():
             for child in list(runtime_directory.iterdir()):
                 if child.is_socket():
