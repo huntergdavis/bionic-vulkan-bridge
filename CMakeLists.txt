@@ -100,6 +100,17 @@ target_link_libraries(
 )
 bvb_enable_warnings(bvb-vulkan-global)
 
+add_library(bvb-wsi-frame-ring STATIC src/wsi_frame_ring.c)
+target_include_directories(
+  bvb-wsi-frame-ring
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
+)
+target_link_libraries(bvb-wsi-frame-ring PUBLIC Threads::Threads)
+bvb_enable_warnings(bvb-wsi-frame-ring)
+target_link_libraries(bvb-vulkan-global PRIVATE bvb-wsi-frame-ring)
+
 add_executable(bvb-vulkan-probe src/vulkan_probe.c)
 target_link_libraries(bvb-vulkan-probe PRIVATE bvb-vulkan-caps)
 bvb_enable_warnings(bvb-vulkan-probe)
@@ -392,6 +403,13 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}"
   )
 
+  add_executable(bvb-wsi-frame-ring-test tests/wsi_frame_ring.c)
+  target_link_libraries(
+    bvb-wsi-frame-ring-test PRIVATE bvb-wsi-frame-ring Threads::Threads
+  )
+  bvb_enable_warnings(bvb-wsi-frame-ring-test)
+  add_test(NAME wsi-frame-ring-contract COMMAND bvb-wsi-frame-ring-test)
+
   add_executable(bvb-frame-sync-test tests/frame_sync.c)
   target_link_libraries(bvb-frame-sync-test PRIVATE bvb-frame-sync)
   bvb_enable_warnings(bvb-frame-sync-test)
@@ -406,6 +424,41 @@ if(BUILD_TESTING)
       OUTPUT_NAME bvb-fake-vulkan
   )
   bvb_enable_warnings(bvb-fake-vulkan)
+
+  add_executable(
+    bvb-vulkan-swapchain-transport-test
+    tests/vulkan_swapchain_transport.c
+  )
+  target_link_libraries(
+    bvb-vulkan-swapchain-transport-test
+    PRIVATE bvb-vulkan-global bvb-wsi-frame-ring Vulkan::Headers
+  )
+  bvb_enable_warnings(bvb-vulkan-swapchain-transport-test)
+  add_test(
+    NAME vulkan-swapchain-transport-contract
+    COMMAND
+      bvb-vulkan-swapchain-transport-test
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+  )
+  add_test(
+    NAME swapchain-service-transport-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_swapchain_service_transport.py"
+      "$<TARGET_FILE:bvb-bridge-service>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+  )
+  add_test(
+    NAME frame-transport-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_frame_transport_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/frame-transport-preparation-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/decisions/0005-persistent-game-frame-ring.md"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/wsi_frame_ring.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
+  )
 
   add_library(bvb-fake-media-ndk SHARED tests/fake_media_ndk.c)
   set_target_properties(

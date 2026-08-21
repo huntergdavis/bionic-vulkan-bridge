@@ -203,5 +203,14 @@ int bvb_vulkan_global_context_queue_submit_command_fence(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_queue_submit_command_fence_request *request,
     int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_prepare_swapchain(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_swapchain_prepare_request *request,
+    struct bvb_vulkan_swapchain_prepare_response *response,
+    int descriptors[BVB_WSI_FRAME_RING_MAX_SLOTS + 1U],
+    size_t *descriptor_count, char *error, size_t error_size);
+int bvb_vulkan_global_context_destroy_swapchain(
+    struct bvb_vulkan_global_context *context, uint64_t swapchain_id,
+    char *error, size_t error_size);
 
 #endif

@@ -4,6 +4,7 @@
 #include <bvb/lifecycle.h>
 #include <bvb/vulkan_caps.h>
 #include <bvb/vulkan_selftest.h>
+#include <bvb/wsi_frame_ring.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -78,7 +79,9 @@ enum {
     BVB_OPCODE_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES = 61,
     BVB_OPCODE_VULKAN_CORE_FEATURES = 62,
     BVB_OPCODE_VULKAN_DEVICE_CREATE_PACKED = 63,
-    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_DEVICE_CREATE_PACKED,
+    BVB_OPCODE_VULKAN_SWAPCHAIN_PREPARE = 64,
+    BVB_OPCODE_VULKAN_SWAPCHAIN_DESTROY = 65,
+    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_SWAPCHAIN_DESTROY,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -150,6 +153,11 @@ enum {
     BVB_EXTERNAL_MEMORY_IMPORT_REQUEST_SIZE = 16,
     BVB_EXTERNAL_SYNC_IMPORT_REQUEST_SIZE = 24,
     BVB_EXTERNAL_IMAGE_IMPORT_REQUEST_SIZE = 32,
+    BVB_VULKAN_SWAPCHAIN_PREPARE_REQUEST_SIZE = 40,
+    BVB_VULKAN_SWAPCHAIN_IMAGE_RECORD_SIZE = 24,
+    BVB_VULKAN_SWAPCHAIN_PREPARE_RESPONSE_SIZE =
+        32 + BVB_WSI_FRAME_RING_MAX_SLOTS *
+                 BVB_VULKAN_SWAPCHAIN_IMAGE_RECORD_SIZE,
     BVB_VULKAN_MEMORY_IO_MAX_BYTES =
         BVB_PROTOCOL_MAX_PAYLOAD - BVB_VULKAN_MEMORY_IO_PREFIX_SIZE,
     BVB_VULKAN_PHYSICAL_DEVICES_PREFIX_SIZE = 8,
@@ -228,6 +236,33 @@ struct bvb_external_image_import_request {
     uint32_t height;
     uint32_t format;
     uint32_t expected_color;
+};
+
+struct bvb_vulkan_swapchain_prepare_request {
+    uint64_t device_id;
+    uint32_t width;
+    uint32_t height;
+    uint32_t format;
+    uint32_t image_usage;
+    uint32_t min_image_count;
+    uint32_t flags;
+    uint64_t generation;
+};
+
+struct bvb_vulkan_swapchain_image_record {
+    uint64_t image_id;
+    uint64_t allocation_size;
+    uint32_t memory_type_index;
+};
+
+struct bvb_vulkan_swapchain_prepare_response {
+    int32_t vulkan_result;
+    uint32_t image_count;
+    uint64_t swapchain_id;
+    uint64_t generation;
+    uint32_t control_region_bytes;
+    struct bvb_vulkan_swapchain_image_record
+        images[BVB_WSI_FRAME_RING_MAX_SLOTS];
 };
 
 struct bvb_shared_batch_setup {
@@ -592,6 +627,18 @@ int bvb_protocol_encode_external_image_import_request(
 int bvb_protocol_decode_external_image_import_request(
     const uint8_t input[BVB_EXTERNAL_IMAGE_IMPORT_REQUEST_SIZE],
     struct bvb_external_image_import_request *request);
+int bvb_protocol_encode_vulkan_swapchain_prepare_request(
+    uint8_t output[BVB_VULKAN_SWAPCHAIN_PREPARE_REQUEST_SIZE],
+    const struct bvb_vulkan_swapchain_prepare_request *request);
+int bvb_protocol_decode_vulkan_swapchain_prepare_request(
+    const uint8_t input[BVB_VULKAN_SWAPCHAIN_PREPARE_REQUEST_SIZE],
+    struct bvb_vulkan_swapchain_prepare_request *request);
+int bvb_protocol_encode_vulkan_swapchain_prepare_response(
+    uint8_t output[BVB_VULKAN_SWAPCHAIN_PREPARE_RESPONSE_SIZE],
+    const struct bvb_vulkan_swapchain_prepare_response *response);
+int bvb_protocol_decode_vulkan_swapchain_prepare_response(
+    const uint8_t input[BVB_VULKAN_SWAPCHAIN_PREPARE_RESPONSE_SIZE],
+    struct bvb_vulkan_swapchain_prepare_response *response);
 int bvb_protocol_encode_vulkan_caps(
     uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
     const struct bvb_vulkan_caps *caps,

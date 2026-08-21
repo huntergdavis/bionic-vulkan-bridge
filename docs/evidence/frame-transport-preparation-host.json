@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "gate": "frame-transport-preparation-host",
+  "result": "pass",
+  "scope": "host contracts for the service-side game-to-Activity image-ring preparation boundary; no tablet frame or visible game output is claimed",
+  "reused_evidence": [
+    "E035 opaque-FD external memory",
+    "E038 authenticated Activity image broker",
+    "E041 allocation-time local GPU completion",
+    "E042 persistent external image plus futex control"
+  ],
+  "allocation": {
+    "image_count_min": 2,
+    "image_count_max": 4,
+    "native_vulkan_images": true,
+    "dedicated_exportable_memory": true,
+    "handle_type": "VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT",
+    "dummy_swapchain_handles": false
+  },
+  "setup_transport": {
+    "activity_state_required": [
+      "authenticated ingress configured",
+      "resumed",
+      "window present",
+      "renderer ready",
+      "extent match"
+    ],
+    "descriptor_transfer_count": "image_count + 1 control region",
+    "descriptor_messages": 1,
+    "control_region_bytes": 4096
+  },
+  "frame_loop": {
+    "slot_states": [
+      "available",
+      "acquired",
+      "presented"
+    ],
+    "ordering": "fixed-width release/acquire atomics and process-shared futex",
+    "java_calls": 0,
+    "binder_calls": 0,
+    "socket_calls": 0,
+    "fd_transfers": 0,
+    "gpu_rule": "producer-local completion before publish; Activity-local completion before release"
+  },
+  "contracts": {
+    "ring_stress_frames": 4096,
+    "ring_stress_slots": 3,
+    "ring_stress_repetitions": 20,
+    "native_export_lifecycle": "pass",
+    "authenticated_service_fd_response": "pass",
+    "strict_protocol_round_trip": "pass"
+  },
+  "visible_output": false,
+  "next_gate": "one-time Activity import followed by native copy/blit, Android swapchain present, and slot release"
+}

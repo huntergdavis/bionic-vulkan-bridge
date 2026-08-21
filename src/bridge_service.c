@@ -1875,6 +1875,100 @@ static int answer_vulkan_queue_submit_command_fence(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_swapchain_prepare(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_activity_status *activity_status) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    const uint32_t required_activity =
+        BVB_ACTIVITY_RESUMED | BVB_ACTIVITY_WINDOW_PRESENT |
+        BVB_ACTIVITY_RENDERER_READY;
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_SWAPCHAIN_PREPARE_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    if (activity_status == NULL ||
+        activity_status->ingress_configured == 0U ||
+        (activity_status->state_flags & required_activity) !=
+            required_activity ||
+        (activity_status->state_flags & BVB_ACTIVITY_DESTROYED) != 0U) {
+        response.header.status = -EAGAIN;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_swapchain_prepare_request decoded;
+    int result = bvb_protocol_decode_vulkan_swapchain_prepare_request(
+        request->payload, &decoded);
+    if (result == 0 &&
+        (decoded.width != activity_status->width ||
+         decoded.height != activity_status->height)) {
+        result = -ERANGE;
+    }
+    struct bvb_vulkan_swapchain_prepare_response prepared = {0};
+    int descriptors[BVB_WSI_FRAME_RING_MAX_SLOTS + 1U];
+    size_t descriptor_count = 0U;
+    char diagnostic[512] = {0};
+    if (result == 0) {
+        result = bvb_vulkan_global_context_prepare_swapchain(
+            context, &decoded, &prepared, descriptors, &descriptor_count,
+            diagnostic, sizeof(diagnostic));
+    }
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_swapchain_prepare_response(
+            response.payload, &prepared);
+    }
+    if (result == 0) {
+        response.header.payload_length =
+            BVB_VULKAN_SWAPCHAIN_PREPARE_RESPONSE_SIZE;
+    } else {
+        fprintf(stderr, "bvb: swapchain preparation failed: %s\n",
+                diagnostic);
+        response.header.status = result;
+    }
+    int send_result = 0;
+    if (result == 0 && prepared.vulkan_result == VK_SUCCESS) {
+        if (descriptor_count != (size_t)prepared.image_count + 1U) {
+            send_result = -EPROTO;
+        } else {
+            send_result = bvb_transport_send_fds(
+                client_fd, &response, descriptors, descriptor_count);
+        }
+    } else {
+        send_result = bvb_transport_send(client_fd, &response);
+    }
+    for (size_t index = 0U; index < descriptor_count; ++index) {
+        if (descriptors[index] >= 0) (void)close(descriptors[index]);
+    }
+    return send_result;
+}
+
+static int answer_vulkan_swapchain_destroy(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length != BVB_VULKAN_OBJECT_ID_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    uint64_t swapchain_id = 0U;
+    int result = bvb_protocol_decode_vulkan_object_id(
+        request->payload, &swapchain_id, BVB_OBJECT_SWAPCHAIN);
+    char diagnostic[512] = {0};
+    if (result == 0) {
+        result = bvb_vulkan_global_context_destroy_swapchain(
+            context, swapchain_id, diagnostic, sizeof(diagnostic));
+    }
+    if (result != 0) {
+        fprintf(stderr, "bvb: swapchain destroy failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_selftest(int client_fd,
                                   const struct bvb_protocol_packet *request,
                                   const char *loader_path,
@@ -2267,6 +2361,15 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_QUEUE_SUBMIT_COMMAND_FENCE) {
             result = answer_vulkan_queue_submit_command_fence(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_SWAPCHAIN_PREPARE) {
+            result = answer_vulkan_swapchain_prepare(
+                client_fd, &request, negotiated, global_context,
+                activity_status);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_SWAPCHAIN_DESTROY) {
+            result = answer_vulkan_swapchain_destroy(
                 client_fd, &request, negotiated, global_context);
         } else {
             result = -EPROTO;

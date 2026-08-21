@@ -1,3 +1,6 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #define VK_NO_PROTOTYPES
 
 #include <bvb/handle.h>
@@ -13,6 +16,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+#include <linux/memfd.h>
 
 enum {
     BVB_GLOBAL_OBJECT_CAPACITY = 64,
@@ -39,6 +47,21 @@ struct bvb_memory_metadata {
     uint32_t property_flags;
 };
 
+struct bvb_swapchain_metadata {
+    uint64_t swapchain_id;
+    uint64_t device_id;
+    uint64_t generation;
+    VkDevice device;
+    uint32_t image_count;
+    uint64_t image_ids[BVB_WSI_FRAME_RING_MAX_SLOTS];
+    VkImage images[BVB_WSI_FRAME_RING_MAX_SLOTS];
+    VkDeviceMemory memories[BVB_WSI_FRAME_RING_MAX_SLOTS];
+    uint64_t allocation_sizes[BVB_WSI_FRAME_RING_MAX_SLOTS];
+    uint32_t memory_type_indices[BVB_WSI_FRAME_RING_MAX_SLOTS];
+    int control_fd;
+    struct bvb_wsi_frame_ring *control;
+};
+
 struct bvb_vulkan_global_context {
     void *loader;
     PFN_vkGetInstanceProcAddr get_instance_proc_addr;
@@ -59,9 +82,17 @@ struct bvb_vulkan_global_context {
     uint64_t next_buffer_serial;
     uint64_t next_memory_serial;
     uint64_t next_fence_serial;
+    uint64_t next_swapchain_serial;
+    uint64_t next_image_serial;
     struct bvb_device_metadata device_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_memory_metadata memory_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
+    struct bvb_swapchain_metadata
+        swapchain_metadata[BVB_WSI_FRAME_RING_MAX_SLOTS];
 };
+
+static int destroy_swapchain_metadata(
+    struct bvb_vulkan_global_context *context,
+    struct bvb_swapchain_metadata *metadata);
 
 static void set_error(char *output, size_t output_size, const char *format, ...) {
     if (output == NULL || output_size == 0U) {
@@ -309,6 +340,8 @@ int bvb_vulkan_global_context_create(
     context->next_buffer_serial = 1U;
     context->next_memory_serial = 1U;
     context->next_fence_serial = 1U;
+    context->next_swapchain_serial = 1U;
+    context->next_image_serial = 1U;
     *output = context;
     return 0;
 }
@@ -317,6 +350,12 @@ void bvb_vulkan_global_context_destroy(
     struct bvb_vulkan_global_context *context) {
     if (context == NULL) {
         return;
+    }
+    for (size_t index = 0U; index < BVB_WSI_FRAME_RING_MAX_SLOTS; ++index) {
+        if (context->swapchain_metadata[index].swapchain_id != 0U) {
+            (void)destroy_swapchain_metadata(
+                context, &context->swapchain_metadata[index]);
+        }
     }
     if (context->get_device_proc_addr != NULL) {
         for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
@@ -1510,6 +1549,15 @@ int bvb_vulkan_global_context_destroy_device(
             device, "vkDestroyDevice");
     if (destroy_device == NULL) {
         return -ENOSYS;
+    }
+    for (size_t index = 0U; index < BVB_WSI_FRAME_RING_MAX_SLOTS; ++index) {
+        struct bvb_swapchain_metadata *swapchain =
+            &context->swapchain_metadata[index];
+        if (swapchain->swapchain_id != 0U &&
+            swapchain->device_id == device_id) {
+            result = destroy_swapchain_metadata(context, swapchain);
+            if (result != 0) return result;
+        }
     }
     for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
         const struct bvb_handle_entry *entry = &context->object_entries[index];
@@ -2836,4 +2884,394 @@ int bvb_vulkan_global_context_queue_submit_command_fence(
     *vulkan_result = submit(queue, 1U, &submit_info,
                             fence_from_bits(fence_bits));
     return 0;
+}
+
+static struct bvb_swapchain_metadata *swapchain_metadata_slot(
+    struct bvb_vulkan_global_context *context, uint64_t swapchain_id) {
+    struct bvb_swapchain_metadata *empty = NULL;
+    for (size_t index = 0U; index < BVB_WSI_FRAME_RING_MAX_SLOTS; ++index) {
+        struct bvb_swapchain_metadata *metadata =
+            &context->swapchain_metadata[index];
+        if (metadata->swapchain_id == swapchain_id && swapchain_id != 0U) {
+            return metadata;
+        }
+        if (metadata->swapchain_id == 0U && empty == NULL) empty = metadata;
+    }
+    return empty;
+}
+
+static int destroy_swapchain_metadata(
+    struct bvb_vulkan_global_context *context,
+    struct bvb_swapchain_metadata *metadata) {
+    if (context == NULL || metadata == NULL) return -EINVAL;
+    PFN_vkDestroyImage destroy_image = NULL;
+    PFN_vkFreeMemory free_memory = NULL;
+    if (metadata->device != VK_NULL_HANDLE &&
+        context->get_device_proc_addr != NULL) {
+        destroy_image = (PFN_vkDestroyImage)context->get_device_proc_addr(
+            metadata->device, "vkDestroyImage");
+        free_memory = (PFN_vkFreeMemory)context->get_device_proc_addr(
+            metadata->device, "vkFreeMemory");
+    }
+    int status = 0;
+    for (uint32_t index = 0U; index < metadata->image_count; ++index) {
+        if (metadata->image_ids[index] != 0U) {
+            const int removed = bvb_handle_table_remove(
+                &context->objects, metadata->image_ids[index],
+                BVB_OBJECT_IMAGE, NULL);
+            if (removed != 0 && status == 0) status = removed;
+        }
+        if (metadata->images[index] != VK_NULL_HANDLE &&
+            destroy_image != NULL) {
+            destroy_image(metadata->device, metadata->images[index], NULL);
+        }
+        if (metadata->memories[index] != VK_NULL_HANDLE &&
+            free_memory != NULL) {
+            free_memory(metadata->device, metadata->memories[index], NULL);
+        }
+    }
+    if (metadata->swapchain_id != 0U) {
+        const int removed = bvb_handle_table_remove(
+            &context->objects, metadata->swapchain_id,
+            BVB_OBJECT_SWAPCHAIN, NULL);
+        if (removed != 0 && status == 0) status = removed;
+    }
+    if (metadata->control != NULL && metadata->control != MAP_FAILED) {
+        if (munmap(metadata->control, BVB_WSI_FRAME_RING_REGION_BYTES) != 0 &&
+            status == 0) status = -errno;
+    }
+    if (metadata->control_fd >= 0 && close(metadata->control_fd) != 0 &&
+        status == 0) status = -errno;
+    *metadata = (struct bvb_swapchain_metadata){.control_fd = -1};
+    return status;
+}
+
+static int create_swapchain_control(
+    struct bvb_swapchain_metadata *metadata, uint32_t image_count,
+    uint64_t generation) {
+    metadata->control_fd = (int)syscall(
+        SYS_memfd_create, "bvb-wsi-frame-ring",
+        MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (metadata->control_fd < 0) return -errno;
+    if (ftruncate(metadata->control_fd, BVB_WSI_FRAME_RING_REGION_BYTES) != 0) {
+        return -errno;
+    }
+    metadata->control = mmap(
+        NULL, BVB_WSI_FRAME_RING_REGION_BYTES, PROT_READ | PROT_WRITE,
+        MAP_SHARED, metadata->control_fd, 0U);
+    if (metadata->control == MAP_FAILED) return -errno;
+    return bvb_wsi_frame_ring_initialize(
+        metadata->control, BVB_WSI_FRAME_RING_REGION_BYTES, image_count,
+        generation);
+}
+
+static int choose_swapchain_memory_type(
+    const VkPhysicalDeviceMemoryProperties *properties,
+    uint32_t memory_type_bits, uint32_t *memory_type_index) {
+    if (properties == NULL || memory_type_index == NULL) return -EINVAL;
+    bool found = false;
+    bool device_local_found = false;
+    for (uint32_t index = 0U; index < properties->memoryTypeCount; ++index) {
+        if ((memory_type_bits & (UINT32_C(1) << index)) == 0U) continue;
+        const bool device_local =
+            (properties->memoryTypes[index].propertyFlags &
+             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) != 0U;
+        if (!found || (device_local && !device_local_found)) {
+            *memory_type_index = index;
+            found = true;
+            device_local_found = device_local;
+        }
+    }
+    return found ? 0 : -ENODEV;
+}
+
+int bvb_vulkan_global_context_prepare_swapchain(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_swapchain_prepare_request *request,
+    struct bvb_vulkan_swapchain_prepare_response *response,
+    int descriptors[BVB_WSI_FRAME_RING_MAX_SLOTS + 1U],
+    size_t *descriptor_count, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL ||
+        descriptors == NULL || descriptor_count == NULL) return -EINVAL;
+    *response = (struct bvb_vulkan_swapchain_prepare_response){0};
+    *descriptor_count = 0U;
+    for (size_t index = 0U; index < BVB_WSI_FRAME_RING_MAX_SLOTS + 1U;
+         ++index) descriptors[index] = -1;
+    uint8_t request_validation[BVB_VULKAN_SWAPCHAIN_PREPARE_REQUEST_SIZE];
+    if (bvb_protocol_encode_vulkan_swapchain_prepare_request(
+            request_validation, request) != 0 ||
+        (request->format != VK_FORMAT_R8G8B8A8_UNORM &&
+         request->format != VK_FORMAT_B8G8R8A8_UNORM)) {
+        return -EINVAL;
+    }
+    if (context->objects.capacity - context->objects.count <
+        (size_t)request->min_image_count + 1U) {
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    struct bvb_swapchain_metadata *metadata =
+        swapchain_metadata_slot(context, 0U);
+    if (metadata == NULL) {
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    *metadata = (struct bvb_swapchain_metadata){
+        .device_id = request->device_id,
+        .generation = request->generation,
+        .image_count = request->min_image_count,
+        .control_fd = -1,
+        .control = MAP_FAILED,
+    };
+    uint64_t physical_id = 0U;
+    uint64_t device_bits = 0U;
+    int status = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE,
+        &physical_id, &device_bits);
+    VkInstance instance = VK_NULL_HANDLE;
+    VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+    if (status == 0) {
+        status = resolve_physical_device(
+            context, physical_id, &instance, &physical_device);
+    }
+    if (status != 0) {
+        set_error(error, error_size, "unknown swapchain device");
+        *metadata = (struct bvb_swapchain_metadata){.control_fd = -1};
+        return status;
+    }
+    metadata->device = device_from_bits(device_bits);
+    PFN_vkGetPhysicalDeviceImageFormatProperties2 query =
+        (PFN_vkGetPhysicalDeviceImageFormatProperties2)
+            context->get_instance_proc_addr(
+                instance, "vkGetPhysicalDeviceImageFormatProperties2");
+    if (query == NULL) {
+        query = (PFN_vkGetPhysicalDeviceImageFormatProperties2)
+            context->get_instance_proc_addr(
+                instance, "vkGetPhysicalDeviceImageFormatProperties2KHR");
+    }
+    PFN_vkCreateImage create_image =
+        (PFN_vkCreateImage)context->get_device_proc_addr(
+            metadata->device, "vkCreateImage");
+    PFN_vkDestroyImage destroy_image =
+        (PFN_vkDestroyImage)context->get_device_proc_addr(
+            metadata->device, "vkDestroyImage");
+    PFN_vkGetImageMemoryRequirements get_requirements =
+        (PFN_vkGetImageMemoryRequirements)context->get_device_proc_addr(
+            metadata->device, "vkGetImageMemoryRequirements");
+    PFN_vkAllocateMemory allocate_memory =
+        (PFN_vkAllocateMemory)context->get_device_proc_addr(
+            metadata->device, "vkAllocateMemory");
+    PFN_vkFreeMemory free_memory =
+        (PFN_vkFreeMemory)context->get_device_proc_addr(
+            metadata->device, "vkFreeMemory");
+    PFN_vkBindImageMemory bind_image =
+        (PFN_vkBindImageMemory)context->get_device_proc_addr(
+            metadata->device, "vkBindImageMemory");
+    PFN_vkGetMemoryFdKHR get_memory_fd =
+        (PFN_vkGetMemoryFdKHR)context->get_device_proc_addr(
+            metadata->device, "vkGetMemoryFdKHR");
+    if (query == NULL || create_image == NULL || destroy_image == NULL ||
+        get_requirements == NULL || allocate_memory == NULL ||
+        free_memory == NULL || bind_image == NULL || get_memory_fd == NULL) {
+        set_error(error, error_size,
+                  "device lacks external-image ring entry points");
+        *metadata = (struct bvb_swapchain_metadata){.control_fd = -1};
+        return -ENOSYS;
+    }
+    const VkImageUsageFlags transport_usage =
+        (VkImageUsageFlags)request->image_usage |
+        VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    const VkPhysicalDeviceExternalImageFormatInfo external_query = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO,
+        .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
+    const VkPhysicalDeviceImageFormatInfo2 format_query = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
+        .pNext = &external_query,
+        .format = (VkFormat)request->format,
+        .type = VK_IMAGE_TYPE_2D,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = transport_usage,
+    };
+    VkExternalImageFormatProperties external_properties = {
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES,
+    };
+    VkImageFormatProperties2 format_properties = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2,
+        .pNext = &external_properties,
+    };
+    VkResult vulkan_result = query(
+        physical_device, &format_query, &format_properties);
+    const VkExternalMemoryFeatureFlags required_features =
+        VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT |
+        VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT;
+    if (vulkan_result != VK_SUCCESS ||
+        request->width > format_properties.imageFormatProperties.maxExtent.width ||
+        request->height > format_properties.imageFormatProperties.maxExtent.height ||
+        (external_properties.externalMemoryProperties.externalMemoryFeatures &
+         required_features) != required_features ||
+        (external_properties.externalMemoryProperties.compatibleHandleTypes &
+         VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT) == 0U) {
+        response->vulkan_result = vulkan_result != VK_SUCCESS
+            ? vulkan_result : VK_ERROR_FORMAT_NOT_SUPPORTED;
+        *metadata = (struct bvb_swapchain_metadata){.control_fd = -1};
+        return 0;
+    }
+    VkPhysicalDeviceMemoryProperties memory_properties = {0};
+    status = bvb_vulkan_global_context_get_memory_properties(
+        context, physical_id, &memory_properties, error, error_size);
+    if (status != 0) {
+        *metadata = (struct bvb_swapchain_metadata){.control_fd = -1};
+        return status;
+    }
+    status = create_swapchain_control(
+        metadata, request->min_image_count, request->generation);
+    if (status != 0) {
+        set_error(error, error_size, "frame-ring control allocation failed");
+        (void)destroy_swapchain_metadata(context, metadata);
+        return status;
+    }
+    const VkExternalMemoryImageCreateInfo external_image_info = {
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
+    const VkImageCreateInfo image_info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .pNext = &external_image_info,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = (VkFormat)request->format,
+        .extent = {request->width, request->height, 1U},
+        .mipLevels = 1U,
+        .arrayLayers = 1U,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = transport_usage,
+        .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    for (uint32_t index = 0U; index < metadata->image_count; ++index) {
+        vulkan_result = create_image(
+            metadata->device, &image_info, NULL, &metadata->images[index]);
+        if (vulkan_result != VK_SUCCESS) break;
+        VkMemoryRequirements requirements = {0};
+        get_requirements(
+            metadata->device, metadata->images[index], &requirements);
+        status = choose_swapchain_memory_type(
+            &memory_properties, requirements.memoryTypeBits,
+            &metadata->memory_type_indices[index]);
+        if (status != 0 || requirements.size == 0U) {
+            vulkan_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+            break;
+        }
+        metadata->allocation_sizes[index] = requirements.size;
+        const VkMemoryDedicatedAllocateInfo dedicated_info = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
+            .image = metadata->images[index],
+        };
+        const VkExportMemoryAllocateInfo export_info = {
+            .sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO,
+            .pNext = &dedicated_info,
+            .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+        };
+        const VkMemoryAllocateInfo allocation_info = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .pNext = &export_info,
+            .allocationSize = requirements.size,
+            .memoryTypeIndex = metadata->memory_type_indices[index],
+        };
+        vulkan_result = allocate_memory(
+            metadata->device, &allocation_info, NULL,
+            &metadata->memories[index]);
+        if (vulkan_result == VK_SUCCESS) {
+            vulkan_result = bind_image(
+                metadata->device, metadata->images[index],
+                metadata->memories[index], 0U);
+        }
+        const VkMemoryGetFdInfoKHR fd_info = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
+            .memory = metadata->memories[index],
+            .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+        };
+        if (vulkan_result == VK_SUCCESS) {
+            vulkan_result = get_memory_fd(
+                metadata->device, &fd_info, &descriptors[index]);
+        }
+        if (vulkan_result == VK_SUCCESS && descriptors[index] < 0) {
+            vulkan_result = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+        }
+        if (vulkan_result != VK_SUCCESS) break;
+        metadata->image_ids[index] = bvb_handle_id(
+            BVB_OBJECT_IMAGE, context->next_image_serial++);
+        status = bvb_handle_table_insert(
+            &context->objects, metadata->image_ids[index], request->device_id,
+            handle_bits(&metadata->images[index],
+                        sizeof(metadata->images[index])));
+        if (status != 0) {
+            vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+            break;
+        }
+    }
+    if (vulkan_result == VK_SUCCESS) {
+        descriptors[metadata->image_count] = dup(metadata->control_fd);
+        if (descriptors[metadata->image_count] < 0) status = -errno;
+    }
+    if (vulkan_result == VK_SUCCESS && status == 0) {
+        metadata->swapchain_id = bvb_handle_id(
+            BVB_OBJECT_SWAPCHAIN, context->next_swapchain_serial++);
+        status = bvb_handle_table_insert(
+            &context->objects, metadata->swapchain_id, request->device_id,
+            (uint64_t)(uintptr_t)metadata);
+    }
+    if (vulkan_result != VK_SUCCESS || status != 0) {
+        for (size_t index = 0U;
+             index < BVB_WSI_FRAME_RING_MAX_SLOTS + 1U; ++index) {
+            if (descriptors[index] >= 0) {
+                (void)close(descriptors[index]);
+                descriptors[index] = -1;
+            }
+        }
+        (void)destroy_swapchain_metadata(context, metadata);
+        if (status != 0 && vulkan_result == VK_SUCCESS) {
+            set_error(error, error_size, "swapchain ownership failed: %d",
+                      status);
+            return status;
+        }
+        response->vulkan_result = vulkan_result;
+        return 0;
+    }
+    response->vulkan_result = VK_SUCCESS;
+    response->image_count = metadata->image_count;
+    response->swapchain_id = metadata->swapchain_id;
+    response->generation = metadata->generation;
+    response->control_region_bytes = BVB_WSI_FRAME_RING_REGION_BYTES;
+    for (uint32_t index = 0U; index < metadata->image_count; ++index) {
+        response->images[index] = (struct bvb_vulkan_swapchain_image_record){
+            .image_id = metadata->image_ids[index],
+            .allocation_size = metadata->allocation_sizes[index],
+            .memory_type_index = metadata->memory_type_indices[index],
+        };
+    }
+    *descriptor_count = (size_t)metadata->image_count + 1U;
+    return 0;
+}
+
+int bvb_vulkan_global_context_destroy_swapchain(
+    struct bvb_vulkan_global_context *context, uint64_t swapchain_id,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL ||
+        bvb_handle_expect(swapchain_id, BVB_OBJECT_SWAPCHAIN) != 0) {
+        return -EINVAL;
+    }
+    struct bvb_swapchain_metadata *metadata =
+        swapchain_metadata_slot(context, swapchain_id);
+    if (metadata == NULL || metadata->swapchain_id != swapchain_id) {
+        return -ENOENT;
+    }
+    const int status = destroy_swapchain_metadata(context, metadata);
+    if (status != 0) {
+        set_error(error, error_size, "swapchain teardown failed: %d", status);
+    }
+    return status;
 }

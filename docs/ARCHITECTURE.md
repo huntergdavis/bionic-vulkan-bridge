@@ -119,3 +119,10 @@ controlled gate is to deliver the E015 glibc-generated batch to that visible
 executor, followed by external-image synchronization as described in
 [decision 0003](decisions/0003-batched-game-dispatch.md). A bridged game frame
 and game input remain outside the completed result.
+
+The current game-facing WSI direction is recorded in
+[decision 0005](decisions/0005-persistent-game-frame-ring.md). The service now
+prepares a bounded ring of real exportable images plus one shared futex control
+page after authenticated Activity readiness. The public swapchain still fails
+closed until the Activity's one-time reverse importer and native copy/present
+consumer produce a visually verified changing frame.

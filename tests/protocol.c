@@ -81,7 +81,7 @@ int main(void) {
     };
     CHECK(bvb_protocol_encode_header(wire, &last_opcode_header) == 0);
     CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
-    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_DEVICE_CREATE_PACKED);
+    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_SWAPCHAIN_DESTROY);
 
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
@@ -174,6 +174,56 @@ int main(void) {
     bvb_wire_put_u32(external_image_wire + 28, 1U);
     CHECK(bvb_protocol_decode_external_image_import_request(
               external_image_wire, &external_image_decoded) == -EINVAL);
+
+    const struct bvb_vulkan_swapchain_prepare_request swapchain_request = {
+        .device_id = UINT64_C(0x0300000000000007),
+        .width = 1280U,
+        .height = 720U,
+        .format = 44U,
+        .image_usage = 0x10U,
+        .min_image_count = 3U,
+        .generation = UINT64_C(0x123456789abcdef0),
+    };
+    uint8_t swapchain_request_wire[
+        BVB_VULKAN_SWAPCHAIN_PREPARE_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_swapchain_prepare_request(
+              swapchain_request_wire, &swapchain_request) == 0);
+    struct bvb_vulkan_swapchain_prepare_request swapchain_request_decoded;
+    CHECK(bvb_protocol_decode_vulkan_swapchain_prepare_request(
+              swapchain_request_wire, &swapchain_request_decoded) == 0);
+    CHECK(swapchain_request_decoded.device_id ==
+          swapchain_request.device_id);
+    CHECK(swapchain_request_decoded.min_image_count == 3U);
+    CHECK(swapchain_request_decoded.generation ==
+          swapchain_request.generation);
+
+    const struct bvb_vulkan_swapchain_prepare_response swapchain_response = {
+        .vulkan_result = 0,
+        .image_count = 3U,
+        .swapchain_id = UINT64_C(0x0600000000000004),
+        .generation = swapchain_request.generation,
+        .control_region_bytes = BVB_WSI_FRAME_RING_REGION_BYTES,
+        .images = {
+            {UINT64_C(0x070000000000000a), 65536U, 2U},
+            {UINT64_C(0x070000000000000b), 65536U, 2U},
+            {UINT64_C(0x070000000000000c), 65536U, 2U},
+        },
+    };
+    uint8_t swapchain_response_wire[
+        BVB_VULKAN_SWAPCHAIN_PREPARE_RESPONSE_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_swapchain_prepare_response(
+              swapchain_response_wire, &swapchain_response) == 0);
+    struct bvb_vulkan_swapchain_prepare_response swapchain_response_decoded;
+    CHECK(bvb_protocol_decode_vulkan_swapchain_prepare_response(
+              swapchain_response_wire, &swapchain_response_decoded) == 0);
+    CHECK(swapchain_response_decoded.image_count == 3U);
+    CHECK(swapchain_response_decoded.images[2].image_id ==
+          swapchain_response.images[2].image_id);
+    CHECK(swapchain_response_decoded.images[2].allocation_size == 65536U);
+    bvb_wire_put_u32(swapchain_response_wire + 52, 1U);
+    CHECK(bvb_protocol_decode_vulkan_swapchain_prepare_response(
+              swapchain_response_wire, &swapchain_response_decoded) ==
+          -EPROTO);
 
     const struct bvb_vulkan_global_info global_info = {
         .loader_api_version = UINT32_C(0x00403000),

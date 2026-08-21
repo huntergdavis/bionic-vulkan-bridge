@@ -2179,6 +2179,146 @@ int bvb_protocol_decode_external_image_import_request(
     return 0;
 }
 
+int bvb_protocol_encode_vulkan_swapchain_prepare_request(
+    uint8_t output[BVB_VULKAN_SWAPCHAIN_PREPARE_REQUEST_SIZE],
+    const struct bvb_vulkan_swapchain_prepare_request *request) {
+    if (output == NULL || request == NULL ||
+        !wire_id_is_type(request->device_id, BVB_OBJECT_DEVICE) ||
+        request->width == 0U || request->height == 0U ||
+        request->format == 0U || request->image_usage == 0U ||
+        request->min_image_count < 2U ||
+        request->min_image_count > BVB_WSI_FRAME_RING_MAX_SLOTS ||
+        request->flags != 0U || request->generation == 0U) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_SWAPCHAIN_PREPARE_REQUEST_SIZE);
+    bvb_wire_put_u64(output, request->device_id);
+    bvb_wire_put_u32(output + 8, request->width);
+    bvb_wire_put_u32(output + 12, request->height);
+    bvb_wire_put_u32(output + 16, request->format);
+    bvb_wire_put_u32(output + 20, request->image_usage);
+    bvb_wire_put_u32(output + 24, request->min_image_count);
+    bvb_wire_put_u32(output + 28, request->flags);
+    bvb_wire_put_u64(output + 32, request->generation);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_swapchain_prepare_request(
+    const uint8_t input[BVB_VULKAN_SWAPCHAIN_PREPARE_REQUEST_SIZE],
+    struct bvb_vulkan_swapchain_prepare_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    const struct bvb_vulkan_swapchain_prepare_request decoded = {
+        .device_id = bvb_wire_get_u64(input),
+        .width = bvb_wire_get_u32(input + 8),
+        .height = bvb_wire_get_u32(input + 12),
+        .format = bvb_wire_get_u32(input + 16),
+        .image_usage = bvb_wire_get_u32(input + 20),
+        .min_image_count = bvb_wire_get_u32(input + 24),
+        .flags = bvb_wire_get_u32(input + 28),
+        .generation = bvb_wire_get_u64(input + 32),
+    };
+    uint8_t validation[BVB_VULKAN_SWAPCHAIN_PREPARE_REQUEST_SIZE];
+    if (bvb_protocol_encode_vulkan_swapchain_prepare_request(
+            validation, &decoded) != 0) {
+        return -EPROTO;
+    }
+    *request = decoded;
+    return 0;
+}
+
+static int swapchain_response_is_valid(
+    const struct bvb_vulkan_swapchain_prepare_response *response) {
+    if (response == NULL) return -EINVAL;
+    if (response->vulkan_result != 0) {
+        if (response->image_count != 0U || response->swapchain_id != 0U ||
+            response->generation != 0U ||
+            response->control_region_bytes != 0U) {
+            return -EINVAL;
+        }
+        for (uint32_t index = 0U;
+             index < BVB_WSI_FRAME_RING_MAX_SLOTS; ++index) {
+            if (response->images[index].image_id != 0U ||
+                response->images[index].allocation_size != 0U ||
+                response->images[index].memory_type_index != 0U) {
+                return -EINVAL;
+            }
+        }
+        return 0;
+    }
+    if (response->image_count < 2U ||
+        response->image_count > BVB_WSI_FRAME_RING_MAX_SLOTS ||
+        !wire_id_is_type(response->swapchain_id, BVB_OBJECT_SWAPCHAIN) ||
+        response->generation == 0U ||
+        response->control_region_bytes != BVB_WSI_FRAME_RING_REGION_BYTES) {
+        return -EINVAL;
+    }
+    for (uint32_t index = 0U;
+         index < BVB_WSI_FRAME_RING_MAX_SLOTS; ++index) {
+        const struct bvb_vulkan_swapchain_image_record *image =
+            &response->images[index];
+        if (index < response->image_count) {
+            if (!wire_id_is_type(image->image_id, BVB_OBJECT_IMAGE) ||
+                image->allocation_size == 0U) return -EINVAL;
+        } else if (image->image_id != 0U || image->allocation_size != 0U ||
+                   image->memory_type_index != 0U) {
+            return -EINVAL;
+        }
+    }
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_swapchain_prepare_response(
+    uint8_t output[BVB_VULKAN_SWAPCHAIN_PREPARE_RESPONSE_SIZE],
+    const struct bvb_vulkan_swapchain_prepare_response *response) {
+    if (output == NULL || swapchain_response_is_valid(response) != 0) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_SWAPCHAIN_PREPARE_RESPONSE_SIZE);
+    bvb_wire_put_i32(output, response->vulkan_result);
+    bvb_wire_put_u32(output + 4, response->image_count);
+    bvb_wire_put_u64(output + 8, response->swapchain_id);
+    bvb_wire_put_u64(output + 16, response->generation);
+    bvb_wire_put_u32(output + 24, response->control_region_bytes);
+    for (uint32_t index = 0U; index < response->image_count; ++index) {
+        const uint32_t offset = 32U +
+            index * BVB_VULKAN_SWAPCHAIN_IMAGE_RECORD_SIZE;
+        bvb_wire_put_u64(output + offset, response->images[index].image_id);
+        bvb_wire_put_u64(output + offset + 8,
+                         response->images[index].allocation_size);
+        bvb_wire_put_u32(output + offset + 16,
+                         response->images[index].memory_type_index);
+    }
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_swapchain_prepare_response(
+    const uint8_t input[BVB_VULKAN_SWAPCHAIN_PREPARE_RESPONSE_SIZE],
+    struct bvb_vulkan_swapchain_prepare_response *response) {
+    if (input == NULL || response == NULL ||
+        bvb_wire_get_u32(input + 28) != 0U) return -EINVAL;
+    struct bvb_vulkan_swapchain_prepare_response decoded = {
+        .vulkan_result = bvb_wire_get_i32(input),
+        .image_count = bvb_wire_get_u32(input + 4),
+        .swapchain_id = bvb_wire_get_u64(input + 8),
+        .generation = bvb_wire_get_u64(input + 16),
+        .control_region_bytes = bvb_wire_get_u32(input + 24),
+    };
+    for (uint32_t index = 0U;
+         index < BVB_WSI_FRAME_RING_MAX_SLOTS; ++index) {
+        const uint32_t offset = 32U +
+            index * BVB_VULKAN_SWAPCHAIN_IMAGE_RECORD_SIZE;
+        decoded.images[index] = (struct bvb_vulkan_swapchain_image_record){
+            .image_id = bvb_wire_get_u64(input + offset),
+            .allocation_size = bvb_wire_get_u64(input + offset + 8),
+            .memory_type_index = bvb_wire_get_u32(input + offset + 16),
+        };
+        if (bvb_wire_get_u32(input + offset + 20) != 0U) return -EPROTO;
+    }
+    if (swapchain_response_is_valid(&decoded) != 0) return -EPROTO;
+    *response = decoded;
+    return 0;
+}
+
 static int validate_memory_io_request(
     const struct bvb_vulkan_memory_io_request *request) {
     return request != NULL && wire_id_is_type(request->memory_id, 9U) &&
