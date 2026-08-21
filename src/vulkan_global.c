@@ -11,13 +11,16 @@
 
 #include <dlfcn.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
@@ -37,6 +40,7 @@ static const char *const bvb_instance_extension_allowlist[
 
 struct bvb_device_metadata {
     uint64_t device_id;
+    uint64_t non_coherent_atom_size;
     uint32_t queue_create_info_count;
     struct bvb_vulkan_device_queue_create_info
         queue_create_infos[BVB_VULKAN_MAX_DEVICE_QUEUE_CREATE_INFOS];
@@ -48,9 +52,26 @@ struct bvb_memory_metadata {
     uint32_t property_flags;
 };
 
+struct bvb_memory_mirror_metadata {
+    uint64_t device_id;
+    uint64_t memory_id;
+    uint64_t generation;
+    uint64_t offset;
+    uint64_t length;
+    uint64_t allocation_size;
+    uint64_t non_coherent_atom_size;
+    uint32_t property_flags;
+    VkDevice device;
+    VkDeviceMemory memory;
+    uint8_t *mirror;
+    uint8_t *native;
+    uint8_t *baseline;
+};
+
 struct bvb_buffer_metadata {
     uint64_t buffer_id;
     uint64_t device_id;
+    uint64_t bound_memory_id;
     uint32_t usage;
     bool memory_bound;
 };
@@ -63,6 +84,7 @@ struct bvb_semaphore_metadata {
 struct bvb_image_metadata {
     uint64_t image_id;
     uint64_t device_id;
+    uint64_t bound_memory_id;
     uint32_t flags;
     uint32_t image_type;
     uint32_t format;
@@ -124,6 +146,9 @@ struct bvb_vulkan_global_context {
     uint64_t next_pipeline_serial;
     struct bvb_device_metadata device_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_memory_metadata memory_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
+    struct bvb_memory_mirror_metadata
+        memory_mirrors[BVB_VULKAN_MEMORY_MIRROR_CAPACITY];
+    uint64_t memory_mirror_bytes;
     struct bvb_buffer_metadata buffer_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_semaphore_metadata
         semaphore_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
@@ -135,6 +160,13 @@ struct bvb_vulkan_global_context {
 static int destroy_swapchain_metadata(
     struct bvb_vulkan_global_context *context,
     struct bvb_swapchain_metadata *metadata);
+static int sync_coherent_memory_mirrors(
+    struct bvb_vulkan_global_context *context, uint64_t device_id);
+static struct bvb_memory_mirror_metadata *memory_mirror_slot(
+    struct bvb_vulkan_global_context *context, uint64_t memory_id);
+static bool buffer_usage_is_upload_only(uint32_t usage);
+static bool memory_is_upload_only(
+    const struct bvb_vulkan_global_context *context, uint64_t memory_id);
 
 static void set_error(char *output, size_t output_size, const char *format, ...) {
     if (output == NULL || output_size == 0U) {
@@ -277,6 +309,34 @@ BVB_DEFINE_HANDLE_FROM_BITS(pipeline_layout_from_bits, VkPipelineLayout)
 BVB_DEFINE_HANDLE_FROM_BITS(pipeline_from_bits, VkPipeline)
 
 #undef BVB_DEFINE_HANDLE_FROM_BITS
+
+static void release_memory_mirror(
+    struct bvb_vulkan_global_context *context,
+    struct bvb_memory_mirror_metadata *mirror) {
+    if (context == NULL || mirror == NULL || mirror->memory_id == 0U) return;
+    PFN_vkUnmapMemory unmap = context->get_device_proc_addr == NULL
+        ? NULL
+        : (PFN_vkUnmapMemory)context->get_device_proc_addr(
+              mirror->device, "vkUnmapMemory");
+    if (unmap != NULL && mirror->native != NULL)
+        unmap(mirror->device, mirror->memory);
+    if (mirror->mirror != NULL)
+        (void)munmap(mirror->mirror, (size_t)mirror->length);
+    free(mirror->baseline);
+    if (context->memory_mirror_bytes >= mirror->length)
+        context->memory_mirror_bytes -= mirror->length;
+    else
+        context->memory_mirror_bytes = 0U;
+    *mirror = (struct bvb_memory_mirror_metadata){0};
+}
+
+static void release_all_memory_mirrors(
+    struct bvb_vulkan_global_context *context) {
+    if (context == NULL) return;
+    for (size_t index = 0U; index < BVB_VULKAN_MEMORY_MIRROR_CAPACITY;
+         ++index)
+        release_memory_mirror(context, &context->memory_mirrors[index]);
+}
 
 static int resolve_physical_device(
     const struct bvb_vulkan_global_context *context,
@@ -452,6 +512,7 @@ void bvb_vulkan_global_context_destroy(
     if (context == NULL) {
         return;
     }
+    release_all_memory_mirrors(context);
     for (size_t index = 0U; index < BVB_WSI_FRAME_RING_MAX_SLOTS; ++index) {
         if (context->swapchain_metadata[index].swapchain_id != 0U) {
             (void)destroy_swapchain_metadata(
@@ -1344,6 +1405,33 @@ static struct bvb_device_metadata *device_metadata_slot(
     return empty;
 }
 
+static bool buffer_usage_is_upload_only(uint32_t usage) {
+    const uint32_t gpu_read_only =
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+        VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT |
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+    return usage != 0U && (usage & ~gpu_read_only) == 0U;
+}
+
+static bool memory_is_upload_only(
+    const struct bvb_vulkan_global_context *context, uint64_t memory_id) {
+    bool found = false;
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_buffer_metadata *buffer =
+            &context->buffer_metadata[index];
+        if (buffer->bound_memory_id == memory_id) {
+            if (!buffer_usage_is_upload_only(buffer->usage)) return false;
+            found = true;
+        }
+        if (context->image_metadata[index].bound_memory_id == memory_id)
+            return false;
+    }
+    return found;
+}
+
 int bvb_vulkan_global_context_create_device_packed(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_device_create_packed_request *request,
@@ -1393,6 +1481,13 @@ int bvb_vulkan_global_context_create_device_packed(
         context, request->physical_device_id, &instance, &physical_device);
     if (status != 0) {
         return status;
+    }
+    VkPhysicalDeviceProperties physical_properties = {0};
+    status = bvb_vulkan_global_context_get_physical_device_properties(
+        context, request->physical_device_id, &physical_properties,
+        error, error_size);
+    if (status != 0 || physical_properties.limits.nonCoherentAtomSize == 0U) {
+        return status != 0 ? status : -EPROTO;
     }
     VkQueueFamilyProperties queue_properties[BVB_VULKAN_MAX_QUEUE_FAMILIES];
     uint32_t queue_family_count = 0U;
@@ -1598,6 +1693,8 @@ int bvb_vulkan_global_context_create_device_packed(
     }
     *metadata = (struct bvb_device_metadata){
         .device_id = wire_id,
+        .non_coherent_atom_size =
+            physical_properties.limits.nonCoherentAtomSize,
         .queue_create_info_count = request->queue_create_info_count,
     };
     memcpy(metadata->queue_create_infos, request->queue_create_infos,
@@ -1651,6 +1748,11 @@ int bvb_vulkan_global_context_destroy_device(
     if (destroy_device == NULL) {
         return -ENOSYS;
     }
+    for (size_t index = 0U; index < BVB_VULKAN_MEMORY_MIRROR_CAPACITY;
+         ++index)
+        if (context->memory_mirrors[index].memory_id != 0U &&
+            context->memory_mirrors[index].device_id == device_id)
+            return -EBUSY;
     for (size_t index = 0U; index < BVB_WSI_FRAME_RING_MAX_SLOTS; ++index) {
         struct bvb_swapchain_metadata *swapchain =
             &context->swapchain_metadata[index];
@@ -2374,7 +2476,7 @@ int bvb_vulkan_global_context_end_command_buffer(
 }
 
 int bvb_vulkan_global_context_queue_submit_command(
-    const struct bvb_vulkan_global_context *context,
+    struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_queue_submit_command_request *request,
     int32_t *vulkan_result, char *error, size_t error_size) {
     if (error != NULL && error_size != 0U) {
@@ -2411,6 +2513,8 @@ int bvb_vulkan_global_context_queue_submit_command(
                   "queue and command buffer have different devices");
         return result != 0 ? result : -EPROTO;
     }
+    result = sync_coherent_memory_mirrors(context, queue_device_id);
+    if (result != 0) return result;
     PFN_vkQueueSubmit submit =
         (PFN_vkQueueSubmit)context->get_device_proc_addr(
             queue_device, "vkQueueSubmit");
@@ -3272,6 +3376,7 @@ int bvb_vulkan_global_context_create_buffer(
         request->size > BVB_VULKAN_MAX_MEMORY_ALLOCATION_SIZE ||
         request->flags != 0U ||
         (request->usage != VK_BUFFER_USAGE_TRANSFER_DST_BIT &&
+         request->usage != VK_BUFFER_USAGE_TRANSFER_SRC_BIT &&
          (((request->usage &
             (VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
              VK_BUFFER_USAGE_TRANSFER_DST_BIT |
@@ -3686,6 +3791,13 @@ int bvb_vulkan_global_context_free_memory(
         context, memory_id, BVB_OBJECT_DEVICE_MEMORY, &device_id, &device,
         &memory_bits);
     if (result != 0) return result;
+    struct bvb_memory_mirror_metadata *mirror =
+        memory_mirror_slot(context, memory_id);
+    if (mirror != NULL && mirror->memory_id == memory_id) {
+        set_error(error, error_size,
+                  "device memory cannot be freed while mirror is mapped");
+        return -EBUSY;
+    }
     PFN_vkFreeMemory free_memory =
         (PFN_vkFreeMemory)context->get_device_proc_addr(device,
                                                         "vkFreeMemory");
@@ -3719,6 +3831,17 @@ int bvb_vulkan_global_context_bind_buffer_memory(
             &memory_device_id, &memory_device, &memory_bits);
     if (result != 0 || buffer_device_id != memory_device_id ||
         buffer_device != memory_device) return result != 0 ? result : -EPROTO;
+    struct bvb_buffer_metadata *metadata = buffer_metadata_slot(
+        context, request->buffer_id);
+    if (metadata == NULL || metadata->device_id != buffer_device_id)
+        return -EPROTO;
+    struct bvb_memory_mirror_metadata *mirror =
+        memory_mirror_slot(context, request->memory_id);
+    if (mirror != NULL && mirror->memory_id == request->memory_id &&
+        !buffer_usage_is_upload_only(metadata->usage)) {
+        *vulkan_result = VK_ERROR_MEMORY_MAP_FAILED;
+        return 0;
+    }
     PFN_vkBindBufferMemory bind =
         (PFN_vkBindBufferMemory)context->get_device_proc_addr(
             buffer_device, "vkBindBufferMemory");
@@ -3727,11 +3850,8 @@ int bvb_vulkan_global_context_bind_buffer_memory(
         buffer_device, buffer_from_bits(buffer_bits),
         memory_from_bits(memory_bits), request->offset);
     if (*vulkan_result == VK_SUCCESS) {
-        struct bvb_buffer_metadata *metadata = buffer_metadata_slot(
-            context, request->buffer_id);
-        if (metadata == NULL || metadata->device_id != buffer_device_id)
-            return -EPROTO;
         metadata->memory_bound = true;
+        metadata->bound_memory_id = request->memory_id;
     }
     return 0;
 }
@@ -3964,7 +4084,7 @@ int bvb_vulkan_global_context_get_image_requirements_2(
 }
 
 int bvb_vulkan_global_context_bind_image_memory(
-    const struct bvb_vulkan_global_context *context,
+    struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_image_bind_request *request,
     int32_t *vulkan_result, char *error, size_t error_size) {
     if (error != NULL && error_size != 0U) error[0] = '\0';
@@ -3987,6 +4107,16 @@ int bvb_vulkan_global_context_bind_image_memory(
         image_device != memory_device) {
         return result != 0 ? result : -EPROTO;
     }
+    struct bvb_image_metadata *metadata = image_metadata_slot(
+        context, request->image_id);
+    if (metadata == NULL || metadata->device_id != image_device_id)
+        return -EPROTO;
+    struct bvb_memory_mirror_metadata *mirror =
+        memory_mirror_slot(context, request->memory_id);
+    if (mirror != NULL && mirror->memory_id == request->memory_id) {
+        *vulkan_result = VK_ERROR_MEMORY_MAP_FAILED;
+        return 0;
+    }
     PFN_vkBindImageMemory bind =
         (PFN_vkBindImageMemory)context->get_device_proc_addr(
             image_device, "vkBindImageMemory");
@@ -3994,6 +4124,8 @@ int bvb_vulkan_global_context_bind_image_memory(
     *vulkan_result = bind(
         image_device, image_from_bits(image_bits),
         memory_from_bits(memory_bits), request->offset);
+    if (*vulkan_result == VK_SUCCESS)
+        metadata->bound_memory_id = request->memory_id;
     return 0;
 }
 
@@ -4995,6 +5127,326 @@ int bvb_vulkan_global_context_read_memory(
     return 0;
 }
 
+static struct bvb_memory_mirror_metadata *memory_mirror_slot(
+    struct bvb_vulkan_global_context *context, uint64_t memory_id) {
+    struct bvb_memory_mirror_metadata *empty = NULL;
+    for (size_t index = 0U; index < BVB_VULKAN_MEMORY_MIRROR_CAPACITY;
+         ++index) {
+        struct bvb_memory_mirror_metadata *mirror =
+            &context->memory_mirrors[index];
+        if (mirror->memory_id == memory_id && memory_id != 0U) return mirror;
+        if (mirror->memory_id == 0U && empty == NULL) empty = mirror;
+    }
+    return empty;
+}
+
+static struct bvb_memory_mirror_metadata *resolve_memory_mirror(
+    struct bvb_vulkan_global_context *context, uint64_t device_id,
+    uint64_t memory_id, uint64_t generation) {
+    struct bvb_memory_mirror_metadata *mirror =
+        memory_mirror_slot(context, memory_id);
+    return mirror != NULL && mirror->memory_id == memory_id &&
+                   mirror->device_id == device_id &&
+                   mirror->generation == generation
+               ? mirror
+               : NULL;
+}
+
+static VkResult maintain_native_memory_range(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_memory_mirror_metadata *mirror, uint64_t offset,
+    uint64_t size, bool invalidate) {
+    const uint64_t atom = mirror->non_coherent_atom_size;
+    if (atom == 0U || size == 0U || offset > mirror->allocation_size ||
+        size > mirror->allocation_size - offset)
+        return VK_ERROR_MEMORY_MAP_FAILED;
+    const uint64_t aligned_offset = offset - offset % atom;
+    uint64_t aligned_end = offset + size;
+    const uint64_t remainder = aligned_end % atom;
+    if (remainder != 0U && aligned_end != mirror->allocation_size) {
+        const uint64_t padding = atom - remainder;
+        if (padding > mirror->allocation_size - aligned_end)
+            aligned_end = mirror->allocation_size;
+        else
+            aligned_end += padding;
+    }
+    const char *name = invalidate ? "vkInvalidateMappedMemoryRanges"
+                                  : "vkFlushMappedMemoryRanges";
+    PFN_vkVoidFunction erased = context->get_device_proc_addr(
+        mirror->device, name);
+    const VkMappedMemoryRange range = {
+        .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+        .memory = mirror->memory,
+        .offset = aligned_offset,
+        .size = aligned_end - aligned_offset,
+    };
+    if (invalidate) {
+        PFN_vkInvalidateMappedMemoryRanges maintain = NULL;
+        memcpy(&maintain, &erased, sizeof(maintain));
+        return maintain == NULL
+                   ? VK_ERROR_FEATURE_NOT_PRESENT
+                   : maintain(mirror->device, 1U, &range);
+    }
+    PFN_vkFlushMappedMemoryRanges maintain = NULL;
+    memcpy(&maintain, &erased, sizeof(maintain));
+    return maintain == NULL ? VK_ERROR_FEATURE_NOT_PRESENT
+                            : maintain(mirror->device, 1U, &range);
+}
+
+static void upload_host_diverged_range(
+    struct bvb_memory_mirror_metadata *mirror, size_t first, size_t length) {
+    const size_t end = first + length;
+    size_t cursor = first;
+    while (cursor < end) {
+        while (cursor < end &&
+               mirror->mirror[cursor] == mirror->baseline[cursor])
+            ++cursor;
+        const size_t dirty_first = cursor;
+        while (cursor < end &&
+               mirror->mirror[cursor] != mirror->baseline[cursor])
+            ++cursor;
+        if (cursor != dirty_first) {
+            const size_t dirty_length = cursor - dirty_first;
+            memcpy(mirror->native + mirror->offset + dirty_first,
+                   mirror->mirror + dirty_first, dirty_length);
+            memcpy(mirror->baseline + dirty_first,
+                   mirror->mirror + dirty_first, dirty_length);
+        }
+    }
+}
+
+int bvb_vulkan_global_context_setup_memory_mirror(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_mirror_setup_request *request,
+    int mirror_fd, int32_t *vulkan_result, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || mirror_fd < 0 ||
+        vulkan_result == NULL) return -EINVAL;
+    *vulkan_result = VK_ERROR_MEMORY_MAP_FAILED;
+    uint8_t validation[BVB_VULKAN_MEMORY_MIRROR_SETUP_SIZE];
+    if (bvb_protocol_encode_vulkan_memory_mirror_setup_request(
+            validation, request) != 0) return -EINVAL;
+    struct stat metadata;
+    const int seals = fcntl(mirror_fd, F_GET_SEALS);
+    const int required_seals = F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL;
+    if (fstat(mirror_fd, &metadata) != 0 || !S_ISREG(metadata.st_mode) ||
+        metadata.st_size < 0 ||
+        (uint64_t)metadata.st_size != request->length || seals < 0 ||
+        (seals & required_seals) != required_seals ||
+        (seals & F_SEAL_WRITE) != 0) {
+        set_error(error, error_size,
+                  "memory mirror fd size or immutable-capacity seals invalid");
+        return -EINVAL;
+    }
+    uint64_t memory_device_id = 0U, memory_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, request->memory_id, BVB_OBJECT_DEVICE_MEMORY,
+        &memory_device_id, &device, &memory_bits);
+    uint64_t device_bits = 0U;
+    if (result == 0)
+        result = bvb_handle_table_lookup(
+            &context->objects, request->device_id, BVB_OBJECT_DEVICE,
+            NULL, &device_bits);
+    struct bvb_memory_metadata *native_metadata =
+        memory_metadata_slot(context, request->memory_id);
+    struct bvb_device_metadata *native_device_metadata =
+        device_metadata_slot(context, request->device_id);
+    if (result != 0 || memory_device_id != request->device_id ||
+        device_from_bits(device_bits) != device || native_metadata == NULL ||
+        native_metadata->memory_id != request->memory_id ||
+        native_device_metadata == NULL ||
+        native_device_metadata->device_id != request->device_id ||
+        native_device_metadata->non_coherent_atom_size == 0U) {
+        set_error(error, error_size,
+                  "memory mirror references unknown or cross-device memory");
+        return result != 0 ? result : -EPROTO;
+    }
+    if (!memory_is_upload_only(context, request->memory_id)) {
+        set_error(error, error_size,
+                  "memory mirror is not bound only to GPU-read-only buffers");
+        *vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    if ((native_metadata->property_flags &
+         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT) == 0U ||
+        request->offset > native_metadata->allocation_size ||
+        request->length > native_metadata->allocation_size - request->offset) {
+        set_error(error, error_size,
+                  "memory mirror range is not host-visible allocation data");
+        return -ERANGE;
+    }
+    struct bvb_memory_mirror_metadata *slot =
+        memory_mirror_slot(context, request->memory_id);
+    if (slot == NULL || slot->memory_id != 0U ||
+        context->memory_mirror_bytes >
+            BVB_VULKAN_MEMORY_MIRROR_TOTAL_BYTES - request->length) {
+        set_error(error, error_size,
+                  "memory mirror slot or total-byte cap exhausted");
+        return slot != NULL && slot->memory_id != 0U ? -EBUSY : -ENOSPC;
+    }
+    void *shared = mmap(NULL, (size_t)request->length,
+                        PROT_READ | PROT_WRITE, MAP_SHARED, mirror_fd, 0);
+    if (shared == MAP_FAILED) return -errno;
+    uint8_t *baseline = malloc((size_t)request->length);
+    if (baseline == NULL) {
+        (void)munmap(shared, (size_t)request->length);
+        return -ENOMEM;
+    }
+    PFN_vkMapMemory map = (PFN_vkMapMemory)context->get_device_proc_addr(
+        device, "vkMapMemory");
+    PFN_vkUnmapMemory unmap =
+        (PFN_vkUnmapMemory)context->get_device_proc_addr(
+            device, "vkUnmapMemory");
+    if (map == NULL || unmap == NULL) {
+        free(baseline);
+        (void)munmap(shared, (size_t)request->length);
+        return -ENOSYS;
+    }
+    void *native = NULL;
+    *vulkan_result = map(device, memory_from_bits(memory_bits), 0U,
+                          VK_WHOLE_SIZE, 0U, &native);
+    if (*vulkan_result != VK_SUCCESS || native == NULL) {
+        free(baseline);
+        (void)munmap(shared, (size_t)request->length);
+        return 0;
+    }
+    const struct bvb_memory_mirror_metadata candidate = {
+        .device_id = request->device_id,
+        .memory_id = request->memory_id,
+        .generation = request->generation,
+        .offset = request->offset,
+        .length = request->length,
+        .allocation_size = native_metadata->allocation_size,
+        .non_coherent_atom_size =
+            native_device_metadata->non_coherent_atom_size,
+        .property_flags = native_metadata->property_flags,
+        .device = device,
+        .memory = memory_from_bits(memory_bits),
+        .mirror = shared,
+        .native = native,
+        .baseline = baseline,
+    };
+    if ((candidate.property_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) !=
+        0U)
+        memcpy(shared, (const uint8_t *)native + request->offset,
+               (size_t)request->length);
+    memcpy(baseline, shared, (size_t)request->length);
+    atomic_thread_fence(memory_order_release);
+    *slot = candidate;
+    context->memory_mirror_bytes += request->length;
+    return 0;
+}
+
+static int memory_mirror_range_operation(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_mirror_range_request *request,
+    bool invalidate, int32_t *vulkan_result, char *error,
+    size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || vulkan_result == NULL)
+        return -EINVAL;
+    *vulkan_result = VK_ERROR_MEMORY_MAP_FAILED;
+    uint8_t validation[BVB_VULKAN_MEMORY_MIRROR_RANGE_SIZE];
+    if (bvb_protocol_encode_vulkan_memory_mirror_range_request(
+            validation, request) != 0) return -EINVAL;
+    struct bvb_memory_mirror_metadata *mirror = resolve_memory_mirror(
+        context, request->device_id, request->memory_id,
+        request->generation);
+    if (mirror == NULL) {
+        set_error(error, error_size, "stale or cross-device memory mirror");
+        return -ESTALE;
+    }
+    if (request->offset < mirror->offset ||
+        request->offset > mirror->offset + mirror->length ||
+        request->size > mirror->offset + mirror->length - request->offset) {
+        set_error(error, error_size, "memory mirror range is out of bounds");
+        return -ERANGE;
+    }
+    const size_t mirror_offset = (size_t)(request->offset - mirror->offset);
+    atomic_thread_fence(memory_order_acquire);
+    if (invalidate &&
+        (mirror->property_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U)
+        *vulkan_result = maintain_native_memory_range(
+            context, mirror, request->offset, request->size, true);
+    else
+        *vulkan_result = VK_SUCCESS;
+    if (*vulkan_result != VK_SUCCESS) return 0;
+    if (invalidate) {
+        memcpy(mirror->mirror + mirror_offset,
+               mirror->native + request->offset, (size_t)request->size);
+        memcpy(mirror->baseline + mirror_offset,
+               mirror->native + request->offset, (size_t)request->size);
+        atomic_thread_fence(memory_order_release);
+    } else {
+        memcpy(mirror->native + request->offset,
+               mirror->mirror + mirror_offset, (size_t)request->size);
+        memcpy(mirror->baseline + mirror_offset,
+               mirror->mirror + mirror_offset, (size_t)request->size);
+        if ((mirror->property_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) ==
+            0U)
+            *vulkan_result = maintain_native_memory_range(
+                context, mirror, request->offset, request->size, false);
+    }
+    return 0;
+}
+
+int bvb_vulkan_global_context_flush_memory_mirror(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_mirror_range_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    return memory_mirror_range_operation(
+        context, request, false, vulkan_result, error, error_size);
+}
+
+int bvb_vulkan_global_context_invalidate_memory_mirror(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_mirror_range_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    return memory_mirror_range_operation(
+        context, request, true, vulkan_result, error, error_size);
+}
+
+int bvb_vulkan_global_context_unmap_memory_mirror(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_mirror_unmap_request *request,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL) return -EINVAL;
+    uint8_t validation[BVB_VULKAN_MEMORY_MIRROR_UNMAP_SIZE];
+    if (bvb_protocol_encode_vulkan_memory_mirror_unmap_request(
+            validation, request) != 0) return -EINVAL;
+    struct bvb_memory_mirror_metadata *mirror = resolve_memory_mirror(
+        context, request->device_id, request->memory_id,
+        request->generation);
+    if (mirror == NULL) {
+        set_error(error, error_size, "stale or cross-device memory mirror");
+        return -ESTALE;
+    }
+    if ((mirror->property_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0U) {
+        atomic_thread_fence(memory_order_acquire);
+        upload_host_diverged_range(mirror, 0U, (size_t)mirror->length);
+    }
+    release_memory_mirror(context, mirror);
+    return 0;
+}
+
+static int sync_coherent_memory_mirrors(
+    struct bvb_vulkan_global_context *context, uint64_t device_id) {
+    atomic_thread_fence(memory_order_acquire);
+    for (size_t index = 0U; index < BVB_VULKAN_MEMORY_MIRROR_CAPACITY;
+         ++index) {
+        struct bvb_memory_mirror_metadata *mirror =
+            &context->memory_mirrors[index];
+        if (mirror->memory_id != 0U && mirror->device_id == device_id &&
+            (mirror->property_flags &
+             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0U) {
+            upload_host_diverged_range(mirror, 0U, (size_t)mirror->length);
+        }
+    }
+    return 0;
+}
+
 int bvb_vulkan_global_context_create_fence(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_fence_create_request *request,
@@ -5324,7 +5776,7 @@ int bvb_vulkan_global_context_signal_semaphore(
 }
 
 int bvb_vulkan_global_context_queue_submit_2(
-    const struct bvb_vulkan_global_context *context,
+    struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_queue_submit_2_request *request,
     int32_t *vulkan_result, char *error, size_t error_size) {
     if (error != NULL && error_size != 0U) error[0] = '\0';
@@ -5421,6 +5873,8 @@ int bvb_vulkan_global_context_queue_submit_2(
                   "submit2 references objects from different devices");
         return result;
     }
+    result = sync_coherent_memory_mirrors(context, device_id);
+    if (result != 0) return result;
     PFN_vkQueueSubmit2 submit =
         (PFN_vkQueueSubmit2)context->get_device_proc_addr(
             device, "vkQueueSubmit2");
@@ -5443,7 +5897,7 @@ int bvb_vulkan_global_context_queue_submit_2(
 }
 
 int bvb_vulkan_global_context_queue_submit_command_fence(
-    const struct bvb_vulkan_global_context *context,
+    struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_queue_submit_command_fence_request *request,
     int32_t *vulkan_result, char *error, size_t error_size) {
     if (error != NULL && error_size != 0U) error[0] = '\0';
@@ -5479,6 +5933,8 @@ int bvb_vulkan_global_context_queue_submit_command_fence(
                   "queue, command buffer, and fence have different devices");
         return result != 0 ? result : -EPROTO;
     }
+    result = sync_coherent_memory_mirrors(context, queue_device_id);
+    if (result != 0) return result;
     PFN_vkQueueSubmit submit =
         (PFN_vkQueueSubmit)context->get_device_proc_addr(queue_device,
                                                          "vkQueueSubmit");

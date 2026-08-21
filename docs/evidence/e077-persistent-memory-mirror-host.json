@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "gate": "E077",
+  "result": "host_contract_pass",
+  "source_base_commit": "0c45c10d96b011c3e8ebe92b70fb86849bc1bb03",
+  "objective": "replace synchronous 4072-byte MEMORY_WRITE fan-out for proven upload-only allocations while preserving strict transport for GPU-writable or unknown allocations",
+  "activation": {
+    "environment": "BVB_MAPPED_MEMORY=shared",
+    "default": "strict per-call socket memory transport",
+    "hybrid_per_allocation": true,
+    "fallback_on_uncertain_shared_setup_failure": false,
+    "independent_of_BVB_COMMAND_STREAM": true
+  },
+  "eligibility": {
+    "required_binding": "one or more buffers with only GPU-read-only usage bits",
+    "allowed_usage_bits": [
+      "TRANSFER_SRC",
+      "UNIFORM_TEXEL_BUFFER",
+      "UNIFORM_BUFFER",
+      "INDEX_BUFFER",
+      "VERTEX_BUFFER",
+      "INDIRECT_BUFFER"
+    ],
+    "excluded": [
+      "unbound or unknown",
+      "all images",
+      "TRANSFER_DST",
+      "STORAGE_BUFFER",
+      "STORAGE_TEXEL_BUFFER",
+      "SHADER_DEVICE_ADDRESS",
+      "TRANSFORM_FEEDBACK_BUFFER",
+      "TRANSFORM_FEEDBACK_COUNTER_BUFFER"
+    ],
+    "bind_after_map_guard": "GPU-writable buffer and every image binding into an active mirror fail before native bind",
+    "general_coherent_map_claim": false
+  },
+  "wire": {
+    "setup": {"opcode": 106, "bytes": 40, "fd_transfers": 1},
+    "flush": {"opcode": 107, "bytes": 40, "fd_transfers": 0},
+    "invalidate": {"opcode": 108, "bytes": 40, "fd_transfers": 0},
+    "unmap": {"opcode": 109, "bytes": 24, "fd_transfers": 0},
+    "pointer_values_crossed": false
+  },
+  "mirror": {
+    "lifetime": "one eligible active VkMapMemory through VkUnmapMemory",
+    "publication": "client release fence before Flush or Submit; service acquire fence before dirty reconciliation",
+    "fd_lifetime": "SCM_RIGHTS only during setup; both peers close the descriptor after establishing their mappings",
+    "seals": ["F_SEAL_GROW", "F_SEAL_SHRINK", "F_SEAL_SEAL"],
+    "native_mapping": "service owns one whole-allocation native mapping and applies the requested subrange offset locally",
+    "baseline": "one private byte-exact snapshot detects host-diverged spans; only those spans copy mirror to native",
+    "device_to_host_completion_refresh": false
+  },
+  "limits": {
+    "live_mirrors": 64,
+    "total_bytes": 268435456,
+    "exact_size_fd": true,
+    "immutable_capacity_seals": true
+  },
+  "ownership": [
+    "device and device-memory IDs retain their typed wire tags",
+    "memory must be live, host-visible, upload-only, and owned by the exact device",
+    "generation must match the one active mapping",
+    "every range must stay inside the original mapped subrange",
+    "free-memory and destroy-device fail while a mirror is active"
+  ],
+  "coherent_upload": {
+    "explicit_flush": "one metadata RPC copies only the caller range and advances its baseline",
+    "submit": "after typed submit validation and before native queue submission, host-diverged spans from eligible same-device mirrors are copied locally",
+    "unchanged_native_bytes_overwritten": false,
+    "memory_write_rpcs_at_submit": 0,
+    "device_to_host_visibility": "only explicit Invalidate in E077; resource-scoped completion tracking is deferred"
+  },
+  "noncoherent_upload": {
+    "map_implicitly_invalidates_or_reads_native": false,
+    "explicit_flush": "one metadata RPC copies the exact caller span and performs the minimally atom-expanded native Flush",
+    "explicit_invalidate": "one metadata RPC performs the minimally atom-expanded native Invalidate and copies the exact caller span back",
+    "submit_implicitly_flushes": false,
+    "unmap_implicitly_flushes": false,
+    "non_coherent_atom_size_source": "native physical-device properties retained with the logical device"
+  },
+  "ab_contract": {
+    "strict_memory_rtts": [2, 2, 2, 2, 3],
+    "eligible_shared_memory_rtts": [1, 1, 1, 1, 1],
+    "order": ["map", "flush", "invalidate", "unmap", "submit"],
+    "eligible_shared_opcodes": [106, 107, 108, 109, 47],
+    "ineligible_hybrid_rtts": [2, 2],
+    "ineligible_hybrid_opcodes": [49, 48],
+    "eligible_submit_memory_write_rtts": 0
+  },
+  "uncertain_transport": {
+    "setup_or_unmap_transport_or_protocol_failure": "permanently poison the client connection and close its socket",
+    "unmap_local_mapping_release": "always after request initiation, including lost acknowledgement",
+    "reconnect_with_stale_proxies": false,
+    "lost_ack_retry_socket_exchanges": 0
+  },
+  "corruption_contract": [
+    "zero generation, wrong typed IDs, zero or oversized range, and arithmetic overflow fail protocol encoding or decoding",
+    "wrong-size, unsealed, capacity-mutable, or write-sealed setup descriptors fail before native mapping",
+    "stale generation, cross-device ownership, out-of-range metadata, duplicate mapping, and cap exhaustion fail closed"
+  ],
+  "verification": {
+    "strict_fake": "retains exact old 4072-byte chunk behavior and opcode 49/48 identity",
+    "eligible_coherent_fake": "observes host-diverged upload reaching native memory at Submit without opcode 48",
+    "gpu_writable_hybrid": "TRANSFER_DST plus SHADER_DEVICE_ADDRESS memory maps through strict opcode 49/48; an unsafe buffer bind and every image bind after shared Map are rejected",
+    "eligible_noncoherent_fake": "proves Map does not read native, partial maintenance expands 257+7 only to 256+256, Submit and Unmap do not flush, and explicit Invalidate pulls",
+    "unmap_lost_ack": "proves local munmap, permanent poison, and a subsequent Vulkan call with zero new exchanges",
+    "source_audited_not_live_injected": [
+      "wrong setup FD size and seal combinations",
+      "stale and cross-device generation",
+      "duplicate mapping and 64-slot/256-MiB cap",
+      "setup acknowledgement loss",
+      "disconnect cleanup"
+    ],
+    "unrelated_fake_isolation": "external-memory receiver E036/E037/E038/E041 retains fixed fake-buffer identity outside explicit mirror mode; EOF is now a bounded diagnostic instead of a busy loop",
+    "full_host_suite": "49/49 contracts passed"
+  },
+  "reuse": "The required deja query found no indexed implementation. E077 reuses E034's mapped-memory lifecycle and exact fake-driver contract, Decision 0003's bounded shared-data-plane direction, E014's sealed-size memfd and release/acquire discipline, E042's setup-only SCM_RIGHTS transport, E060's typed ownership, and E075/E075a's strict/shared fail-closed setup model.",
+  "claims": {
+    "eligible_upload_transport_contract": true,
+    "general_vulkan_map_semantics": false,
+    "tablet_deployment": false,
+    "visible_frame": false,
+    "tomb_raider_run": false,
+    "fps": null
+  },
+  "deferred": [
+    "resource/submission-scoped GPU completion tracking for coherent device-to-host visibility",
+    "directly shared native allocations or fault/write interception for general mapped memory",
+    "multi-range Flush/Invalidate batching",
+    "real-workload eligible allocation count and timing"
+  ],
+  "scope": "Host upload-transport contract only; no Activity/APK/launcher change, push, merge, tablet deployment, visible frame, Tomb Raider run, benchmark, or FPS claim"
+}

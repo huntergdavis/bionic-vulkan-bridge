@@ -27,8 +27,10 @@
 #endif
 
 static VkDeviceMemory fake_bound_memory = VK_NULL_HANDLE;
+static VkDeviceMemory fake_upload_memory = VK_NULL_HANDLE;
 static VkDeviceMemory fake_bound_image_memory = VK_NULL_HANDLE;
 static VkDeviceSize fake_buffer_size = 4096U;
+static uintptr_t fake_next_buffer_handle = UINT64_C(0x4000);
 static const VkDeviceSize fake_native_image_allocation_size = UINT64_C(19623936);
 
 static bool fake_real_hardware_values(void) {
@@ -53,6 +55,8 @@ static uint32_t fake_init_image_step;
 static VkCommandBuffer fake_init_image_command = VK_NULL_HANDLE;
 static int fake_init_image_violation;
 static uint32_t fake_animation_frame_count;
+static uint32_t fake_memory_flush_count;
+static uint32_t fake_memory_invalidate_count;
 static uint32_t fake_animation_step;
 static uint32_t fake_animation_submit_count;
 static int fake_animation_violation;
@@ -361,6 +365,7 @@ static void VKAPI_CALL fake_get_device_properties(
             sizeof(properties->deviceName) - 1U);
     properties->limits.maxPushConstantsSize =
         fake_real_hardware_values() ? 512U : 256U;
+    properties->limits.nonCoherentAtomSize = 256U;
 }
 
 static void VKAPI_CALL fake_get_device_features(
@@ -520,8 +525,10 @@ static void VKAPI_CALL fake_get_memory_properties(
     properties->memoryTypes[0].heapIndex = 0;
     properties->memoryTypes[0].propertyFlags =
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT;
+    if (getenv("BVB_FAKE_NONCOHERENT_MEMORY") == NULL)
+        properties->memoryTypes[0].propertyFlags |=
+            VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 }
 
 static void VKAPI_CALL fake_get_external_buffer_properties(
@@ -1489,7 +1496,12 @@ static VkResult VKAPI_CALL fake_create_buffer(
         return VK_ERROR_FEATURE_NOT_PRESENT;
     }
     fake_buffer_size = create_info->size;
-    *buffer = (VkBuffer)(uintptr_t)0x4000U;
+    if (getenv("BVB_FAKE_REQUIRE_MEMORY_MIRROR") != NULL) {
+        *buffer = (VkBuffer)fake_next_buffer_handle;
+        fake_next_buffer_handle += UINT64_C(0x100);
+    } else {
+        *buffer = (VkBuffer)(uintptr_t)UINT64_C(0x4000);
+    }
     return VK_SUCCESS;
 }
 
@@ -1665,6 +1677,8 @@ static VkResult VKAPI_CALL fake_allocate_memory(
         if (descriptor >= 0 && import_info == NULL) (void)close(descriptor);
         return VK_ERROR_OUT_OF_HOST_MEMORY;
     }
+    if (getenv("BVB_FAKE_NONCOHERENT_MEMORY") != NULL)
+        memset(allocation, UINT8_C(0x5a), size);
     *record = (struct bvb_fake_memory_record){
         .address = allocation,
         .size = size,
@@ -1683,6 +1697,8 @@ static void VKAPI_CALL fake_free_memory(
     if (fake_bound_memory == memory) {
         fake_bound_memory = VK_NULL_HANDLE;
     }
+    if (fake_upload_memory == memory)
+        fake_upload_memory = VK_NULL_HANDLE;
     if (fake_bound_image_memory == memory) {
         fake_bound_image_memory = VK_NULL_HANDLE;
     }
@@ -1724,9 +1740,12 @@ static VkResult VKAPI_CALL fake_bind_buffer_memory(
     VkDeviceMemory memory,
     VkDeviceSize offset) {
     (void)device;
-    (void)buffer;
     (void)offset;
-    fake_bound_memory = memory;
+    if (getenv("BVB_FAKE_REQUIRE_MEMORY_MIRROR") == NULL ||
+        (uintptr_t)buffer == UINT64_C(0x4000))
+        fake_bound_memory = memory;
+    else
+        fake_upload_memory = memory;
     return VK_SUCCESS;
 }
 
@@ -2287,6 +2306,32 @@ static VkResult VKAPI_CALL fake_queue_submit(
                     submit->pSignalSemaphores[index])->value = 1U;
         }
     }
+    if (submit_count == 1U && submits != NULL &&
+        submits[0].commandBufferCount == 1U &&
+        fake_bound_memory != VK_NULL_HANDLE &&
+        (getenv("BVB_FAKE_KEEP_MEMORY_MAPPED") != NULL ||
+         getenv("BVB_FAKE_REQUIRE_MEMORY_MIRROR") != NULL ||
+         getenv("BVB_FAKE_NONCOHERENT_MEMORY") != NULL)) {
+        const uint8_t expected =
+            getenv("BVB_FAKE_KEEP_MEMORY_MAPPED") != NULL
+                ? UINT8_C(0x00) : UINT8_C(0x0d);
+        const uint8_t *bytes =
+            (const uint8_t *)(uintptr_t)fake_bound_memory;
+        if (bytes[0] != expected)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        if (getenv("BVB_FAKE_REQUIRE_MEMORY_MIRROR") != NULL &&
+            (fake_upload_memory == VK_NULL_HANDLE ||
+             *(const uint8_t *)(uintptr_t)fake_upload_memory !=
+                 (getenv("BVB_FAKE_NONCOHERENT_MEMORY") != NULL
+                      ? UINT8_C(0x00) : UINT8_C(0x7b))))
+            return VK_ERROR_INITIALIZATION_FAILED;
+        if (getenv("BVB_FAKE_REQUIRE_MEMORY_MIRROR") != NULL &&
+            ((const uint32_t *)bytes)[1] != UINT32_C(0xa5c3f00d))
+            return VK_ERROR_INITIALIZATION_FAILED;
+        uint32_t *words = (uint32_t *)(uintptr_t)fake_bound_memory;
+        for (size_t index = 0U; index < 4096U / sizeof(*words); ++index)
+            words[index] = UINT32_C(0xa5c3f00d);
+    }
     if (fake_swapchain_created != 0) {
         if (submit_count != 1U || submits == NULL ||
             submits[0].waitSemaphoreCount != 1U ||
@@ -2481,8 +2526,21 @@ static VkResult VKAPI_CALL fake_invalidate_mapped_ranges(
     uint32_t range_count,
     const VkMappedMemoryRange *ranges) {
     (void)device;
-    (void)range_count;
-    (void)ranges;
+    if (getenv("BVB_FAKE_NONCOHERENT_MEMORY") != NULL &&
+        range_count == 1U && ranges != NULL &&
+        ranges[0].memory == fake_upload_memory) {
+        if (range_count != 1U || ranges == NULL) return VK_ERROR_MEMORY_MAP_FAILED;
+        const VkDeviceSize expected_offset =
+            fake_memory_invalidate_count == 1U ? 256U : 0U;
+        const VkDeviceSize expected_size =
+            fake_memory_invalidate_count == 1U ? 256U
+            : fake_memory_invalidate_count >= 3U ? VK_WHOLE_SIZE
+                                                 : 4096U;
+        if (ranges[0].offset != expected_offset ||
+            ranges[0].size != expected_size)
+            return VK_ERROR_MEMORY_MAP_FAILED;
+        ++fake_memory_invalidate_count;
+    }
     return VK_SUCCESS;
 }
 
@@ -2491,8 +2549,19 @@ static VkResult VKAPI_CALL fake_flush_mapped_ranges(
     uint32_t range_count,
     const VkMappedMemoryRange *ranges) {
     (void)device;
-    (void)range_count;
-    (void)ranges;
+    if (getenv("BVB_FAKE_NONCOHERENT_MEMORY") != NULL &&
+        range_count == 1U && ranges != NULL &&
+        ranges[0].memory == fake_upload_memory) {
+        if (range_count != 1U || ranges == NULL) return VK_ERROR_MEMORY_MAP_FAILED;
+        const VkDeviceSize expected_offset =
+            fake_memory_flush_count == 1U ? 256U : 0U;
+        const VkDeviceSize expected_size =
+            fake_memory_flush_count == 1U ? 256U : 4096U;
+        if (ranges[0].offset != expected_offset ||
+            ranges[0].size != expected_size)
+            return VK_ERROR_MEMORY_MAP_FAILED;
+        ++fake_memory_flush_count;
+    }
     return VK_SUCCESS;
 }
 

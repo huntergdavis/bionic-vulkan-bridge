@@ -3130,3 +3130,46 @@ correlates all four with one Activity import generation and matching
 confirmation request and leaves screenshot status pending because metadata is
 not pixel proof. No Activity import, tablet-visible frame, Tomb Raider first
 frame, benchmark, or FPS is claimed by this host gate.
+
+## E077 — persistent upload-memory mirrors (2026-08-21)
+
+Status: 49/49 host contracts pass; host-only upload transport gate. The first
+general-mirror draft was rejected because a broad completion
+pull could expose writes from unrelated queues and a full mirror upload could
+overwrite GPU-produced bytes. The corrected gate classifies each allocation.
+Only memory already bound exclusively to GPU-read-only buffers can use shared
+transport. Transfer destinations, storage, shader-device-address, transform
+feedback, images, and unknown/unbound memory remain strict; unsafe bind after
+Map is rejected. General coherent device-to-host visibility is not claimed.
+
+Each eligible Map creates one exact-size memfd, seals its capacity, passes it
+once with SCM_RIGHTS, and uses pointer-free metadata opcodes 106--109. The
+service retains a private byte baseline and uploads only host-diverged spans
+before Submit. Strict map/flush/invalidate/unmap/submit costs 2/2/2/2/3 socket
+exchanges; eligible shared costs 1/1/1/1/1 with exact opcodes
+106/107/108/109/47. The existing GPU-writable fixture proves hybrid fallback
+stays on strict opcodes 49/48. Live guards reject a GPU-writable buffer bind and
+an image bind into an already active shared mirror.
+
+Noncoherent Map leaves contents undefined without implicit native Invalidate.
+Explicit partial Flush/Invalidate of bytes 257+7 copies exactly those bytes and
+expands the native maintenance range only to atom-aligned 256+256. Submit and
+Unmap do not flush noncoherent host changes. A lost Unmap acknowledgement
+always releases the local mapping, permanently poisons the connection, and a
+subsequent Vulkan call performs zero exchanges rather than reconnecting stale
+proxy IDs. Live fake contracts cover these paths. FD seal variants, stale and
+cross-device generations, duplicate maps, caps, setup-ack loss, and disconnect
+cleanup are source-audited rather than fault-injected live in this gate.
+An unrelated E038 fake-driver regression found during the full run was fixed by
+retaining the established fixed buffer identity outside explicit mirror mode;
+the external-memory receiver harness now also treats an early EOF as a bounded
+failure instead of spinning forever.
+
+The required `deja "BVB Vulkan mapped memory dirty range shared mirror submit
+flush"` query returned no indexed implementation. E077 reuses E034's mapped
+memory lifecycle and fake contract, Decision 0003's bounded shared data-plane
+direction, E014's sealed-size memfd and release/acquire discipline, E042's
+setup-only descriptor transfer, E060's typed ownership, and E075/E075a's
+strict/shared fail-closed setup model. No Activity/APK/launcher file changed;
+there is no tablet deployment, visible-frame, Tomb Raider, benchmark, or FPS
+claim.

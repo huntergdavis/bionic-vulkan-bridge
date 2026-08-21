@@ -179,3 +179,26 @@ exact deployed E076 service and producer-client hashes, correlates each producer
 `E076_FRAME_EXPECTED` RGBW sequence/slot with the Activity's
 `E057_FRAME_PRESENTED` generation/sequence/slot, and still leaves visual
 confirmation and screenshot status explicitly pending.
+
+E077 adds an independent, opt-in upload-memory data plane. With
+`BVB_MAPPED_MEMORY=shared`, only memory already bound exclusively to buffers
+whose usage proves GPU-read-only is eligible. Transfer-source, uniform,
+index, vertex, and indirect buffers qualify; unbound memory, every image,
+transfer destinations, storage, shader-device-address, and transform-feedback
+buffers keep the strict path. Bind-after-map checks prevent later widening an
+eligible mirror to GPU-writable use. This is deliberately not general coherent
+`vkMapMemory` support: device-to-host completion tracking remains deferred.
+
+An eligible Map passes one sealed-size memfd to the service. Fixed pointer-free
+opcodes 106--109 carry setup, Flush, Invalidate, and Unmap metadata. A private
+baseline makes Submit copy only host-diverged spans, so unchanged native bytes
+are not overwritten and no opcode-48 bulk writes occur. Noncoherent Map does
+not read or invalidate native memory; explicit Flush/Invalidate copy the exact
+caller span while native maintenance expands only to the required atom
+boundaries, and Unmap never flushes. Uncertain setup or Unmap acknowledgement
+permanently poisons the connection, releases local Unmap state, and forbids
+reconnecting stale proxies. The strict default measures 2/2/2/2/3
+map/flush/invalidate/unmap/submit exchanges; an eligible upload measures
+1/1/1/1/1 with opcodes 106/107/108/109/47, while an ineligible mapping still
+uses strict opcodes 49/48. This is a host upload-transport contract, not a
+tablet deployment, visible frame, Tomb Raider run, benchmark, or FPS result.

@@ -114,7 +114,11 @@ enum {
     BVB_OPCODE_VULKAN_COMMAND_BUFFER_CLEAR_COLOR_IMAGE = 103,
     BVB_OPCODE_VULKAN_COMMAND_STREAM_SETUP = 104,
     BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2_STREAM = 105,
-    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2_STREAM,
+    BVB_OPCODE_VULKAN_MEMORY_MIRROR_SETUP = 106,
+    BVB_OPCODE_VULKAN_MEMORY_MIRROR_FLUSH = 107,
+    BVB_OPCODE_VULKAN_MEMORY_MIRROR_INVALIDATE = 108,
+    BVB_OPCODE_VULKAN_MEMORY_MIRROR_UNMAP = 109,
+    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_MEMORY_MIRROR_UNMAP,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -228,6 +232,12 @@ enum {
             BVB_VULKAN_SUBMIT_2_STREAM_COMMAND_RECORD_SIZE,
     BVB_VULKAN_MEMORY_IO_PREFIX_SIZE = 24,
     BVB_VULKAN_MEMORY_IO_RESPONSE_PREFIX_SIZE = 8,
+    BVB_VULKAN_MEMORY_MIRROR_SETUP_SIZE = 40,
+    BVB_VULKAN_MEMORY_MIRROR_RANGE_SIZE = 40,
+    BVB_VULKAN_MEMORY_MIRROR_UNMAP_SIZE = 24,
+    BVB_VULKAN_MEMORY_MIRROR_CAPACITY = 64,
+    BVB_VULKAN_MEMORY_MIRROR_TOTAL_BYTES =
+        BVB_VULKAN_MAX_MEMORY_ALLOCATION_SIZE,
     BVB_EXTERNAL_MEMORY_IMPORT_REQUEST_SIZE = 16,
     BVB_EXTERNAL_SYNC_IMPORT_REQUEST_SIZE = 24,
     BVB_EXTERNAL_IMAGE_IMPORT_REQUEST_SIZE = 32,
@@ -927,6 +937,28 @@ struct bvb_vulkan_memory_io_response {
     uint32_t length;
 };
 
+struct bvb_vulkan_memory_mirror_setup_request {
+    uint64_t device_id;
+    uint64_t memory_id;
+    uint64_t generation;
+    uint64_t offset;
+    uint64_t length;
+};
+
+struct bvb_vulkan_memory_mirror_range_request {
+    uint64_t device_id;
+    uint64_t memory_id;
+    uint64_t generation;
+    uint64_t offset;
+    uint64_t size;
+};
+
+struct bvb_vulkan_memory_mirror_unmap_request {
+    uint64_t device_id;
+    uint64_t memory_id;
+    uint64_t generation;
+};
+
 /*
  * The fixed-width wire format is explicitly little-endian; C structure layout
  * never crosses the libc/process boundary.
@@ -1482,6 +1514,24 @@ int bvb_protocol_encode_vulkan_memory_io_response(
 int bvb_protocol_decode_vulkan_memory_io_response(
     const uint8_t *input, uint32_t input_length,
     struct bvb_vulkan_memory_io_response *response, const uint8_t **data);
+int bvb_protocol_encode_vulkan_memory_mirror_setup_request(
+    uint8_t output[BVB_VULKAN_MEMORY_MIRROR_SETUP_SIZE],
+    const struct bvb_vulkan_memory_mirror_setup_request *request);
+int bvb_protocol_decode_vulkan_memory_mirror_setup_request(
+    const uint8_t input[BVB_VULKAN_MEMORY_MIRROR_SETUP_SIZE],
+    struct bvb_vulkan_memory_mirror_setup_request *request);
+int bvb_protocol_encode_vulkan_memory_mirror_range_request(
+    uint8_t output[BVB_VULKAN_MEMORY_MIRROR_RANGE_SIZE],
+    const struct bvb_vulkan_memory_mirror_range_request *request);
+int bvb_protocol_decode_vulkan_memory_mirror_range_request(
+    const uint8_t input[BVB_VULKAN_MEMORY_MIRROR_RANGE_SIZE],
+    struct bvb_vulkan_memory_mirror_range_request *request);
+int bvb_protocol_encode_vulkan_memory_mirror_unmap_request(
+    uint8_t output[BVB_VULKAN_MEMORY_MIRROR_UNMAP_SIZE],
+    const struct bvb_vulkan_memory_mirror_unmap_request *request);
+int bvb_protocol_decode_vulkan_memory_mirror_unmap_request(
+    const uint8_t input[BVB_VULKAN_MEMORY_MIRROR_UNMAP_SIZE],
+    struct bvb_vulkan_memory_mirror_unmap_request *request);
 
 void bvb_wire_put_u16(uint8_t *output, uint16_t value);
 void bvb_wire_put_u32(uint8_t *output, uint32_t value);

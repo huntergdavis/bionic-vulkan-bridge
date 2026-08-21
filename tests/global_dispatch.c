@@ -98,6 +98,19 @@ static bool bvb_shared_command_stream_enabled(void) {
     return value != NULL && strcmp(value, "shared") == 0;
 }
 
+static bool bvb_shared_mapped_memory_enabled(void) {
+    const char *value = getenv("BVB_MAPPED_MEMORY");
+    return value != NULL && strcmp(value, "shared") == 0;
+}
+
+static bool bvb_keep_mapped_memory_enabled(void) {
+    return getenv("BVB_TEST_KEEP_MEMORY_MAPPED") != NULL;
+}
+
+static bool bvb_noncoherent_mapped_memory_enabled(void) {
+    return getenv("BVB_TEST_NONCOHERENT_MEMORY") != NULL;
+}
+
 static bool bvb_is_power_of_two(VkDeviceSize value) {
     return value != 0U && (value & (value - 1U)) == 0U;
 }
@@ -160,6 +173,11 @@ int main(void) {
     const bool shared_command_stream = bvb_shared_command_stream_enabled();
     const bool animated_wsi =
         shared_command_stream && getenv("BVB_TEST_ANIMATED_WSI") != NULL;
+    const bool shared_mapped_memory = bvb_shared_mapped_memory_enabled();
+    const bool keep_mapped_memory =
+        shared_mapped_memory || bvb_keep_mapped_memory_enabled();
+    const bool noncoherent_mapped_memory =
+        bvb_noncoherent_mapped_memory_enabled();
     uint32_t wsi_width = 2800U;
     uint32_t wsi_height = 1752U;
     uint32_t present_hold_ms = 0U;
@@ -1765,11 +1783,14 @@ int main(void) {
     for (uint32_t index = 0U; index < memory.memoryTypeCount; ++index) {
         const VkMemoryPropertyFlags flags =
             memory.memoryTypes[index].propertyFlags;
+        const VkMemoryPropertyFlags required_flags =
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+            (noncoherent_mapped_memory
+                 ? 0U : VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         if ((requirements.memoryTypeBits & (1U << index)) != 0U &&
-            (flags & (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
-                (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) {
+            (flags & required_flags) == required_flags &&
+            (!noncoherent_mapped_memory ||
+             (flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) == 0U)) {
             memory_type_index = index;
             break;
         }
@@ -1794,6 +1815,30 @@ int main(void) {
         CHECK(bvb_handle_serial(memory_id) == 1U);
     }
     CHECK(bind_buffer_memory(device, buffer, device_memory, 0U) == VK_SUCCESS);
+    VkBuffer upload_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory upload_memory = VK_NULL_HANDLE;
+    if (shared_mapped_memory) {
+        const VkBufferCreateInfo upload_buffer_info = {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = 4096U,
+            .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        };
+        CHECK(create_buffer(device, &upload_buffer_info, NULL,
+                            &upload_buffer) == VK_SUCCESS);
+        VkMemoryRequirements upload_requirements = {0};
+        get_buffer_memory_requirements(
+            device, upload_buffer, &upload_requirements);
+        const VkMemoryAllocateInfo upload_allocate_info = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .allocationSize = upload_requirements.size,
+            .memoryTypeIndex = memory_type_index,
+        };
+        CHECK(allocate_memory(device, &upload_allocate_info, NULL,
+                              &upload_memory) == VK_SUCCESS);
+        CHECK(bind_buffer_memory(device, upload_buffer, upload_memory, 0U) ==
+              VK_SUCCESS);
+    }
     VkBufferDeviceAddressInfo buffer_address_info = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
         .buffer = buffer,
@@ -2013,10 +2058,57 @@ int main(void) {
               device, &rejected_view_info, NULL, &rejected_view) ==
           VK_ERROR_FEATURE_NOT_PRESENT);
     CHECK(rejected_view == VK_NULL_HANDLE);
+    const VkDeviceMemory mapped_memory =
+        shared_mapped_memory ? upload_memory : device_memory;
     uint8_t *mapped = NULL;
-    CHECK(map_memory(device, device_memory, 0U, VK_WHOLE_SIZE, 0U,
+    const uint64_t exchanges_before_map =
+        bvb_global_dispatch_exchange_count();
+    CHECK(map_memory(device, mapped_memory, 0U, VK_WHOLE_SIZE, 0U,
                      (void **)&mapped) == VK_SUCCESS);
     CHECK(mapped != NULL);
+    if (noncoherent_mapped_memory) CHECK(mapped[0] == UINT8_C(0x00));
+    const uint64_t map_rtts =
+        bvb_global_dispatch_exchange_count() - exchanges_before_map;
+    const uint16_t map_opcode = bvb_global_dispatch_last_opcode();
+    uint64_t ineligible_map_rtts = 0U;
+    uint64_t ineligible_unmap_rtts = 0U;
+    uint16_t ineligible_map_opcode = 0U;
+    uint16_t ineligible_unmap_opcode = 0U;
+    if (shared_mapped_memory) {
+        void *ineligible_mapping = NULL;
+        const uint64_t before_ineligible_map =
+            bvb_global_dispatch_exchange_count();
+        CHECK(map_memory(device, device_memory, 0U, VK_WHOLE_SIZE, 0U,
+                         &ineligible_mapping) == VK_SUCCESS);
+        CHECK(ineligible_mapping != NULL);
+        ineligible_map_rtts = bvb_global_dispatch_exchange_count() -
+                              before_ineligible_map;
+        ineligible_map_opcode = bvb_global_dispatch_last_opcode();
+        const uint64_t before_ineligible_unmap =
+            bvb_global_dispatch_exchange_count();
+        unmap_memory(device, device_memory);
+        ineligible_unmap_rtts = bvb_global_dispatch_exchange_count() -
+                                before_ineligible_unmap;
+        ineligible_unmap_opcode = bvb_global_dispatch_last_opcode();
+        const VkBufferCreateInfo unsafe_buffer_info = {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = 4096U,
+            .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        };
+        VkBuffer unsafe_buffer = VK_NULL_HANDLE;
+        CHECK(create_buffer(device, &unsafe_buffer_info, NULL,
+                            &unsafe_buffer) == VK_SUCCESS);
+        CHECK(bind_buffer_memory(device, unsafe_buffer, upload_memory, 0U) !=
+              VK_SUCCESS);
+        destroy_buffer(device, unsafe_buffer, NULL);
+        VkImage unsafe_image = VK_NULL_HANDLE;
+        CHECK(create_image(device, &image_create_info, NULL, &unsafe_image) ==
+              VK_SUCCESS);
+        CHECK(bind_image_memory(device, unsafe_image, upload_memory, 0U) !=
+              VK_SUCCESS);
+        destroy_image(device, unsafe_image, NULL);
+    }
     uint8_t expected_mapping[4096];
     for (size_t index = 0U; index < sizeof(expected_mapping); ++index) {
         expected_mapping[index] = (uint8_t)(index ^ (index >> 4));
@@ -2024,21 +2116,58 @@ int main(void) {
     memcpy(mapped, expected_mapping, sizeof(expected_mapping));
     const VkMappedMemoryRange mapped_range = {
         .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
-        .memory = device_memory,
+        .memory = mapped_memory,
         .offset = 0U,
         .size = VK_WHOLE_SIZE,
     };
+    const uint64_t exchanges_before_flush =
+        bvb_global_dispatch_exchange_count();
     CHECK(flush_mapped_memory_ranges(device, 1U, &mapped_range) ==
           VK_SUCCESS);
+    const uint64_t flush_rtts =
+        bvb_global_dispatch_exchange_count() - exchanges_before_flush;
+    const uint16_t flush_opcode = bvb_global_dispatch_last_opcode();
     memset(mapped, 0, sizeof(expected_mapping));
+    const uint64_t exchanges_before_invalidate =
+        bvb_global_dispatch_exchange_count();
     CHECK(invalidate_mapped_memory_ranges(device, 1U, &mapped_range) ==
           VK_SUCCESS);
+    const uint64_t invalidate_rtts =
+        bvb_global_dispatch_exchange_count() - exchanges_before_invalidate;
+    const uint16_t invalidate_opcode = bvb_global_dispatch_last_opcode();
     uint32_t mapped_mismatches = 0U;
     for (size_t index = 0U; index < sizeof(expected_mapping); ++index) {
         if (mapped[index] != expected_mapping[index]) ++mapped_mismatches;
     }
     CHECK(mapped_mismatches == 0U);
-    unmap_memory(device, device_memory);
+    if (noncoherent_mapped_memory) {
+        const VkMappedMemoryRange partial_range = {
+            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+            .memory = mapped_memory,
+            .offset = 257U,
+            .size = 7U,
+        };
+        memset(mapped + 257U, UINT8_C(0x66), 7U);
+        CHECK(flush_mapped_memory_ranges(device, 1U, &partial_range) ==
+              VK_SUCCESS);
+        memset(mapped + 257U, 0, 7U);
+        CHECK(invalidate_mapped_memory_ranges(
+                  device, 1U, &partial_range) == VK_SUCCESS);
+        for (size_t index = 257U; index < 264U; ++index) {
+            CHECK(mapped[index] == UINT8_C(0x66));
+            expected_mapping[index] = UINT8_C(0x66);
+        }
+    }
+    uint64_t unmap_rtts = 0U;
+    uint16_t unmap_opcode = 0U;
+    if (!keep_mapped_memory) {
+        const uint64_t exchanges_before_unmap =
+            bvb_global_dispatch_exchange_count();
+        unmap_memory(device, mapped_memory);
+        unmap_rtts =
+            bvb_global_dispatch_exchange_count() - exchanges_before_unmap;
+        unmap_opcode = bvb_global_dispatch_last_opcode();
+    }
     const VkFenceCreateInfo fence_create_info = {
         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
     };
@@ -2150,6 +2279,9 @@ int main(void) {
     const uint64_t recording_rtts =
         exchanges_after_recording - exchanges_before_recording;
     CHECK(recording_rtts == (shared_command_stream ? 0U : 5U));
+    if (shared_mapped_memory) mapped[0] = UINT8_C(0x7b);
+    const uint64_t exchanges_before_submit =
+        bvb_global_dispatch_exchange_count();
     if (shared_command_stream) {
         const VkCommandBufferSubmitInfo replay_command = {
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
@@ -2169,14 +2301,62 @@ int main(void) {
         };
         CHECK(queue_submit(queue, 1U, &command_submit, fence) == VK_SUCCESS);
     }
+    const uint64_t submit_rtts =
+        bvb_global_dispatch_exchange_count() - exchanges_before_submit;
+    const uint16_t submit_opcode = bvb_global_dispatch_last_opcode();
     CHECK(get_fence_status(device, fence) == VK_SUCCESS);
     CHECK(wait_for_fences(device, 1U, &fence, VK_TRUE, UINT64_MAX) ==
           VK_SUCCESS);
-    uint32_t mismatched_words = UINT32_MAX;
+    uint32_t mismatched_words = 0U;
+    if (shared_mapped_memory) {
+        CHECK(invalidate_mapped_memory_ranges(
+                  device, 1U, &mapped_range) == VK_SUCCESS);
+        for (size_t index = 0U; index < sizeof(expected_mapping); ++index) {
+            const uint8_t expected = index == 0U
+                ? (noncoherent_mapped_memory ? UINT8_C(0x00)
+                                             : UINT8_C(0x7b))
+                : expected_mapping[index];
+            if (mapped[index] != expected) ++mismatched_words;
+        }
+        CHECK(mismatched_words == 0U);
+    }
+    mismatched_words = UINT32_MAX;
     CHECK(bvb_verify_memory_fill(
               device_memory, 0U, 4096U, UINT32_C(0xa5c3f00d),
               &mismatched_words) == 0);
     CHECK(mismatched_words == 0U);
+    if (noncoherent_mapped_memory) mapped[0] = UINT8_C(0x44);
+    if (keep_mapped_memory) {
+        const uint64_t exchanges_before_unmap =
+            bvb_global_dispatch_exchange_count();
+        unmap_memory(device, mapped_memory);
+        unmap_rtts =
+            bvb_global_dispatch_exchange_count() - exchanges_before_unmap;
+        unmap_opcode = bvb_global_dispatch_last_opcode();
+    }
+    if (getenv("BVB_TEST_DROP_MEMORY_UNMAP_ACK") != NULL) {
+        CHECK(bvb_memory_proxy_is_mapped(mapped_memory) == 0);
+        CHECK(bvb_global_dispatch_connection_is_open() == 0);
+        const uint64_t exchanges_before_poison_retry =
+            bvb_global_dispatch_exchange_count();
+        CHECK(get_fence_status(device, fence) ==
+              VK_ERROR_INITIALIZATION_FAILED);
+        CHECK(bvb_global_dispatch_exchange_count() ==
+              exchanges_before_poison_retry);
+        CHECK(bvb_global_dispatch_connection_is_open() == 0);
+        printf("PASS: E077 unmap lost-ack local_release=1 "
+               "connection_poisoned=1 poison_retry_rtts=0 "
+               "unmap_opcode=%u\n",
+               unmap_opcode);
+        return 0;
+    }
+    if (noncoherent_mapped_memory) {
+        mismatched_words = UINT32_MAX;
+        CHECK(bvb_verify_memory_fill(
+                  upload_memory, 0U, 4U, UINT32_C(0x03020100),
+                  &mismatched_words) == 0);
+        CHECK(mismatched_words == 0U);
+    }
     CHECK(reset_fences(device, 1U, &fence) == VK_SUCCESS);
     CHECK(get_fence_status(device, fence) == VK_NOT_READY);
     const VkSemaphoreTypeCreateInfo timeline_type = {
@@ -2318,6 +2498,10 @@ int main(void) {
     CHECK(reset_command_pool(device, command_pool, 0U) == VK_SUCCESS);
     free_command_buffers(device, command_pool, 1U, &command_buffer);
     destroy_command_pool(device, command_pool, NULL);
+    if (upload_buffer != VK_NULL_HANDLE)
+        destroy_buffer(device, upload_buffer, NULL);
+    if (upload_memory != VK_NULL_HANDLE)
+        free_memory(device, upload_memory, NULL);
     destroy_buffer(device, buffer, NULL);
     free_memory(device, device_memory, NULL);
     destroy_fence(device, fence, NULL);
@@ -2503,12 +2687,20 @@ int main(void) {
            "image=%llu image_view=%llu image_bytes=%llu "
            "image_allocation_bytes=%llu image_dedicated=%u,%u "
            "mapped_bytes=4096 mapped_mismatches=%u "
+           "memory_rtts=%llu,%llu,%llu,%llu,%llu "
+           "memory_opcodes=%u,%u,%u,%u,%u "
+           "ineligible_memory_rtts=%llu,%llu "
+           "ineligible_memory_opcodes=%u,%u "
            "fill_words=1024 mismatches=%u fence=%llu fence_before=1 "
            "fenced_submit=0 fence_after=0 fence_wait=0 fence_reset=0 "
            "fence_after_reset=1\n",
            hardware_mode ? "hardware"
                          : shared_command_stream ? "shared-command-stream"
-                                                 : "strict-fake",
+                         : noncoherent_mapped_memory
+                               ? "shared-noncoherent-memory"
+                         : shared_mapped_memory ? "shared-mapped-memory"
+                         : keep_mapped_memory ? "strict-mapped-memory"
+                                                : "strict-fake",
            api_version,
            (unsigned long long)instance_one_id,
            (unsigned long long)instance_two_id,
@@ -2541,7 +2733,18 @@ int main(void) {
            (unsigned long long)image_requirements_2.memoryRequirements.size,
            dedicated_requirements.prefersDedicatedAllocation,
            dedicated_requirements.requiresDedicatedAllocation,
-           mapped_mismatches, mismatched_words,
+           mapped_mismatches,
+           (unsigned long long)map_rtts,
+           (unsigned long long)flush_rtts,
+           (unsigned long long)invalidate_rtts,
+           (unsigned long long)unmap_rtts,
+           (unsigned long long)submit_rtts,
+           map_opcode, flush_opcode, invalidate_opcode, unmap_opcode,
+           submit_opcode,
+           (unsigned long long)ineligible_map_rtts,
+           (unsigned long long)ineligible_unmap_rtts,
+           ineligible_map_opcode, ineligible_unmap_opcode,
+           mismatched_words,
            (unsigned long long)fence_id);
     if (animated_wsi) {
         static const char *const colors[4] = {

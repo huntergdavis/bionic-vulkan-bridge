@@ -28,9 +28,11 @@ BVB_GLOBAL_EXPORT uint64_t bvb_buffer_proxy_id(VkBuffer buffer);
 BVB_GLOBAL_EXPORT uint64_t bvb_image_proxy_id(VkImage image);
 BVB_GLOBAL_EXPORT uint64_t bvb_image_view_proxy_id(VkImageView image_view);
 BVB_GLOBAL_EXPORT uint64_t bvb_memory_proxy_id(VkDeviceMemory memory);
+BVB_GLOBAL_EXPORT int bvb_memory_proxy_is_mapped(VkDeviceMemory memory);
 BVB_GLOBAL_EXPORT uint64_t bvb_fence_proxy_id(VkFence fence);
 BVB_GLOBAL_EXPORT uint64_t bvb_global_dispatch_exchange_count(void);
 BVB_GLOBAL_EXPORT uint16_t bvb_global_dispatch_last_opcode(void);
+BVB_GLOBAL_EXPORT int bvb_global_dispatch_connection_is_open(void);
 BVB_GLOBAL_EXPORT int bvb_verify_memory_fill(
     VkDeviceMemory memory, VkDeviceSize offset, VkDeviceSize size,
     uint32_t expected_word, uint32_t *mismatched_words);

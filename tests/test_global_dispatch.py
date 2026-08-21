@@ -19,7 +19,9 @@ def main() -> int:
         raise SystemExit(
             "usage: test_global_dispatch.py SERVICE CLIENT FAKE_LOADER "
             "[strict-fake|hardware|shared-command-stream|"
-            "shared-command-stream-non-success]"
+            "shared-command-stream-non-success|strict-mapped-memory|"
+            "shared-mapped-memory|shared-noncoherent-memory|"
+            "shared-memory-unmap-lost-ack]"
         )
     service, client, loader = map(
         lambda value: str(pathlib.Path(value).resolve()), sys.argv[1:4]
@@ -28,6 +30,8 @@ def main() -> int:
     if validation_mode not in (
         "strict-fake", "hardware", "shared-command-stream",
         "shared-command-stream-non-success",
+        "strict-mapped-memory", "shared-mapped-memory",
+        "shared-noncoherent-memory", "shared-memory-unmap-lost-ack",
     ):
         raise SystemExit(f"unsupported validation mode: {validation_mode}")
     with tempfile.TemporaryDirectory(prefix="bvb-e034-") as temporary:
@@ -51,6 +55,15 @@ def main() -> int:
             server_environment["BVB_FAKE_REAL_HARDWARE_VALUES"] = "1"
         if validation_mode == "shared-command-stream-non-success":
             server_environment["BVB_FAKE_QUEUE_SUBMIT2_FAIL_AT"] = "3"
+        if validation_mode in (
+            "shared-mapped-memory", "shared-noncoherent-memory",
+            "shared-memory-unmap-lost-ack",
+        ):
+            server_environment["BVB_FAKE_REQUIRE_MEMORY_MIRROR"] = "1"
+        if validation_mode == "shared-noncoherent-memory":
+            server_environment["BVB_FAKE_NONCOHERENT_MEMORY"] = "1"
+        if validation_mode == "strict-mapped-memory":
+            server_environment["BVB_FAKE_KEEP_MEMORY_MAPPED"] = "1"
         server = subprocess.Popen(
             [
                 service,
@@ -134,6 +147,29 @@ def main() -> int:
                 environment["BVB_EXPECT_STREAM_SUBMIT_FAILURE"] = "1"
             if validation_mode == "shared-command-stream":
                 environment["BVB_TEST_ANIMATED_WSI"] = "1"
+
+            if validation_mode in (
+                "shared-mapped-memory", "shared-noncoherent-memory",
+                "shared-memory-unmap-lost-ack",
+            ):
+                environment["BVB_MAPPED_MEMORY"] = "shared"
+            else:
+                environment["BVB_MAPPED_MEMORY"] = "strict"
+            if validation_mode in (
+                "strict-mapped-memory", "shared-mapped-memory",
+                "shared-noncoherent-memory", "shared-memory-unmap-lost-ack",
+            ):
+                environment["BVB_TEST_KEEP_MEMORY_MAPPED"] = "1"
+            else:
+                environment.pop("BVB_TEST_KEEP_MEMORY_MAPPED", None)
+            if validation_mode == "shared-noncoherent-memory":
+                environment["BVB_TEST_NONCOHERENT_MEMORY"] = "1"
+            else:
+                environment.pop("BVB_TEST_NONCOHERENT_MEMORY", None)
+            if validation_mode == "shared-memory-unmap-lost-ack":
+                environment["BVB_TEST_DROP_MEMORY_UNMAP_ACK"] = "1"
+            else:
+                environment.pop("BVB_TEST_DROP_MEMORY_UNMAP_ACK", None)
 
             sink_result = {}
 
@@ -252,6 +288,14 @@ def main() -> int:
                 else [0]
             )
             assert completed.stderr == ""
+            if validation_mode == "shared-memory-unmap-lost-ack":
+                assert completed.stdout == (
+                    "PASS: E077 unmap lost-ack local_release=1 "
+                    "connection_poisoned=1 poison_retry_rtts=0 "
+                    "unmap_opcode=109\n"
+                )
+                print(f"PASS: E077 global validation mode={validation_mode}")
+                return 0
             assert completed.stdout.startswith("PASS: global Vulkan discovery")
             expected_client_mode = (
                 "shared-command-stream" if shared_command_stream
@@ -289,6 +333,38 @@ def main() -> int:
             assert int(image_match.group(1)) >> 56 == 7
             assert "image_bytes=16384" in completed.stdout
             assert "mapped_bytes=4096 mapped_mismatches=0" in completed.stdout
+            assert (
+                "memory_rtts=1,1,1,1,1"
+                if validation_mode in (
+                    "shared-mapped-memory", "shared-noncoherent-memory"
+                )
+                else "memory_rtts=2,2,2,2,3"
+                if validation_mode == "strict-mapped-memory"
+                else "memory_rtts=2,2,2,2,1"
+            ) in completed.stdout
+            assert (
+                "memory_opcodes=106,107,108,109,47"
+                if validation_mode in (
+                    "shared-mapped-memory", "shared-noncoherent-memory"
+                )
+                else "memory_opcodes=49,48,49,48,47"
+                if validation_mode == "strict-mapped-memory"
+                else "memory_opcodes=49,48,49,48,105"
+                if validation_mode in (
+                    "shared-command-stream",
+                    "shared-command-stream-non-success",
+                )
+                else "memory_opcodes=49,48,49,48,47"
+            ) in completed.stdout
+            assert (
+                "ineligible_memory_rtts=2,2 "
+                "ineligible_memory_opcodes=49,48"
+                if validation_mode in (
+                    "shared-mapped-memory", "shared-noncoherent-memory"
+                )
+                else "ineligible_memory_rtts=0,0 "
+                     "ineligible_memory_opcodes=0,0"
+            ) in completed.stdout
             assert "fill_words=1024 mismatches=0" in completed.stdout
             assert "fence_before=1 fenced_submit=0 fence_after=0" in completed.stdout
             assert "fence_wait=0 fence_reset=0 fence_after_reset=1" in completed.stdout

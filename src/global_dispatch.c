@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -108,11 +109,14 @@ struct bvb_resource_proxy {
     uint64_t allocation_size;
     uint64_t mapped_offset;
     uint64_t mapped_size;
+    uint64_t mapped_generation;
+    uint64_t bound_memory_id;
     uint8_t *mapped_bytes;
     uint32_t buffer_usage;
     uint32_t subtype;
     enum bvb_object_type type;
     bool memory_bound;
+    bool mapped_shared;
     struct bvb_resource_proxy *next;
 };
 
@@ -155,6 +159,8 @@ struct bvb_global_client_state {
     uint64_t next_command_stream_sequence;
     uint64_t command_stream_slots[BVB_COMMAND_STREAM_SLOT_COUNT / 64U];
     bool command_stream_enabled;
+    bool memory_mirror_enabled;
+    bool connection_poisoned;
     uint64_t exchange_count;
     uint16_t last_opcode;
 };
@@ -168,6 +174,30 @@ static struct bvb_global_client_state bvb_global_client = {
     .next_surface_serial = 1U,
     .next_swapchain_generation = 1U,
 };
+
+static bool buffer_usage_is_upload_only(uint32_t usage) {
+    const uint32_t gpu_read_only =
+        VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
+        VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT |
+        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
+        VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
+        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
+        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
+    return usage != 0U && (usage & ~gpu_read_only) == 0U;
+}
+
+static bool memory_is_upload_only_locked(uint64_t memory_id) {
+    bool found = false;
+    for (const struct bvb_resource_proxy *state = bvb_global_client.resources;
+         state != NULL; state = state->next) {
+        if (state->bound_memory_id != memory_id) continue;
+        if (state->type != BVB_OBJECT_BUFFER ||
+            !buffer_usage_is_upload_only(state->buffer_usage))
+            return false;
+        found = true;
+    }
+    return found;
+}
 
 static const void *initial_dispatch_word(void) {
     return atomic_load(&bvb_icd_loader_active)
@@ -265,6 +295,20 @@ static bool command_stream_requested(void) {
     return mode != NULL && strcmp(mode, "shared") == 0;
 }
 
+static int mapped_memory_shared_requested(bool *shared) {
+    if (shared == NULL) return -EINVAL;
+    const char *mode = getenv("BVB_MAPPED_MEMORY");
+    if (mode == NULL || strcmp(mode, "strict") == 0) {
+        *shared = false;
+        return 0;
+    }
+    if (strcmp(mode, "shared") == 0) {
+        *shared = true;
+        return 0;
+    }
+    return -EINVAL;
+}
+
 static int setup_command_stream_locked(void) {
     if (!command_stream_requested()) return 0;
     int memory_fd = -1;
@@ -333,8 +377,15 @@ done:
 }
 
 static int connect_locked(void) {
+    if (bvb_global_client.connection_poisoned) return -EPIPE;
+    bool memory_mirror_enabled = false;
+    int result = mapped_memory_shared_requested(&memory_mirror_enabled);
+    if (result != 0) return result;
     if (bvb_global_client.socket_fd >= 0) {
-        return 0;
+        return bvb_global_client.memory_mirror_enabled ==
+                       memory_mirror_enabled
+                   ? 0
+                   : -EPROTO;
     }
     const char *socket_path = getenv("BVB_BRIDGE_SOCKET");
     if (socket_path == NULL || socket_path[0] != '/') {
@@ -372,7 +423,7 @@ static int connect_locked(void) {
         .minimum_version = BVB_PROTOCOL_VERSION,
         .maximum_version = BVB_PROTOCOL_VERSION,
     };
-    int result = bvb_protocol_encode_hello_request(request.payload, &hello);
+    result = bvb_protocol_encode_hello_request(request.payload, &hello);
     struct bvb_protocol_packet response = {0};
     if (result == 0) {
         result = exchange_locked(&request, &response);
@@ -400,6 +451,7 @@ static int connect_locked(void) {
         return result != 0 ? result : -EPROTONOSUPPORT;
     }
     bvb_global_client.service_flags = decoded.service_flags;
+    bvb_global_client.memory_mirror_enabled = memory_mirror_enabled;
     result = setup_command_stream_locked();
     if (result != 0) {
         (void)close(bvb_global_client.socket_fd);
@@ -798,6 +850,27 @@ BVB_GLOBAL_EXPORT uint64_t bvb_global_dispatch_exchange_count(void) {
     return count;
 }
 
+BVB_GLOBAL_EXPORT int bvb_memory_proxy_is_mapped(VkDeviceMemory memory) {
+    const uint64_t wire_id = non_dispatchable_wire_id(&memory, sizeof(memory));
+    int mapped = -1;
+    if (pthread_mutex_lock(&bvb_global_client.mutex) == 0) {
+        const struct bvb_resource_proxy *state =
+            resource_proxy_locked(wire_id, BVB_OBJECT_DEVICE_MEMORY);
+        mapped = state != NULL && state->mapped_bytes != NULL ? 1 : 0;
+        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    }
+    return mapped;
+}
+
+BVB_GLOBAL_EXPORT int bvb_global_dispatch_connection_is_open(void) {
+    int connected = -1;
+    if (pthread_mutex_lock(&bvb_global_client.mutex) == 0) {
+        connected = bvb_global_client.socket_fd >= 0 ? 1 : 0;
+        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    }
+    return connected;
+}
+
 BVB_GLOBAL_EXPORT uint16_t bvb_global_dispatch_last_opcode(void) {
     uint16_t opcode = 0U;
     if (pthread_mutex_lock(&bvb_global_client.mutex) == 0) {
@@ -953,13 +1026,26 @@ static void remove_command_pools_for_device_locked(uint64_t parent_id) {
     }
 }
 
+static void release_mapped_shadow_locked(struct bvb_resource_proxy *proxy) {
+    if (proxy == NULL || proxy->mapped_bytes == NULL) return;
+    if (proxy->mapped_shared)
+        (void)munmap(proxy->mapped_bytes, (size_t)proxy->mapped_size);
+    else
+        free(proxy->mapped_bytes);
+    proxy->mapped_bytes = NULL;
+    proxy->mapped_offset = 0U;
+    proxy->mapped_size = 0U;
+    proxy->mapped_generation = 0U;
+    proxy->mapped_shared = false;
+}
+
 static void remove_resource_proxy_locked(struct bvb_resource_proxy *target) {
     struct bvb_resource_proxy **cursor = &bvb_global_client.resources;
     while (*cursor != NULL) {
         struct bvb_resource_proxy *proxy = *cursor;
         if (proxy == target) {
             *cursor = proxy->next;
-            free(proxy->mapped_bytes);
+            release_mapped_shadow_locked(proxy);
             free(proxy);
             return;
         }
@@ -994,7 +1080,7 @@ static void remove_resources_for_device_locked(uint64_t parent_id) {
         struct bvb_resource_proxy *proxy = *cursor;
         if (proxy->parent_id == parent_id) {
             *cursor = proxy->next;
-            free(proxy->mapped_bytes);
+            release_mapped_shadow_locked(proxy);
             free(proxy);
         } else {
             cursor = &proxy->next;
@@ -4588,6 +4674,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateBuffer(
         create_info->size == 0U ||
         create_info->size > BVB_VULKAN_MAX_MEMORY_ALLOCATION_SIZE ||
         (create_info->usage != VK_BUFFER_USAGE_TRANSFER_DST_BIT &&
+         create_info->usage != VK_BUFFER_USAGE_TRANSFER_SRC_BIT &&
          (((create_info->usage &
             (VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT |
              VK_BUFFER_USAGE_TRANSFER_DST_BIT |
@@ -5091,7 +5178,9 @@ static VkResult VKAPI_CALL bvb_bridge_vkBindBufferMemory(
     VkResult vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
     if (buffer_state != NULL && memory_state != NULL &&
         buffer_state->parent_id == device_state->wire_id &&
-        memory_state->parent_id == device_state->wire_id) {
+        memory_state->parent_id == device_state->wire_id &&
+        (!memory_state->mapped_shared ||
+         buffer_usage_is_upload_only(buffer_state->buffer_usage))) {
         const struct bvb_vulkan_buffer_bind_request decoded = {
             .buffer_id = buffer_id,
             .memory_id = memory_id,
@@ -5103,7 +5192,10 @@ static VkResult VKAPI_CALL bvb_bridge_vkBindBufferMemory(
         if (result == 0) {
             vulkan_result = result_request_locked(
                 BVB_OPCODE_VULKAN_BUFFER_BIND, payload, sizeof(payload));
-            if (vulkan_result == VK_SUCCESS) buffer_state->memory_bound = true;
+            if (vulkan_result == VK_SUCCESS) {
+                buffer_state->memory_bound = true;
+                buffer_state->bound_memory_id = memory_id;
+            }
         }
     }
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
@@ -5370,7 +5462,8 @@ static VkResult VKAPI_CALL bvb_bridge_vkBindImageMemory(
     VkResult vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
     if (image_state != NULL && memory_state != NULL &&
         image_state->parent_id == device_state->wire_id &&
-        memory_state->parent_id == device_state->wire_id) {
+        memory_state->parent_id == device_state->wire_id &&
+        !memory_state->mapped_shared) {
         const struct bvb_vulkan_image_bind_request decoded = {
             .image_id = image_id,
             .memory_id = memory_id,
@@ -5382,6 +5475,8 @@ static VkResult VKAPI_CALL bvb_bridge_vkBindImageMemory(
         if (result == 0) {
             vulkan_result = result_request_locked(
                 BVB_OPCODE_VULKAN_IMAGE_BIND, payload, sizeof(payload));
+            if (vulkan_result == VK_SUCCESS)
+                image_state->bound_memory_id = memory_id;
         }
     }
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
@@ -5578,6 +5673,164 @@ static VkResult memory_read_locked(
     return VK_SUCCESS;
 }
 
+static VkResult setup_memory_mirror_locked(
+    const struct bvb_device_proxy *device_state,
+    struct bvb_resource_proxy *state, uint64_t offset, uint64_t length,
+    uint8_t **mapping, uint64_t *generation) {
+    if (device_state == NULL || state == NULL || mapping == NULL ||
+        generation == NULL || length == 0U || length > SIZE_MAX ||
+        connect_locked() != 0 || !bvb_global_client.memory_mirror_enabled)
+        return VK_ERROR_MEMORY_MAP_FAILED;
+    *mapping = NULL;
+    *generation = 0U;
+    uint64_t selected_generation = 0U;
+    const ssize_t random_bytes = syscall(
+        SYS_getrandom, &selected_generation, sizeof(selected_generation), 0);
+    if (random_bytes != (ssize_t)sizeof(selected_generation) ||
+        selected_generation == 0U)
+        return VK_ERROR_MEMORY_MAP_FAILED;
+    int memory_fd = (int)syscall(
+        SYS_memfd_create, "bvb-memory-mirror",
+        MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (memory_fd < 0) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    uint8_t *shared = MAP_FAILED;
+    int result = 0;
+    int32_t vulkan_result = VK_ERROR_MEMORY_MAP_FAILED;
+    if (ftruncate(memory_fd, (off_t)length) != 0) {
+        result = -errno;
+        goto done;
+    }
+    shared = mmap(NULL, (size_t)length, PROT_READ | PROT_WRITE,
+                  MAP_SHARED, memory_fd, 0);
+    if (shared == MAP_FAILED) {
+        result = -errno;
+        goto done;
+    }
+    if (fcntl(memory_fd, F_ADD_SEALS,
+              F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) != 0) {
+        result = -errno;
+        goto done;
+    }
+    const struct bvb_vulkan_memory_mirror_setup_request decoded = {
+        .device_id = device_state->wire_id,
+        .memory_id = state->wire_id,
+        .generation = selected_generation,
+        .offset = offset,
+        .length = length,
+    };
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_MEMORY_MIRROR_SETUP,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_MEMORY_MIRROR_SETUP_SIZE,
+    };
+    result = bvb_protocol_encode_vulkan_memory_mirror_setup_request(
+        request.payload, &decoded);
+    struct bvb_protocol_packet response = {0};
+    if (result == 0)
+        result = exchange_pass_fd_locked(&request, &response, memory_fd);
+    if (result == 0 &&
+        (response.header.status != 0 ||
+         response.header.payload_length != BVB_VULKAN_RESULT_SIZE))
+        result = response.header.status != 0 ? response.header.status
+                                             : -EPROTO;
+    if (result == 0)
+        result = bvb_protocol_decode_vulkan_result(
+            response.payload, &vulkan_result);
+    if (result == 0 && vulkan_result == VK_SUCCESS) {
+        atomic_thread_fence(memory_order_acquire);
+        *mapping = shared;
+        *generation = selected_generation;
+        shared = MAP_FAILED;
+    }
+done:
+    if (shared != MAP_FAILED) (void)munmap(shared, (size_t)length);
+    (void)close(memory_fd);
+    if (result != 0) {
+        if (bvb_global_client.socket_fd >= 0)
+            (void)close(bvb_global_client.socket_fd);
+        bvb_global_client.socket_fd = -1;
+        bvb_global_client.connection_poisoned = true;
+        return VK_ERROR_MEMORY_MAP_FAILED;
+    }
+    return (VkResult)vulkan_result;
+}
+
+static VkResult memory_mirror_range_locked(
+    const struct bvb_resource_proxy *state, uint64_t offset,
+    uint64_t size, bool invalidate) {
+    if (state == NULL || !state->mapped_shared ||
+        state->mapped_generation == 0U) return VK_ERROR_MEMORY_MAP_FAILED;
+    const struct bvb_vulkan_memory_mirror_range_request decoded = {
+        .device_id = state->parent_id,
+        .memory_id = state->wire_id,
+        .generation = state->mapped_generation,
+        .offset = offset,
+        .size = size,
+    };
+    uint8_t payload[BVB_VULKAN_MEMORY_MIRROR_RANGE_SIZE];
+    int result = bvb_protocol_encode_vulkan_memory_mirror_range_request(
+        payload, &decoded);
+    if (result == 0 && !invalidate)
+        atomic_thread_fence(memory_order_release);
+    VkResult vulkan_result = result == 0
+        ? result_request_locked(
+              invalidate ? BVB_OPCODE_VULKAN_MEMORY_MIRROR_INVALIDATE
+                         : BVB_OPCODE_VULKAN_MEMORY_MIRROR_FLUSH,
+              payload, sizeof(payload))
+        : VK_ERROR_MEMORY_MAP_FAILED;
+    if (vulkan_result == VK_SUCCESS && invalidate)
+        atomic_thread_fence(memory_order_acquire);
+    return vulkan_result;
+}
+
+static void unmap_memory_mirror_locked(
+    const struct bvb_resource_proxy *state) {
+    if (state == NULL || !state->mapped_shared ||
+        state->mapped_generation == 0U) return;
+    const struct bvb_vulkan_memory_mirror_unmap_request decoded = {
+        .device_id = state->parent_id,
+        .memory_id = state->wire_id,
+        .generation = state->mapped_generation,
+    };
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_MEMORY_MIRROR_UNMAP,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_MEMORY_MIRROR_UNMAP_SIZE,
+    };
+    int result = bvb_protocol_encode_vulkan_memory_mirror_unmap_request(
+        request.payload, &decoded);
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        ++bvb_global_client.exchange_count;
+        bvb_global_client.last_opcode = request.header.opcode;
+        result = bvb_transport_send(bvb_global_client.socket_fd, &request);
+        if (result == 0 &&
+            getenv("BVB_TEST_DROP_MEMORY_UNMAP_ACK") != NULL) {
+            (void)shutdown(bvb_global_client.socket_fd, SHUT_RDWR);
+            result = -ECONNRESET;
+        }
+        if (result == 0)
+            result = bvb_transport_receive(
+                bvb_global_client.socket_fd, &response);
+    }
+    if (result == 0 &&
+        (response.header.status != 0 || response.header.payload_length != 0U))
+        result = response.header.status != 0 ? response.header.status
+                                             : -EPROTO;
+    if (result != 0) {
+        if (bvb_global_client.socket_fd >= 0)
+            (void)close(bvb_global_client.socket_fd);
+        bvb_global_client.socket_fd = -1;
+        bvb_global_client.connection_poisoned = true;
+    }
+}
+
 static VkResult mapped_range_locked(
     struct bvb_resource_proxy *state, uint64_t offset, uint64_t size,
     bool read_from_native) {
@@ -5597,6 +5850,9 @@ static VkResult mapped_range_locked(
     }
     uint8_t *shadow =
         state->mapped_bytes + (size_t)(offset - state->mapped_offset);
+    if (state->mapped_shared)
+        return memory_mirror_range_locked(
+            state, offset, effective_size, read_from_native);
     return read_from_native
                ? memory_read_locked(state, offset, shadow, effective_size)
                : memory_write_locked(state, offset, shadow, effective_size);
@@ -5623,20 +5879,35 @@ static VkResult VKAPI_CALL bvb_bridge_vkMapMemory(
         state->mapped_bytes == NULL && effective_size != 0U &&
         offset <= state->allocation_size &&
         effective_size <= state->allocation_size - offset &&
-        effective_size <= SIZE_MAX) {
-        uint8_t *shadow = malloc((size_t)effective_size);
-        if (shadow == NULL) {
-            result = VK_ERROR_OUT_OF_HOST_MEMORY;
+        effective_size <= SIZE_MAX && connect_locked() == 0) {
+        uint8_t *shadow = NULL;
+        uint64_t generation = 0U;
+        const bool use_shared_mirror =
+            bvb_global_client.memory_mirror_enabled &&
+            memory_is_upload_only_locked(state->wire_id);
+        if (use_shared_mirror) {
+            result = setup_memory_mirror_locked(
+                device_state, state, offset, effective_size,
+                &shadow, &generation);
         } else {
-            result = memory_read_locked(state, offset, shadow, effective_size);
-            if (result == VK_SUCCESS) {
-                state->mapped_offset = offset;
-                state->mapped_size = effective_size;
-                state->mapped_bytes = shadow;
-                *data = shadow;
-            } else {
+            shadow = malloc((size_t)effective_size);
+            result = shadow == NULL
+                ? VK_ERROR_OUT_OF_HOST_MEMORY
+                : memory_read_locked(state, offset, shadow, effective_size);
+        }
+        if (result == VK_SUCCESS) {
+            state->mapped_offset = offset;
+            state->mapped_size = effective_size;
+            state->mapped_generation = generation;
+            state->mapped_bytes = shadow;
+            state->mapped_shared =
+                use_shared_mirror;
+            *data = shadow;
+        } else if (shadow != NULL) {
+            if (use_shared_mirror)
+                (void)munmap(shadow, (size_t)effective_size);
+            else
                 free(shadow);
-            }
         }
     }
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
@@ -5655,12 +5926,14 @@ static void VKAPI_CALL bvb_bridge_vkUnmapMemory(
         resource_proxy_locked(memory_id, BVB_OBJECT_DEVICE_MEMORY);
     if (state != NULL && state->parent_id == device_state->wire_id &&
         state->mapped_bytes != NULL) {
-        (void)mapped_range_locked(state, state->mapped_offset,
-                                  state->mapped_size, false);
-        free(state->mapped_bytes);
-        state->mapped_bytes = NULL;
-        state->mapped_offset = 0U;
-        state->mapped_size = 0U;
+        if (state->mapped_shared) {
+            unmap_memory_mirror_locked(state);
+            release_mapped_shadow_locked(state);
+        } else {
+            (void)mapped_range_locked(state, state->mapped_offset,
+                                      state->mapped_size, false);
+            release_mapped_shadow_locked(state);
+        }
     }
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
 }
@@ -5707,15 +5980,22 @@ static VkResult VKAPI_CALL bvb_bridge_vkInvalidateMappedMemoryRanges(
 }
 
 static VkResult flush_mapped_resources_locked(uint64_t device_id) {
+    bool shared_mapping = false;
     for (struct bvb_resource_proxy *state = bvb_global_client.resources;
          state != NULL; state = state->next) {
         if (state->type == BVB_OBJECT_DEVICE_MEMORY &&
-            state->parent_id == device_id && state->mapped_bytes != NULL) {
+            state->parent_id == device_id && state->mapped_bytes != NULL &&
+            !state->mapped_shared) {
             VkResult result = mapped_range_locked(
                 state, state->mapped_offset, state->mapped_size, false);
             if (result != VK_SUCCESS) return result;
+        } else if (state->type == BVB_OBJECT_DEVICE_MEMORY &&
+                   state->parent_id == device_id &&
+                   state->mapped_bytes != NULL && state->mapped_shared) {
+            shared_mapping = true;
         }
     }
+    if (shared_mapping) atomic_thread_fence(memory_order_release);
     return VK_SUCCESS;
 }
 

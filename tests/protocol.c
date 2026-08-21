@@ -98,7 +98,11 @@ int main(void) {
     CHECK(BVB_OPCODE_VULKAN_COMMAND_BUFFER_CLEAR_COLOR_IMAGE == 103);
     CHECK(BVB_OPCODE_VULKAN_COMMAND_STREAM_SETUP == 104);
     CHECK(BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2_STREAM == 105);
-    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2_STREAM);
+    CHECK(BVB_OPCODE_VULKAN_MEMORY_MIRROR_SETUP == 106);
+    CHECK(BVB_OPCODE_VULKAN_MEMORY_MIRROR_FLUSH == 107);
+    CHECK(BVB_OPCODE_VULKAN_MEMORY_MIRROR_INVALIDATE == 108);
+    CHECK(BVB_OPCODE_VULKAN_MEMORY_MIRROR_UNMAP == 109);
+    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_MEMORY_MIRROR_UNMAP);
 
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
@@ -1706,6 +1710,66 @@ int main(void) {
     CHECK(memory_io_response_decoded.length == sizeof(memory_bytes));
     CHECK(memcmp(memory_data_decoded, memory_bytes,
                  sizeof(memory_bytes)) == 0);
+
+    const struct bvb_vulkan_memory_mirror_setup_request mirror_setup = {
+        .device_id = UINT64_C(0x0300000000000001),
+        .memory_id = UINT64_C(0x0900000000000001),
+        .generation = UINT64_C(0x8877665544332211),
+        .offset = 256U,
+        .length = 8192U,
+    };
+    uint8_t mirror_setup_wire[BVB_VULKAN_MEMORY_MIRROR_SETUP_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_memory_mirror_setup_request(
+              mirror_setup_wire, &mirror_setup) == 0);
+    struct bvb_vulkan_memory_mirror_setup_request mirror_setup_decoded;
+    CHECK(bvb_protocol_decode_vulkan_memory_mirror_setup_request(
+              mirror_setup_wire, &mirror_setup_decoded) == 0);
+    CHECK(mirror_setup_decoded.generation == mirror_setup.generation);
+    CHECK(mirror_setup_decoded.offset == 256U);
+    bvb_wire_put_u64(mirror_setup_wire + 16, 0U);
+    CHECK(bvb_protocol_decode_vulkan_memory_mirror_setup_request(
+              mirror_setup_wire, &mirror_setup_decoded) == -EPROTO);
+    CHECK(bvb_protocol_encode_vulkan_memory_mirror_setup_request(
+              mirror_setup_wire, &mirror_setup) == 0);
+    bvb_wire_put_u64(mirror_setup_wire + 32,
+                     (uint64_t)BVB_VULKAN_MAX_MEMORY_ALLOCATION_SIZE + 1U);
+    CHECK(bvb_protocol_decode_vulkan_memory_mirror_setup_request(
+              mirror_setup_wire, &mirror_setup_decoded) == -EPROTO);
+
+    const struct bvb_vulkan_memory_mirror_range_request mirror_range = {
+        .device_id = mirror_setup.device_id,
+        .memory_id = mirror_setup.memory_id,
+        .generation = mirror_setup.generation,
+        .offset = 512U,
+        .size = 4096U,
+    };
+    uint8_t mirror_range_wire[BVB_VULKAN_MEMORY_MIRROR_RANGE_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_memory_mirror_range_request(
+              mirror_range_wire, &mirror_range) == 0);
+    struct bvb_vulkan_memory_mirror_range_request mirror_range_decoded;
+    CHECK(bvb_protocol_decode_vulkan_memory_mirror_range_request(
+              mirror_range_wire, &mirror_range_decoded) == 0);
+    CHECK(mirror_range_decoded.size == 4096U);
+    mirror_range_wire[7] = 4U;
+    CHECK(bvb_protocol_decode_vulkan_memory_mirror_range_request(
+              mirror_range_wire, &mirror_range_decoded) == -EPROTO);
+
+    const struct bvb_vulkan_memory_mirror_unmap_request mirror_unmap = {
+        .device_id = mirror_setup.device_id,
+        .memory_id = mirror_setup.memory_id,
+        .generation = mirror_setup.generation,
+    };
+    uint8_t mirror_unmap_wire[BVB_VULKAN_MEMORY_MIRROR_UNMAP_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_memory_mirror_unmap_request(
+              mirror_unmap_wire, &mirror_unmap) == 0);
+    struct bvb_vulkan_memory_mirror_unmap_request mirror_unmap_decoded;
+    CHECK(bvb_protocol_decode_vulkan_memory_mirror_unmap_request(
+              mirror_unmap_wire, &mirror_unmap_decoded) == 0);
+    CHECK(mirror_unmap_decoded.generation == mirror_unmap.generation);
+    bvb_wire_put_u64(mirror_unmap_wire + 8,
+                     UINT64_C(0x1300000000000001));
+    CHECK(bvb_protocol_decode_vulkan_memory_mirror_unmap_request(
+              mirror_unmap_wire, &mirror_unmap_decoded) == -EPROTO);
 
     const struct bvb_shared_batch_setup shared_setup = {
         .region_bytes = 4096U,

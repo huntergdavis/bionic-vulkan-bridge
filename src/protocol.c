@@ -3760,6 +3760,130 @@ int bvb_protocol_decode_vulkan_memory_io_response(
     return 0;
 }
 
+static int validate_memory_mirror_identity(
+    uint64_t device_id, uint64_t memory_id, uint64_t generation) {
+    return wire_id_is_type(device_id, 3U) &&
+                   wire_id_is_type(memory_id, 9U) && generation != 0U
+               ? 0
+               : -EINVAL;
+}
+
+int bvb_protocol_encode_vulkan_memory_mirror_setup_request(
+    uint8_t output[BVB_VULKAN_MEMORY_MIRROR_SETUP_SIZE],
+    const struct bvb_vulkan_memory_mirror_setup_request *request) {
+    if (output == NULL || request == NULL ||
+        validate_memory_mirror_identity(
+            request->device_id, request->memory_id,
+            request->generation) != 0 ||
+        request->length == 0U ||
+        request->length > BVB_VULKAN_MAX_MEMORY_ALLOCATION_SIZE ||
+        request->offset > UINT64_MAX - request->length) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u64(output, request->device_id);
+    bvb_wire_put_u64(output + 8, request->memory_id);
+    bvb_wire_put_u64(output + 16, request->generation);
+    bvb_wire_put_u64(output + 24, request->offset);
+    bvb_wire_put_u64(output + 32, request->length);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_memory_mirror_setup_request(
+    const uint8_t input[BVB_VULKAN_MEMORY_MIRROR_SETUP_SIZE],
+    struct bvb_vulkan_memory_mirror_setup_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    const struct bvb_vulkan_memory_mirror_setup_request decoded = {
+        .device_id = bvb_wire_get_u64(input),
+        .memory_id = bvb_wire_get_u64(input + 8),
+        .generation = bvb_wire_get_u64(input + 16),
+        .offset = bvb_wire_get_u64(input + 24),
+        .length = bvb_wire_get_u64(input + 32),
+    };
+    uint8_t validation[BVB_VULKAN_MEMORY_MIRROR_SETUP_SIZE];
+    if (bvb_protocol_encode_vulkan_memory_mirror_setup_request(
+            validation, &decoded) != 0 ||
+        memcmp(validation, input, sizeof(validation)) != 0) {
+        return -EPROTO;
+    }
+    *request = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_memory_mirror_range_request(
+    uint8_t output[BVB_VULKAN_MEMORY_MIRROR_RANGE_SIZE],
+    const struct bvb_vulkan_memory_mirror_range_request *request) {
+    if (output == NULL || request == NULL ||
+        validate_memory_mirror_identity(
+            request->device_id, request->memory_id,
+            request->generation) != 0 ||
+        request->size == 0U ||
+        request->size > BVB_VULKAN_MAX_MEMORY_ALLOCATION_SIZE ||
+        request->offset > UINT64_MAX - request->size) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u64(output, request->device_id);
+    bvb_wire_put_u64(output + 8, request->memory_id);
+    bvb_wire_put_u64(output + 16, request->generation);
+    bvb_wire_put_u64(output + 24, request->offset);
+    bvb_wire_put_u64(output + 32, request->size);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_memory_mirror_range_request(
+    const uint8_t input[BVB_VULKAN_MEMORY_MIRROR_RANGE_SIZE],
+    struct bvb_vulkan_memory_mirror_range_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    const struct bvb_vulkan_memory_mirror_range_request decoded = {
+        .device_id = bvb_wire_get_u64(input),
+        .memory_id = bvb_wire_get_u64(input + 8),
+        .generation = bvb_wire_get_u64(input + 16),
+        .offset = bvb_wire_get_u64(input + 24),
+        .size = bvb_wire_get_u64(input + 32),
+    };
+    uint8_t validation[BVB_VULKAN_MEMORY_MIRROR_RANGE_SIZE];
+    if (bvb_protocol_encode_vulkan_memory_mirror_range_request(
+            validation, &decoded) != 0 ||
+        memcmp(validation, input, sizeof(validation)) != 0) {
+        return -EPROTO;
+    }
+    *request = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_memory_mirror_unmap_request(
+    uint8_t output[BVB_VULKAN_MEMORY_MIRROR_UNMAP_SIZE],
+    const struct bvb_vulkan_memory_mirror_unmap_request *request) {
+    if (output == NULL || request == NULL ||
+        validate_memory_mirror_identity(
+            request->device_id, request->memory_id,
+            request->generation) != 0) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u64(output, request->device_id);
+    bvb_wire_put_u64(output + 8, request->memory_id);
+    bvb_wire_put_u64(output + 16, request->generation);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_memory_mirror_unmap_request(
+    const uint8_t input[BVB_VULKAN_MEMORY_MIRROR_UNMAP_SIZE],
+    struct bvb_vulkan_memory_mirror_unmap_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    const struct bvb_vulkan_memory_mirror_unmap_request decoded = {
+        .device_id = bvb_wire_get_u64(input),
+        .memory_id = bvb_wire_get_u64(input + 8),
+        .generation = bvb_wire_get_u64(input + 16),
+    };
+    uint8_t validation[BVB_VULKAN_MEMORY_MIRROR_UNMAP_SIZE];
+    if (bvb_protocol_encode_vulkan_memory_mirror_unmap_request(
+            validation, &decoded) != 0 ||
+        memcmp(validation, input, sizeof(validation)) != 0) {
+        return -EPROTO;
+    }
+    *request = decoded;
+    return 0;
+}
+
 int bvb_protocol_encode_hello_response(
     uint8_t output[BVB_HELLO_RESPONSE_SIZE],
     const struct bvb_hello_response *response) {

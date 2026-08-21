@@ -14,6 +14,22 @@ import time
 MFD_CLOEXEC = getattr(os, "MFD_CLOEXEC", 0x0001)
 
 
+def recv_exact(client: socket.socket, size: int,
+               process: subprocess.Popen, label: str) -> bytes:
+    response = b""
+    while len(response) < size:
+        chunk = client.recv(size - len(response))
+        if not chunk:
+            output, error = process.communicate(timeout=1)
+            raise AssertionError(
+                f"{label} closed before its response: "
+                f"returncode={process.returncode} stdout={output!r} "
+                f"stderr={error!r}"
+            )
+        response += chunk
+    return response
+
+
 def create_memfd(name: str) -> int:
     if hasattr(os, "memfd_create"):
         return os.memfd_create(name, MFD_CLOEXEC)
@@ -52,9 +68,7 @@ def main():
     rights = array.array("i", [descriptor])
     client.sendmsg([header + payload], [(socket.SOL_SOCKET, socket.SCM_RIGHTS,
                                          rights.tobytes())])
-    response = b""
-    while len(response) < 24:
-        response += client.recv(24 - len(response))
+    response = recv_exact(client, 24, process, "E036")
     client.close()
     os.close(descriptor)
     fields = struct.unpack("<IHHHHIIi", response)
@@ -95,9 +109,7 @@ def main():
         [sync_header + sync_payload],
         [(socket.SOL_SOCKET, socket.SCM_RIGHTS, sync_rights.tobytes())],
     )
-    sync_response = b""
-    while len(sync_response) < 24:
-        sync_response += sync_client.recv(24 - len(sync_response))
+    sync_response = recv_exact(sync_client, 24, sync_process, "E037")
     sync_client.close()
     os.close(sync_memory)
     os.close(sync_semaphore)
@@ -149,9 +161,7 @@ def main():
         [image_header + image_payload],
         [(socket.SOL_SOCKET, socket.SCM_RIGHTS, image_rights.tobytes())],
     )
-    image_response = b""
-    while len(image_response) < 24:
-        image_response += image_client.recv(24 - len(image_response))
+    image_response = recv_exact(image_client, 24, image_process, "E038")
     image_client.close()
     os.close(image_memory)
     os.close(image_semaphore)
@@ -197,9 +207,9 @@ def main():
         [fenced_header + image_payload],
         [(socket.SOL_SOCKET, socket.SCM_RIGHTS, fenced_rights.tobytes())],
     )
-    fenced_response = b""
-    while len(fenced_response) < 24:
-        fenced_response += fenced_client.recv(24 - len(fenced_response))
+    fenced_response = recv_exact(
+        fenced_client, 24, fenced_process, "E041"
+    )
     fenced_client.close()
     os.close(fenced_memory)
     fenced_fields = struct.unpack("<IHHHHIIi", fenced_response)

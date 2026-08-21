@@ -2251,6 +2251,105 @@ static int answer_vulkan_memory_read(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_memory_mirror_setup(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    int received_fd, struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL || received_fd < 0 ||
+        request->header.payload_length !=
+            BVB_VULKAN_MEMORY_MIRROR_SETUP_SIZE) {
+        if (received_fd >= 0) (void)close(received_fd);
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_memory_mirror_setup_request decoded;
+    int result = bvb_protocol_decode_vulkan_memory_mirror_setup_request(
+        request->payload, &decoded);
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_setup_memory_mirror(
+            context, &decoded, received_fd, &vulkan_result,
+            diagnostic, sizeof(diagnostic));
+    (void)close(received_fd);
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_result(
+            response.payload, vulkan_result);
+    if (result == 0)
+        response.header.payload_length = BVB_VULKAN_RESULT_SIZE;
+    else {
+        fprintf(stderr, "bvb: memory mirror setup failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_memory_mirror_range(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_MEMORY_MIRROR_RANGE_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_memory_mirror_range_request decoded;
+    int result = bvb_protocol_decode_vulkan_memory_mirror_range_request(
+        request->payload, &decoded);
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    char diagnostic[512] = {0};
+    if (result == 0 && request->header.opcode ==
+                           BVB_OPCODE_VULKAN_MEMORY_MIRROR_FLUSH)
+        result = bvb_vulkan_global_context_flush_memory_mirror(
+            context, &decoded, &vulkan_result, diagnostic,
+            sizeof(diagnostic));
+    else if (result == 0 && request->header.opcode ==
+                                BVB_OPCODE_VULKAN_MEMORY_MIRROR_INVALIDATE)
+        result = bvb_vulkan_global_context_invalidate_memory_mirror(
+            context, &decoded, &vulkan_result, diagnostic,
+            sizeof(diagnostic));
+    else if (result == 0)
+        result = -EPROTO;
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_result(
+            response.payload, vulkan_result);
+    if (result == 0)
+        response.header.payload_length = BVB_VULKAN_RESULT_SIZE;
+    else {
+        fprintf(stderr, "bvb: memory mirror range failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_memory_mirror_unmap(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_MEMORY_MIRROR_UNMAP_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_memory_mirror_unmap_request decoded;
+    int result = bvb_protocol_decode_vulkan_memory_mirror_unmap_request(
+        request->payload, &decoded);
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_unmap_memory_mirror(
+            context, &decoded, diagnostic, sizeof(diagnostic));
+    if (result != 0) {
+        fprintf(stderr, "bvb: memory mirror unmap failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_fence_operation(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context) {
@@ -2981,7 +3080,9 @@ static int serve_connection(int client_fd, const char *loader_path,
             (received_fd >= 0 &&
              request.header.opcode != BVB_OPCODE_SHARED_BATCH_SETUP &&
              request.header.opcode !=
-                 BVB_OPCODE_VULKAN_COMMAND_STREAM_SETUP)) {
+                 BVB_OPCODE_VULKAN_COMMAND_STREAM_SETUP &&
+             request.header.opcode !=
+                 BVB_OPCODE_VULKAN_MEMORY_MIRROR_SETUP)) {
             if (received_fd >= 0) {
                 (void)close(received_fd);
             }
@@ -3238,6 +3339,22 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_MEMORY_READ) {
             result = answer_vulkan_memory_read(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_MEMORY_MIRROR_SETUP) {
+            result = answer_vulkan_memory_mirror_setup(
+                client_fd, &request, negotiated, received_fd,
+                global_context);
+            received_fd = -1;
+        } else if (request.header.opcode ==
+                       BVB_OPCODE_VULKAN_MEMORY_MIRROR_FLUSH ||
+                   request.header.opcode ==
+                       BVB_OPCODE_VULKAN_MEMORY_MIRROR_INVALIDATE) {
+            result = answer_vulkan_memory_mirror_range(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_MEMORY_MIRROR_UNMAP) {
+            result = answer_vulkan_memory_mirror_unmap(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode == BVB_OPCODE_VULKAN_FENCE_STATUS ||
                    request.header.opcode == BVB_OPCODE_VULKAN_FENCE_RESET) {

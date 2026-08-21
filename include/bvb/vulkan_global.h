@@ -188,7 +188,7 @@ int bvb_vulkan_global_context_end_command_buffer(
     uint64_t command_buffer_id, int32_t *vulkan_result,
     char *error, size_t error_size);
 int bvb_vulkan_global_context_queue_submit_command(
-    const struct bvb_vulkan_global_context *context,
+    struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_queue_submit_command_request *request,
     int32_t *vulkan_result, char *error, size_t error_size);
 int bvb_vulkan_global_context_create_buffer(
@@ -253,7 +253,7 @@ int bvb_vulkan_global_context_get_image_requirements_2(
     struct bvb_vulkan_image_requirements_2_response *response,
     char *error, size_t error_size);
 int bvb_vulkan_global_context_bind_image_memory(
-    const struct bvb_vulkan_global_context *context,
+    struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_image_bind_request *request,
     int32_t *vulkan_result, char *error, size_t error_size);
 int bvb_vulkan_global_context_create_image_view(
@@ -305,6 +305,22 @@ int bvb_vulkan_global_context_read_memory(
     const struct bvb_vulkan_memory_io_request *request, uint8_t *data,
     uint32_t capacity, uint32_t *length, int32_t *vulkan_result,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_setup_memory_mirror(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_mirror_setup_request *request,
+    int mirror_fd, int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_flush_memory_mirror(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_mirror_range_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_invalidate_memory_mirror(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_mirror_range_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_unmap_memory_mirror(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_mirror_unmap_request *request,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_create_fence(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_fence_create_request *request,
@@ -344,11 +360,11 @@ int bvb_vulkan_global_context_signal_semaphore(
     const struct bvb_vulkan_semaphore_signal_request *request,
     int32_t *vulkan_result, char *error, size_t error_size);
 int bvb_vulkan_global_context_queue_submit_2(
-    const struct bvb_vulkan_global_context *context,
+    struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_queue_submit_2_request *request,
     int32_t *vulkan_result, char *error, size_t error_size);
 int bvb_vulkan_global_context_queue_submit_command_fence(
-    const struct bvb_vulkan_global_context *context,
+    struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_queue_submit_command_fence_request *request,
     int32_t *vulkan_result, char *error, size_t error_size);
 int bvb_vulkan_global_context_prepare_swapchain(
