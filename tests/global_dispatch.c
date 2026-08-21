@@ -535,9 +535,14 @@ int main(void) {
               physical_device, NULL, &device_extension_count,
               device_extensions) == VK_SUCCESS);
     CHECK(device_extension_count == available_device_extension_count);
+    bool swapchain_extension_found = false;
     for (uint32_t index = 0U; index < device_extension_count; ++index) {
         CHECK(device_extensions[index].extensionName[0] != '\0');
+        swapchain_extension_found |=
+            strcmp(device_extensions[index].extensionName,
+                   VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0;
     }
+    CHECK(swapchain_extension_found);
     CHECK(enumerate_device_extensions(
               physical_device, "VK_LAYER_not_exposed",
               &device_extension_count, NULL) == VK_ERROR_LAYER_NOT_PRESENT);
@@ -698,6 +703,62 @@ int main(void) {
     CHECK(erased != NULL);
     memcpy(&reset_fences, &erased, sizeof(reset_fences));
     CHECK(vkGetDeviceProcAddr(device, "vkCmdDraw") != NULL);
+    PFN_vkCreateSwapchainKHR create_swapchain = NULL;
+    PFN_vkDestroySwapchainKHR destroy_swapchain = NULL;
+    PFN_vkGetSwapchainImagesKHR get_swapchain_images = NULL;
+    PFN_vkAcquireNextImageKHR acquire_next_image = NULL;
+    PFN_vkAcquireNextImage2KHR acquire_next_image2 = NULL;
+    PFN_vkQueuePresentKHR queue_present = NULL;
+#define RESOLVE_WSI(entry_name, variable)                                    \
+    do {                                                                      \
+        erased = vkGetDeviceProcAddr(device, #entry_name);                   \
+        CHECK(erased != NULL);                                                \
+        memcpy(&(variable), &erased, sizeof(variable));                       \
+    } while (0)
+    RESOLVE_WSI(vkCreateSwapchainKHR, create_swapchain);
+    RESOLVE_WSI(vkDestroySwapchainKHR, destroy_swapchain);
+    RESOLVE_WSI(vkGetSwapchainImagesKHR, get_swapchain_images);
+    RESOLVE_WSI(vkAcquireNextImageKHR, acquire_next_image);
+    RESOLVE_WSI(vkAcquireNextImage2KHR, acquire_next_image2);
+    RESOLVE_WSI(vkQueuePresentKHR, queue_present);
+#undef RESOLVE_WSI
+    const VkSwapchainCreateInfoKHR swapchain_create_info = {
+        .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+        .surface = surface,
+        .minImageCount = 2U,
+        .imageFormat = VK_FORMAT_B8G8R8A8_UNORM,
+        .imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
+        .imageExtent = {2800U, 1752U},
+        .imageArrayLayers = 1U,
+        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
+        .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+        .presentMode = VK_PRESENT_MODE_FIFO_KHR,
+        .clipped = VK_TRUE,
+    };
+    VkSwapchainKHR unavailable_swapchain = VK_NULL_HANDLE;
+    CHECK(create_swapchain(device, &swapchain_create_info, NULL,
+                           &unavailable_swapchain) ==
+          VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(unavailable_swapchain == VK_NULL_HANDLE);
+    uint32_t unavailable_image_count = UINT32_MAX;
+    CHECK(get_swapchain_images(device, VK_NULL_HANDLE,
+                               &unavailable_image_count, NULL) ==
+          VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(unavailable_image_count == 0U);
+    uint32_t unavailable_image_index = UINT32_MAX;
+    CHECK(acquire_next_image(device, VK_NULL_HANDLE, 0U, VK_NULL_HANDLE,
+                             VK_NULL_HANDLE, &unavailable_image_index) ==
+          VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(unavailable_image_index == 0U);
+    const VkAcquireNextImageInfoKHR acquire_info = {
+        .sType = VK_STRUCTURE_TYPE_ACQUIRE_NEXT_IMAGE_INFO_KHR,
+    };
+    CHECK(acquire_next_image2(device, &acquire_info,
+                              &unavailable_image_index) ==
+          VK_ERROR_FEATURE_NOT_PRESENT);
+    destroy_swapchain(device, VK_NULL_HANDLE, NULL);
     VkQueue queue = VK_NULL_HANDLE;
     get_device_queue(device, queue_family_index, 0U, &queue);
     CHECK(queue != VK_NULL_HANDLE);
@@ -707,6 +768,11 @@ int main(void) {
     VkQueue repeated_queue = VK_NULL_HANDLE;
     get_device_queue(device, queue_family_index, 0U, &repeated_queue);
     CHECK(repeated_queue == queue);
+    const VkPresentInfoKHR unavailable_present = {
+        .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+    };
+    CHECK(queue_present(queue, &unavailable_present) ==
+          VK_ERROR_FEATURE_NOT_PRESENT);
     CHECK(queue_submit(queue, 0U, NULL, VK_NULL_HANDLE) == VK_SUCCESS);
     const VkSubmitInfo unsupported_submit = {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,

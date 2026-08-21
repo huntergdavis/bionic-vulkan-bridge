@@ -531,18 +531,28 @@ static VkResult VKAPI_CALL fake_enumerate_device_extensions(
         "VK_KHR_external_semaphore_fd",
         "VK_KHR_dynamic_rendering",
     };
-    const uint32_t available = (uint32_t)(sizeof(names) / sizeof(names[0]));
+    const bool hide_swapchain = getenv("BVB_FAKE_HIDE_SWAPCHAIN") != NULL;
+    const uint32_t name_count =
+        (uint32_t)(sizeof(names) / sizeof(names[0]));
+    const uint32_t available = name_count - (hide_swapchain ? 1U : 0U);
     if (properties == NULL) {
         *count = available;
         return VK_SUCCESS;
     }
-    uint32_t written = *count < available ? *count : available;
-    for (uint32_t index = 0; index < written; ++index) {
-        memset(&properties[index], 0, sizeof(properties[index]));
-        (void)snprintf(properties[index].extensionName,
-                       sizeof(properties[index].extensionName), "%s",
+    const uint32_t capacity = *count;
+    uint32_t written = 0U;
+    for (uint32_t index = 0U;
+         index < name_count && written < capacity; ++index) {
+        if (hide_swapchain &&
+            strcmp(names[index], VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0) {
+            continue;
+        }
+        memset(&properties[written], 0, sizeof(properties[written]));
+        (void)snprintf(properties[written].extensionName,
+                       sizeof(properties[written].extensionName), "%s",
                        names[index]);
-        properties[index].specVersion = 1;
+        properties[written].specVersion = 1;
+        ++written;
     }
     *count = written;
     return written < available ? VK_INCOMPLETE : VK_SUCCESS;
@@ -590,6 +600,10 @@ static VkResult VKAPI_CALL fake_create_device(
                 strcmp(create_info->ppEnabledExtensionNames[index],
                        "VK_KHR_swapchain") == 0;
         }
+    }
+    if (getenv("BVB_FAKE_HIDE_SWAPCHAIN") != NULL &&
+        fake_swapchain_enabled != 0) {
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
     }
     *device = (VkDevice)(uintptr_t)0x3000U;
     return VK_SUCCESS;

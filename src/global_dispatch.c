@@ -40,6 +40,9 @@ struct bvb_physical_device_proxy {
     uint64_t magic;
     uint64_t wire_id;
     uint64_t parent_id;
+    VkExtensionProperties *device_extensions;
+    uint32_t device_extension_count;
+    bool device_extensions_valid;
     struct bvb_physical_device_proxy *next;
 };
 
@@ -49,6 +52,7 @@ struct bvb_device_proxy {
     uint64_t wire_id;
     uint64_t parent_id;
     uint64_t instance_id;
+    bool virtual_swapchain_enabled;
     struct bvb_device_proxy *next;
 };
 
@@ -96,6 +100,7 @@ struct bvb_global_client_state {
     pthread_mutex_t mutex;
     int socket_fd;
     uint32_t next_request_id;
+    uint32_t service_flags;
     bool info_valid;
     struct bvb_vulkan_global_info info;
     struct bvb_physical_device_proxy *physical_devices;
@@ -235,6 +240,7 @@ static int connect_locked(void) {
         bvb_global_client.socket_fd = -1;
         return result != 0 ? result : -EPROTONOSUPPORT;
     }
+    bvb_global_client.service_flags = decoded.service_flags;
     return 0;
 }
 
@@ -684,6 +690,7 @@ static void remove_physical_proxies_locked(uint64_t parent_id) {
         if (proxy->parent_id == parent_id) {
             *cursor = proxy->next;
             proxy->magic = 0U;
+            free(proxy->device_extensions);
             free(proxy);
         } else {
             cursor = &proxy->next;
@@ -1536,6 +1543,78 @@ static int extension_page_locked(
     return result;
 }
 
+static int device_extensions_locked(
+    struct bvb_physical_device_proxy *proxy,
+    const VkExtensionProperties **properties, uint32_t *count) {
+    if (proxy == NULL || properties == NULL || count == NULL) return -EINVAL;
+    if (!proxy->device_extensions_valid) {
+        struct bvb_vulkan_extension_page page = {0};
+        int result = extension_page_locked(proxy, 0U, 0U, &page);
+        if (result != 0) return result;
+        if (page.vulkan_result != VK_SUCCESS ||
+            page.total_count > BVB_VULKAN_MAX_DEVICE_EXTENSIONS) {
+            return -EPROTO;
+        }
+        const uint32_t raw_count = page.total_count;
+        const bool virtual_wsi =
+            (bvb_global_client.service_flags &
+             BVB_SERVICE_ACTIVITY_INGRESS) != 0U;
+        const uint32_t allocation_count =
+            raw_count + (virtual_wsi ? 1U : 0U);
+        VkExtensionProperties *loaded =
+            allocation_count == 0U
+                ? NULL
+                : calloc(allocation_count, sizeof(*loaded));
+        if (allocation_count != 0U && loaded == NULL) return -ENOMEM;
+
+        uint32_t raw_offset = 0U;
+        uint32_t exposed_count = 0U;
+        bool swapchain_found = false;
+        while (result == 0 && raw_offset < raw_count) {
+            uint32_t requested = raw_count - raw_offset;
+            if (requested > BVB_VULKAN_EXTENSION_PAGE_CAPACITY) {
+                requested = BVB_VULKAN_EXTENSION_PAGE_CAPACITY;
+            }
+            result = extension_page_locked(
+                proxy, raw_offset, requested, &page);
+            if (result != 0 || page.vulkan_result != VK_SUCCESS ||
+                page.total_count != raw_count ||
+                page.first != raw_offset || page.count == 0U ||
+                page.count > requested) {
+                result = result != 0 ? result : -EPROTO;
+                break;
+            }
+            for (uint32_t index = 0U; index < page.count; ++index) {
+                const VkExtensionProperties *property =
+                    &page.properties[index];
+                if (strcmp(property->extensionName,
+                           VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0) {
+                    swapchain_found = true;
+                }
+                loaded[exposed_count++] = *property;
+            }
+            raw_offset += page.count;
+        }
+        if (result == 0 && virtual_wsi && !swapchain_found) {
+            VkExtensionProperties *property = &loaded[exposed_count++];
+            (void)snprintf(property->extensionName,
+                           sizeof(property->extensionName), "%s",
+                           VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+            property->specVersion = VK_KHR_SWAPCHAIN_SPEC_VERSION;
+        }
+        if (result != 0) {
+            free(loaded);
+            return result;
+        }
+        proxy->device_extensions = loaded;
+        proxy->device_extension_count = exposed_count;
+        proxy->device_extensions_valid = true;
+    }
+    *properties = proxy->device_extensions;
+    *count = proxy->device_extension_count;
+    return 0;
+}
+
 static VkResult VKAPI_CALL bvb_bridge_vkEnumerateDeviceExtensionProperties(
     VkPhysicalDevice physical_device, const char *layer_name,
     uint32_t *property_count, VkExtensionProperties *properties) {
@@ -1552,40 +1631,22 @@ static VkResult VKAPI_CALL bvb_bridge_vkEnumerateDeviceExtensionProperties(
         pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    struct bvb_vulkan_extension_page page;
-    int result = extension_page_locked(proxy, 0U, 0U, &page);
-    VkResult vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    const VkExtensionProperties *available_properties = NULL;
     uint32_t available = 0U;
-    if (result == 0) {
-        vulkan_result = (VkResult)page.vulkan_result;
-        available = page.total_count;
-    }
-    if (result == 0 && vulkan_result == VK_SUCCESS && properties != NULL) {
-        const uint32_t target = capacity < available ? capacity : available;
-        uint32_t written = 0U;
-        while (written < target) {
-            uint32_t requested = target - written;
-            if (requested > BVB_VULKAN_EXTENSION_PAGE_CAPACITY) {
-                requested = BVB_VULKAN_EXTENSION_PAGE_CAPACITY;
-            }
-            result = extension_page_locked(
-                proxy, written, requested, &page);
-            if (result != 0 || page.vulkan_result != VK_SUCCESS ||
-                page.total_count != available || page.first != written ||
-                page.count == 0U || page.count > requested) {
-                result = result != 0 ? result : -EPROTO;
-                break;
-            }
-            memcpy(properties + written, page.properties,
-                   page.count * sizeof(*properties));
-            written += page.count;
+    int result = device_extensions_locked(
+        proxy, &available_properties, &available);
+    VkResult vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    if (result == 0 && properties != NULL) {
+        const uint32_t written = capacity < available ? capacity : available;
+        if (written != 0U) {
+            memcpy(properties, available_properties,
+                   written * sizeof(*properties));
         }
         *property_count = written;
-        if (result == 0) {
-            vulkan_result = capacity < available ? VK_INCOMPLETE : VK_SUCCESS;
-        }
-    } else if (result == 0 && vulkan_result == VK_SUCCESS) {
+        vulkan_result = capacity < available ? VK_INCOMPLETE : VK_SUCCESS;
+    } else if (result == 0) {
         *property_count = available;
+        vulkan_result = VK_SUCCESS;
     }
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
     return result == 0 ? vulkan_result : VK_ERROR_INITIALIZATION_FAILED;
@@ -2201,6 +2262,22 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
             return VK_ERROR_EXTENSION_NOT_PRESENT;
         }
     }
+    const char *native_extensions[BVB_VULKAN_MAX_ENABLED_EXTENSIONS] = {0};
+    uint32_t native_extension_count = 0U;
+    bool virtual_swapchain_requested = false;
+    const bool virtual_wsi_available =
+        (bvb_global_client.service_flags &
+         BVB_SERVICE_ACTIVITY_INGRESS) != 0U;
+    for (uint32_t index = 0U;
+         index < create_info->enabledExtensionCount; ++index) {
+        const char *name = create_info->ppEnabledExtensionNames[index];
+        if (virtual_wsi_available &&
+            strcmp(name, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0) {
+            virtual_swapchain_requested = true;
+        } else {
+            native_extensions[native_extension_count++] = name;
+        }
+    }
     if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
         for (uint32_t index = 0U;
              index < create_info->enabledExtensionCount; ++index) {
@@ -2217,7 +2294,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
         .flags = create_info->flags,
         .queue_create_info_count = create_info->queueCreateInfoCount,
         .enabled_layer_count = create_info->enabledLayerCount,
-        .enabled_extension_count = create_info->enabledExtensionCount,
+        .enabled_extension_count = native_extension_count,
     };
     for (uint32_t index = 0U;
          index < create_info->queueCreateInfoCount; ++index) {
@@ -2265,8 +2342,8 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
         }
     }
     for (uint32_t index = 0U;
-         index < create_info->enabledExtensionCount; ++index) {
-        const char *name = create_info->ppEnabledExtensionNames[index];
+         index < native_extension_count; ++index) {
+        const char *name = native_extensions[index];
         const char *terminator = memchr(
             name, '\0', BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE);
         const size_t length = (size_t)(terminator - name) + 1U;
@@ -2274,8 +2351,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
     }
     const bool use_packed = create_info->queueCreateInfoCount != 1U ||
         create_info->pQueueCreateInfos[0].queueCount != 1U ||
-        create_info->enabledExtensionCount >
-            BVB_VULKAN_MAX_ENABLED_EXTENSIONS;
+        native_extension_count > BVB_VULKAN_MAX_ENABLED_EXTENSIONS;
     if (use_packed && create_info->pNext != NULL) {
         return VK_ERROR_FEATURE_NOT_PRESENT;
     }
@@ -2291,7 +2367,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
         .queue_count = queue_info->queueCount,
         .queue_priority_bits = packed.queue_priority_bits[0],
         .enabled_layer_count = create_info->enabledLayerCount,
-        .enabled_extension_count = create_info->enabledExtensionCount,
+        .enabled_extension_count = native_extension_count,
     };
     if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
         free(proxy);
@@ -2304,7 +2380,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
         .kind = BVB_PROTOCOL_REQUEST,
         .opcode = use_packed
                       ? BVB_OPCODE_VULKAN_DEVICE_CREATE_PACKED
-                      : (create_info->enabledExtensionCount == 0U
+                      : (native_extension_count == 0U
                              ? BVB_OPCODE_VULKAN_DEVICE_CREATE
                              : BVB_OPCODE_VULKAN_DEVICE_CREATE_EXTENDED),
         .request_id = next_request_id_locked(),
@@ -2313,7 +2389,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
         if (use_packed) {
             result = bvb_protocol_encode_vulkan_device_create_packed_request(
                 request.payload, &packed, &request.header.payload_length);
-        } else if (create_info->enabledExtensionCount == 0U) {
+        } else if (native_extension_count == 0U) {
             request.header.payload_length =
                 BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE;
             result = bvb_protocol_encode_vulkan_device_create_request(
@@ -2323,9 +2399,8 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
                 .base = create_request,
             };
             for (uint32_t index = 0U;
-                 index < create_info->enabledExtensionCount; ++index) {
-                const char *name =
-                    create_info->ppEnabledExtensionNames[index];
+                 index < native_extension_count; ++index) {
+                const char *name = native_extensions[index];
                 const char *terminator = memchr(
                     name, '\0', BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE);
                 const size_t length = (size_t)(terminator - name) + 1U;
@@ -2361,6 +2436,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
         proxy->wire_id = decoded.device_id;
         proxy->parent_id = physical->wire_id;
         proxy->instance_id = physical->parent_id;
+        proxy->virtual_swapchain_enabled = virtual_swapchain_requested;
         proxy->next = bvb_global_client.devices;
         bvb_global_client.devices = proxy;
     }
@@ -3686,6 +3762,152 @@ static VkResult VKAPI_CALL bvb_bridge_vkDeviceWaitIdle(VkDevice device) {
                        : VK_ERROR_INITIALIZATION_FAILED;
 }
 
+static VkResult VKAPI_CALL bvb_bridge_vkCreateSwapchainKHR(
+    VkDevice device, const VkSwapchainCreateInfoKHR *create_info,
+    const VkAllocationCallbacks *allocator, VkSwapchainKHR *swapchain) {
+    if (swapchain != NULL) *swapchain = VK_NULL_HANDLE;
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || !device_state->virtual_swapchain_enabled ||
+        create_info == NULL || swapchain == NULL || allocator != NULL ||
+        create_info->sType != VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    struct bvb_surface_proxy *surface_state =
+        surface_proxy_locked(create_info->surface);
+    struct bvb_activity_status activity = {0};
+    int result = surface_state == NULL ||
+                         surface_state->parent_id != device_state->instance_id
+                     ? -EINVAL
+                     : ready_activity_status_locked(&activity);
+    if (result == 0 &&
+        (create_info->imageExtent.width != activity.width ||
+         create_info->imageExtent.height != activity.height)) {
+        result = -ERANGE;
+    }
+    if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        fprintf(stderr,
+                "BVB_ICD_VIRTUAL_SWAPCHAIN_CREATE surface=%llu "
+                "extent=%ux%u activity=%ux%u backing=activity "
+                "frame_transport=unavailable status=%d\n",
+                (unsigned long long)non_dispatchable_wire_id(
+                    &create_info->surface, sizeof(create_info->surface)),
+                create_info->imageExtent.width,
+                create_info->imageExtent.height, activity.width,
+                activity.height, result);
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (result != 0) return VK_ERROR_SURFACE_LOST_KHR;
+
+    /*
+     * The Activity owns the real Android swapchain. Its external-image frame
+     * transport is not connected to game-owned images yet, so creating a
+     * usable proxy here would advertise pixels that cannot be presented.
+     */
+    return VK_ERROR_FEATURE_NOT_PRESENT;
+}
+
+static void VKAPI_CALL bvb_bridge_vkDestroySwapchainKHR(
+    VkDevice device, VkSwapchainKHR swapchain,
+    const VkAllocationCallbacks *allocator) {
+    (void)swapchain;
+    (void)allocator;
+    (void)device_proxy(device);
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkGetSwapchainImagesKHR(
+    VkDevice device, VkSwapchainKHR swapchain, uint32_t *image_count,
+    VkImage *images) {
+    (void)swapchain;
+    (void)images;
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (image_count != NULL) *image_count = 0U;
+    return device_state != NULL && device_state->virtual_swapchain_enabled &&
+                   image_count != NULL
+               ? VK_ERROR_FEATURE_NOT_PRESENT
+               : VK_ERROR_INITIALIZATION_FAILED;
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkAcquireNextImageKHR(
+    VkDevice device, VkSwapchainKHR swapchain, uint64_t timeout,
+    VkSemaphore semaphore, VkFence fence, uint32_t *image_index) {
+    (void)swapchain;
+    (void)timeout;
+    (void)semaphore;
+    (void)fence;
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (image_index != NULL) *image_index = 0U;
+    return device_state != NULL && device_state->virtual_swapchain_enabled &&
+                   image_index != NULL
+               ? VK_ERROR_FEATURE_NOT_PRESENT
+               : VK_ERROR_INITIALIZATION_FAILED;
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkAcquireNextImage2KHR(
+    VkDevice device, const VkAcquireNextImageInfoKHR *acquire_info,
+    uint32_t *image_index) {
+    if (acquire_info == NULL ||
+        acquire_info->sType != VK_STRUCTURE_TYPE_ACQUIRE_NEXT_IMAGE_INFO_KHR) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    return bvb_bridge_vkAcquireNextImageKHR(
+        device, acquire_info->swapchain, acquire_info->timeout,
+        acquire_info->semaphore, acquire_info->fence, image_index);
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkQueuePresentKHR(
+    VkQueue queue, const VkPresentInfoKHR *present_info) {
+    struct bvb_queue_proxy *queue_state = queue_proxy(queue);
+    if (queue_state == NULL || present_info == NULL ||
+        present_info->sType != VK_STRUCTURE_TYPE_PRESENT_INFO_KHR) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    bool enabled = false;
+    for (struct bvb_device_proxy *device = bvb_global_client.devices;
+         device != NULL; device = device->next) {
+        if (device->wire_id == queue_state->parent_id) {
+            enabled = device->virtual_swapchain_enabled;
+            break;
+        }
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return enabled ? VK_ERROR_FEATURE_NOT_PRESENT
+                   : VK_ERROR_INITIALIZATION_FAILED;
+}
+
+static VkResult VKAPI_CALL
+bvb_bridge_vkGetDeviceGroupPresentCapabilitiesKHR(
+    VkDevice device, VkDeviceGroupPresentCapabilitiesKHR *capabilities) {
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (capabilities == NULL ||
+        capabilities->sType !=
+            VK_STRUCTURE_TYPE_DEVICE_GROUP_PRESENT_CAPABILITIES_KHR ||
+        device_state == NULL || !device_state->virtual_swapchain_enabled) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    memset(capabilities->presentMask, 0, sizeof(capabilities->presentMask));
+    capabilities->modes = 0U;
+    return VK_ERROR_FEATURE_NOT_PRESENT;
+}
+
+static VkResult VKAPI_CALL
+bvb_bridge_vkGetDeviceGroupSurfacePresentModesKHR(
+    VkDevice device, VkSurfaceKHR surface,
+    VkDeviceGroupPresentModeFlagsKHR *modes) {
+    (void)surface;
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (modes != NULL) *modes = 0U;
+    return modes != NULL && device_state != NULL &&
+                   device_state->virtual_swapchain_enabled
+               ? VK_ERROR_FEATURE_NOT_PRESENT
+               : VK_ERROR_INITIALIZATION_FAILED;
+}
+
 PFN_vkVoidFunction bvb_global_device_proc_addr(
     VkDevice device, const char *name) {
     if (device_proxy(device) == NULL || name == NULL) {
@@ -3701,6 +3923,23 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     BVB_DEVICE_MATCH("vkQueueSubmit", bvb_bridge_vkQueueSubmit)
     BVB_DEVICE_MATCH("vkQueueWaitIdle", bvb_bridge_vkQueueWaitIdle)
     BVB_DEVICE_MATCH("vkDeviceWaitIdle", bvb_bridge_vkDeviceWaitIdle)
+    if (device_proxy(device)->virtual_swapchain_enabled) {
+        BVB_DEVICE_MATCH("vkCreateSwapchainKHR",
+                         bvb_bridge_vkCreateSwapchainKHR)
+        BVB_DEVICE_MATCH("vkDestroySwapchainKHR",
+                         bvb_bridge_vkDestroySwapchainKHR)
+        BVB_DEVICE_MATCH("vkGetSwapchainImagesKHR",
+                         bvb_bridge_vkGetSwapchainImagesKHR)
+        BVB_DEVICE_MATCH("vkAcquireNextImageKHR",
+                         bvb_bridge_vkAcquireNextImageKHR)
+        BVB_DEVICE_MATCH("vkAcquireNextImage2KHR",
+                         bvb_bridge_vkAcquireNextImage2KHR)
+        BVB_DEVICE_MATCH("vkQueuePresentKHR", bvb_bridge_vkQueuePresentKHR)
+        BVB_DEVICE_MATCH("vkGetDeviceGroupPresentCapabilitiesKHR",
+                         bvb_bridge_vkGetDeviceGroupPresentCapabilitiesKHR)
+        BVB_DEVICE_MATCH("vkGetDeviceGroupSurfacePresentModesKHR",
+                         bvb_bridge_vkGetDeviceGroupSurfacePresentModesKHR)
+    }
     BVB_DEVICE_MATCH("vkCreateCommandPool", bvb_bridge_vkCreateCommandPool)
     BVB_DEVICE_MATCH("vkDestroyCommandPool", bvb_bridge_vkDestroyCommandPool)
     BVB_DEVICE_MATCH("vkResetCommandPool", bvb_bridge_vkResetCommandPool)

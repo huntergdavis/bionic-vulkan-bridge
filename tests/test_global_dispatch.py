@@ -24,6 +24,8 @@ def main() -> int:
             "00112233445566778899aabbccddeeff"
             "fedcba98765432100123456789abcdef"
         )
+        server_environment = os.environ.copy()
+        server_environment["BVB_FAKE_HIDE_SWAPCHAIN"] = "1"
         server = subprocess.Popen(
             [
                 service,
@@ -40,6 +42,7 @@ def main() -> int:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=server_environment,
         )
         try:
             deadline = time.monotonic() + 5.0
