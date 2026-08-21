@@ -273,3 +273,30 @@ presentation-support `VkBool32` queries retain their real boolean meaning and
 are not treated as errors. Generated pointer erasure is guarded by an exact
 PFN-size static assertion. These changes add diagnosis only, not Vulkan support
 or a visible-frame claim.
+
+E080 removes repeated client ownership-registry reads from the opt-in shared
+recording path. Each command buffer has a 16-entry direct-mapped positive cache
+of exact typed buffer/image IDs. A hit remains under that command buffer's
+stream mutex. A miss takes the established registry read lock and performs the
+same typed same-device lookup; only a positive result is cached. An exact-key
+mismatch is a collision, so it revalidates and replaces instead of aliasing.
+Every Begin/rerecord and successful command-pool reset clears the cache and its
+observation counter.
+
+On a miss, the client snapshots the recording sequence, releases the command
+buffer mutex, takes and releases the registry read lock, then reacquires the
+command buffer and verifies that sequence before inserting. Registry and
+command-buffer locks therefore remain non-overlapping as in E078. Registry
+writers remain control then registry write. Submit remains control then command
+buffer, and slot allocation remains command buffer then slot allocator. Positive
+entries rely only on Vulkan's existing object-lifetime and external-sync rules
+for one recording; the application may not concurrently destroy an object it
+is recording. Rerecord clears any prior positive before a later reference.
+If an invalid application destroys a positively cached resource after End but
+before Submit2, the client may still transmit the sealed stream. The Bionic
+service remains authoritative: it snapshots and prevalidates the entire stream
+against live typed same-device native objects before any replay. The adversarial
+host contract destroys such a buffer and verifies both rejection and an
+unchanged native-memory sentinel. Strict mode and all opcodes/wire records are
+unchanged. This is a bounded client lookup reduction, not native validation,
+tablet, Tomb Raider, or FPS evidence.

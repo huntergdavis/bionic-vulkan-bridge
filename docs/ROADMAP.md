@@ -115,6 +115,9 @@
 - [x] Prepare the fail-closed E074 versionCode 40 installed-Activity runtime
   gate with APK identity, authentication, E057 import/present markers, and
   bounded cleanup independent of Steam and Termux:X11
+- [x] Cache repeated typed same-device ownership within each externally
+  synchronized shared command-buffer recording while retaining service
+  prevalidation
 - [ ] Deploy the combined E057/E060 launch wiring and visually prove a changing
   game-facing frame in the installed Activity
 - [ ] Reach a DXVK sample

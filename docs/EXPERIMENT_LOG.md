@@ -3404,3 +3404,43 @@ output, private names, and probed-null policy remain unchanged. The standalone
 Termux glibc ICD builder still compiles the generator and diagnostic source.
 This is host-only diagnosis evidence: no deploy, Activity/APK, UI, Steam, X11,
 Tomb Raider, visible frame, benchmark, or FPS claim.
+
+## E080 — per-command-buffer positive ownership cache (2026-08-21)
+
+Status: 58/58 host contracts pass on exact parent
+`b89e152d792f25c406b10babc4e042bdf3369f94`; the focused concurrency contract
+also passes under ThreadSanitizer.
+
+The required `deja "BVB per-command-buffer ownership cache object registry
+rwlock repeated vkCmdFillBuffer E080"` query returned no indexed hit. E080
+reuses E075/E075a's bounded shared records and authoritative service
+prevalidation, E076's typed same-device poison, E078's per-command-buffer
+mutex, and E079's diagnostic behavior.
+
+The opt-in shared client previously acquired the process-wide object-registry
+read lock for every command call, even when 256 consecutive fills in one
+recording referenced the same buffer. Each command-buffer proxy now owns a
+16-entry direct-mapped positive cache protected by its existing stream mutex.
+An exact typed-ID hit stays local. On a miss the client releases the stream
+mutex, performs the unchanged registry and same-device check, releases the
+registry, then reacquires the stream mutex and verifies the recording sequence
+before insertion. The two locks remain non-overlapping. Collisions revalidate
+and replace, while negative results are never cached. Begin/rerecord clears the
+entire bounded cache; successful `vkResetCommandPool` does the same for every
+owned command buffer. This relies on Vulkan's existing external synchronization
+and resource-lifetime contract only for the duration of one recording; it does
+not make invalid concurrent destroy safe.
+
+The focused two-thread contract records 256 repeated fills into each of two
+different command buffers and observes one client registry read per command
+buffer, two total rather than 512, with zero recording socket exchanges. It
+also exercises distinct IDs, a direct-map collision, cache reset on rerecord,
+a populated-cache command-pool reset followed by exactly one new miss, and the
+existing first-reference cross-device buffer/image poison. An adversarial
+invalid-lifetime case records a distinctive fill, destroys its buffer after
+End, and submits the stale positive stream. The service rejects it during
+whole-stream typed prevalidation; the unchanged memory sentinel proves the
+fill never reached native replay. Compact evidence is
+`docs/evidence/e080-command-ownership-cache-host.json`. These observations
+prove only fewer client lookups; they do not count native validation, establish
+FPS, or claim deployment.

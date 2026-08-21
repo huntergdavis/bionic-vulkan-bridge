@@ -1,0 +1,62 @@
+{
+  "gate": "E080",
+  "base": "b89e152d792f25c406b10babc4e042bdf3369f94",
+  "objective": "remove repeated client object-registry reads from opt-in shared command recording without weakening authoritative service validation or the strict default",
+  "deja": {
+    "query": "BVB per-command-buffer ownership cache object registry rwlock repeated vkCmdFillBuffer E080",
+    "result": "no indexed hit",
+    "reuse": [
+      "E075/E075a bounded shared recording and authoritative immutable service prevalidation",
+      "E076 typed same-device image validation and command poison",
+      "E078 per-command-buffer recording mutex and Vulkan external-sync contract",
+      "E079 first-rejection diagnostic semantics"
+    ]
+  },
+  "cache": {
+    "scope": "per-command-buffer recording",
+    "kind": "positive direct-mapped typed ownership",
+    "capacity": 16,
+    "cleared_on_begin": true,
+    "cleared_on_successful_command_pool_reset": true,
+    "miss_validation": "existing registry rwlock and typed same-device lookup",
+    "collision_behavior": "exact mismatch revalidates and replaces"
+  },
+  "synchronization": {
+    "cache_owner": "command-buffer stream mutex",
+    "miss_order": "probe under command-buffer mutex, release it, take and release object-registry read lock, then reacquire command-buffer mutex and verify the recording sequence",
+    "writers": "control mutex then object-registry write lock; no writer takes a command-buffer mutex while holding the registry lock",
+    "lifetime": "positive entries are valid only for one externally synchronized Vulkan recording and are cleared before rerecord"
+  },
+  "focused_concurrency": {
+    "threads": 2,
+    "distinct_command_buffers": 2,
+    "commands_per_thread": 256,
+    "client_registry_reads_per_command_buffer": 1,
+    "client_registry_reads_total": 2,
+    "recording_socket_exchanges": 0
+  },
+  "fail_closed": {
+    "cross_device_first_reference_poison": true,
+    "typed_exact_match": true,
+    "distinct_ids": true,
+    "direct_map_collision_revalidates": true,
+    "rerecord_next_reference_registry_reads": 1,
+    "command_pool_reset_next_reference_registry_reads": 1,
+    "destroy_after_end_before_submit_rejects": true,
+    "destroy_after_end_native_memory_sentinel_unchanged": true,
+    "service_whole_batch_prevalidation_unchanged": true
+  },
+  "default_strict_unchanged": true,
+  "wire_changes": [],
+  "validation": {
+    "focused_contracts": "3/3 passed: concurrency runtime, E078 locking architecture, E080 cache architecture",
+    "full_host_suite": "58/58 passed",
+    "thread_sanitizer_concurrency": "1/1 passed after rebuilding exact targets with -fsanitize=thread; -Wno-error=tsan permits only GCC's pre-existing atomic_thread_fence instrumentation warning"
+  },
+  "claims": {
+    "client_lookup_reduction": true,
+    "native_validation_count": null,
+    "tablet_deployed": false,
+    "tomb_raider_fps": null
+  }
+}

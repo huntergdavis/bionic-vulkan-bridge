@@ -83,9 +83,9 @@ def main() -> int:
     )
     assert "stream_mutex" in poison
     assert "bvb_global_client.mutex" not in poison
-    assert "shared_images_owned_by_device(" in barrier
-    assert "shared_image_owned_by_device(" in clear
-    assert "shared_resource_owned_by_device(" in fill
+    assert "shared_object_owned_by_device_cached_locked(" in barrier
+    assert "shared_object_owned_by_device_cached_locked(" in clear
+    assert "shared_object_owned_by_device_cached_locked(" in fill
     assert "BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMAGE_BARRIER" in barrier
     assert "BVB_OPCODE_VULKAN_COMMAND_BUFFER_CLEAR_COLOR_IMAGE" in clear
     assert "BVB_OPCODE_VULKAN_COMMAND_BUFFER_FILL" in fill

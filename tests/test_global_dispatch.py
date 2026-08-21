@@ -399,6 +399,15 @@ def main() -> int:
                 else "concurrent_streams=0 concurrent_commands=0"
             ) in completed.stdout
             assert (
+                "concurrent_registry_reads=2 collision_registry_reads=4 "
+                "rerecord_registry_reads=1 pool_reset_registry_reads=1 "
+                "stale_resource_rejected=1 stale_native_replay_blocked=1"
+                if validation_mode == "shared-command-stream-concurrency"
+                else "concurrent_registry_reads=0 collision_registry_reads=0 "
+                     "rerecord_registry_reads=0 pool_reset_registry_reads=0 "
+                     "stale_resource_rejected=0 stale_native_replay_blocked=0"
+            ) in completed.stdout
+            assert (
                 "recording_rtts=0" if shared_command_stream
                 else "recording_rtts=5"
             ) in completed.stdout
@@ -529,7 +538,12 @@ def main() -> int:
                 "bvb-bridge-service: activity_event=9 sequence=6 "
                 "pid=12345 width=0 height=0",
             ]
-            assert server_stderr == ""
+            assert server_stderr == (
+                "bvb: queue submit2 failed: invalid or cross-device shared "
+                "command stream\n"
+                if validation_mode == "shared-command-stream-concurrency"
+                else ""
+            )
             assert not socket_path.exists()
         finally:
             activity_frame_listener.close()

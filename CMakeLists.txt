@@ -792,6 +792,17 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
   )
   add_test(
+    NAME command-ownership-cache-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_command_ownership_cache.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e080-command-ownership-cache-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/global_dispatch.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+  )
+  add_test(
     NAME command-stream-correctness-architecture-contract
     COMMAND
       "${Python3_EXECUTABLE}"

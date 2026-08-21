@@ -43,6 +43,12 @@ static const uint64_t BVB_QUEUE_PROXY_MAGIC =
     UINT64_C(0x4256425155453030);
 static const uint64_t BVB_COMMAND_BUFFER_PROXY_MAGIC =
     UINT64_C(0x425642434d443030);
+enum { BVB_COMMAND_OWNERSHIP_CACHE_CAPACITY = 16U };
+
+struct bvb_command_ownership_cache_entry {
+    uint64_t wire_id;
+    enum bvb_object_type type;
+};
 
 struct bvb_instance_proxy {
     const void *dispatch;
@@ -95,6 +101,9 @@ struct bvb_command_buffer_proxy {
     uint64_t device_id;
     pthread_mutex_t stream_mutex;
     struct bvb_command_batch_builder stream_builder;
+    struct bvb_command_ownership_cache_entry
+        ownership_cache[BVB_COMMAND_OWNERSHIP_CACHE_CAPACITY];
+    uint64_t ownership_registry_reads;
     uint64_t stream_sequence;
     uint32_t stream_length;
     uint32_t stream_slot;
@@ -834,37 +843,61 @@ static bool image_owned_by_device_locked(uint64_t image_id,
     return false;
 }
 
-static bool shared_image_owned_by_device(uint64_t image_id,
-                                         uint64_t device_id) {
-    if (pthread_rwlock_rdlock(&bvb_object_registry_lock) != 0) return false;
-    const bool owned = image_owned_by_device_locked(image_id, device_id);
-    (void)pthread_rwlock_unlock(&bvb_object_registry_lock);
-    return owned;
-}
-
-static bool shared_images_owned_by_device(const uint64_t *image_ids,
-                                          uint32_t image_count,
-                                          uint64_t device_id) {
-    if (image_ids == NULL ||
-        pthread_rwlock_rdlock(&bvb_object_registry_lock) != 0) {
-        return false;
+/* The caller owns command_state->stream_mutex on entry. A cache miss releases
+ * it before the registry read, then reacquires it and returns with it held.
+ * Positive entries remain valid for one recording under Vulkan's
+ * object-lifetime/external-sync rules; BeginCommandBuffer clears every entry
+ * before a rerecord. A negative return means reacquisition failed. */
+static int shared_object_owned_by_device_cached_locked(
+    struct bvb_command_buffer_proxy *command_state, uint64_t wire_id,
+    enum bvb_object_type type) {
+    if (command_state == NULL ||
+        (type != BVB_OBJECT_BUFFER && type != BVB_OBJECT_IMAGE) ||
+        bvb_handle_expect(wire_id, type) != 0) {
+        return 0;
     }
-    bool owned = true;
-    for (uint32_t index = 0U; owned && index < image_count; ++index)
-        owned = image_owned_by_device_locked(image_ids[index], device_id);
-    (void)pthread_rwlock_unlock(&bvb_object_registry_lock);
-    return owned;
-}
-
-static bool shared_resource_owned_by_device(uint64_t wire_id,
-                                            enum bvb_object_type type,
-                                            uint64_t device_id) {
-    if (pthread_rwlock_rdlock(&bvb_object_registry_lock) != 0) return false;
-    const struct bvb_resource_proxy *proxy =
-        resource_proxy_locked(wire_id, type);
-    const bool owned = proxy != NULL && proxy->parent_id == device_id;
-    (void)pthread_rwlock_unlock(&bvb_object_registry_lock);
-    return owned;
+    _Static_assert((BVB_COMMAND_OWNERSHIP_CACHE_CAPACITY &
+                    (BVB_COMMAND_OWNERSHIP_CACHE_CAPACITY - 1U)) == 0U,
+                   "command ownership cache capacity must be a power of two");
+    const uint64_t hash = wire_id ^ (wire_id >> 32U) ^ (uint64_t)type;
+    const uint32_t index = (uint32_t)hash &
+        (BVB_COMMAND_OWNERSHIP_CACHE_CAPACITY - 1U);
+    const struct bvb_command_ownership_cache_entry *cached =
+        &command_state->ownership_cache[index];
+    if (cached->wire_id == wire_id && cached->type == type) return 1;
+    const uint64_t recording_sequence = command_state->stream_sequence;
+    (void)pthread_mutex_unlock(&command_state->stream_mutex);
+    const int registry_status =
+        pthread_rwlock_rdlock(&bvb_object_registry_lock);
+    bool owned = false;
+    if (registry_status == 0) {
+        if (type == BVB_OBJECT_IMAGE) {
+            owned = image_owned_by_device_locked(
+                wire_id, command_state->device_id);
+        } else {
+            const struct bvb_resource_proxy *proxy =
+                resource_proxy_locked(wire_id, type);
+            owned = proxy != NULL &&
+                proxy->parent_id == command_state->device_id;
+        }
+        (void)pthread_rwlock_unlock(&bvb_object_registry_lock);
+    }
+    if (pthread_mutex_lock(&command_state->stream_mutex) != 0)
+        return -EDEADLK;
+    if (registry_status != 0) return 0;
+    ++command_state->ownership_registry_reads;
+    if (command_state->stream_sequence != recording_sequence ||
+        !command_state->stream_recording) {
+        return 0;
+    }
+    if (owned) {
+        command_state->ownership_cache[index] =
+            (struct bvb_command_ownership_cache_entry){
+                .wire_id = wire_id,
+                .type = type,
+            };
+    }
+    return owned ? 1 : 0;
 }
 
 BVB_GLOBAL_EXPORT uint64_t bvb_buffer_proxy_id(VkBuffer buffer) {
@@ -887,6 +920,17 @@ BVB_GLOBAL_EXPORT uint64_t bvb_image_proxy_id(VkImage image) {
         (void)pthread_mutex_unlock(&bvb_global_client.mutex);
     }
     return result;
+}
+
+BVB_GLOBAL_EXPORT uint64_t bvb_command_buffer_ownership_registry_reads(
+    VkCommandBuffer command_buffer) {
+    struct bvb_command_buffer_proxy *proxy =
+        command_buffer_proxy(command_buffer);
+    if (proxy == NULL || pthread_mutex_lock(&proxy->stream_mutex) != 0)
+        return 0U;
+    const uint64_t reads = proxy->ownership_registry_reads;
+    (void)pthread_mutex_unlock(&proxy->stream_mutex);
+    return reads;
 }
 
 BVB_GLOBAL_EXPORT uint64_t bvb_image_view_proxy_id(VkImageView image_view) {
@@ -1050,6 +1094,8 @@ static void reset_command_stream_state(
     if (proxy == NULL) return;
     release_command_stream_slot(proxy);
     memset(&proxy->stream_builder, 0, sizeof(proxy->stream_builder));
+    memset(proxy->ownership_cache, 0, sizeof(proxy->ownership_cache));
+    proxy->ownership_registry_reads = 0U;
     proxy->stream_sequence = 0U;
     proxy->stream_length = 0U;
     proxy->stream_recording = false;
@@ -6399,12 +6445,17 @@ static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
         return;
     }
     if (shared_stream) {
-        int result = shared_images_owned_by_device(
-                         decoded.image_ids, decoded.image_count,
-                         command_state->device_id)
-                         ? 0
-                         : -EINVAL;
         if (pthread_mutex_lock(&command_state->stream_mutex) != 0) return;
+        int result = 0;
+        for (uint32_t index = 0U;
+             result == 0 && index < decoded.image_count; ++index) {
+            const int owned = shared_object_owned_by_device_cached_locked(
+                command_state, decoded.image_ids[index], BVB_OBJECT_IMAGE);
+            if (owned < 0) return;
+            if (owned == 0) {
+                result = -EINVAL;
+            }
+        }
         if (result == 0 && command_state->stream_recording &&
             !command_state->stream_error) {
             if (fixed_init_shape) {
@@ -6517,11 +6568,11 @@ static void VKAPI_CALL bvb_bridge_vkCmdClearColorImage(
     const uint64_t image_id =
         non_dispatchable_wire_id(&image, sizeof(image));
     if (shared_stream) {
-        int result = shared_image_owned_by_device(
-                         image_id, command_state->device_id)
-                         ? 0
-                         : -EINVAL;
         if (pthread_mutex_lock(&command_state->stream_mutex) != 0) return;
+        const int owned = shared_object_owned_by_device_cached_locked(
+            command_state, image_id, BVB_OBJECT_IMAGE);
+        if (owned < 0) return;
+        int result = owned != 0 ? 0 : -EINVAL;
         if (result == 0 && command_state->stream_recording &&
             !command_state->stream_error) {
             if (fixed_clear_shape) {
@@ -6611,12 +6662,11 @@ static void VKAPI_CALL bvb_bridge_vkCmdFillBuffer(
         return;
     }
     if (command_stream_is_enabled()) {
-        int result = shared_resource_owned_by_device(
-                         buffer_id, BVB_OBJECT_BUFFER,
-                         command_state->device_id)
-                         ? 0
-                         : -EINVAL;
         if (pthread_mutex_lock(&command_state->stream_mutex) != 0) return;
+        const int owned = shared_object_owned_by_device_cached_locked(
+            command_state, buffer_id, BVB_OBJECT_BUFFER);
+        if (owned < 0) return;
+        int result = owned != 0 ? 0 : -EINVAL;
         if (result == 0 && command_state->stream_recording &&
             !command_state->stream_error) {
             result = bvb_command_batch_append_fill_buffer(

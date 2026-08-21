@@ -2248,6 +2248,8 @@ int main(void) {
         CHECK(begin_command_buffer(command_buffer, &begin_info) == VK_SUCCESS);
         cmd_fill_buffer(command_buffer, ownership_buffer, 0U, 4096U,
                         UINT32_C(0xa5c3f00d));
+        CHECK(bvb_command_buffer_ownership_registry_reads(command_buffer) ==
+              1U);
         CHECK(end_command_buffer(command_buffer) ==
               VK_ERROR_INITIALIZATION_FAILED);
         destroy_buffer(ownership_device, ownership_buffer, NULL);
@@ -2259,6 +2261,8 @@ int main(void) {
         cmd_clear_color_image(command_buffer, ownership_image,
                               VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                               &unsupported_color, 1U, &poison_range);
+        CHECK(bvb_command_buffer_ownership_registry_reads(command_buffer) ==
+              1U);
         CHECK(end_command_buffer(command_buffer) ==
               VK_ERROR_INITIALIZATION_FAILED);
         destroy_image(ownership_device, ownership_image, NULL);
@@ -2316,6 +2320,10 @@ int main(void) {
     };
     cmd_pipeline_barrier_2(command_buffer, &init_dependency);
     CHECK(end_command_buffer(command_buffer) == VK_SUCCESS);
+    if (shared_command_stream) {
+        CHECK(bvb_command_buffer_ownership_registry_reads(command_buffer) ==
+              2U);
+    }
     const uint64_t exchanges_after_recording =
         bvb_global_dispatch_exchange_count();
     CHECK(exchanges_after_recording >= exchanges_before_recording);
@@ -2370,6 +2378,12 @@ int main(void) {
     CHECK(mismatched_words == 0U);
     uint32_t concurrent_streams = 0U;
     uint32_t concurrent_commands = 0U;
+    uint64_t concurrent_ownership_registry_reads = 0U;
+    uint64_t collision_ownership_registry_reads = 0U;
+    uint64_t rerecord_ownership_registry_reads = 0U;
+    uint64_t pool_reset_ownership_registry_reads = 0U;
+    bool stale_resource_rejected = false;
+    bool stale_native_replay_blocked = false;
     if (concurrent_command_stream) {
         VkCommandBuffer concurrent[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
         CHECK(allocate_command_buffers(device, &allocate_info,
@@ -2408,6 +2422,11 @@ int main(void) {
         for (uint32_t index = 0U; index < 2U; ++index) {
             CHECK(contexts[index].begin_result == VK_SUCCESS);
             CHECK(contexts[index].end_result == VK_SUCCESS);
+            const uint64_t reads =
+                bvb_command_buffer_ownership_registry_reads(
+                    concurrent[index]);
+            CHECK(reads == 1U);
+            concurrent_ownership_registry_reads += reads;
         }
         const VkCommandBufferSubmitInfo concurrent_infos[2] = {
             {
@@ -2427,6 +2446,90 @@ int main(void) {
         CHECK(queue_submit_2(queue, 1U, &concurrent_submit,
                              VK_NULL_HANDLE) == VK_SUCCESS);
         CHECK(queue_wait_idle(queue) == VK_SUCCESS);
+
+        VkBuffer collision_buffers[17] = {VK_NULL_HANDLE};
+        for (uint32_t index = 0U; index < 17U; ++index) {
+            CHECK(create_buffer(device, &buffer_create_info, NULL,
+                                &collision_buffers[index]) == VK_SUCCESS);
+        }
+        VkCommandPool cache_pool = VK_NULL_HANDLE;
+        CHECK(create_command_pool(device, &pool_create_info, NULL,
+                                  &cache_pool) == VK_SUCCESS);
+        VkCommandBufferAllocateInfo cache_allocate_info = allocate_info;
+        cache_allocate_info.commandPool = cache_pool;
+        VkCommandBuffer cache_command = VK_NULL_HANDLE;
+        CHECK(allocate_command_buffers(device, &cache_allocate_info,
+                                       &cache_command) == VK_SUCCESS);
+        CHECK(begin_command_buffer(cache_command, &begin_info) == VK_SUCCESS);
+        cmd_fill_buffer(cache_command, collision_buffers[0], 0U, 4096U, 1U);
+        cmd_fill_buffer(cache_command, collision_buffers[0], 0U, 4096U, 2U);
+        CHECK(bvb_command_buffer_ownership_registry_reads(cache_command) ==
+              1U);
+        cmd_fill_buffer(cache_command, collision_buffers[1], 0U, 4096U, 3U);
+        cmd_fill_buffer(cache_command, collision_buffers[1], 0U, 4096U, 4U);
+        CHECK(bvb_command_buffer_ownership_registry_reads(cache_command) ==
+              2U);
+        cmd_fill_buffer(cache_command, collision_buffers[16], 0U, 4096U, 5U);
+        cmd_fill_buffer(cache_command, collision_buffers[0], 0U, 4096U, 6U);
+        collision_ownership_registry_reads =
+            bvb_command_buffer_ownership_registry_reads(cache_command);
+        CHECK(collision_ownership_registry_reads == 4U);
+        CHECK(end_command_buffer(cache_command) == VK_SUCCESS);
+
+        CHECK(begin_command_buffer(cache_command, &begin_info) == VK_SUCCESS);
+        CHECK(bvb_command_buffer_ownership_registry_reads(cache_command) ==
+              0U);
+        cmd_fill_buffer(cache_command, collision_buffers[0], 0U, 4096U, 7U);
+        rerecord_ownership_registry_reads =
+            bvb_command_buffer_ownership_registry_reads(cache_command);
+        CHECK(rerecord_ownership_registry_reads == 1U);
+        CHECK(end_command_buffer(cache_command) == VK_SUCCESS);
+
+        CHECK(reset_command_pool(device, cache_pool, 0U) == VK_SUCCESS);
+        CHECK(bvb_command_buffer_ownership_registry_reads(cache_command) ==
+              0U);
+        CHECK(begin_command_buffer(cache_command, &begin_info) == VK_SUCCESS);
+        cmd_fill_buffer(cache_command, collision_buffers[1], 0U, 4096U, 8U);
+        cmd_fill_buffer(cache_command, collision_buffers[1], 0U, 4096U, 9U);
+        pool_reset_ownership_registry_reads =
+            bvb_command_buffer_ownership_registry_reads(cache_command);
+        CHECK(pool_reset_ownership_registry_reads == 1U);
+        CHECK(end_command_buffer(cache_command) == VK_SUCCESS);
+
+        VkBuffer stale_buffer = VK_NULL_HANDLE;
+        CHECK(create_buffer(device, &buffer_create_info, NULL,
+                            &stale_buffer) == VK_SUCCESS);
+        CHECK(begin_command_buffer(cache_command, &begin_info) == VK_SUCCESS);
+        cmd_fill_buffer(cache_command, stale_buffer, 0U, 4096U,
+                        UINT32_C(0xdeadcafe));
+        CHECK(bvb_command_buffer_ownership_registry_reads(cache_command) ==
+              1U);
+        CHECK(end_command_buffer(cache_command) == VK_SUCCESS);
+        destroy_buffer(device, stale_buffer, NULL);
+        const VkCommandBufferSubmitInfo stale_command_info = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+            .commandBuffer = cache_command,
+        };
+        const VkSubmitInfo2 stale_submit = {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+            .commandBufferInfoCount = 1U,
+            .pCommandBufferInfos = &stale_command_info,
+        };
+        stale_resource_rejected =
+            queue_submit_2(queue, 1U, &stale_submit, VK_NULL_HANDLE) ==
+            VK_ERROR_INITIALIZATION_FAILED;
+        CHECK(stale_resource_rejected);
+        uint32_t stale_replay_mismatches = UINT32_MAX;
+        CHECK(bvb_verify_memory_fill(
+                  device_memory, 0U, 4096U, UINT32_C(0xa5c3f00d),
+                  &stale_replay_mismatches) == 0);
+        stale_native_replay_blocked = stale_replay_mismatches == 0U;
+        CHECK(stale_native_replay_blocked);
+
+        free_command_buffers(device, cache_pool, 1U, &cache_command);
+        destroy_command_pool(device, cache_pool, NULL);
+        for (uint32_t index = 0U; index < 17U; ++index)
+            destroy_buffer(device, collision_buffers[index], NULL);
         free_command_buffers(device, command_pool, 1U, &concurrent[0]);
         free_command_buffers(device, command_pool, 1U, &concurrent[1]);
         concurrent_streams = 2U;
@@ -2789,6 +2892,9 @@ int main(void) {
            "animated_recording_rtts=%llu "
            "command_pool=%llu command_buffer=%llu recording_rtts=%llu "
            "concurrent_streams=%u concurrent_commands=%u "
+           "concurrent_registry_reads=%llu collision_registry_reads=%llu "
+           "rerecord_registry_reads=%llu pool_reset_registry_reads=%llu "
+           "stale_resource_rejected=%u stale_native_replay_blocked=%u "
            "command_submit=0 "
            "pool_reset=0 buffer=%llu memory=%llu memory_type=%u "
            "buffer_requirements2=%llu,%llu,%u buffer_address=%llu "
@@ -2829,6 +2935,12 @@ int main(void) {
            (unsigned long long)command_buffer_id,
            (unsigned long long)recording_rtts,
            concurrent_streams, concurrent_commands,
+           (unsigned long long)concurrent_ownership_registry_reads,
+           (unsigned long long)collision_ownership_registry_reads,
+           (unsigned long long)rerecord_ownership_registry_reads,
+           (unsigned long long)pool_reset_ownership_registry_reads,
+           stale_resource_rejected ? 1U : 0U,
+           stale_native_replay_blocked ? 1U : 0U,
            (unsigned long long)buffer_id,
            (unsigned long long)memory_id,
            memory_type_index,
