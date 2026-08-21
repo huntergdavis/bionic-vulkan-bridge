@@ -2432,6 +2432,36 @@ E052 does not prove maintenance5/6 exposure, final adapter acceptance, the
 DXVK feature chain reaching native `vkCreateDevice`, swapchain creation, a
 game frame, or FPS.
 
+## E053 — Tomb Raider creates a native logical device (2026-08-20)
+
+Status: passed as a native logical-device and exact crash-boundary gate; no
+queue, swapchain, or game-frame claim. In `dxvk-direct-5tdfe6k2`, DXVK selected
+private Turnip and reached device creation. The bridge returned Vulkan result
+0 and Wine recorded `Created device`. The 479,065,129-byte direct log hashed to
+`fbf2370f2893cd565eab3b22f2f876a41d9007cf8d0414fde0c45a5cec5e807f`.
+
+The next observed boundary was three identical `vkGetDeviceQueue` thunks for
+queue family 0, queue index 0, followed by access violation `0xc0000005` at
+`pc=0`. Initializing loader dispatchable device objects did not move it: the
+`dxvk-direct-d87075do` callback retest again created the native device, emitted
+three queue thunks, and failed at the same null PC. Its 129,610,144-byte log
+hashed to
+`5d767bd563dd6b12723b625966cae110c9be951cd4993b69f59119234a0f2834`.
+Both oversized direct logs were deleted only after their byte counts, complete
+hashes, and compact boundary summaries were retained; Steam and X11 survived
+cleanup.
+
+Canonical evidence is
+`docs/evidence/e053-tombraider-native-device-boundary.json`, 3,274 bytes,
+SHA-256
+`d6088dfe823379f0eb31f0c46a97343f52c8cbb239d13f8c008980e1dde6ade2`.
+Relevant implementation commits are `937c54f`, `a7ac075`, `2c9fc7e`,
+`87f6230`, and `db56f7a`. This gate reuses E052's private-Turnip feature ladder
+and E043-E051's loader, wire, ownership, and Activity contracts. Required
+`deja` searches returned no indexed match; exact hashes were recovered from
+retained local Codex transcript summaries rather than guessed. E054 must prove
+the queue handle/dispatch path before swapchain or frame work can advance.
+
 ## E054 — DXVK timeline semaphore primitives are native-backed (2026-08-20)
 
 Status: passed as a host integration gate; no tablet deployment, frame, or FPS

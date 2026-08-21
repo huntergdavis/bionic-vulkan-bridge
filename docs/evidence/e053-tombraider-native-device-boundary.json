@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "gate": "E053",
+  "result": "pass_with_measured_post_device_crash",
+  "target": "Galaxy Tab S8+ Android Bionic Turnip Adreno 730",
+  "objective": "prove that real Tomb Raider and DXVK reach successful native Turnip logical-device creation, then preserve the exact first observed post-device crash boundary",
+  "route": {
+    "game": "Tomb Raider 2013 AppID 203160 through Proton 11.0 ARM64",
+    "vulkan_icd": "BVB glibc ICD over an authenticated Unix socket",
+    "vulkan_service": "Android Bionic service loading a private Mesa 26.2.0 Turnip ICD",
+    "device": "Turnip Adreno (TM) 730"
+  },
+  "first_native_device_run": {
+    "run_prefix": "20260821T060401Z",
+    "dxvk_directory": "dxvk-direct-5tdfe6k2",
+    "direct_log": "tombraider-direct-tombraider-lean-20260821T060405Z.log",
+    "direct_log_bytes": 479065129,
+    "direct_log_sha256": "fbf2370f2893cd565eab3b22f2f876a41d9007cf8d0414fde0c45a5cec5e807f",
+    "dxvk_observation": "DXVK selected Turnip Adreno (TM) 730, accepted feature level 11_0, and reached Creating device",
+    "device_creation": {
+      "queue_family": 0,
+      "queue_count": 1,
+      "bvb_status": 0,
+      "bvb_wire_status": 0,
+      "vulkan_result": 0,
+      "wine_created_device": true
+    },
+    "crash_boundary": {
+      "last_observed_thunk": "thunk32_vkGetDeviceQueue",
+      "identical_thunk_count": 3,
+      "queue_family": 0,
+      "queue_index": 0,
+      "exception": "0xc0000005 EXCEPTION_ACCESS_VIOLATION",
+      "pc": "0x0",
+      "classification": "null dispatch during or immediately after the first post-device queue lookup sequence"
+    }
+  },
+  "loader_callback_retest": {
+    "run_prefix": "20260821T061323Z",
+    "dxvk_directory": "dxvk-direct-d87075do",
+    "direct_log": "tombraider-direct-tombraider-lean-20260821T061328Z.log",
+    "direct_log_bytes": 129610144,
+    "direct_log_sha256": "5d767bd563dd6b12723b625966cae110c9be951cd4993b69f59119234a0f2834",
+    "vulkan_result": 0,
+    "wine_created_device": true,
+    "boundary_unchanged": true,
+    "observation": "three identical vkGetDeviceQueue thunks were again followed by exception 0xc0000005 at pc=0"
+  },
+  "cleanup": {
+    "large_direct_logs_deleted_after_hashing": true,
+    "raw_direct_logs_retained": false,
+    "steam_survived": true,
+    "x11_survived": true,
+    "evidence_basis": "retained compact command summaries, byte counts, and complete SHA-256 values in the local Codex run transcript"
+  },
+  "implementation_commits": {
+    "private_turnip_maintenance_gate": "937c54f",
+    "scaled_device_creation": "a7ac075",
+    "device_feature_chains": "2c9fc7e",
+    "legacy_device_features": "87f6230",
+    "loader_dispatchable_device_objects": "db56f7a"
+  },
+  "reuse": "Reused E052's private-Turnip feature ladder and E043-E051's loader, ownership, wire, and Activity contracts. The required deja searches returned no indexed matches; the complete hashes and compact boundary summaries were recovered from the retained local Codex transcript rather than reconstructed or guessed.",
+  "scope": "Proves successful native logical-device creation and localizes the next failure to the first queue-dispatch sequence. It does not prove a returned queue handle, swapchain creation, command-resource creation, a game frame, or FPS."
+}
