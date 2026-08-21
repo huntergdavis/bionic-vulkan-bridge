@@ -3056,3 +3056,35 @@ implementation. E075 reuses Decision 0003's bounded batched-dispatch direction,
 E014's one-time memfd setup and release/acquire generation discipline, E042's
 setup-only descriptor transfer with a socket-free shared data plane, and E060's
 stable typed ownership/generation model.
+
+## E075a — immutable replay and transactional generations (2026-08-21)
+
+Status: 42/42 host contracts pass; corrective host-only gate. The E075 audit
+confirmed that zero recording RTTs were real but found that the service
+validated and replayed directly from a peer-writable mapping, committed
+generation entries one command at a time, and retained a sealed slot when
+native Submit2 returned a non-success `VkResult`. E075a takes one bounded heap
+snapshot of each referenced stream and never validates or replays the shared
+mapping itself. It stages every generation update in a private 4096-entry
+shadow table and copies that table back only when all streams pass. If the table
+is full, one bounded scan discards only entries whose typed command-buffer
+handle no longer resolves in the connection's native context, then retries the
+transaction once.
+
+The client now distinguishes a clean opcode-105 reply from the Vulkan result
+inside that reply. A clean reply proves the native command buffer was replayed,
+so the slot is retired even when native Submit2 returns an error. The regression
+forces the third fake Submit2 to return `VK_ERROR_OUT_OF_DEVICE_MEMORY`, then
+proves the retry uses opcode 85 rather than replaying opcode 105. The reused
+command-buffer test now records with flags zero, making its resubmission legal.
+Unit contracts mutate the shared source after snapshot, reject a later update
+without partially changing the real generation table, and reclaim one exact
+dead-handle entry while preserving the live entry. Strict recording remains
+five socket exchanges and shared recording remains zero.
+
+The exact E075a `deja` query found no indexed correction. The broader recall
+reused E075's deliberately separate opcode-105/shared Begin-Cmd-End design and
+the audit's verified strict opcode-85 compatibility. Mapped-memory flush fan-out
+and global recording-mutex scalability are recorded as E077 follow-up work.
+This gate has no tablet deployment, visible-frame, Tomb Raider, benchmark, or
+FPS claim.

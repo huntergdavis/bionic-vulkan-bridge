@@ -156,6 +156,7 @@ struct bvb_global_client_state {
     uint64_t command_stream_slots[BVB_COMMAND_STREAM_SLOT_COUNT / 64U];
     bool command_stream_enabled;
     uint64_t exchange_count;
+    uint16_t last_opcode;
 };
 
 static const uint64_t bvb_dispatch_anchor = UINT64_C(0x4256424449535030);
@@ -197,6 +198,7 @@ static PFN_vkVoidFunction erase_function(const void *bytes, size_t size) {
 static int exchange_locked(const struct bvb_protocol_packet *request,
                            struct bvb_protocol_packet *response) {
     ++bvb_global_client.exchange_count;
+    bvb_global_client.last_opcode = request->header.opcode;
     int result = bvb_transport_send(bvb_global_client.socket_fd, request);
     if (result == 0) {
         result = bvb_transport_receive(bvb_global_client.socket_fd, response);
@@ -217,6 +219,7 @@ static int exchange_fds_locked(
     struct bvb_protocol_packet *response, int *received_fds,
     size_t fd_capacity, size_t *received_fd_count) {
     ++bvb_global_client.exchange_count;
+    bvb_global_client.last_opcode = request->header.opcode;
     int result = bvb_transport_send(bvb_global_client.socket_fd, request);
     if (result == 0)
         result = bvb_transport_receive_fds(
@@ -234,6 +237,7 @@ static int exchange_pass_fd_locked(
     const struct bvb_protocol_packet *request,
     struct bvb_protocol_packet *response, int passed_fd) {
     ++bvb_global_client.exchange_count;
+    bvb_global_client.last_opcode = request->header.opcode;
     int result = bvb_transport_send_fd(
         bvb_global_client.socket_fd, request, passed_fd);
     if (result == 0) {
@@ -776,6 +780,15 @@ BVB_GLOBAL_EXPORT uint64_t bvb_global_dispatch_exchange_count(void) {
         (void)pthread_mutex_unlock(&bvb_global_client.mutex);
     }
     return count;
+}
+
+BVB_GLOBAL_EXPORT uint16_t bvb_global_dispatch_last_opcode(void) {
+    uint16_t opcode = 0U;
+    if (pthread_mutex_lock(&bvb_global_client.mutex) == 0) {
+        opcode = bvb_global_client.last_opcode;
+        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    }
+    return opcode;
 }
 
 static struct bvb_queue_proxy *queue_proxy_locked(
@@ -3358,8 +3371,11 @@ static void VKAPI_CALL bvb_bridge_vkGetDeviceQueue(
     }
 }
 
-static VkResult result_request_locked(
-    uint16_t opcode, const uint8_t *payload, uint32_t payload_length) {
+static int result_exchange_locked(
+    uint16_t opcode, const uint8_t *payload, uint32_t payload_length,
+    VkResult *vulkan_result) {
+    if (vulkan_result == NULL) return -EINVAL;
+    *vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
     int result = connect_locked();
     struct bvb_protocol_packet request = {0};
     request.header = (struct bvb_protocol_header){
@@ -3385,13 +3401,22 @@ static VkResult result_request_locked(
          response.header.payload_length != BVB_VULKAN_RESULT_SIZE)) {
         result = -EPROTO;
     }
-    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    int32_t decoded_result = VK_ERROR_INITIALIZATION_FAILED;
     if (result == 0) {
         result = bvb_protocol_decode_vulkan_result(
-            response.payload, &vulkan_result);
+            response.payload, &decoded_result);
     }
-    return result == 0 ? (VkResult)vulkan_result
-                       : VK_ERROR_INITIALIZATION_FAILED;
+    if (result == 0) *vulkan_result = (VkResult)decoded_result;
+    return result;
+}
+
+static VkResult result_request_locked(
+    uint16_t opcode, const uint8_t *payload, uint32_t payload_length) {
+    VkResult vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    return result_exchange_locked(
+               opcode, payload, payload_length, &vulkan_result) == 0
+               ? vulkan_result
+               : VK_ERROR_INITIALIZATION_FAILED;
 }
 
 static VkResult VKAPI_CALL bvb_bridge_vkCreateCommandPool(
@@ -6543,13 +6568,21 @@ static VkResult VKAPI_CALL bvb_bridge_vkQueueSubmit2(
             : bvb_protocol_encode_vulkan_queue_submit_2_request(
                   payload, &decoded, &payload_length);
     }
-    VkResult vulkan_result = result == 0 && upload_result == VK_SUCCESS
-        ? result_request_locked(stream_submit
-                                    ? BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2_STREAM
-                                    : BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2,
-                                payload, payload_length)
-        : upload_result;
-    if (vulkan_result == VK_SUCCESS) {
+    VkResult vulkan_result = result == 0
+                                 ? upload_result
+                                 : VK_ERROR_INITIALIZATION_FAILED;
+    bool submit_acknowledged = false;
+    if (result == 0 && upload_result == VK_SUCCESS) {
+        submit_acknowledged = result_exchange_locked(
+                                  stream_submit
+                                      ? BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2_STREAM
+                                      : BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2,
+                                  payload, payload_length,
+                                  &vulkan_result) == 0;
+        if (!submit_acknowledged)
+            vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (submit_acknowledged) {
         for (uint32_t index = 0U; index < decoded.command_count; ++index) {
             if (decoded.commands[index].stream_flags ==
                 BVB_VULKAN_SUBMIT_2_COMMAND_SHARED_STREAM) {

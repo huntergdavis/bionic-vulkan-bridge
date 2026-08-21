@@ -16,13 +16,17 @@ def main() -> int:
     if len(sys.argv) not in (4, 5):
         raise SystemExit(
             "usage: test_global_dispatch.py SERVICE CLIENT FAKE_LOADER "
-            "[strict-fake|hardware|shared-command-stream]"
+            "[strict-fake|hardware|shared-command-stream|"
+            "shared-command-stream-non-success]"
         )
     service, client, loader = map(
         lambda value: str(pathlib.Path(value).resolve()), sys.argv[1:4]
     )
     validation_mode = sys.argv[4] if len(sys.argv) == 5 else "strict-fake"
-    if validation_mode not in ("strict-fake", "hardware", "shared-command-stream"):
+    if validation_mode not in (
+        "strict-fake", "hardware", "shared-command-stream",
+        "shared-command-stream-non-success",
+    ):
         raise SystemExit(f"unsupported validation mode: {validation_mode}")
     with tempfile.TemporaryDirectory(prefix="bvb-e034-") as temporary:
         socket_path = pathlib.Path(temporary) / "runtime" / "bridge.sock"
@@ -41,6 +45,8 @@ def main() -> int:
         server_environment["BVB_FAKE_REQUIRE_INIT_IMAGE_COMMANDS"] = "1"
         if validation_mode == "hardware":
             server_environment["BVB_FAKE_REAL_HARDWARE_VALUES"] = "1"
+        if validation_mode == "shared-command-stream-non-success":
+            server_environment["BVB_FAKE_QUEUE_SUBMIT2_FAIL_AT"] = "3"
         server = subprocess.Popen(
             [
                 service,
@@ -113,10 +119,15 @@ def main() -> int:
                 environment["BVB_GLOBAL_DISPATCH_HARDWARE"] = "1"
             else:
                 environment.pop("BVB_GLOBAL_DISPATCH_HARDWARE", None)
-            if validation_mode == "shared-command-stream":
+            shared_command_stream = validation_mode.startswith(
+                "shared-command-stream"
+            )
+            if shared_command_stream:
                 environment["BVB_COMMAND_STREAM"] = "shared"
             else:
                 environment.pop("BVB_COMMAND_STREAM", None)
+            if validation_mode == "shared-command-stream-non-success":
+                environment["BVB_EXPECT_STREAM_SUBMIT_FAILURE"] = "1"
             completed = subprocess.run(
                 [client],
                 check=False,
@@ -132,13 +143,17 @@ def main() -> int:
                 )
             assert completed.stderr == ""
             assert completed.stdout.startswith("PASS: global Vulkan discovery")
-            assert f"validation_mode={validation_mode}" in completed.stdout
+            expected_client_mode = (
+                "shared-command-stream" if shared_command_stream
+                else validation_mode
+            )
+            assert f"validation_mode={expected_client_mode}" in completed.stdout
             assert "exposed_extensions=7 exposed_layers=0" in completed.stdout
             assert "sampler_anisotropy=1" in completed.stdout
             assert "empty_submit=0 queue_wait=0 device_wait=0" in completed.stdout
             assert "command_submit=0 pool_reset=0" in completed.stdout
             assert (
-                "recording_rtts=0" if validation_mode == "shared-command-stream"
+                "recording_rtts=0" if shared_command_stream
                 else "recording_rtts=5"
             ) in completed.stdout
             image_match = re.search(r"\bimage=(\d+)\b", completed.stdout)

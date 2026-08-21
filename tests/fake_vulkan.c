@@ -47,6 +47,7 @@ static int fake_to_present_barrier;
 static int fake_submitted;
 static int fake_fence_created;
 static int fake_fence_signaled;
+static uint32_t fake_queue_submit_2_calls;
 static uint32_t fake_descriptor_step;
 static uint32_t fake_init_image_step;
 static VkCommandBuffer fake_init_image_command = VK_NULL_HANDLE;
@@ -2152,6 +2153,12 @@ static VkResult VKAPI_CALL fake_queue_submit_2(
         submits[0].sType != VK_STRUCTURE_TYPE_SUBMIT_INFO_2 ||
         submits[0].pNext != NULL || submits[0].flags != 0U)
         return VK_ERROR_INITIALIZATION_FAILED;
+    ++fake_queue_submit_2_calls;
+    const char *fail_at_text = getenv("BVB_FAKE_QUEUE_SUBMIT2_FAIL_AT");
+    if (fail_at_text != NULL &&
+        strtoul(fail_at_text, NULL, 10) == fake_queue_submit_2_calls) {
+        return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+    }
     for (uint32_t index = 0U;
          index < submits[0].waitSemaphoreInfoCount; ++index) {
         const VkSemaphoreSubmitInfo *info =

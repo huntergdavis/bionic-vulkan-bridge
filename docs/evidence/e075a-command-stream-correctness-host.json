@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "gate": "E075a",
+  "result": "host_contract_pass",
+  "source_base_commit": "250fd64fb98e753fbf8faf03e2aaa25f5f7b0da3",
+  "objective": "make E075 shared command replay immutable, generation updates transactional, and native non-success retry semantics replay-safe",
+  "service_snapshot": {
+    "source": "peer-writable shared mapping after acquire fence",
+    "destination": "one private bounded heap snapshot per referenced stream",
+    "validation_source": "private snapshot",
+    "replay_source": "the same private snapshot",
+    "shared_mapping_revisited_after_snapshot": false
+  },
+  "generation_transaction": {
+    "entries": 4096,
+    "staging": "private shadow copy",
+    "commit": "one memcpy after every referenced stream validates and every generation update succeeds",
+    "partial_commit_on_failure": false,
+    "reclamation": "on ENOSPC, one bounded scan removes only typed command-buffer IDs that no longer resolve in the connection context, then retries once"
+  },
+  "submit_retry": {
+    "opcode_105_transport_ack_separate_from_vk_result": true,
+    "slot_retired_after_clean_ack_and_native_non_success": true,
+    "retry_opcode": 85,
+    "stream_replay_opcode": 105,
+    "forced_native_result": "VK_ERROR_OUT_OF_DEVICE_MEMORY"
+  },
+  "ab_contract": {
+    "strict_recording_socket_exchanges": 5,
+    "shared_recording_socket_exchanges": 0,
+    "changed": false
+  },
+  "tests": {
+    "snapshot_mutation": "source byte is mutated after snapshot and snapshot remains unchanged",
+    "atomic_generation_failure": "first valid update plus later ENOSPC leaves the real two-entry table byte-identical",
+    "reclamation_lifecycle": "one dead typed command-buffer entry is reclaimed while one live entry is preserved",
+    "native_non_success_retry": "clean opcode 105 returns VK_ERROR_OUT_OF_DEVICE_MEMORY, releases the slot, and retry is asserted as opcode 85",
+    "legal_resubmit_flags": 0,
+    "full_host_suite": "42/42 passed"
+  },
+  "deferred": {
+    "E077": [
+      "replace per-submit mapped-memory flush socket fan-out with a shared dirty-memory transport",
+      "reduce the global client recording mutex bottleneck"
+    ],
+    "disconnect_cleanup": "bounded later lifecycle work; service-side per-connection unmap and context destruction remain intact"
+  },
+  "reuse": "The exact E075a deja query found no indexed correction. Broader recall reused E075's separate opcode-105 shared stream and unchanged opcode-85 strict/native-reuse design; this implementation applies the audit's snapshot, transactional-generation, acknowledgement, and legal-resubmit findings.",
+  "scope": "Host correctness contract only; no push, merge, APK change, tablet deployment, visible frame, Tomb Raider run, benchmark, or FPS claim"
+}

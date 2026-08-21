@@ -2440,6 +2440,12 @@ static int answer_vulkan_queue_submit_command_fence(
     return bvb_transport_send(client_fd, &response);
 }
 
+static bool command_buffer_generation_is_live(
+    uint64_t command_buffer_id, void *user_data) {
+    return bvb_vulkan_global_context_command_buffer_is_live(
+        user_data, command_buffer_id);
+}
+
 static int replay_submit_command_streams(
     struct shared_batch_region *region,
     const struct bvb_vulkan_queue_submit_2_request *request,
@@ -2461,8 +2467,10 @@ static int replay_submit_command_streams(
         context, request, &device_id, diagnostic, diagnostic_size);
     if (result != 0) return result;
     atomic_thread_fence(memory_order_acquire);
-    const uint8_t *batches[BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT] = {0};
-    size_t generation_slots[BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT] = {0};
+    uint8_t *snapshots[BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT] = {0};
+    struct bvb_command_stream_generation_update
+        generation_updates[BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT] = {0};
+    size_t generation_update_count = 0U;
     for (uint32_t index = 0U; result == 0 && index < request->command_count;
          ++index) {
         const struct bvb_vulkan_submit_2_command_record *command =
@@ -2485,10 +2493,14 @@ static int replay_submit_command_streams(
             }
         }
         if (result != 0) break;
-        batches[index] = region->address + command->stream_offset;
+        result = bvb_command_batch_snapshot(
+            region->address + command->stream_offset,
+            command->stream_length, &snapshots[index]);
         struct bvb_command_batch_info info;
-        result = bvb_command_batch_validate(
-            batches[index], command->stream_length, &info);
+        if (result == 0) {
+            result = bvb_command_batch_validate(
+                snapshots[index], command->stream_length, &info);
+        }
         if (result == 0 &&
             (info.command_buffer_id != command->command_buffer_id ||
              info.sequence != command->stream_sequence ||
@@ -2497,37 +2509,36 @@ static int replay_submit_command_streams(
         }
         if (result == 0) {
             result = bvb_vulkan_global_context_validate_command_stream(
-                context, batches[index], command->stream_length, device_id,
+                context, snapshots[index], command->stream_length, device_id,
                 diagnostic, diagnostic_size);
         }
         if (result == 0) {
-            result = bvb_command_stream_generation_check(
-                region->command_generations,
-                sizeof(region->command_generations) /
-                    sizeof(region->command_generations[0]),
-                command->command_buffer_id, command->stream_sequence,
-                &generation_slots[index]);
-        }
-        if (result == 0) {
-            result = bvb_command_stream_generation_commit(
-                region->command_generations,
-                sizeof(region->command_generations) /
-                    sizeof(region->command_generations[0]),
-                generation_slots[index], command->command_buffer_id,
-                command->stream_sequence);
+            generation_updates[generation_update_count++] =
+                (struct bvb_command_stream_generation_update){
+                    .command_buffer_id = command->command_buffer_id,
+                    .sequence = command->stream_sequence,
+                };
         }
     }
-    if (result != 0) return result;
+    if (result == 0) {
+        result = bvb_command_stream_generations_apply(
+            region->command_generations,
+            sizeof(region->command_generations) /
+                sizeof(region->command_generations[0]),
+            generation_updates, generation_update_count,
+            command_buffer_generation_is_live, context, NULL);
+    }
     for (uint32_t index = 0U; index < request->command_count; ++index) {
         const struct bvb_vulkan_submit_2_command_record *command =
             &request->commands[index];
-        if (command->stream_flags == 0U) continue;
-        result = bvb_vulkan_global_context_replay_command_stream(
-            context, batches[index], command->stream_length, device_id,
-            diagnostic, diagnostic_size);
-        if (result != 0) return result;
+        if (result == 0 && command->stream_flags != 0U) {
+            result = bvb_vulkan_global_context_replay_command_stream(
+                context, snapshots[index], command->stream_length, device_id,
+                diagnostic, diagnostic_size);
+        }
+        free(snapshots[index]);
     }
-    return 0;
+    return result;
 }
 
 static int answer_vulkan_queue_submit_2(

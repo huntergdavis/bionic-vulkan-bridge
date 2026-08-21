@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define CHECK(expression)                                                        \
@@ -14,6 +15,10 @@
             return 1;                                                            \
         }                                                                        \
     } while (0)
+
+static bool generation_is_live(uint64_t command_buffer_id, void *user_data) {
+    return command_buffer_id == *(const uint64_t *)user_data;
+}
 
 static int test_handles(void) {
     const uint64_t device = bvb_handle_id(BVB_OBJECT_DEVICE, 1U);
@@ -325,6 +330,15 @@ static int test_vulkan_command_stream(void) {
                      2U);
     CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
 
+    uint8_t *snapshot = NULL;
+    CHECK(bvb_command_batch_snapshot(bytes, length, &snapshot) == 0);
+    const uint8_t first_snapshot_byte = snapshot[0];
+    bytes[0] ^= UINT8_C(0xff);
+    CHECK(snapshot[0] == first_snapshot_byte);
+    CHECK(snapshot[0] != bytes[0]);
+    bytes[0] ^= UINT8_C(0xff);
+    free(snapshot);
+
     struct bvb_command_stream_generation generations[2] = {0};
     size_t generation_index = SIZE_MAX;
     CHECK(bvb_command_stream_generation_check(
@@ -356,6 +370,33 @@ static int test_vulkan_command_stream(void) {
               generations, 2U,
               bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 9U), 1U,
               &generation_index) == -ENOSPC);
+    const struct bvb_command_stream_generation committed[2] = {
+        generations[0], generations[1],
+    };
+    const uint64_t third_command_buffer =
+        bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 9U);
+    const struct bvb_command_stream_generation_update rejected_updates[2] = {
+        {.command_buffer_id = command_buffer, .sequence = 19U},
+        {.command_buffer_id = third_command_buffer, .sequence = 1U},
+    };
+    CHECK(bvb_command_stream_generations_apply(
+              generations, 2U, rejected_updates, 2U, NULL, NULL, NULL) ==
+          -ENOSPC);
+    CHECK(memcmp(generations, committed, sizeof(committed)) == 0);
+
+    const struct bvb_command_stream_generation_update reclaimed_update = {
+        .command_buffer_id = third_command_buffer,
+        .sequence = 1U,
+    };
+    size_t reclaimed = 0U;
+    CHECK(bvb_command_stream_generations_apply(
+              generations, 2U, &reclaimed_update, 1U, generation_is_live,
+              (void *)&second_command_buffer, &reclaimed) == 0);
+    CHECK(reclaimed == 1U);
+    CHECK(generations[0].command_buffer_id == third_command_buffer);
+    CHECK(generations[0].last_sequence == 1U);
+    CHECK(generations[1].command_buffer_id == second_command_buffer);
+    CHECK(generations[1].last_sequence == 1U);
     return 0;
 }
 

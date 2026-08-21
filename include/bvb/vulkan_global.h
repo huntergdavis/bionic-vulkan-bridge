@@ -6,6 +6,7 @@
 #include <bvb/vulkan_discovery.h>
 #include <bvb/vulkan_pipeline_wire.h>
 
+#include <stdbool.h>
 #include <stddef.h>
 
 struct bvb_vulkan_global_context;
@@ -287,6 +288,9 @@ int bvb_vulkan_global_context_replay_command_stream(
     const struct bvb_vulkan_global_context *context,
     const uint8_t *batch, size_t batch_length, uint64_t expected_device_id,
     char *error, size_t error_size);
+bool bvb_vulkan_global_context_command_buffer_is_live(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t command_buffer_id);
 int bvb_vulkan_global_context_verify_memory_fill(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_memory_verify_fill_request *request,

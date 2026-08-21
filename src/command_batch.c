@@ -2,6 +2,7 @@
 #include <bvb/protocol.h>
 
 #include <errno.h>
+#include <stdlib.h>
 #include <string.h>
 
 enum {
@@ -592,6 +593,18 @@ int bvb_command_batch_next(struct bvb_command_batch_iterator *iterator,
     return 0;
 }
 
+int bvb_command_batch_snapshot(const uint8_t *source, size_t length,
+                               uint8_t **snapshot) {
+    if (source == NULL || length == 0U ||
+        length > BVB_COMMAND_BATCH_MAX_BYTES || snapshot == NULL) {
+        return -EINVAL;
+    }
+    *snapshot = malloc(length);
+    if (*snapshot == NULL) return -ENOMEM;
+    memcpy(*snapshot, source, length);
+    return 0;
+}
+
 int bvb_command_stream_generation_check(
     const struct bvb_command_stream_generation *generations,
     size_t generation_count, uint64_t command_buffer_id, uint64_t sequence,
@@ -634,6 +647,62 @@ int bvb_command_stream_generation_commit(
         .last_sequence = sequence,
     };
     return 0;
+}
+
+int bvb_command_stream_generations_apply(
+    struct bvb_command_stream_generation *generations,
+    size_t generation_count,
+    const struct bvb_command_stream_generation_update *updates,
+    size_t update_count, bvb_command_stream_generation_live_fn is_live,
+    void *user_data, size_t *reclaimed_count) {
+    if (reclaimed_count != NULL) *reclaimed_count = 0U;
+    if (generations == NULL || generation_count == 0U ||
+        (update_count != 0U && updates == NULL) ||
+        generation_count > SIZE_MAX / sizeof(*generations)) {
+        return -EINVAL;
+    }
+    if (update_count == 0U) return 0;
+    const size_t bytes = generation_count * sizeof(*generations);
+    struct bvb_command_stream_generation *shadow = malloc(bytes);
+    if (shadow == NULL) return -ENOMEM;
+    memcpy(shadow, generations, bytes);
+    size_t reclaimed = 0U;
+    bool attempted_reclamation = false;
+    int result = 0;
+    for (size_t update = 0U; result == 0 && update < update_count; ++update) {
+        size_t generation_index = SIZE_MAX;
+        result = bvb_command_stream_generation_check(
+            shadow, generation_count, updates[update].command_buffer_id,
+            updates[update].sequence, &generation_index);
+        if (result == -ENOSPC && is_live != NULL &&
+            !attempted_reclamation) {
+            attempted_reclamation = true;
+            for (size_t index = 0U; index < generation_count; ++index) {
+                if (shadow[index].command_buffer_id != 0U &&
+                    !is_live(shadow[index].command_buffer_id, user_data)) {
+                    shadow[index] =
+                        (struct bvb_command_stream_generation){0};
+                    ++reclaimed;
+                }
+            }
+            result = bvb_command_stream_generation_check(
+                shadow, generation_count,
+                updates[update].command_buffer_id,
+                updates[update].sequence, &generation_index);
+        }
+        if (result == 0) {
+            result = bvb_command_stream_generation_commit(
+                shadow, generation_count, generation_index,
+                updates[update].command_buffer_id,
+                updates[update].sequence);
+        }
+    }
+    if (result == 0) {
+        memcpy(generations, shadow, bytes);
+        if (reclaimed_count != NULL) *reclaimed_count = reclaimed;
+    }
+    free(shadow);
+    return result;
 }
 
 int bvb_command_decode_begin_rendering(

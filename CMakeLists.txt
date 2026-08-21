@@ -676,6 +676,29 @@ if(BUILD_TESTING)
       "shared-command-stream"
   )
   add_test(
+    NAME global-command-stream-non-success-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+      "$<TARGET_FILE:bvb-bridge-service>"
+      "$<TARGET_FILE:bvb-global-dispatch-test>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+      "shared-command-stream-non-success"
+  )
+  add_test(
+    NAME command-stream-correctness-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_command_stream_correctness_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e075a-command-stream-correctness-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/command_batch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/command_batch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_vulkan.c"
+  )
+  add_test(
     NAME global-activity-harness-contract
     COMMAND
       "${Python3_EXECUTABLE}"

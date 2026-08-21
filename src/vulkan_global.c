@@ -2045,6 +2045,18 @@ static int resolve_command_buffer(
     return result;
 }
 
+bool bvb_vulkan_global_context_command_buffer_is_live(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t command_buffer_id) {
+    uint64_t device_id = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    return resolve_command_buffer(
+               context, command_buffer_id, &device_id, &device,
+               &command_pool, &command_buffer) == 0;
+}
+
 int bvb_vulkan_global_context_create_command_pool(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_command_pool_create_request *request,

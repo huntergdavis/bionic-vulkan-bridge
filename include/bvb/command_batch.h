@@ -136,6 +136,14 @@ struct bvb_command_stream_generation {
     uint64_t last_sequence;
 };
 
+struct bvb_command_stream_generation_update {
+    uint64_t command_buffer_id;
+    uint64_t sequence;
+};
+
+typedef bool (*bvb_command_stream_generation_live_fn)(
+    uint64_t command_buffer_id, void *user_data);
+
 int bvb_command_batch_begin(struct bvb_command_batch_builder *builder,
                             uint8_t *bytes, size_t capacity,
                             uint64_t command_buffer_id, uint64_t sequence);
@@ -184,6 +192,8 @@ int bvb_command_batch_iterator_init(struct bvb_command_batch_iterator *iterator,
                                     const uint8_t *bytes, size_t length);
 int bvb_command_batch_next(struct bvb_command_batch_iterator *iterator,
                            struct bvb_command_record *record);
+int bvb_command_batch_snapshot(const uint8_t *source, size_t length,
+                               uint8_t **snapshot);
 int bvb_command_stream_generation_check(
     const struct bvb_command_stream_generation *generations,
     size_t generation_count, uint64_t command_buffer_id, uint64_t sequence,
@@ -192,6 +202,12 @@ int bvb_command_stream_generation_commit(
     struct bvb_command_stream_generation *generations,
     size_t generation_count, size_t generation_index,
     uint64_t command_buffer_id, uint64_t sequence);
+int bvb_command_stream_generations_apply(
+    struct bvb_command_stream_generation *generations,
+    size_t generation_count,
+    const struct bvb_command_stream_generation_update *updates,
+    size_t update_count, bvb_command_stream_generation_live_fn is_live,
+    void *user_data, size_t *reclaimed_count);
 int bvb_command_decode_begin_rendering(
     const struct bvb_command_record *record,
     struct bvb_begin_rendering_command *command);

@@ -147,3 +147,16 @@ prevalidates the whole submit, command topology, and typed same-device
 ownership before replaying into native command buffers. The default path still
 uses the strict per-call socket implementation for A/B comparison. Corrupt,
 stale, unsupported, or cross-device streams fail closed before native replay.
+
+E075a closes the shared-stream correctness gaps found in the first audit.
+The service snapshots each referenced slot into private immutable memory before
+validation, stages every monotonic-generation change in a shadow table, and
+commits the table only after the complete submit validates. A full generation
+table reclaims entries only for command buffers that the typed native context
+proves are no longer live. Once opcode 105 has been accepted and replayed, the
+client retires the slot even when native `vkQueueSubmit2` returns a Vulkan
+error; a legal retry therefore uses the ordinary opcode-85 native handle rather
+than resending an already-consumed stream. The 5-to-0 recording exchange A/B
+result is unchanged. Per-submit mapped-memory flush fan-out and the global
+recording mutex remain later performance/scalability work (E077); E075a makes
+no FPS or visible-frame claim.

@@ -1879,7 +1879,7 @@ int main(void) {
     CHECK(get_fence_status(device, fence) == VK_NOT_READY);
     const VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        .flags = 0U,
     };
     if (shared_command_stream) {
         CHECK(begin_command_buffer(command_buffer, &begin_info) == VK_SUCCESS);
@@ -2078,8 +2078,24 @@ int main(void) {
             .commandBufferInfoCount = 1U,
             .pCommandBufferInfos = &reused_slot_command,
         };
-        CHECK(queue_submit_2(queue, 1U, &reused_slot_submit,
-                             VK_NULL_HANDLE) == VK_SUCCESS);
+        if (getenv("BVB_EXPECT_STREAM_SUBMIT_FAILURE") != NULL) {
+            const VkResult forced_submit_result = queue_submit_2(
+                queue, 1U, &reused_slot_submit, VK_NULL_HANDLE);
+            if (forced_submit_result != VK_ERROR_OUT_OF_DEVICE_MEMORY) {
+                fprintf(stderr, "forced Submit2 result=%d expected=%d\n",
+                        forced_submit_result, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+            }
+            CHECK(forced_submit_result == VK_ERROR_OUT_OF_DEVICE_MEMORY);
+            CHECK(bvb_global_dispatch_last_opcode() ==
+                  BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2_STREAM);
+            CHECK(queue_submit_2(queue, 1U, &reused_slot_submit,
+                                 VK_NULL_HANDLE) == VK_SUCCESS);
+            CHECK(bvb_global_dispatch_last_opcode() ==
+                  BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2);
+        } else {
+            CHECK(queue_submit_2(queue, 1U, &reused_slot_submit,
+                                 VK_NULL_HANDLE) == VK_SUCCESS);
+        }
     }
     destroy_semaphore(device, timeline, NULL);
     destroy_image_view(device, image_view, NULL);
