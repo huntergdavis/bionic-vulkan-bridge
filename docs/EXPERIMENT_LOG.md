@@ -2824,3 +2824,45 @@ validation, and E063 typed native image ownership. The earlier E067 proposal
 was corrected and cancelled: the Adreno 730's native Turnip feature truth makes
 DXVK disable sparse image probing; observing the buffer query alone did not
 prove that conclusion.
+
+## E070 — honest real-hardware global validation mode (2026-08-21)
+
+Status: both strict-fake and divergent hardware-mode host contracts pass; real
+tablet deployment remains pending, with no visibility or FPS claim. The first
+synthetic Activity tablet run authenticated all six lifecycle events and then
+failed because the global client demanded the fake driver's sampled-image
+maximum width of 4096 while Adreno truthfully returned 16384. Auditing the
+whole client found additional fake-only constants in memory requirements,
+buffer addresses, dedicated-allocation preferences, proxy serials, and the
+separate 59-invented-extension transport stress device.
+
+The default remains `strict-fake` and retains every exact fixture assertion.
+An explicit `BVB_GLOBAL_DISPATCH_HARDWARE=1` branch instead requires Vulkan
+capability bounds and cross-call consistency: at least Vulkan 1.0, DXVK's
+256-byte `MaxTotalPushDataSize` acceptance floor, a sampled-image maximum of at
+least 2800x1752 for the native-resolution Tab S8+ target, matching legacy and
+Properties2 results, power-of-two memory alignment, nonzero in-range memory
+type masks, stable repeated queries and buffer addresses, and valid dedicated
+allocation booleans. Return codes, unsupported-shape zeroing, typed same-device
+ownership, lifecycle authentication, mapping contents, command recording,
+fences, and timeline semantics are never weakened. The synthetic scale-device
+success path remains strict-fake-only because its `VK_BVB_scale_extension_*`
+names are not real driver extensions.
+
+The standalone Activity harness now accepts `--hardware-validation`, injects
+the environment variable into the client child only, and records the selected
+mode in its result JSON. The Termux gate uses that explicit route. A divergent
+fake hardware fixture reports 512 push-constant bytes, a 16384x8192 image
+maximum, alignment 4, a different nonzero device address, consistent 16384-byte
+image requirements, and false dedicated preferences; passing it proves that
+the invariant branch is real rather than a renamed exact fixture. Dispatch
+policy remains 88 executable, 352 required-unimplemented, and 302 probed-null.
+The complete host suite passes 36/36 through `scripts/check.sh`.
+
+Canonical host evidence is
+`docs/evidence/e070-real-hardware-global-validation-host.json`. The required
+`deja "BVB global_dispatch real hardware mode fake-specific assertions Termux Activity harness"`
+query returned no indexed implementation. E070 reuses the repository's exact
+global-dispatch fake contract and authenticated synthetic Activity harness as
+the strict baseline. Real Adreno execution, image import/display, and game
+performance remain separate gates.

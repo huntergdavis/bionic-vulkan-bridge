@@ -617,6 +617,16 @@ if(BUILD_TESTING)
       "$<TARGET_FILE:bvb-fake-vulkan>"
   )
   add_test(
+    NAME global-dispatch-hardware-mode-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+      "$<TARGET_FILE:bvb-bridge-service>"
+      "$<TARGET_FILE:bvb-global-dispatch-test>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+      "hardware"
+  )
+  add_test(
     NAME global-activity-harness-contract
     COMMAND
       "${Python3_EXECUTABLE}"

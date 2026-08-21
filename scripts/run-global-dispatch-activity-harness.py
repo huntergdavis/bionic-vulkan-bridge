@@ -288,6 +288,11 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=2800)
     parser.add_argument("--height", type=int, default=1752)
     parser.add_argument("--timeout", type=float, default=15.0)
+    parser.add_argument(
+        "--hardware-validation",
+        action="store_true",
+        help="set BVB_GLOBAL_DISPATCH_HARDWARE=1 only in the client child",
+    )
     parser.add_argument("--service-stdout", required=True)
     parser.add_argument("--service-stderr", required=True)
     parser.add_argument("--client-stdout", required=True)
@@ -361,6 +366,9 @@ def run(arguments: argparse.Namespace) -> int:
         "requested_height": arguments.height,
         "activity_frame_setup": {"received": False},
         "client_exit": None,
+        "client_validation_mode": (
+            "hardware" if arguments.hardware_validation else "strict-fake"
+        ),
         "service_exit": None,
         "visible_frame_claim": False,
         "fps_claim": False,
@@ -418,6 +426,10 @@ def run(arguments: argparse.Namespace) -> int:
 
         client_environment = os.environ.copy()
         client_environment["BVB_BRIDGE_SOCKET"] = str(control_socket)
+        if arguments.hardware_validation:
+            client_environment["BVB_GLOBAL_DISPATCH_HARDWARE"] = "1"
+        else:
+            client_environment.pop("BVB_GLOBAL_DISPATCH_HARDWARE", None)
         client_stdout_handle = output_paths["client-stdout"].open("wb")
         client_stderr_handle = output_paths["client-stderr"].open("wb")
         client_process = subprocess.Popen(

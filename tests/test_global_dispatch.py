@@ -13,13 +13,17 @@ import time
 
 
 def main() -> int:
-    if len(sys.argv) != 4:
+    if len(sys.argv) not in (4, 5):
         raise SystemExit(
-            "usage: test_global_dispatch.py SERVICE CLIENT FAKE_LOADER"
+            "usage: test_global_dispatch.py SERVICE CLIENT FAKE_LOADER "
+            "[strict-fake|hardware]"
         )
     service, client, loader = map(
-        lambda value: str(pathlib.Path(value).resolve()), sys.argv[1:]
+        lambda value: str(pathlib.Path(value).resolve()), sys.argv[1:4]
     )
+    validation_mode = sys.argv[4] if len(sys.argv) == 5 else "strict-fake"
+    if validation_mode not in ("strict-fake", "hardware"):
+        raise SystemExit(f"unsupported validation mode: {validation_mode}")
     with tempfile.TemporaryDirectory(prefix="bvb-e034-") as temporary:
         socket_path = pathlib.Path(temporary) / "runtime" / "bridge.sock"
         token = bytes.fromhex(
@@ -35,6 +39,8 @@ def main() -> int:
         server_environment = os.environ.copy()
         server_environment["BVB_FAKE_HIDE_SWAPCHAIN"] = "1"
         server_environment["BVB_FAKE_REQUIRE_INIT_IMAGE_COMMANDS"] = "1"
+        if validation_mode == "hardware":
+            server_environment["BVB_FAKE_REAL_HARDWARE_VALUES"] = "1"
         server = subprocess.Popen(
             [
                 service,
@@ -103,6 +109,10 @@ def main() -> int:
             send_event(9, 6)
             environment = os.environ.copy()
             environment["BVB_BRIDGE_SOCKET"] = str(socket_path)
+            if validation_mode == "hardware":
+                environment["BVB_GLOBAL_DISPATCH_HARDWARE"] = "1"
+            else:
+                environment.pop("BVB_GLOBAL_DISPATCH_HARDWARE", None)
             completed = subprocess.run(
                 [client],
                 check=False,
@@ -118,35 +128,62 @@ def main() -> int:
                 )
             assert completed.stderr == ""
             assert completed.stdout.startswith("PASS: global Vulkan discovery")
-            assert f"api={0x00400000 | (4 << 12) | 354}" in completed.stdout
+            assert f"validation_mode={validation_mode}" in completed.stdout
             assert "exposed_extensions=7 exposed_layers=0" in completed.stdout
-            assert 'device=BVB Fake Adreno 730 "quoted"' in completed.stdout
-            assert f"device_api={0x00400000 | (3 << 12) | 275}" in completed.stdout
-            assert "driver=16909060 vendor=20803 device_id=1840" in completed.stdout
-            assert "queues=2 memory_types=1 memory_heaps=2 device_extensions=7" in completed.stdout
             assert "sampler_anisotropy=1" in completed.stdout
-            assert f"logical_device={0x0300000000000001}" in completed.stdout
-            assert f"queue={0x0400000000000001}" in completed.stdout
             assert "empty_submit=0 queue_wait=0 device_wait=0" in completed.stdout
-            assert f"command_pool={0x0A00000000000001}" in completed.stdout
-            assert f"command_buffer={0x0B00000000000001}" in completed.stdout
             assert "command_submit=0 pool_reset=0" in completed.stdout
-            assert f"buffer={0x1300000000000001}" in completed.stdout
-            assert f"memory={0x0900000000000001}" in completed.stdout
-            assert "buffer_requirements2=4096,256,1" in completed.stdout
-            assert f"buffer_address={0x123456780000}" in completed.stdout
             image_match = re.search(r"\bimage=(\d+)\b", completed.stdout)
             assert image_match is not None
             assert int(image_match.group(1)) >> 56 == 7
-            assert f"image_view={0x0800000000000001}" in completed.stdout
             assert "image_bytes=16384" in completed.stdout
-            assert "image_allocation_bytes=19623936" in completed.stdout
-            assert "image_dedicated=1,1" in completed.stdout
             assert "mapped_bytes=4096 mapped_mismatches=0" in completed.stdout
             assert "fill_words=1024 mismatches=0" in completed.stdout
-            assert f"fence={0x1200000000000001}" in completed.stdout
             assert "fence_before=1 fenced_submit=0 fence_after=0" in completed.stdout
             assert "fence_wait=0 fence_reset=0 fence_after_reset=1" in completed.stdout
+            if validation_mode == "strict-fake":
+                assert f"api={0x00400000 | (4 << 12) | 354}" in completed.stdout
+                assert 'device=BVB Fake Adreno 730 "quoted"' in completed.stdout
+                assert f"device_api={0x00400000 | (3 << 12) | 275}" in completed.stdout
+                assert "driver=16909060 vendor=20803 device_id=1840" in completed.stdout
+                assert "max_push_constants=256 image_format_max=4096,2048" in completed.stdout
+                assert "queues=2 memory_types=1 memory_heaps=2 device_extensions=7" in completed.stdout
+                assert f"logical_device={0x0300000000000001}" in completed.stdout
+                assert f"queue={0x0400000000000001}" in completed.stdout
+                assert f"command_pool={0x0A00000000000001}" in completed.stdout
+                assert f"command_buffer={0x0B00000000000001}" in completed.stdout
+                assert f"buffer={0x1300000000000001}" in completed.stdout
+                assert f"memory={0x0900000000000001}" in completed.stdout
+                assert "buffer_requirements2=4096,256,1" in completed.stdout
+                assert f"buffer_address={0x123456780000}" in completed.stdout
+                assert f"image_view={0x0800000000000001}" in completed.stdout
+                assert "image_allocation_bytes=19623936" in completed.stdout
+                assert "image_dedicated=1,1" in completed.stdout
+                assert f"fence={0x1200000000000001}" in completed.stdout
+            else:
+                assert "max_push_constants=512 image_format_max=16384,8192" in completed.stdout
+                assert "buffer_requirements2=4096,4,1" in completed.stdout
+                assert f"buffer_address={0xabcdef010000}" in completed.stdout
+                assert "image_allocation_bytes=16384" in completed.stdout
+                assert "image_dedicated=0,0" in completed.stdout
+                for field, object_type in (
+                    ("instance_one", 1),
+                    ("instance_two", 1),
+                    ("physical_device", 2),
+                    ("logical_device", 3),
+                    ("queue", 4),
+                    ("image_view", 8),
+                    ("memory", 9),
+                    ("command_pool", 10),
+                    ("command_buffer", 11),
+                    ("fence", 18),
+                    ("buffer", 19),
+                ):
+                    field_match = re.search(
+                        rf"\b{field}=(\d+)\b", completed.stdout
+                    )
+                    assert field_match is not None
+                    assert int(field_match.group(1)) >> 56 == object_type
             frame_connection, _ = activity_frame_listener.accept()
             with frame_connection:
                 setup, ancillary, _, _ = frame_connection.recvmsg(
@@ -185,7 +222,7 @@ def main() -> int:
             if server.poll() is None:
                 server.terminate()
                 server.wait(timeout=5.0)
-    print("PASS: E034 mapped-memory integration")
+    print(f"PASS: E070 global validation mode={validation_mode}")
     return 0
 
 

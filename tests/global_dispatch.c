@@ -56,6 +56,47 @@ static const uint32_t test_dxvk_dummy_frag[] = {
     UINT32_C(0x00000005), UINT32_C(0x000100fd), UINT32_C(0x00010038),
 };
 
+static bool bvb_hardware_validation_enabled(void) {
+    const char *value = getenv("BVB_GLOBAL_DISPATCH_HARDWARE");
+    return value != NULL && strcmp(value, "1") == 0;
+}
+
+static bool bvb_is_power_of_two(VkDeviceSize value) {
+    return value != 0U && (value & (value - 1U)) == 0U;
+}
+
+static bool bvb_memory_requirements_are_valid(
+    const VkMemoryRequirements *requirements, VkDeviceSize minimum_size,
+    uint32_t memory_type_count) {
+    const uint32_t valid_type_bits =
+        memory_type_count == 32U
+            ? UINT32_MAX
+            : (UINT32_C(1) << memory_type_count) - UINT32_C(1);
+    return requirements->size >= minimum_size &&
+           bvb_is_power_of_two(requirements->alignment) &&
+           requirements->memoryTypeBits != 0U &&
+           (requirements->memoryTypeBits & ~valid_type_bits) == 0U;
+}
+
+static bool bvb_memory_requirements_match(
+    const VkMemoryRequirements *left, const VkMemoryRequirements *right) {
+    return left->size == right->size &&
+           left->alignment == right->alignment &&
+           left->memoryTypeBits == right->memoryTypeBits;
+}
+
+static bool bvb_image_format_properties_match(
+    const VkImageFormatProperties *left,
+    const VkImageFormatProperties *right) {
+    return left->maxExtent.width == right->maxExtent.width &&
+           left->maxExtent.height == right->maxExtent.height &&
+           left->maxExtent.depth == right->maxExtent.depth &&
+           left->maxMipLevels == right->maxMipLevels &&
+           left->maxArrayLayers == right->maxArrayLayers &&
+           left->sampleCounts == right->sampleCounts &&
+           left->maxResourceSize == right->maxResourceSize;
+}
+
 static VkResult VKAPI_CALL test_set_device_loader_data(
     VkDevice device, void *object) {
     if (device == VK_NULL_HANDLE || object == NULL) {
@@ -78,6 +119,7 @@ static VkResult VKAPI_CALL test_set_device_loader_data(
     } while (0)
 
 int main(void) {
+    const bool hardware_mode = bvb_hardware_validation_enabled();
     uint32_t icd_interface_version = 7U;
     CHECK(vk_icdNegotiateLoaderICDInterfaceVersion(
               &icd_interface_version) == VK_SUCCESS);
@@ -172,7 +214,9 @@ int main(void) {
     CHECK(instance_one != VK_NULL_HANDLE);
     const uint64_t instance_one_id = bvb_instance_proxy_id(instance_one);
     CHECK(bvb_handle_type(instance_one_id) == BVB_OBJECT_INSTANCE);
-    CHECK(bvb_handle_serial(instance_one_id) == 1U);
+    if (!hardware_mode) {
+        CHECK(bvb_handle_serial(instance_one_id) == 1U);
+    }
     CHECK(vkGetInstanceProcAddr(instance_one, "vkCmdDraw") != NULL);
     CHECK(vkGetInstanceProcAddr(instance_one,
                                 "vkGetPhysicalDeviceProperties") != NULL);
@@ -198,16 +242,27 @@ int main(void) {
     uint32_t physical_count = 0U;
     CHECK(enumerate_physical_devices(instance_one, &physical_count, NULL) ==
           VK_SUCCESS);
-    CHECK(physical_count == 1U);
+    const uint32_t available_physical_count = physical_count;
+    if (hardware_mode) {
+        CHECK(available_physical_count > 0U);
+        CHECK(available_physical_count <= BVB_VULKAN_MAX_PHYSICAL_DEVICES);
+    } else {
+        CHECK(available_physical_count == 1U);
+    }
     VkPhysicalDevice physical_device = VK_NULL_HANDLE;
-    CHECK(enumerate_physical_devices(instance_one, &physical_count,
-                                     &physical_device) == VK_SUCCESS);
+    physical_count = 1U;
+    const VkResult physical_enumeration_result = enumerate_physical_devices(
+        instance_one, &physical_count, &physical_device);
+    CHECK(physical_enumeration_result ==
+          (available_physical_count > 1U ? VK_INCOMPLETE : VK_SUCCESS));
     CHECK(physical_count == 1U);
     CHECK(physical_device != VK_NULL_HANDLE);
     const uint64_t physical_id =
         bvb_physical_device_proxy_id(physical_device);
     CHECK(bvb_handle_type(physical_id) == BVB_OBJECT_PHYSICAL_DEVICE);
-    CHECK(bvb_handle_serial(physical_id) == 1U);
+    if (!hardware_mode) {
+        CHECK(bvb_handle_serial(physical_id) == 1U);
+    }
     VkPhysicalDevice repeated_device = VK_NULL_HANDLE;
     physical_count = 1U;
     CHECK(enumerate_physical_devices(instance_one, &physical_count,
@@ -338,7 +393,11 @@ int main(void) {
     CHECK(properties.apiVersion >= VK_API_VERSION_1_0);
     CHECK(properties.vendorID != 0U);
     CHECK(properties.deviceName[0] != '\0');
-    CHECK(properties.limits.maxPushConstantsSize == 256U);
+    if (hardware_mode) {
+        CHECK(properties.limits.maxPushConstantsSize >= 256U);
+    } else {
+        CHECK(properties.limits.maxPushConstantsSize == 256U);
+    }
 
     VkFormatProperties format_properties;
     get_format_properties(
@@ -356,11 +415,26 @@ int main(void) {
               VK_IMAGE_TYPE_2D, VK_IMAGE_TILING_OPTIMAL,
               VK_IMAGE_USAGE_SAMPLED_BIT, 0U,
               &image_format_properties) == VK_SUCCESS);
-    CHECK(image_format_properties.maxExtent.width == 4096U);
-    CHECK(image_format_properties.maxExtent.height == 2048U);
-    CHECK(image_format_properties.maxMipLevels == 12U);
-    CHECK(image_format_properties.maxArrayLayers == 256U);
-    CHECK(image_format_properties.maxResourceSize == UINT64_C(0x100000000));
+    if (hardware_mode) {
+        CHECK(image_format_properties.maxExtent.width >= 2800U);
+        CHECK(image_format_properties.maxExtent.height >= 1752U);
+        CHECK(image_format_properties.maxExtent.depth >= 1U);
+        CHECK(image_format_properties.maxMipLevels >= 1U);
+        CHECK(image_format_properties.maxArrayLayers >= 1U);
+        CHECK((image_format_properties.sampleCounts &
+               VK_SAMPLE_COUNT_1_BIT) != 0U);
+        CHECK(image_format_properties.maxResourceSize >=
+              64U * 64U * sizeof(uint32_t));
+    } else {
+        CHECK(image_format_properties.maxExtent.width == 4096U);
+        CHECK(image_format_properties.maxExtent.height == 2048U);
+        CHECK(image_format_properties.maxMipLevels == 12U);
+        CHECK(image_format_properties.maxArrayLayers == 256U);
+        CHECK(image_format_properties.maxResourceSize ==
+              UINT64_C(0x100000000));
+    }
+    const VkImageFormatProperties supported_image_format_properties =
+        image_format_properties;
     memset(&image_format_properties, 0xff, sizeof(image_format_properties));
     CHECK(get_image_format_properties(
               physical_device, VK_FORMAT_UNDEFINED, VK_IMAGE_TYPE_2D,
@@ -456,7 +530,14 @@ int main(void) {
     CHECK(get_image_properties2(
               physical_device, &image_info2, &image_properties2) ==
           VK_SUCCESS);
-    CHECK(image_properties2.imageFormatProperties.maxExtent.width == 4096U);
+    if (hardware_mode) {
+        CHECK(bvb_image_format_properties_match(
+            &image_properties2.imageFormatProperties,
+            &supported_image_format_properties));
+    } else {
+        CHECK(image_properties2.imageFormatProperties.maxExtent.width ==
+              4096U);
+    }
     const VkPhysicalDeviceExternalBufferInfo external_buffer_info = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_BUFFER_INFO,
         .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
@@ -630,7 +711,9 @@ int main(void) {
     CHECK(device != VK_NULL_HANDLE);
     const uint64_t device_id = bvb_device_proxy_id(device);
     CHECK(bvb_handle_type(device_id) == BVB_OBJECT_DEVICE);
-    CHECK(bvb_handle_serial(device_id) == 1U);
+    if (!hardware_mode) {
+        CHECK(bvb_handle_serial(device_id) == 1U);
+    }
     VkDevice ownership_device = VK_NULL_HANDLE;
     CHECK(create_device(
               physical_device, &device_create_info, NULL,
@@ -958,7 +1041,9 @@ int main(void) {
     CHECK(queue != VK_NULL_HANDLE);
     const uint64_t queue_id = bvb_queue_proxy_id(queue);
     CHECK(bvb_handle_type(queue_id) == BVB_OBJECT_QUEUE);
-    CHECK(bvb_handle_serial(queue_id) == 1U);
+    if (!hardware_mode) {
+        CHECK(bvb_handle_serial(queue_id) == 1U);
+    }
     VkQueue repeated_queue = VK_NULL_HANDLE;
     get_device_queue(device, queue_family_index, 0U, &repeated_queue);
     CHECK(repeated_queue == queue);
@@ -1261,7 +1346,9 @@ int main(void) {
     const uint64_t command_pool_id =
         bvb_command_pool_proxy_id(command_pool);
     CHECK(bvb_handle_type(command_pool_id) == BVB_OBJECT_COMMAND_POOL);
-    CHECK(bvb_handle_serial(command_pool_id) == 1U);
+    if (!hardware_mode) {
+        CHECK(bvb_handle_serial(command_pool_id) == 1U);
+    }
     const VkCommandBufferAllocateInfo allocate_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .commandPool = command_pool,
@@ -1275,7 +1362,9 @@ int main(void) {
     const uint64_t command_buffer_id =
         bvb_command_buffer_proxy_id(command_buffer);
     CHECK(bvb_handle_type(command_buffer_id) == BVB_OBJECT_COMMAND_BUFFER);
-    CHECK(bvb_handle_serial(command_buffer_id) == 1U);
+    if (!hardware_mode) {
+        CHECK(bvb_handle_serial(command_buffer_id) == 1U);
+    }
     const VkBufferCreateInfo device_buffer_create_info = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = 65536U,
@@ -1297,13 +1386,24 @@ int main(void) {
     };
     get_device_buffer_memory_requirements(
         device, &device_buffer_info, &device_buffer_requirements);
-    CHECK(device_buffer_requirements.memoryRequirements.size == 65792U);
-    CHECK(device_buffer_requirements.memoryRequirements.alignment == 256U);
-    CHECK(device_buffer_requirements.memoryRequirements.memoryTypeBits == 5U);
-    CHECK(device_buffer_dedicated_requirements.prefersDedicatedAllocation ==
-          VK_FALSE);
-    CHECK(device_buffer_dedicated_requirements.requiresDedicatedAllocation ==
-          VK_TRUE);
+    if (hardware_mode) {
+        CHECK(bvb_memory_requirements_are_valid(
+            &device_buffer_requirements.memoryRequirements,
+            device_buffer_create_info.size, memory.memoryTypeCount));
+        CHECK(device_buffer_dedicated_requirements
+                  .prefersDedicatedAllocation <= VK_TRUE);
+        CHECK(device_buffer_dedicated_requirements
+                  .requiresDedicatedAllocation <= VK_TRUE);
+    } else {
+        CHECK(device_buffer_requirements.memoryRequirements.size == 65792U);
+        CHECK(device_buffer_requirements.memoryRequirements.alignment == 256U);
+        CHECK(device_buffer_requirements.memoryRequirements.memoryTypeBits ==
+              5U);
+        CHECK(device_buffer_dedicated_requirements
+                  .prefersDedicatedAllocation == VK_FALSE);
+        CHECK(device_buffer_dedicated_requirements
+                  .requiresDedicatedAllocation == VK_TRUE);
+    }
     const uint32_t unsupported_marker = 0U;
     VkDeviceBufferMemoryRequirements unsupported_device_buffer_info =
         device_buffer_info;
@@ -1340,7 +1440,9 @@ int main(void) {
           VK_SUCCESS);
     const uint64_t buffer_id = bvb_buffer_proxy_id(buffer);
     CHECK(bvb_handle_type(buffer_id) == BVB_OBJECT_BUFFER);
-    CHECK(bvb_handle_serial(buffer_id) == 1U);
+    if (!hardware_mode) {
+        CHECK(bvb_handle_serial(buffer_id) == 1U);
+    }
     const VkBufferMemoryRequirementsInfo2 buffer_requirements_info_2 = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_REQUIREMENTS_INFO_2,
         .buffer = buffer,
@@ -1350,20 +1452,38 @@ int main(void) {
     };
     get_buffer_memory_requirements_2(
         device, &buffer_requirements_info_2, &buffer_requirements_2);
-    CHECK(buffer_requirements_2.memoryRequirements.size == 4096U);
-    CHECK(buffer_requirements_2.memoryRequirements.alignment == 256U);
-    CHECK(buffer_requirements_2.memoryRequirements.memoryTypeBits == 1U);
+    if (hardware_mode) {
+        CHECK(bvb_memory_requirements_are_valid(
+            &buffer_requirements_2.memoryRequirements,
+            buffer_create_info.size, memory.memoryTypeCount));
+    } else {
+        CHECK(buffer_requirements_2.memoryRequirements.size == 4096U);
+        CHECK(buffer_requirements_2.memoryRequirements.alignment == 256U);
+        CHECK(buffer_requirements_2.memoryRequirements.memoryTypeBits == 1U);
+    }
+    const VkMemoryRequirements first_buffer_requirements_2 =
+        buffer_requirements_2.memoryRequirements;
     VkMemoryDedicatedRequirements buffer_dedicated_requirements = {
         .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS,
     };
     buffer_requirements_2.pNext = &buffer_dedicated_requirements;
     get_buffer_memory_requirements_2(
         device, &buffer_requirements_info_2, &buffer_requirements_2);
-    CHECK(buffer_requirements_2.memoryRequirements.size == 4096U);
-    CHECK(buffer_dedicated_requirements.prefersDedicatedAllocation ==
-          VK_TRUE);
-    CHECK(buffer_dedicated_requirements.requiresDedicatedAllocation ==
-          VK_FALSE);
+    if (hardware_mode) {
+        CHECK(bvb_memory_requirements_match(
+            &buffer_requirements_2.memoryRequirements,
+            &first_buffer_requirements_2));
+        CHECK(buffer_dedicated_requirements.prefersDedicatedAllocation <=
+              VK_TRUE);
+        CHECK(buffer_dedicated_requirements.requiresDedicatedAllocation <=
+              VK_TRUE);
+    } else {
+        CHECK(buffer_requirements_2.memoryRequirements.size == 4096U);
+        CHECK(buffer_dedicated_requirements.prefersDedicatedAllocation ==
+              VK_TRUE);
+        CHECK(buffer_dedicated_requirements.requiresDedicatedAllocation ==
+              VK_FALSE);
+    }
     VkApplicationInfo unsupported_buffer_requirements_tail = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
     };
@@ -1445,7 +1565,9 @@ int main(void) {
           VK_SUCCESS);
     const uint64_t memory_id = bvb_memory_proxy_id(device_memory);
     CHECK(bvb_handle_type(memory_id) == BVB_OBJECT_DEVICE_MEMORY);
-    CHECK(bvb_handle_serial(memory_id) == 1U);
+    if (!hardware_mode) {
+        CHECK(bvb_handle_serial(memory_id) == 1U);
+    }
     CHECK(bind_buffer_memory(device, buffer, device_memory, 0U) == VK_SUCCESS);
     VkBufferDeviceAddressInfo buffer_address_info = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
@@ -1453,7 +1575,13 @@ int main(void) {
     };
     const VkDeviceAddress buffer_device_address =
         get_buffer_device_address(device, &buffer_address_info);
-    CHECK(buffer_device_address == UINT64_C(0x123456780000));
+    if (hardware_mode) {
+        CHECK(buffer_device_address != 0U);
+        CHECK(get_buffer_device_address(device, &buffer_address_info) ==
+              buffer_device_address);
+    } else {
+        CHECK(buffer_device_address == UINT64_C(0x123456780000));
+    }
     CHECK(get_buffer_device_address(
               ownership_device, &buffer_address_info) == 0U);
     buffer_address_info.pNext = &unsupported_buffer_requirements_tail;
@@ -1500,9 +1628,15 @@ int main(void) {
     CHECK(bvb_handle_serial(image_id) != 0U);
     VkMemoryRequirements image_requirements = {0};
     get_image_memory_requirements(device, image, &image_requirements);
-    CHECK(image_requirements.size == 64U * 64U * sizeof(uint32_t));
-    CHECK(image_requirements.alignment == 4096U);
-    CHECK(image_requirements.memoryTypeBits == 1U);
+    if (hardware_mode) {
+        CHECK(bvb_memory_requirements_are_valid(
+            &image_requirements, 64U * 64U * sizeof(uint32_t),
+            memory.memoryTypeCount));
+    } else {
+        CHECK(image_requirements.size == 64U * 64U * sizeof(uint32_t));
+        CHECK(image_requirements.alignment == 4096U);
+        CHECK(image_requirements.memoryTypeBits == 1U);
+    }
 
     VkMemoryDedicatedRequirements dedicated_requirements = {
         .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS,
@@ -1517,11 +1651,22 @@ int main(void) {
     };
     get_image_memory_requirements_2(
         device, &requirements_info_2, &image_requirements_2);
-    CHECK(image_requirements_2.memoryRequirements.size == UINT64_C(19623936));
-    CHECK(image_requirements_2.memoryRequirements.alignment == 4096U);
-    CHECK(image_requirements_2.memoryRequirements.memoryTypeBits == 1U);
-    CHECK(dedicated_requirements.prefersDedicatedAllocation == VK_TRUE);
-    CHECK(dedicated_requirements.requiresDedicatedAllocation == VK_TRUE);
+    if (hardware_mode) {
+        CHECK(bvb_memory_requirements_are_valid(
+            &image_requirements_2.memoryRequirements,
+            64U * 64U * sizeof(uint32_t), memory.memoryTypeCount));
+        CHECK(bvb_memory_requirements_match(
+            &image_requirements_2.memoryRequirements, &image_requirements));
+        CHECK(dedicated_requirements.prefersDedicatedAllocation <= VK_TRUE);
+        CHECK(dedicated_requirements.requiresDedicatedAllocation <= VK_TRUE);
+    } else {
+        CHECK(image_requirements_2.memoryRequirements.size ==
+              UINT64_C(19623936));
+        CHECK(image_requirements_2.memoryRequirements.alignment == 4096U);
+        CHECK(image_requirements_2.memoryRequirements.memoryTypeBits == 1U);
+        CHECK(dedicated_requirements.prefersDedicatedAllocation == VK_TRUE);
+        CHECK(dedicated_requirements.requiresDedicatedAllocation == VK_TRUE);
+    }
 
     const VkMemoryDedicatedAllocateInfo dedicated_allocate_info = {
         .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
@@ -1619,7 +1764,9 @@ int main(void) {
           VK_SUCCESS);
     const uint64_t image_view_id = bvb_image_view_proxy_id(image_view);
     CHECK(bvb_handle_type(image_view_id) == BVB_OBJECT_IMAGE_VIEW);
-    CHECK(bvb_handle_serial(image_view_id) == 1U);
+    if (!hardware_mode) {
+        CHECK(bvb_handle_serial(image_view_id) == 1U);
+    }
 
     const VkBaseInStructure unsupported_image_chain = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -1674,7 +1821,9 @@ int main(void) {
     CHECK(create_fence(device, &fence_create_info, NULL, &fence) == VK_SUCCESS);
     const uint64_t fence_id = bvb_fence_proxy_id(fence);
     CHECK(bvb_handle_type(fence_id) == BVB_OBJECT_FENCE);
-    CHECK(bvb_handle_serial(fence_id) == 1U);
+    if (!hardware_mode) {
+        CHECK(bvb_handle_serial(fence_id) == 1U);
+    }
     CHECK(get_fence_status(device, fence) == VK_NOT_READY);
     const VkCommandBufferBeginInfo begin_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -1760,7 +1909,9 @@ int main(void) {
     uint64_t timeline_id = 0U;
     memcpy(&timeline_id, &timeline, sizeof(timeline));
     CHECK(bvb_handle_type(timeline_id) == BVB_OBJECT_SEMAPHORE);
-    CHECK(bvb_handle_serial(timeline_id) == 2U);
+    if (!hardware_mode) {
+        CHECK(bvb_handle_serial(timeline_id) == 2U);
+    }
     uint64_t timeline_value = 0U;
     CHECK(get_semaphore_counter(device, timeline, &timeline_value) ==
           VK_SUCCESS);
@@ -1840,6 +1991,7 @@ int main(void) {
     destroy_device(device, NULL);
     destroy_device(ownership_device, NULL);
 
+    if (!hardware_mode) {
     const float scaled_queue_priorities[2] = {0.75F, 0.25F};
     const VkDeviceQueueCreateInfo scaled_queue_infos[2] = {
         {
@@ -1980,6 +2132,7 @@ int main(void) {
     free_command_buffers(scaled_device, scaled_pool, 1U, &scaled_command);
     destroy_command_pool(scaled_device, scaled_pool, NULL);
     destroy_device(scaled_device, NULL);
+    }
     destroy_surface(instance_one, surface, NULL);
 
     VkInstance instance_two = VK_NULL_HANDLE;
@@ -1988,7 +2141,9 @@ int main(void) {
     CHECK(instance_two != VK_NULL_HANDLE);
     const uint64_t instance_two_id = bvb_instance_proxy_id(instance_two);
     CHECK(bvb_handle_type(instance_two_id) == BVB_OBJECT_INSTANCE);
-    CHECK(bvb_handle_serial(instance_two_id) == 2U);
+    if (!hardware_mode) {
+        CHECK(bvb_handle_serial(instance_two_id) == 2U);
+    }
     CHECK(instance_two_id != instance_one_id);
 
     destroy_instance(instance_one, NULL);
@@ -1998,27 +2153,32 @@ int main(void) {
     memcpy(&destroy_instance_two, &erased, sizeof(destroy_instance_two));
     destroy_instance_two(instance_two, NULL);
 
-    printf("PASS: global Vulkan discovery api=%u "
+    printf("PASS: global Vulkan discovery validation_mode=%s api=%u "
            "exposed_extensions=7 exposed_layers=0 "
            "instance_one=%llu instance_two=%llu physical_device=%llu "
            "device=%s device_api=%u driver=%u vendor=%u device_id=%u "
+           "max_push_constants=%u image_format_max=%u,%u "
            "queues=%u memory_types=%u memory_heaps=%u device_extensions=%u "
            "sampler_anisotropy=%u logical_device=%llu queue=%llu "
            "empty_submit=0 queue_wait=0 device_wait=0 "
            "command_pool=%llu command_buffer=%llu command_submit=0 "
            "pool_reset=0 buffer=%llu memory=%llu memory_type=%u "
-           "buffer_requirements2=4096,256,1 buffer_address=%llu "
+           "buffer_requirements2=%llu,%llu,%u buffer_address=%llu "
            "image=%llu image_view=%llu image_bytes=%llu "
-           "image_allocation_bytes=%llu image_dedicated=1,1 "
+           "image_allocation_bytes=%llu image_dedicated=%u,%u "
            "mapped_bytes=4096 mapped_mismatches=%u "
            "fill_words=1024 mismatches=%u fence=%llu fence_before=1 "
            "fenced_submit=0 fence_after=0 fence_wait=0 fence_reset=0 "
            "fence_after_reset=1\n",
-           api_version, (unsigned long long)instance_one_id,
+           hardware_mode ? "hardware" : "strict-fake", api_version,
+           (unsigned long long)instance_one_id,
            (unsigned long long)instance_two_id,
            (unsigned long long)physical_id, properties.deviceName,
            properties.apiVersion, properties.driverVersion,
            properties.vendorID, properties.deviceID,
+           properties.limits.maxPushConstantsSize,
+           supported_image_format_properties.maxExtent.width,
+           supported_image_format_properties.maxExtent.height,
            available_queue_count, memory.memoryTypeCount,
            memory.memoryHeapCount, available_device_extension_count,
            features.samplerAnisotropy,
@@ -2028,11 +2188,17 @@ int main(void) {
            (unsigned long long)command_buffer_id,
            (unsigned long long)buffer_id,
            (unsigned long long)memory_id,
-           memory_type_index, (unsigned long long)buffer_device_address,
+           memory_type_index,
+           (unsigned long long)first_buffer_requirements_2.size,
+           (unsigned long long)first_buffer_requirements_2.alignment,
+           first_buffer_requirements_2.memoryTypeBits,
+           (unsigned long long)buffer_device_address,
            (unsigned long long)image_id,
            (unsigned long long)image_view_id,
            (unsigned long long)image_requirements.size,
            (unsigned long long)image_requirements_2.memoryRequirements.size,
+           dedicated_requirements.prefersDedicatedAllocation,
+           dedicated_requirements.requiresDedicatedAllocation,
            mapped_mismatches, mismatched_words,
            (unsigned long long)fence_id);
     return 0;

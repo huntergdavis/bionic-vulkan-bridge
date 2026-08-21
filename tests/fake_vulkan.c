@@ -30,6 +30,10 @@ static VkDeviceMemory fake_bound_memory = VK_NULL_HANDLE;
 static VkDeviceMemory fake_bound_image_memory = VK_NULL_HANDLE;
 static VkDeviceSize fake_buffer_size = 4096U;
 static const VkDeviceSize fake_native_image_allocation_size = UINT64_C(19623936);
+
+static bool fake_real_hardware_values(void) {
+    return getenv("BVB_FAKE_REAL_HARDWARE_VALUES") != NULL;
+}
 static uint32_t fake_live_images;
 static uint32_t fake_live_image_views;
 static int fake_android_surface_enabled;
@@ -345,7 +349,8 @@ static void VKAPI_CALL fake_get_device_properties(
     properties->deviceType = VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
     strncpy(properties->deviceName, "BVB Fake Adreno 730 \"quoted\"",
             sizeof(properties->deviceName) - 1U);
-    properties->limits.maxPushConstantsSize = 256U;
+    properties->limits.maxPushConstantsSize =
+        fake_real_hardware_values() ? 512U : 256U;
 }
 
 static void VKAPI_CALL fake_get_device_features(
@@ -454,13 +459,23 @@ static VkResult VKAPI_CALL fake_get_image_format_properties(
         usage == 0U || properties == NULL) {
         return VK_ERROR_FORMAT_NOT_SUPPORTED;
     }
-    *properties = (VkImageFormatProperties){
-        .maxExtent = {4096U, 2048U, 1U},
-        .maxMipLevels = 12U,
-        .maxArrayLayers = 256U,
-        .sampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT,
-        .maxResourceSize = UINT64_C(0x100000000),
-    };
+    if (fake_real_hardware_values()) {
+        *properties = (VkImageFormatProperties){
+            .maxExtent = {16384U, 8192U, 1U},
+            .maxMipLevels = 15U,
+            .maxArrayLayers = 2048U,
+            .sampleCounts = VK_SAMPLE_COUNT_1_BIT,
+            .maxResourceSize = UINT64_C(0x200000000),
+        };
+    } else {
+        *properties = (VkImageFormatProperties){
+            .maxExtent = {4096U, 2048U, 1U},
+            .maxMipLevels = 12U,
+            .maxArrayLayers = 256U,
+            .sampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT,
+            .maxResourceSize = UINT64_C(0x100000000),
+        };
+    }
     return VK_SUCCESS;
 }
 
@@ -534,13 +549,23 @@ static VkResult VKAPI_CALL fake_get_image_format_properties2(
         info->tiling != VK_IMAGE_TILING_OPTIMAL || info->usage == 0U) {
         return VK_ERROR_FORMAT_NOT_SUPPORTED;
     }
-    properties->imageFormatProperties = (VkImageFormatProperties){
-        .maxExtent = {4096U, 4096U, 1U},
-        .maxMipLevels = 1U,
-        .maxArrayLayers = 1U,
-        .sampleCounts = VK_SAMPLE_COUNT_1_BIT,
-        .maxResourceSize = UINT64_C(16) * 1024U * 1024U,
-    };
+    if (fake_real_hardware_values()) {
+        properties->imageFormatProperties = (VkImageFormatProperties){
+            .maxExtent = {16384U, 8192U, 1U},
+            .maxMipLevels = 15U,
+            .maxArrayLayers = 2048U,
+            .sampleCounts = VK_SAMPLE_COUNT_1_BIT,
+            .maxResourceSize = UINT64_C(0x200000000),
+        };
+    } else {
+        properties->imageFormatProperties = (VkImageFormatProperties){
+            .maxExtent = {4096U, 4096U, 1U},
+            .maxMipLevels = 1U,
+            .maxArrayLayers = 1U,
+            .sampleCounts = VK_SAMPLE_COUNT_1_BIT,
+            .maxResourceSize = UINT64_C(16) * 1024U * 1024U,
+        };
+    }
     for (VkBaseOutStructure *next = (VkBaseOutStructure *)properties->pNext;
          next != NULL; next = next->pNext) {
         if (next->sType == VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES) {
@@ -1446,11 +1471,12 @@ static void VKAPI_CALL fake_get_buffer_memory_requirements_2(
     }
     requirements->memoryRequirements = (VkMemoryRequirements){
         .size = fake_buffer_size,
-        .alignment = 256U,
+        .alignment = fake_real_hardware_values() ? 4U : 256U,
         .memoryTypeBits = 1U,
     };
     if (dedicated != NULL) {
-        dedicated->prefersDedicatedAllocation = VK_TRUE;
+        dedicated->prefersDedicatedAllocation =
+            fake_real_hardware_values() ? VK_FALSE : VK_TRUE;
         dedicated->requiresDedicatedAllocation = VK_FALSE;
     }
 }
@@ -1484,12 +1510,13 @@ static void VKAPI_CALL fake_get_device_buffer_memory_requirements(
         return;
     }
     requirements->memoryRequirements = (VkMemoryRequirements){
-        .size = 65792U,
-        .alignment = 256U,
-        .memoryTypeBits = 5U,
+        .size = fake_real_hardware_values() ? 65536U : 65792U,
+        .alignment = fake_real_hardware_values() ? 64U : 256U,
+        .memoryTypeBits = fake_real_hardware_values() ? 1U : 5U,
     };
     dedicated->prefersDedicatedAllocation = VK_FALSE;
-    dedicated->requiresDedicatedAllocation = VK_TRUE;
+    dedicated->requiresDedicatedAllocation =
+        fake_real_hardware_values() ? VK_FALSE : VK_TRUE;
 }
 
 static VkResult VKAPI_CALL fake_allocate_memory(
@@ -1534,7 +1561,10 @@ static VkResult VKAPI_CALL fake_allocate_memory(
         (dedicated_info->buffer != VK_NULL_HANDLE ||
          dedicated_info->image !=
              (VkImage)(uintptr_t)UINT64_C(0xa000) ||
-         allocate_info->allocationSize != fake_native_image_allocation_size)) {
+         allocate_info->allocationSize !=
+             (fake_real_hardware_values()
+                  ? 64U * 64U * sizeof(uint32_t)
+                  : fake_native_image_allocation_size))) {
         return VK_ERROR_FEATURE_NOT_PRESENT;
     }
     struct bvb_fake_memory_record *record = fake_memory_slot();
@@ -1646,7 +1676,9 @@ static VkDeviceAddress VKAPI_CALL fake_get_buffer_device_address(
         fake_bound_memory == VK_NULL_HANDLE) {
         abort();
     }
-    return UINT64_C(0x123456780000);
+    return fake_real_hardware_values()
+               ? UINT64_C(0xabcdef010000)
+               : UINT64_C(0x123456780000);
 }
 
 static VkResult VKAPI_CALL fake_create_image(
@@ -1747,13 +1779,17 @@ static void VKAPI_CALL fake_get_image_memory_requirements_2(
         abort();
     }
     requirements->memoryRequirements = (VkMemoryRequirements){
-        .size = fake_native_image_allocation_size,
+        .size = fake_real_hardware_values()
+                    ? 64U * 64U * sizeof(uint32_t)
+                    : fake_native_image_allocation_size,
         .alignment = 4096U,
         .memoryTypeBits = 1U,
     };
     if (dedicated != NULL) {
-        dedicated->prefersDedicatedAllocation = VK_TRUE;
-        dedicated->requiresDedicatedAllocation = VK_TRUE;
+        dedicated->prefersDedicatedAllocation =
+            fake_real_hardware_values() ? VK_FALSE : VK_TRUE;
+        dedicated->requiresDedicatedAllocation =
+            fake_real_hardware_values() ? VK_FALSE : VK_TRUE;
     }
 }
 

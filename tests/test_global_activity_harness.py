@@ -36,6 +36,7 @@ def main() -> int:
     assert 'python3 "$harness"' in termux_gate
     assert '--activity-frame-socket' not in termux_gate
     assert '--result-json "$harness_result"' in termux_gate
+    assert "--hardware-validation" in termux_gate
     assert '-- grun "$client"' in termux_gate
     assert 'harness_result["authenticated_event_count"] == 6' in termux_gate
     assert 'harness_result["visible_frame_claim"] is False' in termux_gate
@@ -49,6 +50,7 @@ def main() -> int:
         result_path = outputs / "result.json"
         environment = os.environ.copy()
         environment["BVB_FAKE_HIDE_SWAPCHAIN"] = "1"
+        environment["BVB_FAKE_REAL_HARDWARE_VALUES"] = "1"
         completed = subprocess.run(
             [
                 sys.executable,
@@ -65,6 +67,7 @@ def main() -> int:
                 "1752",
                 "--timeout",
                 "10",
+                "--hardware-validation",
                 "--service-stdout",
                 str(outputs / "service.stdout"),
                 "--service-stderr",
@@ -98,6 +101,7 @@ def main() -> int:
         assert result["requested_width"] == 2800
         assert result["requested_height"] == 1752
         assert result["client_exit"] == 0
+        assert result["client_validation_mode"] == "hardware"
         assert result["service_exit"] == 0
         assert result["visible_frame_claim"] is False
         assert result["fps_claim"] is False
@@ -112,7 +116,7 @@ def main() -> int:
         assert (outputs / "client.stderr").read_bytes() == b""
         assert (outputs / "service.stderr").read_bytes() == b""
         assert (outputs / "client.stdout").read_text().startswith(
-            "PASS: global Vulkan discovery"
+            "PASS: global Vulkan discovery validation_mode=hardware"
         )
         service_lines = (outputs / "service.stdout").read_text().splitlines()
         assert "activity_port=" in service_lines[0]
@@ -162,6 +166,7 @@ def main() -> int:
         failure_result = json.loads(failure_result_path.read_text())
         assert failure_result["result"] == "fail"
         assert failure_result["client_exit"] == 1
+        assert failure_result["client_validation_mode"] == "strict-fake"
         assert failure_result["activity_frame_setup"] == {"received": False}
         assert failure_result["visible_frame_claim"] is False
         assert failure_result["fps_claim"] is False

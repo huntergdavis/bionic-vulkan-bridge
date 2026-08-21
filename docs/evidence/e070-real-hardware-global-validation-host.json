@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "gate": "E070",
+  "result": "pass_host_contract",
+  "objective": "separate strict fake-driver fixtures from honest real-hardware invariants in the complete global-dispatch and synthetic Activity gate",
+  "selection": {
+    "default": "strict-fake",
+    "hardware_environment": "BVB_GLOBAL_DISPATCH_HARDWARE=1",
+    "termux_harness_flag": "--hardware-validation",
+    "scope": "the Activity harness injects the environment variable into the global-dispatch client child only"
+  },
+  "strict_fake_contract": {
+    "unchanged_exact_values": [
+      "loader and device API fixtures",
+      "all deterministic proxy serial IDs",
+      "maxPushConstantsSize 256",
+      "sampled-image maximum 4096x2048, 12 mips, 256 layers, and 4 GiB resource size",
+      "device-buffer and created-buffer requirements",
+      "buffer device address 0x123456780000",
+      "image requirements2 size 19623936 and both dedicated-allocation booleans true"
+    ],
+    "default_environment_is_sanitized": true
+  },
+  "hardware_invariants": {
+    "api": "loader and physical-device API versions are at least Vulkan 1.0",
+    "identity": "every proxy has the required typed high byte, is nonzero, and distinct objects remain distinct; serial values are not assumed",
+    "push_constants": ">=256 bytes, matching DXVK MaxTotalPushDataSize adapter acceptance rather than only the 160-byte synthetic layout",
+    "sampled_image_extent": ">=2800x1752 for the Galaxy Tab S8+ native-resolution Tomb Raider target",
+    "image_format_queries": "legacy and Properties2 results must agree field-for-field",
+    "memory_requirements": "size covers the resource, alignment is nonzero and a power of two, and the nonzero type mask contains no unavailable memory type",
+    "repeatability": "repeated requirements and buffer-address queries return the same values",
+    "dedicated_allocation": "both values are Vulkan booleans rather than fixed fake preferences",
+    "protocol_semantics": "return codes, unsupported-shape zeroing, typed same-device ownership, mapping contents, command recording, fences, timelines, lifecycle authentication, and Activity frame-FD topology remain strict"
+  },
+  "host_branch_proof": {
+    "strict_fixture": "retains every original exact value",
+    "hardware_fixture": {
+      "maxPushConstantsSize": 512,
+      "sampled_image_max_extent": [16384, 8192],
+      "buffer_requirements2": [4096, 4, 1],
+      "buffer_device_address": "0xabcdef010000",
+      "image_requirements2_size": 16384,
+      "image_dedicated_allocation": [false, false]
+    },
+    "reason": "deliberately divergent valid values prove that hardware mode executes invariant checks rather than accidentally retaining fake constants",
+    "dual_mode_contracts": "2/2 passed",
+    "complete_host_suite": "36/36 passed via scripts/check.sh"
+  },
+  "activity_harness": {
+    "authenticated_lifecycle_events": [1, 2, 3, 7, 11, 9],
+    "hardware_mode_recorded_in_json": true,
+    "client_environment_is_explicit": true,
+    "activity_frame_setup_still_required": true,
+    "visible_frame_claim": false,
+    "fps_claim": false
+  },
+  "dispatch_policy": {
+    "runtime_bridge_changed": false,
+    "executable": 88,
+    "required_unimplemented": 352,
+    "probed_null": 302
+  },
+  "excluded": {
+    "real_tablet_execution": "pending deployment by the integration owner",
+    "visibility": "the synthetic Activity sink does not import or display images",
+    "performance": "no FPS or speed claim follows from validation-mode work",
+    "synthetic_scale_device": "the 59 invented VK_BVB_scale_extension_* success scenario remains strict-fake-only and is not presented as a real Adreno capability"
+  },
+  "reuse": "The required deja query returned no indexed implementation. E070 reuses the existing exact global-dispatch fake contract and the synthetic authenticated Activity harness, preserving both as the strict baseline while adding an explicit client-only hardware-validation branch."
+}
