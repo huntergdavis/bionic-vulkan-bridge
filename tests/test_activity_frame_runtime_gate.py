@@ -239,6 +239,8 @@ def main() -> int:
         "EXPECTED_BRIDGE_CLIENT_SHA256",
         "EXPECTED_BRIDGE_SERVICE_SHA256",
         "EXPECTED_PRIVATE_TURNIP_SHA256",
+        '"libvulkan-bvb-glibc.so"',
+        "installed E073 baseline glibc ICD",
         "validate_client_bridge_icd",
         "validate_frame_document",
         'logcat, "-T", "1"',

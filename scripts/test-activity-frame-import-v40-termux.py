@@ -482,7 +482,17 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument("--service-loader", default=str(pathlib.Path.home() / "steam-arm64" / "bvb" / "driver" / "libvulkan_freedreno.so"))
     parser.add_argument("--service", default=str(pathlib.Path.home() / "steam-arm64" / "bvb" / "bin" / "bvb-bridge-service"))
-    parser.add_argument("--bridge-client", default=str(pathlib.Path.home() / "steam-arm64" / "bvb" / "bin" / "bvb-bridge-client"))
+    parser.add_argument(
+        "--bridge-client",
+        default=str(
+            pathlib.Path.home()
+            / "steam-arm64"
+            / "bvb"
+            / "lib"
+            / "libvulkan-bvb-glibc.so"
+        ),
+        help="installed E073 baseline glibc ICD retained for pre-deployment identity",
+    )
     parser.add_argument("--client")
     parser.add_argument("--bridge-icd")
     parser.add_argument("--output-root", default=str(project / "out" / "activity-frame-v40"))
@@ -657,7 +667,7 @@ def run(arguments: argparse.Namespace) -> int:
         )
         installed_bridge_client = require_artifact_sha256(
             pathlib.Path(arguments.bridge_client), EXPECTED_BRIDGE_CLIENT_SHA256,
-            "installed bridge client", executable=True,
+            "installed E073 baseline glibc ICD",
         )
 
         if arguments.skip_build:

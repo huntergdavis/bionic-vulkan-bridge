@@ -2,7 +2,7 @@
   "schema_version": 1,
   "gate": "E077-upload-memory-transport-tablet",
   "result": "pass",
-  "captured_at": "2026-08-21T05:18:41-07:00",
+  "captured_at": "2026-08-21T05:34:25-07:00",
   "target": {
     "model": "Samsung Galaxy Tab S8+",
     "gpu": "Turnip Adreno (TM) 730",
@@ -12,7 +12,7 @@
     "image_allocation_bytes": 19910656
   },
   "source": {
-    "commit": "7dd1ffeed3be900451479e996b88865135681714",
+    "commit": "7dd1ffe3c86bbbd510e76e00f40dd5b0d6e460f8",
     "provenance": "exact git archive extracted into an isolated tablet candidate",
     "vulkan_headers_commit": "01393c3df0e5285b54ee6527466513f9e614be94",
     "vulkan_registry_sha256": "80e7394d0e787d6ec78b67aa324add6f96129fdd042ba640cc336a5481a208ee"
@@ -43,9 +43,9 @@
     "mapped_mismatches": 0,
     "gpu_fill_mismatches": 0,
     "raw_evidence_bytes": 12785,
-    "raw_evidence_sha256": "542011ad6acd4884c3721d668463c505939e28955067103a093c38f8742330c6",
+    "raw_evidence_sha256": "664214cc3713b434d9939376f1c4e5b04fee770c32567106fbb9ab35934390c0",
     "client_stdout_sha256": "23f793e6e4f51753041807460081273c3e3a2e804031616108b9e6f58cd5c64d",
-    "service_stdout_sha256": "7b8687cbf18c2b72b9a8eb50008a94e721ba75c42eb0a5c1f3c6abb33dd1b429",
+    "service_stdout_sha256": "841a3ec70c1f8870c684035de385e27f19028d3c2a2fb7e6366caaa467c1c9ff",
     "harness_sha256": "6ae504ccea0d5e6cab78380277b32f4a8ca5e73f53e4fa8e22a69546093bce8d"
   },
   "shared_upload_only": {
@@ -73,9 +73,9 @@
     "mapped_mismatches": 0,
     "gpu_fill_mismatches": 0,
     "raw_evidence_bytes": 12797,
-    "raw_evidence_sha256": "928fe110f1ad6abe6a520911e8aaead39eb1abf2366e900d7fcc62c3982af3b3",
+    "raw_evidence_sha256": "08227b176bff151657f09b50159a20767910c947aaa40bc45710f82e98ab1eca",
     "client_stdout_sha256": "8d1191abcde06f0b2d7d63563ee72a7f73a8186fd0c78b29b7769e0cc622ba82",
-    "service_stdout_sha256": "f3a3fad0a36225d23ab227bef9611df845d8301d23c7d4ac79efa0e2292bce53",
+    "service_stdout_sha256": "ebe8235e63916dab7307f7b4454601d705ff3e1402f13bcab0821eaf0df27959",
     "harness_sha256": "6ae504ccea0d5e6cab78380277b32f4a8ca5e73f53e4fa8e22a69546093bce8d"
   },
   "comparison": {

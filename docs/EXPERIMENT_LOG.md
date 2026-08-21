@@ -3176,7 +3176,7 @@ claim.
 
 ### E077 tablet candidate transport A/B
 
-An exact `7dd1ffeed3be900451479e996b88865135681714` git archive was
+An exact `7dd1ffe3c86bbbd510e76e00f40dd5b0d6e460f8` git archive was
 built on the Galaxy Tab S8+ against clean Vulkan-Headers commit
 `01393c3df0e5285b54ee6527466513f9e614be94` and the unchanged private
 Turnip SHA-256 `8ac6ef78...a45`. The stale Termux evidence parser was first
@@ -3195,10 +3195,10 @@ using the mirror.
 
 The compact evidence is
 `docs/evidence/e077-upload-memory-transport-tablet.json`; the retained tablet
-evidence file SHA-256 is `daba5516e47df5247b83e033c80240dfa1b6751962d98227b3ac6231eb49191b`.
+evidence file SHA-256 is `6e782f8c88ab4983d9b9aee8df5c0a91134405fb9f298743f1bd1ca2bb44d545`.
 The retained tablet
-raw evidence SHA-256 values are `542011ad...0c6` (strict) and
-`928fe110...3b3` (shared). The installed E073 service/client/manifest hashes
+raw evidence SHA-256 values are `664214cc...0c0` (strict) and
+`08227b17...eca` (shared). The installed E073 service/client/manifest hashes
 remain unchanged, and live Steam PID 5973 plus Termux:X11 PID 27923 survived.
 This is a real Turnip cross-libc transport proof only. The synthetic Activity
 received the one-time FD bundle but did not import/display it, so no visible
@@ -3227,3 +3227,23 @@ Java/Binder calls; requires one import plus exactly four presents; requires
 slots 0,1,2,0; and rejects any `E057_FRAME_CONSUMER_FAIL`. Logcat starts with a
 bounded tail to exclude recycled-PID history. The exact integration `deja`
 query returned no hit; this hardening reused E057/E060/E074/E076/E077 evidence.
+
+Deployment review caught that the first written evidence had expanded the
+abbreviated `7dd1ffe` to a nonexistent full hash. Both strict-kept-mapped and
+shared-upload-only hardware runs were repeated from the unchanged exact archive
+with Git's authoritative full hash above; this log and the compact evidence now
+reference only the repeated raw artifacts. The same review also corrected the
+historical `--bridge-client` default to the actual installed E073 baseline ICD
+path. That baseline identity check is separate from the newly pinned candidate
+ICD that the producer really loads.
+
+Before any E077 deployment, an exact no-clobber rollback snapshot was created at
+`~/steam-arm64/bvb-backups/e073-and-selectors-pre-e077-20260821T0535PDT`.
+It preserves the installed E073 ICD (`c0b3dbf3...ee3eb`), service
+(`0917ef33...1241`), manifest (`77f3395e...33df`), and install stamp
+(`8ca779ff...cb3`), plus the installed pre-E077 Tomb Raider probe
+(`e534c471...74f`), direct wrapper (`63c4df87...137`), and Pressure Vessel
+dispatcher (`f5025f54...b4c`). Every source/backup SHA-256 pair matched before
+the snapshot was accepted. The operation did not replace installed files or
+change the live Steam/X11 processes. This closes the deployment review's E073
+rollback gap; it does not authorize deployment before the v40 RGBW visual gate.
