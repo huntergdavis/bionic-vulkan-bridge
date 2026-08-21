@@ -139,7 +139,21 @@ int main(void) {
                         strcmp(entry->name, "vkWaitSemaphores") == 0 ||
                         strcmp(entry->name, "vkWaitSemaphoresKHR") == 0 ||
                         strcmp(entry->name, "vkSignalSemaphore") == 0 ||
-                        strcmp(entry->name, "vkSignalSemaphoreKHR") == 0)) {
+                        strcmp(entry->name, "vkSignalSemaphoreKHR") == 0 ||
+                        strcmp(entry->name,
+                               "vkAllocateDescriptorSets") == 0 ||
+                        strcmp(entry->name,
+                               "vkCreateDescriptorPool") == 0 ||
+                        strcmp(entry->name,
+                               "vkCreateDescriptorSetLayout") == 0 ||
+                        strcmp(entry->name, "vkCreateSampler") == 0 ||
+                        strcmp(entry->name,
+                               "vkDestroyDescriptorPool") == 0 ||
+                        strcmp(entry->name,
+                               "vkDestroyDescriptorSetLayout") == 0 ||
+                        strcmp(entry->name, "vkDestroySampler") == 0 ||
+                        strcmp(entry->name,
+                               "vkUpdateDescriptorSets") == 0)) {
                 CHECK(resolved == NULL);
             } else {
                 CHECK(resolved != NULL);
@@ -159,8 +173,8 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 64U);
-    CHECK(required_count == 376U);
+    CHECK(executable_count == 72U);
+    CHECK(required_count == 368U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");
