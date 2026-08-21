@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200112L
+
 #include <bvb/wsi_frame_ring.h>
 
 #include <errno.h>
@@ -46,9 +48,9 @@ static void *consume_frames(void *opaque) {
 }
 
 int main(void) {
-    void *region = aligned_alloc(BVB_WSI_FRAME_RING_REGION_BYTES,
-                                 BVB_WSI_FRAME_RING_REGION_BYTES);
-    CHECK(region != NULL);
+    void *region = NULL;
+    CHECK(posix_memalign(&region, BVB_WSI_FRAME_RING_REGION_BYTES,
+                        BVB_WSI_FRAME_RING_REGION_BYTES) == 0);
     CHECK(bvb_wsi_frame_ring_initialize(
               region, BVB_WSI_FRAME_RING_REGION_BYTES, 1U, 1U) == -EINVAL);
     CHECK(bvb_wsi_frame_ring_initialize(
