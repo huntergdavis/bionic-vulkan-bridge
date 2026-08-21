@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "gate": "E097",
+  "date": "2026-08-21",
+  "source_base_commit": "e7c8433946ebdd68cb71e4ea91ffb7a51ac2cc58",
+  "status": "host_pass_tablet_pending",
+  "trigger": {
+    "runtime_gate": "E096",
+    "sequence": ["vkAcquireNextImageKHR", "vkCreateImageView", "VK_ERROR_INITIALIZATION_FAILED"],
+    "service_error_present": false
+  },
+  "root_cause": {
+    "client": "vkCreateImageView accepted only ordinary image proxies and rejected typed virtual-swapchain images before RPC",
+    "service": "virtual swapchain image handles were registered without the image format, type, mip, and layer metadata required by the shared image-view validator"
+  },
+  "change": {
+    "client": "reuse the existing same-device ordinary-or-swapchain image ownership predicate",
+    "service": "register and deterministically clear canonical image metadata for each virtual swapchain image",
+    "wire_protocol_changed": false,
+    "dispatch_policy_changed": false
+  },
+  "cross_process_contract": {
+    "operation": "create and destroy a sampled 2D RGBA8 image view over the first typed virtual swapchain image",
+    "native_fake_call_required": true,
+    "client_and_service_same_device_validation_required": true,
+    "ordinary_image_view_serial_after_virtual_view": 2
+  },
+  "validation": {
+    "focused_contracts": "5/5",
+    "full_host_suite": "58/58",
+    "global_dispatch_test_sha256": "4f76c882037feef168814a7f0e4d671e4379afe3c7da0cbe3cff44867ca813d0",
+    "bridge_service_sha256": "cda5170c66c3af2618727e10e199864162ad4306a179b6442f380c857e2b7298",
+    "host_icd_sha256": "75f721325f79365e2ad312aa0b9482f57a1bbc1c9b3310bbabe1cb3e2fb7bfcd"
+  },
+  "reuse": [
+    "E076 same-device ordinary-or-swapchain command image ownership predicate",
+    "E060 typed virtual swapchain image registration and native ownership",
+    "E096 exact Tomb Raider first-rejection trace"
+  ],
+  "recall": "deja query 'BVB vkCreateImageView virtual swapchain image ownership E097' returned no indexed match",
+  "claims": {
+    "tablet_runtime": false,
+    "tomb_raider_frame": false,
+    "benchmark": false,
+    "fps": false
+  }
+}

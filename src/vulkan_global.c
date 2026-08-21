@@ -6229,6 +6229,12 @@ static int destroy_swapchain_metadata(
     }
     for (uint32_t index = 0U; index < metadata->image_count; ++index) {
         if (metadata->image_ids[index] != 0U) {
+            struct bvb_image_metadata *image_metadata =
+                image_metadata_slot(context, metadata->image_ids[index]);
+            if (image_metadata != NULL &&
+                image_metadata->image_id == metadata->image_ids[index]) {
+                *image_metadata = (struct bvb_image_metadata){0};
+            }
             const int removed = bvb_handle_table_remove(
                 &context->objects, metadata->image_ids[index],
                 BVB_OBJECT_IMAGE, NULL);
@@ -6780,6 +6786,26 @@ int bvb_vulkan_global_context_prepare_swapchain(
             vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
             break;
         }
+        struct bvb_image_metadata *image_metadata =
+            image_metadata_slot(context, 0U);
+        if (image_metadata == NULL) {
+            (void)bvb_handle_table_remove(
+                &context->objects, metadata->image_ids[index],
+                BVB_OBJECT_IMAGE, NULL);
+            metadata->image_ids[index] = 0U;
+            status = -ENOSPC;
+            vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+            break;
+        }
+        *image_metadata = (struct bvb_image_metadata){
+            .image_id = metadata->image_ids[index],
+            .device_id = request->device_id,
+            .flags = image_info.flags,
+            .image_type = image_info.imageType,
+            .format = image_info.format,
+            .mip_levels = image_info.mipLevels,
+            .array_layers = image_info.arrayLayers,
+        };
     }
     if (vulkan_result == VK_SUCCESS) {
 #ifdef __ANDROID__

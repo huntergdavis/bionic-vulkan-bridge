@@ -1139,6 +1139,33 @@ int main(void) {
     for (uint32_t index = 0U; index < virtual_image_count; ++index)
         CHECK(bvb_handle_type((uint64_t)virtual_images[index]) ==
               BVB_OBJECT_IMAGE);
+    const VkImageViewUsageCreateInfo virtual_image_view_usage = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
+        .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+    };
+    const VkImageViewCreateInfo virtual_image_view_create_info = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .pNext = &virtual_image_view_usage,
+        .image = virtual_images[0],
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = VK_FORMAT_R8G8B8A8_UNORM,
+        .components = {
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+            VK_COMPONENT_SWIZZLE_IDENTITY,
+        },
+        .subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .levelCount = 1U,
+            .layerCount = 1U,
+        },
+    };
+    VkImageView virtual_image_view = VK_NULL_HANDLE;
+    CHECK(create_image_view(device, &virtual_image_view_create_info, NULL,
+                            &virtual_image_view) == VK_SUCCESS);
+    CHECK(bvb_handle_type(bvb_image_view_proxy_id(virtual_image_view)) ==
+          BVB_OBJECT_IMAGE_VIEW);
     const VkSemaphoreCreateInfo binary_semaphore_info = {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
     };
@@ -1354,6 +1381,8 @@ int main(void) {
         CHECK(per_swapchain_result == VK_SUCCESS);
     }
     CHECK(bvb_sleep_milliseconds(present_hold_ms));
+    destroy_image_view(device, virtual_image_view, NULL);
+    CHECK(bvb_image_view_proxy_id(virtual_image_view) == 0U);
     destroy_swapchain(device, virtual_swapchain, NULL);
     if (render_semaphore != VK_NULL_HANDLE)
         destroy_semaphore(device, render_semaphore, NULL);
@@ -2218,7 +2247,7 @@ int main(void) {
     const uint64_t image_view_id = bvb_image_view_proxy_id(image_view);
     CHECK(bvb_handle_type(image_view_id) == BVB_OBJECT_IMAGE_VIEW);
     if (!hardware_mode) {
-        CHECK(bvb_handle_serial(image_view_id) == 1U);
+        CHECK(bvb_handle_serial(image_view_id) == 2U);
     }
 
     const VkBaseInStructure unsupported_image_chain = {

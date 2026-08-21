@@ -5985,10 +5985,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateImageView(
         free(state);
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    struct bvb_resource_proxy *image_state =
-        resource_proxy_locked(image_id, BVB_OBJECT_IMAGE);
-    if (image_state == NULL ||
-        image_state->parent_id != device_state->wire_id) {
+    if (!image_owned_by_device_locked(image_id, device_state->wire_id)) {
         (void)pthread_mutex_unlock(&bvb_global_client.mutex);
         free(state);
         return VK_ERROR_INITIALIZATION_FAILED;

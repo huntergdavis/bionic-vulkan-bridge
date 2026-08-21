@@ -3814,3 +3814,31 @@ failure exists: the glibc client rejected the virtual-swapchain image locally
 because its image-view path recognized ordinary image proxies only. The shared
 command path already has the correct same-device ordinary-or-swapchain image
 ownership helper. The next gate reuses that helper for image views and reruns.
+
+## E097 — Virtual-swapchain image-view ownership (2026-08-21)
+
+Status: 58/58 host contracts pass; Android build, deployment, and Tomb Raider
+rerun pending. E096 successfully created DXVK's three descriptor update
+templates, then the real run reached `vkAcquireNextImageKHR` and stopped when
+`vkCreateImageView` returned `VK_ERROR_INITIALIZATION_FAILED`. The absence of a
+service error and the exact client source identified a pre-RPC rejection: the
+image-view path recognized only ordinary image proxies even though the shared
+command path already recognized typed images owned by a virtual swapchain.
+
+E097 reuses that ordinary-or-swapchain ownership predicate. The host regression
+then exposed and closes the matching service-side omission: virtual swapchain
+images had native typed handles but no canonical image metadata for the shared
+format/mip/layer view validator. Swapchain preparation now installs that
+metadata and teardown clears it deterministically. No wire opcode or dispatch
+policy changes.
+
+The cross-process fake contract creates and destroys an RGBA8 sampled 2D view
+over the first virtual swapchain image, requiring client ownership validation,
+service typed lookup and metadata validation, and a real fake-native
+`vkCreateImageView` call. Ordinary image-view coverage remains intact. The
+required `deja "BVB vkCreateImageView virtual swapchain image ownership E097"`
+search returned no indexed implementation. E097 reuses E076's swapchain-aware
+command-image predicate, E060's typed virtual image ownership, and E096's exact
+runtime trace. Compact host evidence is
+`docs/evidence/e097-virtual-swapchain-image-view-host.json`. No tablet game
+frame, benchmark, or FPS result is claimed yet.

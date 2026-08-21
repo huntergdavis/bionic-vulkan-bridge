@@ -517,7 +517,7 @@ def main() -> int:
                 assert f"memory={0x0900000000000001}" in completed.stdout
                 assert "buffer_requirements2=4096,256,1" in completed.stdout
                 assert f"buffer_address={0x123456780000}" in completed.stdout
-                assert f"image_view={0x0800000000000001}" in completed.stdout
+                assert f"image_view={0x0800000000000002}" in completed.stdout
                 assert "image_allocation_bytes=19623936" in completed.stdout
                 assert "image_dedicated=1,1" in completed.stdout
                 assert f"fence={0x1200000000000001}" in completed.stdout
