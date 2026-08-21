@@ -817,6 +817,17 @@ int bvb_vulkan_global_context_enumerate_device_extensions(
                   (int)result);
         return result == VK_SUCCESS ? -EPROTO : 0;
     }
+    if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        fprintf(stderr,
+                "BVB_ICD_DEVICE_EXTENSIONS result=%d count=%u\n",
+                (int)result, returned);
+        for (uint32_t index = 0U; index < returned; ++index) {
+            fprintf(stderr,
+                    "BVB_ICD_DEVICE_EXTENSION index=%u name=%s spec=%u\n",
+                    index, all[index].extensionName,
+                    all[index].specVersion);
+        }
+    }
     page->vulkan_result = result;
     page->total_count = returned;
     const uint32_t remaining = returned - query->first;
