@@ -275,6 +275,18 @@ int bvb_vulkan_global_context_command_buffer_clear_color_image(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_command_buffer_clear_color_image_request *request,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_validate_queue_submit_2(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_queue_submit_2_request *request,
+    uint64_t *device_id, char *error, size_t error_size);
+int bvb_vulkan_global_context_validate_command_stream(
+    const struct bvb_vulkan_global_context *context,
+    const uint8_t *batch, size_t batch_length, uint64_t expected_device_id,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_replay_command_stream(
+    const struct bvb_vulkan_global_context *context,
+    const uint8_t *batch, size_t batch_length, uint64_t expected_device_id,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_verify_memory_fill(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_memory_verify_fill_request *request,

@@ -3,6 +3,7 @@
 #endif
 #define VK_NO_PROTOTYPES
 
+#include <bvb/command_batch.h>
 #include <bvb/handle.h>
 #include <bvb/vulkan_global.h>
 
@@ -4281,6 +4282,294 @@ int bvb_vulkan_global_context_command_buffer_clear_color_image(
     clear(command_buffer, image_from_bits(image_bits),
           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1U, &range);
     return 0;
+}
+
+int bvb_vulkan_global_context_validate_queue_submit_2(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_queue_submit_2_request *request,
+    uint64_t *device_id, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || device_id == NULL ||
+        request->flags != 0U ||
+        request->wait_count > BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT ||
+        request->command_count > BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT ||
+        request->signal_count > BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT) {
+        return -EINVAL;
+    }
+    VkDevice queue_device = VK_NULL_HANDLE;
+    VkQueue queue = VK_NULL_HANDLE;
+    int result = resolve_queue(
+        context, request->queue_id, &queue_device, &queue);
+    uint64_t queue_device_id = 0U;
+    uint64_t queue_bits = 0U;
+    if (result == 0) {
+        result = bvb_handle_table_lookup(
+            &context->objects, request->queue_id, BVB_OBJECT_QUEUE,
+            &queue_device_id, &queue_bits);
+    }
+    for (uint32_t index = 0U; result == 0 && index < request->wait_count;
+         ++index) {
+        uint64_t parent_id = 0U;
+        uint64_t semaphore_bits = 0U;
+        result = bvb_handle_table_lookup(
+            &context->objects, request->waits[index].semaphore_id,
+            BVB_OBJECT_SEMAPHORE, &parent_id, &semaphore_bits);
+        if (result == 0 &&
+            (parent_id != queue_device_id ||
+             request->waits[index].device_index != 0U)) {
+            result = -EPROTO;
+        }
+    }
+    for (uint32_t index = 0U; result == 0 && index < request->command_count;
+         ++index) {
+        uint64_t command_device_id = 0U;
+        VkDevice command_device = VK_NULL_HANDLE;
+        VkCommandPool command_pool = VK_NULL_HANDLE;
+        VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+        result = resolve_command_buffer(
+            context, request->commands[index].command_buffer_id,
+            &command_device_id, &command_device, &command_pool,
+            &command_buffer);
+        if (result == 0 &&
+            (command_device_id != queue_device_id ||
+             command_device != queue_device ||
+             request->commands[index].device_mask != 0U)) {
+            result = -EPROTO;
+        }
+    }
+    for (uint32_t index = 0U; result == 0 && index < request->signal_count;
+         ++index) {
+        uint64_t parent_id = 0U;
+        uint64_t semaphore_bits = 0U;
+        result = bvb_handle_table_lookup(
+            &context->objects, request->signals[index].semaphore_id,
+            BVB_OBJECT_SEMAPHORE, &parent_id, &semaphore_bits);
+        if (result == 0 &&
+            (parent_id != queue_device_id ||
+             request->signals[index].device_index != 0U)) {
+            result = -EPROTO;
+        }
+    }
+    if (result == 0 && request->fence_id != 0U) {
+        uint64_t fence_device_id = 0U;
+        uint64_t fence_bits = 0U;
+        VkDevice fence_device = VK_NULL_HANDLE;
+        result = resolve_device_child(
+            context, request->fence_id, BVB_OBJECT_FENCE,
+            &fence_device_id, &fence_device, &fence_bits);
+        if (result == 0 &&
+            (fence_device_id != queue_device_id ||
+             fence_device != queue_device)) {
+            result = -EPROTO;
+        }
+    }
+    if (result != 0) {
+        set_error(error, error_size,
+                  "submit2 references unknown or cross-device objects");
+        return result;
+    }
+    *device_id = queue_device_id;
+    return 0;
+}
+
+static int command_stream_child_matches_device(
+    const struct bvb_vulkan_global_context *context, uint64_t child_id,
+    enum bvb_object_type type, uint64_t expected_device_id) {
+    uint64_t child_device_id = 0U;
+    uint64_t child_bits = 0U;
+    VkDevice child_device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, child_id, type, &child_device_id, &child_device,
+        &child_bits);
+    return result != 0 ? result
+                       : child_device_id == expected_device_id ? 0 : -EPROTO;
+}
+
+int bvb_vulkan_global_context_validate_command_stream(
+    const struct bvb_vulkan_global_context *context,
+    const uint8_t *batch, size_t batch_length, uint64_t expected_device_id,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || batch == NULL ||
+        bvb_handle_expect(expected_device_id, BVB_OBJECT_DEVICE) != 0) {
+        return -EINVAL;
+    }
+    struct bvb_command_batch_info info;
+    int result = bvb_command_batch_validate(batch, batch_length, &info);
+    uint64_t command_device_id = 0U;
+    VkDevice command_device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    if (result == 0) {
+        result = resolve_command_buffer(
+            context, info.command_buffer_id, &command_device_id,
+            &command_device, &command_pool, &command_buffer);
+    }
+    if (result == 0 && command_device_id != expected_device_id) {
+        result = -EPROTO;
+    }
+    struct bvb_command_batch_iterator iterator;
+    if (result == 0) {
+        result = info.command_count >= 2U
+                     ? bvb_command_batch_iterator_init(
+                           &iterator, batch, batch_length)
+                     : -EPROTO;
+    }
+    for (uint32_t index = 0U; result == 0 && index < info.command_count;
+         ++index) {
+        struct bvb_command_record record;
+        result = bvb_command_batch_next(&iterator, &record);
+        if (result != 0) break;
+        if (index == 0U) {
+            struct bvb_vulkan_begin_command begin;
+            result = bvb_command_decode_vulkan_begin(&record, &begin);
+            continue;
+        }
+        if (index + 1U == info.command_count) {
+            result = record.opcode == BVB_COMMAND_VULKAN_END &&
+                             record.payload_length == 0U
+                         ? 0 : -EPROTO;
+            continue;
+        }
+        if (record.opcode == BVB_COMMAND_FILL_BUFFER) {
+            struct bvb_fill_buffer_command fill;
+            result = bvb_command_decode_fill_buffer(&record, &fill);
+            if (result == 0) {
+                result = command_stream_child_matches_device(
+                    context, fill.buffer_id, BVB_OBJECT_BUFFER,
+                    expected_device_id);
+            }
+        } else if (record.opcode ==
+                   BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE) {
+            struct bvb_vulkan_clear_color_image_command clear;
+            result = bvb_command_decode_vulkan_clear_color_image(
+                &record, &clear);
+            if (result == 0) {
+                result = command_stream_child_matches_device(
+                    context, clear.image_id, BVB_OBJECT_IMAGE,
+                    expected_device_id);
+            }
+        } else if (record.opcode ==
+                   BVB_COMMAND_VULKAN_INIT_IMAGE_BARRIER) {
+            struct bvb_vulkan_init_image_barrier_command barrier;
+            result = bvb_command_decode_vulkan_init_image_barrier(
+                &record, &barrier);
+            for (uint32_t image = 0U;
+                 result == 0 && image < barrier.image_count; ++image) {
+                result = command_stream_child_matches_device(
+                    context, barrier.image_ids[image], BVB_OBJECT_IMAGE,
+                    expected_device_id);
+            }
+        } else {
+            result = -EPROTO;
+        }
+    }
+    if (result == 0 && bvb_command_batch_next(
+                           &iterator,
+                           &(struct bvb_command_record){0}) != 1) {
+        result = -EPROTO;
+    }
+    if (result != 0) {
+        set_error(error, error_size,
+                  "invalid or cross-device shared command stream");
+    }
+    return result;
+}
+
+int bvb_vulkan_global_context_replay_command_stream(
+    const struct bvb_vulkan_global_context *context,
+    const uint8_t *batch, size_t batch_length, uint64_t expected_device_id,
+    char *error, size_t error_size) {
+    int result = bvb_vulkan_global_context_validate_command_stream(
+        context, batch, batch_length, expected_device_id, error, error_size);
+    if (result != 0) return result;
+    struct bvb_command_batch_info info;
+    result = bvb_command_batch_validate(batch, batch_length, &info);
+    struct bvb_command_batch_iterator iterator;
+    if (result == 0) {
+        result = bvb_command_batch_iterator_init(
+            &iterator, batch, batch_length);
+    }
+    for (uint32_t index = 0U; result == 0 && index < info.command_count;
+         ++index) {
+        struct bvb_command_record record;
+        result = bvb_command_batch_next(&iterator, &record);
+        if (result != 0) break;
+        if (record.opcode == BVB_COMMAND_VULKAN_BEGIN) {
+            struct bvb_vulkan_begin_command begin;
+            result = bvb_command_decode_vulkan_begin(&record, &begin);
+            int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+            if (result == 0) {
+                result = bvb_vulkan_global_context_begin_command_buffer(
+                    context,
+                    &(const struct bvb_vulkan_command_buffer_begin_request){
+                        .command_buffer_id = info.command_buffer_id,
+                        .flags = begin.flags,
+                    },
+                    &vulkan_result, error, error_size);
+            }
+            if (result == 0 && vulkan_result != VK_SUCCESS) result = -EIO;
+        } else if (record.opcode == BVB_COMMAND_FILL_BUFFER) {
+            struct bvb_fill_buffer_command fill;
+            result = bvb_command_decode_fill_buffer(&record, &fill);
+            if (result == 0) {
+                result = bvb_vulkan_global_context_command_buffer_fill(
+                    context,
+                    &(const struct bvb_vulkan_command_buffer_fill_request){
+                        .command_buffer_id = info.command_buffer_id,
+                        .buffer_id = fill.buffer_id,
+                        .offset = fill.offset,
+                        .size = fill.size,
+                        .data = fill.data,
+                    },
+                    error, error_size);
+            }
+        } else if (record.opcode ==
+                   BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE) {
+            struct bvb_vulkan_clear_color_image_command clear;
+            result = bvb_command_decode_vulkan_clear_color_image(
+                &record, &clear);
+            if (result == 0) {
+                result =
+                    bvb_vulkan_global_context_command_buffer_clear_color_image(
+                        context,
+                        &(const struct
+                          bvb_vulkan_command_buffer_clear_color_image_request){
+                            .command_buffer_id = info.command_buffer_id,
+                            .image_id = clear.image_id,
+                        },
+                        error, error_size);
+            }
+        } else if (record.opcode ==
+                   BVB_COMMAND_VULKAN_INIT_IMAGE_BARRIER) {
+            struct bvb_vulkan_init_image_barrier_command barrier;
+            result = bvb_command_decode_vulkan_init_image_barrier(
+                &record, &barrier);
+            struct bvb_vulkan_command_buffer_image_barrier_request request = {
+                .command_buffer_id = info.command_buffer_id,
+                .image_count = barrier.image_count,
+            };
+            memcpy(request.image_ids, barrier.image_ids,
+                   barrier.image_count * sizeof(barrier.image_ids[0]));
+            if (result == 0) {
+                result =
+                    bvb_vulkan_global_context_command_buffer_image_barrier(
+                        context, &request, error, error_size);
+            }
+        } else if (record.opcode == BVB_COMMAND_VULKAN_END) {
+            int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+            result = bvb_vulkan_global_context_end_command_buffer(
+                context, info.command_buffer_id, &vulkan_result,
+                error, error_size);
+            if (result == 0 && vulkan_result != VK_SUCCESS) result = -EIO;
+        } else {
+            result = -EPROTO;
+        }
+    }
+    if (result != 0 && error != NULL && error_size != 0U && error[0] == '\0') {
+        set_error(error, error_size, "native shared command replay failed");
+    }
+    return result;
 }
 
 int bvb_vulkan_global_context_verify_memory_fill(

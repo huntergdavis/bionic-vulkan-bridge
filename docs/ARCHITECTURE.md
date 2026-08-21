@@ -132,3 +132,18 @@ service-side acquire signaling, and synchronous producer ownership release
 before ring publication. Public create still fails closed without the Activity
 setup socket and exact live extent. Host contracts pass; tablet-visible changing
 pixels remain unproven.
+
+E075 adds the first opt-in game-command hot path. With
+`BVB_COMMAND_STREAM=shared`, the glibc client passes one sealed-size 16 MiB
+memfd during connection setup. Slots are leased only while a command buffer is
+being recorded or awaits its first replay; live command-buffer proxies do not
+consume shared space. `vkBeginCommandBuffer`, the currently executable
+`vkCmdFillBuffer`, `vkCmdClearColorImage`, and `vkCmdPipelineBarrier2` shapes,
+and `vkEndCommandBuffer` write canonical pointer-free records locally with no
+socket exchange. `vkQueueSubmit2` remains the control boundary: dedicated
+opcode 105 carries the sealed generation, sequence, offset, and length, while
+the legacy opcode-85 wire remains unchanged. The Bionic service
+prevalidates the whole submit, command topology, and typed same-device
+ownership before replaying into native command buffers. The default path still
+uses the strict per-call socket implementation for A/B comparison. Corrupt,
+stale, unsupported, or cross-device streams fail closed before native replay.

@@ -666,6 +666,16 @@ if(BUILD_TESTING)
       "hardware"
   )
   add_test(
+    NAME global-command-stream-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+      "$<TARGET_FILE:bvb-bridge-service>"
+      "$<TARGET_FILE:bvb-global-dispatch-test>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+      "shared-command-stream"
+  )
+  add_test(
     NAME global-activity-harness-contract
     COMMAND
       "${Python3_EXECUTABLE}"

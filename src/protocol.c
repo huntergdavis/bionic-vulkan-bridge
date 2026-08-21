@@ -2909,10 +2909,9 @@ int bvb_protocol_decode_vulkan_semaphore_wait_request(
     return 0;
 }
 
-int bvb_protocol_encode_vulkan_queue_submit_2_request(
-    uint8_t output[BVB_VULKAN_SUBMIT_2_MAX_SIZE],
-    const struct bvb_vulkan_queue_submit_2_request *request,
-    uint32_t *output_length) {
+static int encode_vulkan_queue_submit_2_request(
+    uint8_t *output, const struct bvb_vulkan_queue_submit_2_request *request,
+    uint32_t *output_length, bool stream_wire) {
     if (output == NULL || request == NULL || output_length == NULL ||
         !wire_id_is_type(request->queue_id, 4U) ||
         (request->fence_id != 0U &&
@@ -2921,10 +2920,13 @@ int bvb_protocol_encode_vulkan_queue_submit_2_request(
         request->command_count > BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT ||
         request->signal_count > BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT)
         return -EINVAL;
+    const uint32_t command_record_size = stream_wire
+        ? BVB_VULKAN_SUBMIT_2_STREAM_COMMAND_RECORD_SIZE
+        : BVB_VULKAN_SUBMIT_2_COMMAND_RECORD_SIZE;
     const uint32_t length = BVB_VULKAN_SUBMIT_2_PREFIX_SIZE +
         (request->wait_count + request->signal_count) *
             BVB_VULKAN_SUBMIT_2_SEMAPHORE_RECORD_SIZE +
-        request->command_count * BVB_VULKAN_SUBMIT_2_COMMAND_RECORD_SIZE;
+        request->command_count * command_record_size;
     memset(output, 0, length);
     bvb_wire_put_u64(output, request->queue_id);
     bvb_wire_put_u64(output + 8, request->fence_id);
@@ -2933,6 +2935,7 @@ int bvb_protocol_encode_vulkan_queue_submit_2_request(
     bvb_wire_put_u32(output + 24, request->command_count);
     bvb_wire_put_u32(output + 28, request->signal_count);
     uint32_t offset = BVB_VULKAN_SUBMIT_2_PREFIX_SIZE;
+    bool has_shared_stream = false;
     for (uint32_t index = 0U; index < request->wait_count; ++index) {
         const struct bvb_vulkan_submit_2_semaphore_record *record =
             &request->waits[index];
@@ -2946,11 +2949,45 @@ int bvb_protocol_encode_vulkan_queue_submit_2_request(
     for (uint32_t index = 0U; index < request->command_count; ++index) {
         const struct bvb_vulkan_submit_2_command_record *record =
             &request->commands[index];
-        if (!wire_id_is_type(record->command_buffer_id, 11U)) return -EINVAL;
+        const bool shared =
+            record->stream_flags ==
+            BVB_VULKAN_SUBMIT_2_COMMAND_SHARED_STREAM;
+        has_shared_stream |= shared;
+        if (!wire_id_is_type(record->command_buffer_id, 11U) ||
+            (record->stream_flags &
+             ~BVB_VULKAN_SUBMIT_2_COMMAND_SHARED_STREAM) != 0U ||
+            (!stream_wire &&
+             (record->stream_flags != 0U ||
+              record->stream_generation != 0U ||
+              record->stream_sequence != 0U || record->stream_offset != 0U ||
+              record->stream_length != 0U)) ||
+            (!shared &&
+             (record->stream_generation != 0U ||
+              record->stream_sequence != 0U || record->stream_offset != 0U ||
+              record->stream_length != 0U)) ||
+            (shared &&
+             (record->stream_generation == 0U ||
+              record->stream_sequence == 0U ||
+              record->stream_offset % BVB_COMMAND_STREAM_SLOT_BYTES != 0U ||
+              record->stream_offset >= BVB_COMMAND_STREAM_REGION_BYTES ||
+              record->stream_length < BVB_COMMAND_BATCH_HEADER_SIZE ||
+              record->stream_length > BVB_COMMAND_STREAM_SLOT_BYTES))) {
+            return -EINVAL;
+        }
         bvb_wire_put_u64(output + offset, record->command_buffer_id);
-        bvb_wire_put_u32(output + offset + 8, record->device_mask);
-        offset += BVB_VULKAN_SUBMIT_2_COMMAND_RECORD_SIZE;
+        if (stream_wire) {
+            bvb_wire_put_u64(output + offset + 8, record->stream_generation);
+            bvb_wire_put_u64(output + offset + 16, record->stream_sequence);
+            bvb_wire_put_u32(output + offset + 24, record->stream_offset);
+            bvb_wire_put_u32(output + offset + 28, record->stream_length);
+            bvb_wire_put_u32(output + offset + 32, record->device_mask);
+            bvb_wire_put_u32(output + offset + 36, record->stream_flags);
+        } else {
+            bvb_wire_put_u32(output + offset + 8, record->device_mask);
+        }
+        offset += command_record_size;
     }
+    if (stream_wire && !has_shared_stream) return -EINVAL;
     for (uint32_t index = 0U; index < request->signal_count; ++index) {
         const struct bvb_vulkan_submit_2_semaphore_record *record =
             &request->signals[index];
@@ -2965,9 +3002,25 @@ int bvb_protocol_encode_vulkan_queue_submit_2_request(
     return 0;
 }
 
-int bvb_protocol_decode_vulkan_queue_submit_2_request(
+int bvb_protocol_encode_vulkan_queue_submit_2_request(
+    uint8_t output[BVB_VULKAN_SUBMIT_2_MAX_SIZE],
+    const struct bvb_vulkan_queue_submit_2_request *request,
+    uint32_t *output_length) {
+    return encode_vulkan_queue_submit_2_request(
+        output, request, output_length, false);
+}
+
+int bvb_protocol_encode_vulkan_queue_submit_2_stream_request(
+    uint8_t output[BVB_VULKAN_SUBMIT_2_STREAM_MAX_SIZE],
+    const struct bvb_vulkan_queue_submit_2_request *request,
+    uint32_t *output_length) {
+    return encode_vulkan_queue_submit_2_request(
+        output, request, output_length, true);
+}
+
+static int decode_vulkan_queue_submit_2_request(
     const uint8_t *input, uint32_t input_length,
-    struct bvb_vulkan_queue_submit_2_request *request) {
+    struct bvb_vulkan_queue_submit_2_request *request, bool stream_wire) {
     if (input == NULL || request == NULL ||
         input_length < BVB_VULKAN_SUBMIT_2_PREFIX_SIZE) return -EINVAL;
     const uint32_t wait_count = bvb_wire_get_u32(input + 20);
@@ -2976,10 +3029,13 @@ int bvb_protocol_decode_vulkan_queue_submit_2_request(
     if (wait_count > BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT ||
         command_count > BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT ||
         signal_count > BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT) return -EPROTO;
+    const uint32_t command_record_size = stream_wire
+        ? BVB_VULKAN_SUBMIT_2_STREAM_COMMAND_RECORD_SIZE
+        : BVB_VULKAN_SUBMIT_2_COMMAND_RECORD_SIZE;
     const uint32_t expected = BVB_VULKAN_SUBMIT_2_PREFIX_SIZE +
         (wait_count + signal_count) *
             BVB_VULKAN_SUBMIT_2_SEMAPHORE_RECORD_SIZE +
-        command_count * BVB_VULKAN_SUBMIT_2_COMMAND_RECORD_SIZE;
+        command_count * command_record_size;
     if (input_length != expected) return -EPROTO;
     *request = (struct bvb_vulkan_queue_submit_2_request){
         .queue_id = bvb_wire_get_u64(input),
@@ -2993,6 +3049,7 @@ int bvb_protocol_decode_vulkan_queue_submit_2_request(
         (request->fence_id != 0U &&
          !wire_id_is_type(request->fence_id, 18U))) return -EPROTO;
     uint32_t offset = BVB_VULKAN_SUBMIT_2_PREFIX_SIZE;
+    bool has_shared_stream = false;
     for (uint32_t index = 0U; index < wait_count; ++index) {
         request->waits[index] =
             (struct bvb_vulkan_submit_2_semaphore_record){
@@ -3006,16 +3063,51 @@ int bvb_protocol_decode_vulkan_queue_submit_2_request(
         offset += BVB_VULKAN_SUBMIT_2_SEMAPHORE_RECORD_SIZE;
     }
     for (uint32_t index = 0U; index < command_count; ++index) {
-        request->commands[index] =
-            (struct bvb_vulkan_submit_2_command_record){
-                .command_buffer_id = bvb_wire_get_u64(input + offset),
-                .device_mask = bvb_wire_get_u32(input + offset + 8),
-            };
-        if (!wire_id_is_type(request->commands[index].command_buffer_id,
-                             11U) ||
-            bvb_wire_get_u32(input + offset + 12) != 0U) return -EPROTO;
-        offset += BVB_VULKAN_SUBMIT_2_COMMAND_RECORD_SIZE;
+        request->commands[index].command_buffer_id =
+            bvb_wire_get_u64(input + offset);
+        if (stream_wire) {
+            request->commands[index].stream_generation =
+                bvb_wire_get_u64(input + offset + 8);
+            request->commands[index].stream_sequence =
+                bvb_wire_get_u64(input + offset + 16);
+            request->commands[index].stream_offset =
+                bvb_wire_get_u32(input + offset + 24);
+            request->commands[index].stream_length =
+                bvb_wire_get_u32(input + offset + 28);
+            request->commands[index].device_mask =
+                bvb_wire_get_u32(input + offset + 32);
+            request->commands[index].stream_flags =
+                bvb_wire_get_u32(input + offset + 36);
+        } else {
+            request->commands[index].device_mask =
+                bvb_wire_get_u32(input + offset + 8);
+            if (bvb_wire_get_u32(input + offset + 12) != 0U) return -EPROTO;
+        }
+        const struct bvb_vulkan_submit_2_command_record *record =
+            &request->commands[index];
+        const bool shared =
+            record->stream_flags ==
+            BVB_VULKAN_SUBMIT_2_COMMAND_SHARED_STREAM;
+        has_shared_stream |= shared;
+        if (!wire_id_is_type(record->command_buffer_id, 11U) ||
+            (record->stream_flags &
+             ~BVB_VULKAN_SUBMIT_2_COMMAND_SHARED_STREAM) != 0U ||
+            (!shared &&
+             (record->stream_generation != 0U ||
+              record->stream_sequence != 0U || record->stream_offset != 0U ||
+              record->stream_length != 0U)) ||
+            (shared &&
+             (record->stream_generation == 0U ||
+              record->stream_sequence == 0U ||
+              record->stream_offset % BVB_COMMAND_STREAM_SLOT_BYTES != 0U ||
+              record->stream_offset >= BVB_COMMAND_STREAM_REGION_BYTES ||
+              record->stream_length < BVB_COMMAND_BATCH_HEADER_SIZE ||
+              record->stream_length > BVB_COMMAND_STREAM_SLOT_BYTES))) {
+            return -EPROTO;
+        }
+        offset += command_record_size;
     }
+    if (stream_wire && !has_shared_stream) return -EPROTO;
     for (uint32_t index = 0U; index < signal_count; ++index) {
         request->signals[index] =
             (struct bvb_vulkan_submit_2_semaphore_record){
@@ -3029,6 +3121,20 @@ int bvb_protocol_decode_vulkan_queue_submit_2_request(
         offset += BVB_VULKAN_SUBMIT_2_SEMAPHORE_RECORD_SIZE;
     }
     return 0;
+}
+
+int bvb_protocol_decode_vulkan_queue_submit_2_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_queue_submit_2_request *request) {
+    return decode_vulkan_queue_submit_2_request(
+        input, input_length, request, false);
+}
+
+int bvb_protocol_decode_vulkan_queue_submit_2_stream_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_queue_submit_2_request *request) {
+    return decode_vulkan_queue_submit_2_request(
+        input, input_length, request, true);
 }
 
 int bvb_protocol_encode_header(

@@ -13,6 +13,9 @@ enum {
     BVB_DRAW_SIZE = 16,
     BVB_FILL_BUFFER_SIZE = 32,
     BVB_BUFFER_HOST_READ_BARRIER_SIZE = 24,
+    BVB_VULKAN_BEGIN_SIZE = 8,
+    BVB_VULKAN_CLEAR_COLOR_IMAGE_SIZE = 16,
+    BVB_VULKAN_INIT_IMAGE_BARRIER_SIZE = 40,
 };
 
 _Static_assert(sizeof(float) == sizeof(uint32_t),
@@ -246,6 +249,65 @@ int bvb_command_batch_append_buffer_host_read_barrier(
                          sizeof(payload));
 }
 
+int bvb_command_batch_append_vulkan_begin(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_begin_command *command) {
+    if (command == NULL || (command->flags & ~1U) != 0U) {
+        return -EINVAL;
+    }
+    uint8_t payload[BVB_VULKAN_BEGIN_SIZE];
+    bvb_wire_put_u32(payload, command->flags);
+    bvb_wire_put_u32(payload + 4, 0U);
+    return append_record(builder, BVB_COMMAND_VULKAN_BEGIN, payload,
+                         sizeof(payload));
+}
+
+int bvb_command_batch_append_vulkan_clear_color_image(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_clear_color_image_command *command) {
+    if (command == NULL ||
+        bvb_handle_expect(command->image_id, BVB_OBJECT_IMAGE) != 0) {
+        return -EINVAL;
+    }
+    uint8_t payload[BVB_VULKAN_CLEAR_COLOR_IMAGE_SIZE];
+    bvb_wire_put_u64(payload, command->image_id);
+    bvb_wire_put_u64(payload + 8, 0U);
+    return append_record(builder, BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE,
+                         payload, sizeof(payload));
+}
+
+int bvb_command_batch_append_vulkan_init_image_barrier(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_init_image_barrier_command *command) {
+    if (command == NULL || command->image_count == 0U ||
+        command->image_count > BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS) {
+        return -EINVAL;
+    }
+    uint8_t payload[BVB_VULKAN_INIT_IMAGE_BARRIER_SIZE];
+    memset(payload, 0, sizeof(payload));
+    bvb_wire_put_u32(payload, command->image_count);
+    for (uint32_t index = 0U; index < command->image_count; ++index) {
+        if (bvb_handle_expect(command->image_ids[index], BVB_OBJECT_IMAGE) !=
+            0) {
+            return -EINVAL;
+        }
+        for (uint32_t earlier = 0U; earlier < index; ++earlier) {
+            if (command->image_ids[earlier] == command->image_ids[index]) {
+                return -EINVAL;
+            }
+        }
+        bvb_wire_put_u64(payload + 8U + index * sizeof(uint64_t),
+                         command->image_ids[index]);
+    }
+    return append_record(builder, BVB_COMMAND_VULKAN_INIT_IMAGE_BARRIER,
+                         payload, sizeof(payload));
+}
+
+int bvb_command_batch_append_vulkan_end(
+    struct bvb_command_batch_builder *builder) {
+    return append_record(builder, BVB_COMMAND_VULKAN_END, NULL, 0U);
+}
+
 int bvb_command_batch_finish(struct bvb_command_batch_builder *builder,
                              size_t *output_length) {
     if (builder == NULL || builder->bytes == NULL || output_length == NULL ||
@@ -297,6 +359,18 @@ static int expected_payload_size(uint16_t opcode, uint32_t *payload_size) {
             return 0;
         case BVB_COMMAND_PUSH_ROTATION:
             *payload_size = BVB_PUSH_ROTATION_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_BEGIN:
+            *payload_size = BVB_VULKAN_BEGIN_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE:
+            *payload_size = BVB_VULKAN_CLEAR_COLOR_IMAGE_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_INIT_IMAGE_BARRIER:
+            *payload_size = BVB_VULKAN_INIT_IMAGE_BARRIER_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_END:
+            *payload_size = 0U;
             return 0;
         default:
             return -EPROTO;
@@ -380,6 +454,47 @@ static int validate_payload(uint16_t opcode, const uint8_t *payload) {
                            get_float(payload + 12) <= 0.0F
                        ? -EPROTO
                        : 0;
+        case BVB_COMMAND_VULKAN_BEGIN:
+            return (bvb_wire_get_u32(payload) & ~1U) != 0U ||
+                           bvb_wire_get_u32(payload + 4) != 0U
+                       ? -EPROTO
+                       : 0;
+        case BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE:
+            return bvb_handle_expect(bvb_wire_get_u64(payload),
+                                     BVB_OBJECT_IMAGE) != 0 ||
+                           bvb_wire_get_u64(payload + 8) != 0U
+                       ? -EPROTO
+                       : 0;
+        case BVB_COMMAND_VULKAN_INIT_IMAGE_BARRIER: {
+            const uint32_t count = bvb_wire_get_u32(payload);
+            if (count == 0U ||
+                count > BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS ||
+                bvb_wire_get_u32(payload + 4) != 0U) {
+                return -EPROTO;
+            }
+            for (uint32_t index = 0U;
+                 index < BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS; ++index) {
+                const uint64_t image_id =
+                    bvb_wire_get_u64(payload + 8U + index * sizeof(uint64_t));
+                if (index >= count) {
+                    if (image_id != 0U) return -EPROTO;
+                    continue;
+                }
+                if (bvb_handle_expect(image_id, BVB_OBJECT_IMAGE) != 0) {
+                    return -EPROTO;
+                }
+                for (uint32_t earlier = 0U; earlier < index; ++earlier) {
+                    if (image_id == bvb_wire_get_u64(
+                                        payload + 8U +
+                                        earlier * sizeof(uint64_t))) {
+                        return -EPROTO;
+                    }
+                }
+            }
+            return 0;
+        }
+        case BVB_COMMAND_VULKAN_END:
+            return 0;
         default:
             return -EPROTO;
     }
@@ -474,6 +589,50 @@ int bvb_command_batch_next(struct bvb_command_batch_iterator *iterator,
     };
     iterator->offset += BVB_COMMAND_RECORD_HEADER_SIZE + payload_length;
     --iterator->remaining;
+    return 0;
+}
+
+int bvb_command_stream_generation_check(
+    const struct bvb_command_stream_generation *generations,
+    size_t generation_count, uint64_t command_buffer_id, uint64_t sequence,
+    size_t *generation_index) {
+    if (generations == NULL || generation_count == 0U ||
+        generation_index == NULL || sequence == 0U ||
+        bvb_handle_expect(command_buffer_id, BVB_OBJECT_COMMAND_BUFFER) != 0) {
+        return -EINVAL;
+    }
+    size_t empty = SIZE_MAX;
+    for (size_t index = 0U; index < generation_count; ++index) {
+        if (generations[index].command_buffer_id == command_buffer_id) {
+            if (sequence <= generations[index].last_sequence) return -ESTALE;
+            *generation_index = index;
+            return 0;
+        }
+        if (empty == SIZE_MAX && generations[index].command_buffer_id == 0U) {
+            empty = index;
+        }
+    }
+    if (empty == SIZE_MAX) return -ENOSPC;
+    *generation_index = empty;
+    return 0;
+}
+
+int bvb_command_stream_generation_commit(
+    struct bvb_command_stream_generation *generations,
+    size_t generation_count, size_t generation_index,
+    uint64_t command_buffer_id, uint64_t sequence) {
+    if (generations == NULL || generation_index >= generation_count ||
+        sequence == 0U ||
+        bvb_handle_expect(command_buffer_id, BVB_OBJECT_COMMAND_BUFFER) != 0 ||
+        (generations[generation_index].command_buffer_id != 0U &&
+         generations[generation_index].command_buffer_id != command_buffer_id) ||
+        sequence <= generations[generation_index].last_sequence) {
+        return -EINVAL;
+    }
+    generations[generation_index] = (struct bvb_command_stream_generation){
+        .command_buffer_id = command_buffer_id,
+        .last_sequence = sequence,
+    };
     return 0;
 }
 
@@ -608,5 +767,46 @@ int bvb_command_decode_buffer_host_read_barrier(
         .offset = bvb_wire_get_u64(record->payload + 8),
         .size = bvb_wire_get_u64(record->payload + 16),
     };
+    return 0;
+}
+
+int bvb_command_decode_vulkan_begin(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_begin_command *command) {
+    if (record == NULL || command == NULL ||
+        record->opcode != BVB_COMMAND_VULKAN_BEGIN ||
+        record->payload_length != BVB_VULKAN_BEGIN_SIZE) {
+        return -EINVAL;
+    }
+    command->flags = bvb_wire_get_u32(record->payload);
+    return 0;
+}
+
+int bvb_command_decode_vulkan_clear_color_image(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_clear_color_image_command *command) {
+    if (record == NULL || command == NULL ||
+        record->opcode != BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE ||
+        record->payload_length != BVB_VULKAN_CLEAR_COLOR_IMAGE_SIZE) {
+        return -EINVAL;
+    }
+    command->image_id = bvb_wire_get_u64(record->payload);
+    return 0;
+}
+
+int bvb_command_decode_vulkan_init_image_barrier(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_init_image_barrier_command *command) {
+    if (record == NULL || command == NULL ||
+        record->opcode != BVB_COMMAND_VULKAN_INIT_IMAGE_BARRIER ||
+        record->payload_length != BVB_VULKAN_INIT_IMAGE_BARRIER_SIZE) {
+        return -EINVAL;
+    }
+    memset(command, 0, sizeof(*command));
+    command->image_count = bvb_wire_get_u32(record->payload);
+    for (uint32_t index = 0U; index < command->image_count; ++index) {
+        command->image_ids[index] = bvb_wire_get_u64(
+            record->payload + 8U + index * sizeof(uint64_t));
+    }
     return 0;
 }

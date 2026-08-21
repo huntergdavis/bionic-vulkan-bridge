@@ -112,7 +112,9 @@ enum {
     BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT = 101,
     BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMAGE_BARRIER = 102,
     BVB_OPCODE_VULKAN_COMMAND_BUFFER_CLEAR_COLOR_IMAGE = 103,
-    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_COMMAND_BUFFER_CLEAR_COLOR_IMAGE,
+    BVB_OPCODE_VULKAN_COMMAND_STREAM_SETUP = 104,
+    BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2_STREAM = 105,
+    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2_STREAM,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -212,12 +214,18 @@ enum {
     BVB_VULKAN_SUBMIT_2_PREFIX_SIZE = 32,
     BVB_VULKAN_SUBMIT_2_SEMAPHORE_RECORD_SIZE = 32,
     BVB_VULKAN_SUBMIT_2_COMMAND_RECORD_SIZE = 16,
+    BVB_VULKAN_SUBMIT_2_STREAM_COMMAND_RECORD_SIZE = 40,
     BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT = 16,
     BVB_VULKAN_SUBMIT_2_MAX_SIZE = BVB_VULKAN_SUBMIT_2_PREFIX_SIZE +
         2 * BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT *
             BVB_VULKAN_SUBMIT_2_SEMAPHORE_RECORD_SIZE +
         BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT *
             BVB_VULKAN_SUBMIT_2_COMMAND_RECORD_SIZE,
+    BVB_VULKAN_SUBMIT_2_STREAM_MAX_SIZE = BVB_VULKAN_SUBMIT_2_PREFIX_SIZE +
+        2 * BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT *
+            BVB_VULKAN_SUBMIT_2_SEMAPHORE_RECORD_SIZE +
+        BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT *
+            BVB_VULKAN_SUBMIT_2_STREAM_COMMAND_RECORD_SIZE,
     BVB_VULKAN_MEMORY_IO_PREFIX_SIZE = 24,
     BVB_VULKAN_MEMORY_IO_RESPONSE_PREFIX_SIZE = 8,
     BVB_EXTERNAL_MEMORY_IMPORT_REQUEST_SIZE = 16,
@@ -242,6 +250,11 @@ enum {
     BVB_VULKAN_MAX_PHYSICAL_DEVICES = 8,
     BVB_SHARED_BATCH_MIN_BYTES = 4096,
     BVB_SHARED_BATCH_MAX_BYTES = 16 * 1024 * 1024,
+    BVB_COMMAND_STREAM_SLOT_COUNT = 256,
+    BVB_COMMAND_STREAM_SLOT_BYTES = 64 * 1024,
+    BVB_COMMAND_STREAM_REGION_BYTES =
+        BVB_COMMAND_STREAM_SLOT_COUNT * BVB_COMMAND_STREAM_SLOT_BYTES,
+    BVB_VULKAN_SUBMIT_2_COMMAND_SHARED_STREAM = 1U << 0,
     BVB_SERVICE_BIONIC = 1U << 0,
     BVB_SERVICE_ANDROID_VULKAN_LOADER = 1U << 1,
     BVB_SERVICE_ACTIVITY_INGRESS = 1U << 2,
@@ -880,7 +893,12 @@ struct bvb_vulkan_submit_2_semaphore_record {
 
 struct bvb_vulkan_submit_2_command_record {
     uint64_t command_buffer_id;
+    uint64_t stream_generation;
+    uint64_t stream_sequence;
+    uint32_t stream_offset;
+    uint32_t stream_length;
     uint32_t device_mask;
+    uint32_t stream_flags;
 };
 
 struct bvb_vulkan_queue_submit_2_request {
@@ -1435,6 +1453,13 @@ int bvb_protocol_encode_vulkan_queue_submit_2_request(
     const struct bvb_vulkan_queue_submit_2_request *request,
     uint32_t *output_length);
 int bvb_protocol_decode_vulkan_queue_submit_2_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_queue_submit_2_request *request);
+int bvb_protocol_encode_vulkan_queue_submit_2_stream_request(
+    uint8_t output[BVB_VULKAN_SUBMIT_2_STREAM_MAX_SIZE],
+    const struct bvb_vulkan_queue_submit_2_request *request,
+    uint32_t *output_length);
+int bvb_protocol_decode_vulkan_queue_submit_2_stream_request(
     const uint8_t *input, uint32_t input_length,
     struct bvb_vulkan_queue_submit_2_request *request);
 int bvb_protocol_encode_vulkan_memory_write_request(

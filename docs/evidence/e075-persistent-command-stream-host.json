@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "gate": "E075",
+  "result": "host_contract_pass",
+  "source_base_commit": "70f8189dfa1e7f730da6a092fa9993801a44e706",
+  "objective": "remove per-call socket round trips from the currently executable Vulkan command-recording vocabulary while preserving strict socket A/B behavior",
+  "activation": {
+    "environment": "BVB_COMMAND_STREAM=shared",
+    "default": "strict per-call socket path",
+    "fallback_on_explicit_shared_setup_failure": false
+  },
+  "shared_region": {
+    "setup_opcode": 104,
+    "bytes": 16777216,
+    "slots": 256,
+    "slot_bytes": 65536,
+    "slot_lease": "Begin through first successful Submit2 replay; allocation alone consumes no slot",
+    "descriptor_transfers_after_setup": 0,
+    "seals": ["F_SEAL_GROW", "F_SEAL_SHRINK", "F_SEAL_SEAL"],
+    "publication": "release fence at successful vkEndCommandBuffer; acquire fence before service validation"
+  },
+  "record_vocabulary": {
+    "lifecycle_record_ids": {
+      "begin": 20,
+      "end": 23
+    },
+    "current_command_record_ids": {
+      "fill_buffer": 7,
+      "zero_clear_color_image": 21,
+      "init_image_barrier2": 22
+    },
+    "reserved_for_e076": {
+      "general_barrier2": 10,
+      "general_clear_color_image": 11
+    },
+    "pointer_values_crossed": false
+  },
+  "submit2_reference": {
+    "stream_opcode": 105,
+    "bytes_per_command": 40,
+    "legacy_opcode_85_bytes_per_command": 16,
+    "legacy_wire_changed": false,
+    "fields": [
+      "typed command_buffer_id",
+      "stream_generation",
+      "stream_sequence",
+      "slot-aligned stream_offset",
+      "bounded stream_length",
+      "device_mask",
+      "stream_flags"
+    ],
+    "replay_once_then_native_reuse": true
+  },
+  "pre_replay_validation": [
+    "complete Submit2 queue, waits, command buffers, signals, and fence share one typed native device",
+    "region generation, aligned slot bounds, batch length, command-buffer ID, and sequence match the Submit2 reference",
+    "Begin occurs first, End occurs last, and only the currently executable command records occur between them",
+    "every buffer and image resolves as a live child of the queue device",
+    "per-command-buffer sequence is strictly newer than the last consumed generation"
+  ],
+  "fail_closed": [
+    "explicit shared setup failure does not fall back to per-call RPC",
+    "unsupported void command input poisons the local recording",
+    "corrupt flags, generation, sequence, slot alignment, length, reserved words, topology, or handle type",
+    "stale or replayed command-buffer sequence",
+    "unknown or cross-device queue, synchronization, command-buffer, buffer, image, or fence ownership",
+    "more than 256 simultaneously recording or sealed-unreplayed command buffers"
+  ],
+  "ab_contract": {
+    "strict_recording_socket_exchanges": 5,
+    "shared_recording_socket_exchanges": 0,
+    "control_boundary": "one vkQueueSubmit2 request/response after recording",
+    "native_fake_sequence": [
+      "vkBeginCommandBuffer",
+      "vkCmdFillBuffer plus the established host-read barrier",
+      "vkCmdClearColorImage",
+      "vkCmdPipelineBarrier2",
+      "vkEndCommandBuffer",
+      "vkQueueSubmit2"
+    ],
+    "scalability_contract": "257 additional live command buffers allocate without slots; a replayed buffer rerecords and submits after its slot is returned"
+  },
+  "verification": {
+    "focused_contracts": [
+      "protocol-contract",
+      "command-batch-contract",
+      "global-dispatch-contract",
+      "global-command-stream-contract"
+    ],
+    "focused_result": "4/4 passed",
+    "full_host_suite": "40/40 passed on E074 base via scripts/check.sh",
+    "dispatch_policy_changed": false,
+    "runtime_visibility_or_fps_claim": false
+  },
+  "reuse": "The required deja query found no indexed implementation. E075 reuses Decision 0003's bounded shared command-batch direction, E014's one-time sealed-size memfd and release/acquire generation validation, E042's setup-only descriptor transfer and socket-free shared data plane, and E060's stable typed ownership/generation model.",
+  "scope": "Host transport contract only; no Activity/APK/launcher change, tablet deployment, visible frame, Tomb Raider run, benchmark, or FPS claim"
+}

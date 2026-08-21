@@ -243,10 +243,127 @@ static int test_transfer_batch(void) {
     return 0;
 }
 
+static int test_vulkan_command_stream(void) {
+    uint8_t bytes[512];
+    const uint64_t command_buffer =
+        bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 7U);
+    const uint64_t buffer = bvb_handle_id(BVB_OBJECT_BUFFER, 8U);
+    const uint64_t image_one = bvb_handle_id(BVB_OBJECT_IMAGE, 9U);
+    const uint64_t image_two = bvb_handle_id(BVB_OBJECT_IMAGE, 10U);
+    struct bvb_command_batch_builder builder;
+    CHECK(bvb_command_batch_begin(&builder, bytes, sizeof(bytes), command_buffer,
+                                  17U) == 0);
+    CHECK(bvb_command_batch_append_vulkan_begin(
+              &builder,
+              &(const struct bvb_vulkan_begin_command){.flags = 1U}) == 0);
+    CHECK(bvb_command_batch_append_fill_buffer(
+              &builder,
+              &(const struct bvb_fill_buffer_command){
+                  .buffer_id = buffer,
+                  .size = 4096U,
+                  .data = UINT32_C(0xa5c3f00d),
+              }) == 0);
+    CHECK(bvb_command_batch_append_vulkan_clear_color_image(
+              &builder,
+              &(const struct bvb_vulkan_clear_color_image_command){
+                  .image_id = image_one,
+              }) == 0);
+    CHECK(bvb_command_batch_append_vulkan_init_image_barrier(
+              &builder,
+              &(const struct bvb_vulkan_init_image_barrier_command){
+                  .image_count = 2U,
+                  .image_ids = {image_one, image_two},
+              }) == 0);
+    CHECK(bvb_command_batch_append_vulkan_end(&builder) == 0);
+    size_t length = 0U;
+    CHECK(bvb_command_batch_finish(&builder, &length) == 0);
+    struct bvb_command_batch_info info;
+    CHECK(bvb_command_batch_validate(bytes, length, &info) == 0);
+    CHECK(info.command_count == 5U);
+    CHECK(info.command_buffer_id == command_buffer);
+    CHECK(info.sequence == 17U);
+
+    struct bvb_command_batch_iterator iterator;
+    struct bvb_command_record record;
+    CHECK(bvb_command_batch_iterator_init(&iterator, bytes, length) == 0);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    struct bvb_vulkan_begin_command begin;
+    CHECK(bvb_command_decode_vulkan_begin(&record, &begin) == 0);
+    CHECK(begin.flags == 1U);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    struct bvb_fill_buffer_command fill;
+    CHECK(bvb_command_decode_fill_buffer(&record, &fill) == 0);
+    CHECK(fill.buffer_id == buffer && fill.size == 4096U);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    struct bvb_vulkan_clear_color_image_command clear;
+    CHECK(bvb_command_decode_vulkan_clear_color_image(&record, &clear) == 0);
+    CHECK(clear.image_id == image_one);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    struct bvb_vulkan_init_image_barrier_command barrier;
+    CHECK(bvb_command_decode_vulkan_init_image_barrier(&record, &barrier) ==
+          0);
+    CHECK(barrier.image_count == 2U);
+    CHECK(barrier.image_ids[0] == image_one);
+    CHECK(barrier.image_ids[1] == image_two);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    CHECK(record.opcode == BVB_COMMAND_VULKAN_END);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 1);
+
+    uint8_t corrupted[sizeof(bytes)];
+    memcpy(corrupted, bytes, length);
+    const size_t barrier_payload = BVB_COMMAND_BATCH_HEADER_SIZE +
+        BVB_COMMAND_RECORD_HEADER_SIZE + 8U +
+        BVB_COMMAND_RECORD_HEADER_SIZE + 32U +
+        BVB_COMMAND_RECORD_HEADER_SIZE + 16U +
+        BVB_COMMAND_RECORD_HEADER_SIZE;
+    bvb_wire_put_u64(corrupted + barrier_payload + 8U + sizeof(uint64_t),
+                     image_one);
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+    memcpy(corrupted, bytes, length);
+    bvb_wire_put_u32(corrupted + BVB_COMMAND_BATCH_HEADER_SIZE +
+                         BVB_COMMAND_RECORD_HEADER_SIZE,
+                     2U);
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+
+    struct bvb_command_stream_generation generations[2] = {0};
+    size_t generation_index = SIZE_MAX;
+    CHECK(bvb_command_stream_generation_check(
+              generations, 2U, command_buffer, 17U, &generation_index) == 0);
+    CHECK(generation_index == 0U);
+    CHECK(bvb_command_stream_generation_commit(
+              generations, 2U, generation_index, command_buffer, 17U) == 0);
+    CHECK(bvb_command_stream_generation_check(
+              generations, 2U, command_buffer, 17U, &generation_index) ==
+          -ESTALE);
+    CHECK(bvb_command_stream_generation_check(
+              generations, 2U, command_buffer, 16U, &generation_index) ==
+          -ESTALE);
+    CHECK(bvb_command_stream_generation_check(
+              generations, 2U, command_buffer, 18U, &generation_index) == 0);
+    CHECK(generation_index == 0U);
+    CHECK(bvb_command_stream_generation_commit(
+              generations, 2U, generation_index, command_buffer, 18U) == 0);
+    const uint64_t second_command_buffer =
+        bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 8U);
+    CHECK(bvb_command_stream_generation_check(
+              generations, 2U, second_command_buffer, 1U,
+              &generation_index) == 0);
+    CHECK(generation_index == 1U);
+    CHECK(bvb_command_stream_generation_commit(
+              generations, 2U, generation_index, second_command_buffer,
+              1U) == 0);
+    CHECK(bvb_command_stream_generation_check(
+              generations, 2U,
+              bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 9U), 1U,
+              &generation_index) == -ENOSPC);
+    return 0;
+}
+
 int main(void) {
     CHECK(test_handles() == 0);
     CHECK(test_batch() == 0);
     CHECK(test_transfer_batch() == 0);
+    CHECK(test_vulkan_command_stream() == 0);
     puts("PASS: proxy handles and triangle command batch");
     return 0;
 }

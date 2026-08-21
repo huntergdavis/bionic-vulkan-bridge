@@ -3012,3 +3012,47 @@ an image without a deterministic pattern, a successful runtime pass proves
 authenticated import and native present markers only; the Activity may remain
 black, and no screenshot, changing game frame, Tomb Raider output, benchmark,
 or FPS is claimed.
+
+## E075 — persistent shared-memory command recording (2026-08-21)
+
+Status: host contracts pass; opt-in transport milestone only. E075 removes the
+per-call Unix-socket round trip from command recording while preserving the
+strict legacy path as the default A/B control. `BVB_COMMAND_STREAM=shared`
+creates one 16 MiB sealed-size memfd during connection setup and leases one of
+256 fixed 64 KiB slots only from Begin until the first successful Submit2
+replay. Allocation alone consumes no slot; Reset, Free, pool teardown, a failed
+End, or a successful replay returns it. Canonical local records cover Begin,
+FillBuffer, zero ClearColorImage, initialization PipelineBarrier2, and End. The
+record framing leaves IDs 10 and 11 free for E076's general Barrier2 and
+ClearColor forms; E075 uses IDs 20 through 23 for its lifecycle and current
+fixed E069 image shapes.
+
+Dedicated opcode 105 carries a bounded 40-byte `vkQueueSubmit2` command
+reference: typed command-buffer ID, shared generation and sequence,
+slot-aligned offset and length, device mask, and one shared-stream flag. The
+legacy opcode-85 Submit2 record remains byte-for-byte 16 bytes, so strict A/B
+and replayed native command buffers keep the established wire. The service
+performs an acquire fence and validates the complete Submit2 ownership
+graph, every batch header, Begin/End topology, every resource's type and native
+device, and per-command-buffer monotonic generation before any native replay.
+Validated generations are consumed before replay so a failed or malicious
+retry cannot replay a partially touched native command buffer. Unsupported
+void-command input poisons the local recording, so End and Submit2 fail
+deterministically rather than submitting a partial stream.
+
+The cross-process fake-driver contract observes the exact E069 native command
+sequence and successful Submit2 while the client exchange counter proves zero
+socket exchanges across Begin/Fill/Clear/Barrier/End. The unchanged strict
+contract measures five exchanges across the same valid recording sequence.
+Codec tests reject corrupt generation, slot alignment, flags, reserved words,
+duplicate image IDs, and stale/replayed sequences. The shared global contract
+also rejects unsupported void shapes and a real typed buffer owned by a second
+logical device, reuses a released slot, and allocates 257 additional live
+command buffers without consuming stream slots. This gate makes no tablet
+deployment, visible-frame, Tomb Raider, benchmark, or FPS claim.
+
+The required `deja` query found no indexed persistent game-command
+implementation. E075 reuses Decision 0003's bounded batched-dispatch direction,
+E014's one-time memfd setup and release/acquire generation discipline, E042's
+setup-only descriptor transfer with a socket-free shared data plane, and E060's
+stable typed ownership/generation model.

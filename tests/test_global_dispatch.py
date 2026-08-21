@@ -16,13 +16,13 @@ def main() -> int:
     if len(sys.argv) not in (4, 5):
         raise SystemExit(
             "usage: test_global_dispatch.py SERVICE CLIENT FAKE_LOADER "
-            "[strict-fake|hardware]"
+            "[strict-fake|hardware|shared-command-stream]"
         )
     service, client, loader = map(
         lambda value: str(pathlib.Path(value).resolve()), sys.argv[1:4]
     )
     validation_mode = sys.argv[4] if len(sys.argv) == 5 else "strict-fake"
-    if validation_mode not in ("strict-fake", "hardware"):
+    if validation_mode not in ("strict-fake", "hardware", "shared-command-stream"):
         raise SystemExit(f"unsupported validation mode: {validation_mode}")
     with tempfile.TemporaryDirectory(prefix="bvb-e034-") as temporary:
         socket_path = pathlib.Path(temporary) / "runtime" / "bridge.sock"
@@ -113,6 +113,10 @@ def main() -> int:
                 environment["BVB_GLOBAL_DISPATCH_HARDWARE"] = "1"
             else:
                 environment.pop("BVB_GLOBAL_DISPATCH_HARDWARE", None)
+            if validation_mode == "shared-command-stream":
+                environment["BVB_COMMAND_STREAM"] = "shared"
+            else:
+                environment.pop("BVB_COMMAND_STREAM", None)
             completed = subprocess.run(
                 [client],
                 check=False,
@@ -133,6 +137,10 @@ def main() -> int:
             assert "sampler_anisotropy=1" in completed.stdout
             assert "empty_submit=0 queue_wait=0 device_wait=0" in completed.stdout
             assert "command_submit=0 pool_reset=0" in completed.stdout
+            assert (
+                "recording_rtts=0" if validation_mode == "shared-command-stream"
+                else "recording_rtts=5"
+            ) in completed.stdout
             image_match = re.search(r"\bimage=(\d+)\b", completed.stdout)
             assert image_match is not None
             assert int(image_match.group(1)) >> 56 == 7
@@ -141,7 +149,7 @@ def main() -> int:
             assert "fill_words=1024 mismatches=0" in completed.stdout
             assert "fence_before=1 fenced_submit=0 fence_after=0" in completed.stdout
             assert "fence_wait=0 fence_reset=0 fence_after_reset=1" in completed.stdout
-            if validation_mode == "strict-fake":
+            if validation_mode != "hardware":
                 assert f"api={0x00400000 | (4 << 12) | 354}" in completed.stdout
                 assert 'device=BVB Fake Adreno 730 "quoted"' in completed.stdout
                 assert f"device_api={0x00400000 | (3 << 12) | 275}" in completed.stdout

@@ -43,6 +43,8 @@ struct shared_batch_region {
     size_t length;
     uint64_t generation;
     uint64_t last_sequence;
+    struct bvb_command_stream_generation command_generations[4096];
+    bool command_stream;
 };
 
 struct connection_worker {
@@ -2438,9 +2440,100 @@ static int answer_vulkan_queue_submit_command_fence(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int replay_submit_command_streams(
+    struct shared_batch_region *region,
+    const struct bvb_vulkan_queue_submit_2_request *request,
+    struct bvb_vulkan_global_context *context,
+    char *diagnostic, size_t diagnostic_size) {
+    bool has_stream = false;
+    for (uint32_t index = 0U; index < request->command_count; ++index) {
+        has_stream |= request->commands[index].stream_flags ==
+            BVB_VULKAN_SUBMIT_2_COMMAND_SHARED_STREAM;
+    }
+    if (!has_stream) return 0;
+    if (region == NULL || !region->command_stream ||
+        region->address == NULL ||
+        region->length != BVB_COMMAND_STREAM_REGION_BYTES) {
+        return -EPROTO;
+    }
+    uint64_t device_id = 0U;
+    int result = bvb_vulkan_global_context_validate_queue_submit_2(
+        context, request, &device_id, diagnostic, diagnostic_size);
+    if (result != 0) return result;
+    atomic_thread_fence(memory_order_acquire);
+    const uint8_t *batches[BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT] = {0};
+    size_t generation_slots[BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT] = {0};
+    for (uint32_t index = 0U; result == 0 && index < request->command_count;
+         ++index) {
+        const struct bvb_vulkan_submit_2_command_record *command =
+            &request->commands[index];
+        if (command->stream_flags == 0U) continue;
+        if (command->stream_generation != region->generation ||
+            command->stream_offset > region->length ||
+            command->stream_length >
+                region->length - command->stream_offset) {
+            result = command->stream_generation != region->generation
+                         ? -ESTALE : -ERANGE;
+            break;
+        }
+        for (uint32_t earlier = 0U; earlier < index; ++earlier) {
+            if (request->commands[earlier].stream_flags != 0U &&
+                request->commands[earlier].command_buffer_id ==
+                    command->command_buffer_id) {
+                result = -EPROTO;
+                break;
+            }
+        }
+        if (result != 0) break;
+        batches[index] = region->address + command->stream_offset;
+        struct bvb_command_batch_info info;
+        result = bvb_command_batch_validate(
+            batches[index], command->stream_length, &info);
+        if (result == 0 &&
+            (info.command_buffer_id != command->command_buffer_id ||
+             info.sequence != command->stream_sequence ||
+             info.byte_length != command->stream_length)) {
+            result = -ESTALE;
+        }
+        if (result == 0) {
+            result = bvb_vulkan_global_context_validate_command_stream(
+                context, batches[index], command->stream_length, device_id,
+                diagnostic, diagnostic_size);
+        }
+        if (result == 0) {
+            result = bvb_command_stream_generation_check(
+                region->command_generations,
+                sizeof(region->command_generations) /
+                    sizeof(region->command_generations[0]),
+                command->command_buffer_id, command->stream_sequence,
+                &generation_slots[index]);
+        }
+        if (result == 0) {
+            result = bvb_command_stream_generation_commit(
+                region->command_generations,
+                sizeof(region->command_generations) /
+                    sizeof(region->command_generations[0]),
+                generation_slots[index], command->command_buffer_id,
+                command->stream_sequence);
+        }
+    }
+    if (result != 0) return result;
+    for (uint32_t index = 0U; index < request->command_count; ++index) {
+        const struct bvb_vulkan_submit_2_command_record *command =
+            &request->commands[index];
+        if (command->stream_flags == 0U) continue;
+        result = bvb_vulkan_global_context_replay_command_stream(
+            context, batches[index], command->stream_length, device_id,
+            diagnostic, diagnostic_size);
+        if (result != 0) return result;
+    }
+    return 0;
+}
+
 static int answer_vulkan_queue_submit_2(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
-    struct bvb_vulkan_global_context *context) {
+    struct bvb_vulkan_global_context *context,
+    struct shared_batch_region *region, bool stream_wire) {
     struct bvb_protocol_packet response;
     prepare_response(&response, request);
     if (!negotiated || context == NULL) {
@@ -2448,10 +2541,16 @@ static int answer_vulkan_queue_submit_2(
         return bvb_transport_send(client_fd, &response);
     }
     struct bvb_vulkan_queue_submit_2_request decoded;
-    int result = bvb_protocol_decode_vulkan_queue_submit_2_request(
-        request->payload, request->header.payload_length, &decoded);
+    int result = stream_wire
+        ? bvb_protocol_decode_vulkan_queue_submit_2_stream_request(
+              request->payload, request->header.payload_length, &decoded)
+        : bvb_protocol_decode_vulkan_queue_submit_2_request(
+              request->payload, request->header.payload_length, &decoded);
     int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
     char diagnostic[512] = {0};
+    if (result == 0 && stream_wire)
+        result = replay_submit_command_streams(
+            region, &decoded, context, diagnostic, sizeof(diagnostic));
     if (result == 0)
         result = bvb_vulkan_global_context_queue_submit_2(
             context, &decoded, &vulkan_result, diagnostic, sizeof(diagnostic));
@@ -2723,7 +2822,8 @@ static int answer_vulkan_batch_selftest(
 
 static int answer_shared_batch_setup(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
-    int received_fd, struct shared_batch_region *region) {
+    int received_fd, struct shared_batch_region *region,
+    bool command_stream) {
     struct bvb_protocol_packet response;
     prepare_response(&response, request);
     int status = 0;
@@ -2735,6 +2835,10 @@ static int answer_shared_batch_setup(
     } else {
         status = bvb_protocol_decode_shared_batch_setup(request->payload,
                                                         &setup);
+    }
+    if (status == 0 && command_stream &&
+        setup.region_bytes != BVB_COMMAND_STREAM_REGION_BYTES) {
+        status = -EINVAL;
     }
     struct stat metadata;
     if (status == 0 &&
@@ -2764,6 +2868,7 @@ static int answer_shared_batch_setup(
             .address = mapping,
             .length = setup.region_bytes,
             .generation = setup.generation,
+            .command_stream = command_stream,
         };
     }
     response.header.status = status;
@@ -2777,7 +2882,7 @@ static int answer_shared_batch_execute(
     struct bvb_protocol_packet response;
     prepare_response(&response, request);
     if (!negotiated || region == NULL || region->address == NULL ||
-        context == NULL ||
+        region->command_stream || context == NULL ||
         request->header.payload_length != BVB_SHARED_BATCH_EXECUTE_SIZE) {
         response.header.status = -EPROTO;
         return bvb_transport_send(client_fd, &response);
@@ -2862,8 +2967,10 @@ static int serve_connection(int client_fd, const char *loader_path,
             break;
         }
         if (request.header.kind != BVB_PROTOCOL_REQUEST ||
-            (received_fd >= 0 && request.header.opcode !=
-                                     BVB_OPCODE_SHARED_BATCH_SETUP)) {
+            (received_fd >= 0 &&
+             request.header.opcode != BVB_OPCODE_SHARED_BATCH_SETUP &&
+             request.header.opcode !=
+                 BVB_OPCODE_VULKAN_COMMAND_STREAM_SETUP)) {
             if (received_fd >= 0) {
                 (void)close(received_fd);
             }
@@ -2889,7 +2996,14 @@ static int serve_connection(int client_fd, const char *loader_path,
                 client_fd, &request, loader_path, negotiated);
         } else if (request.header.opcode == BVB_OPCODE_SHARED_BATCH_SETUP) {
             result = answer_shared_batch_setup(client_fd, &request, negotiated,
-                                               received_fd, &shared_region);
+                                               received_fd, &shared_region,
+                                               false);
+            received_fd = -1;
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_COMMAND_STREAM_SETUP) {
+            result = answer_shared_batch_setup(client_fd, &request, negotiated,
+                                               received_fd, &shared_region,
+                                               true);
             received_fd = -1;
         } else if (request.header.opcode == BVB_OPCODE_SHARED_BATCH_EXECUTE) {
             result = answer_shared_batch_execute(
@@ -3140,7 +3254,13 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2) {
             result = answer_vulkan_queue_submit_2(
-                client_fd, &request, negotiated, global_context);
+                client_fd, &request, negotiated, global_context,
+                &shared_region, false);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2_STREAM) {
+            result = answer_vulkan_queue_submit_2(
+                client_fd, &request, negotiated, global_context,
+                &shared_region, true);
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_SWAPCHAIN_PREPARE) {
             result = answer_vulkan_swapchain_prepare(

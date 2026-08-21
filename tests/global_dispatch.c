@@ -93,6 +93,11 @@ static bool bvb_sleep_milliseconds(uint32_t milliseconds) {
     return true;
 }
 
+static bool bvb_shared_command_stream_enabled(void) {
+    const char *value = getenv("BVB_COMMAND_STREAM");
+    return value != NULL && strcmp(value, "shared") == 0;
+}
+
 static bool bvb_is_power_of_two(VkDeviceSize value) {
     return value != 0U && (value & (value - 1U)) == 0U;
 }
@@ -152,6 +157,7 @@ static VkResult VKAPI_CALL test_set_device_loader_data(
 
 int main(void) {
     const bool hardware_mode = bvb_hardware_validation_enabled();
+    const bool shared_command_stream = bvb_shared_command_stream_enabled();
     uint32_t wsi_width = 2800U;
     uint32_t wsi_height = 1752U;
     uint32_t present_hold_ms = 0U;
@@ -1875,6 +1881,35 @@ int main(void) {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
+    if (shared_command_stream) {
+        CHECK(begin_command_buffer(command_buffer, &begin_info) == VK_SUCCESS);
+        const VkClearColorValue unsupported_color = {
+            .uint32 = {1U, 0U, 0U, 0U},
+        };
+        const VkImageSubresourceRange poison_range = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .levelCount = 1U,
+            .layerCount = 1U,
+        };
+        cmd_clear_color_image(command_buffer, image,
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              &unsupported_color, 1U, &poison_range);
+        CHECK(end_command_buffer(command_buffer) ==
+              VK_ERROR_INITIALIZATION_FAILED);
+
+        VkBuffer ownership_buffer = VK_NULL_HANDLE;
+        CHECK(create_buffer(ownership_device, &buffer_create_info, NULL,
+                            &ownership_buffer) == VK_SUCCESS);
+        CHECK(begin_command_buffer(command_buffer, &begin_info) == VK_SUCCESS);
+        cmd_fill_buffer(command_buffer, ownership_buffer, 0U, 4096U,
+                        UINT32_C(0xa5c3f00d));
+        CHECK(end_command_buffer(command_buffer) ==
+              VK_ERROR_INITIALIZATION_FAILED);
+        destroy_buffer(ownership_device, ownership_buffer, NULL);
+    }
+    const uint64_t exchanges_before_recording =
+        bvb_global_dispatch_exchange_count();
+    CHECK(exchanges_before_recording != UINT64_MAX);
     CHECK(begin_command_buffer(command_buffer, &begin_info) == VK_SUCCESS);
     cmd_fill_buffer(command_buffer, buffer, 0U, 4096U, UINT32_C(0xa5c3f00d));
     const VkImageSubresourceRange init_image_range = {
@@ -1885,9 +1920,10 @@ int main(void) {
     VkClearColorValue rejected_init_color = {
         .uint32 = {1U, 0U, 0U, 0U},
     };
-    cmd_clear_color_image(command_buffer, image,
-                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                          &rejected_init_color, 1U, &init_image_range);
+    if (!shared_command_stream)
+        cmd_clear_color_image(command_buffer, image,
+                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                              &rejected_init_color, 1U, &init_image_range);
     const VkClearColorValue init_color = {0};
     cmd_clear_color_image(command_buffer, image,
                           VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
@@ -1915,7 +1951,8 @@ int main(void) {
         .imageMemoryBarrierCount = 1U,
         .pImageMemoryBarriers = &init_image_barrier,
     };
-    cmd_pipeline_barrier_2(command_buffer, &rejected_dependency);
+    if (!shared_command_stream)
+        cmd_pipeline_barrier_2(command_buffer, &rejected_dependency);
     const VkDependencyInfo init_dependency = {
         .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
         .imageMemoryBarrierCount = 1U,
@@ -1923,13 +1960,31 @@ int main(void) {
     };
     cmd_pipeline_barrier_2(command_buffer, &init_dependency);
     CHECK(end_command_buffer(command_buffer) == VK_SUCCESS);
-    const VkSubmitInfo command_submit = {
-        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .commandBufferCount = 1U,
-        .pCommandBuffers = &command_buffer,
-    };
-    CHECK(queue_submit(queue, 1U, &command_submit, fence) ==
-          VK_SUCCESS);
+    const uint64_t exchanges_after_recording =
+        bvb_global_dispatch_exchange_count();
+    CHECK(exchanges_after_recording >= exchanges_before_recording);
+    const uint64_t recording_rtts =
+        exchanges_after_recording - exchanges_before_recording;
+    CHECK(recording_rtts == (shared_command_stream ? 0U : 5U));
+    if (shared_command_stream) {
+        const VkCommandBufferSubmitInfo replay_command = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+            .commandBuffer = command_buffer,
+        };
+        const VkSubmitInfo2 replay_submit = {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+            .commandBufferInfoCount = 1U,
+            .pCommandBufferInfos = &replay_command,
+        };
+        CHECK(queue_submit_2(queue, 1U, &replay_submit, fence) == VK_SUCCESS);
+    } else {
+        const VkSubmitInfo command_submit = {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .commandBufferCount = 1U,
+            .pCommandBuffers = &command_buffer,
+        };
+        CHECK(queue_submit(queue, 1U, &command_submit, fence) == VK_SUCCESS);
+    }
     CHECK(get_fence_status(device, fence) == VK_SUCCESS);
     CHECK(wait_for_fences(device, 1U, &fence, VK_TRUE, UINT64_MAX) ==
           VK_SUCCESS);
@@ -2011,6 +2066,21 @@ int main(void) {
     CHECK(get_semaphore_counter(device, timeline, &timeline_value) ==
           VK_SUCCESS);
     CHECK(timeline_value == UINT64_C(13));
+    if (shared_command_stream) {
+        CHECK(begin_command_buffer(command_buffer, &begin_info) == VK_SUCCESS);
+        CHECK(end_command_buffer(command_buffer) == VK_SUCCESS);
+        const VkCommandBufferSubmitInfo reused_slot_command = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+            .commandBuffer = command_buffer,
+        };
+        const VkSubmitInfo2 reused_slot_submit = {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+            .commandBufferInfoCount = 1U,
+            .pCommandBufferInfos = &reused_slot_command,
+        };
+        CHECK(queue_submit_2(queue, 1U, &reused_slot_submit,
+                             VK_NULL_HANDLE) == VK_SUCCESS);
+    }
     destroy_semaphore(device, timeline, NULL);
     destroy_image_view(device, image_view, NULL);
     CHECK(bvb_image_view_proxy_id(image_view) == 0U);
@@ -2028,6 +2098,22 @@ int main(void) {
               device, &teardown_view_info, NULL, &teardown_view) == VK_SUCCESS);
     CHECK(bvb_image_proxy_id(teardown_image) != 0U);
     CHECK(bvb_image_view_proxy_id(teardown_view) != 0U);
+    if (shared_command_stream) {
+        VkCommandBuffer extra_commands[257] = {0};
+        for (size_t index = 0U;
+             index < sizeof(extra_commands) / sizeof(extra_commands[0]);
+             ++index) {
+            CHECK(allocate_command_buffers(
+                      device, &allocate_info, &extra_commands[index]) ==
+                  VK_SUCCESS);
+        }
+        for (size_t index = 0U;
+             index < sizeof(extra_commands) / sizeof(extra_commands[0]);
+             ++index) {
+            free_command_buffers(
+                device, command_pool, 1U, &extra_commands[index]);
+        }
+    }
     CHECK(reset_command_pool(device, command_pool, 0U) == VK_SUCCESS);
     free_command_buffers(device, command_pool, 1U, &command_buffer);
     destroy_command_pool(device, command_pool, NULL);
@@ -2207,7 +2293,8 @@ int main(void) {
            "queues=%u memory_types=%u memory_heaps=%u device_extensions=%u "
            "sampler_anisotropy=%u logical_device=%llu queue=%llu "
            "empty_submit=0 queue_wait=0 device_wait=0 "
-           "command_pool=%llu command_buffer=%llu command_submit=0 "
+           "command_pool=%llu command_buffer=%llu recording_rtts=%llu "
+           "command_submit=0 "
            "pool_reset=0 buffer=%llu memory=%llu memory_type=%u "
            "buffer_requirements2=%llu,%llu,%u buffer_address=%llu "
            "image=%llu image_view=%llu image_bytes=%llu "
@@ -2216,7 +2303,10 @@ int main(void) {
            "fill_words=1024 mismatches=%u fence=%llu fence_before=1 "
            "fenced_submit=0 fence_after=0 fence_wait=0 fence_reset=0 "
            "fence_after_reset=1\n",
-           hardware_mode ? "hardware" : "strict-fake", api_version,
+           hardware_mode ? "hardware"
+                         : shared_command_stream ? "shared-command-stream"
+                                                 : "strict-fake",
+           api_version,
            (unsigned long long)instance_one_id,
            (unsigned long long)instance_two_id,
            (unsigned long long)physical_id, properties.deviceName,
@@ -2232,6 +2322,7 @@ int main(void) {
            (unsigned long long)queue_id,
            (unsigned long long)command_pool_id,
            (unsigned long long)command_buffer_id,
+           (unsigned long long)recording_rtts,
            (unsigned long long)buffer_id,
            (unsigned long long)memory_id,
            memory_type_index,

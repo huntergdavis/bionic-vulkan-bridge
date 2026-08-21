@@ -23,6 +23,12 @@ enum {
     BVB_COMMAND_FILL_BUFFER = 7,
     BVB_COMMAND_BUFFER_HOST_READ_BARRIER = 8,
     BVB_COMMAND_PUSH_ROTATION = 9,
+    /* 10-11 are reserved for E076's general Barrier2/ClearColor records. */
+    BVB_COMMAND_VULKAN_BEGIN = 20,
+    BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE = 21,
+    BVB_COMMAND_VULKAN_INIT_IMAGE_BARRIER = 22,
+    BVB_COMMAND_VULKAN_END = 23,
+    BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS = 4,
 };
 
 struct bvb_begin_rendering_command {
@@ -82,6 +88,19 @@ struct bvb_buffer_host_read_barrier_command {
     uint64_t size;
 };
 
+struct bvb_vulkan_begin_command {
+    uint32_t flags;
+};
+
+struct bvb_vulkan_clear_color_image_command {
+    uint64_t image_id;
+};
+
+struct bvb_vulkan_init_image_barrier_command {
+    uint32_t image_count;
+    uint64_t image_ids[BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS];
+};
+
 struct bvb_command_batch_builder {
     uint8_t *bytes;
     size_t capacity;
@@ -112,6 +131,11 @@ struct bvb_command_batch_iterator {
     uint32_t remaining;
 };
 
+struct bvb_command_stream_generation {
+    uint64_t command_buffer_id;
+    uint64_t last_sequence;
+};
+
 int bvb_command_batch_begin(struct bvb_command_batch_builder *builder,
                             uint8_t *bytes, size_t capacity,
                             uint64_t command_buffer_id, uint64_t sequence);
@@ -140,6 +164,17 @@ int bvb_command_batch_append_fill_buffer(
 int bvb_command_batch_append_buffer_host_read_barrier(
     struct bvb_command_batch_builder *builder,
     const struct bvb_buffer_host_read_barrier_command *command);
+int bvb_command_batch_append_vulkan_begin(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_begin_command *command);
+int bvb_command_batch_append_vulkan_clear_color_image(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_clear_color_image_command *command);
+int bvb_command_batch_append_vulkan_init_image_barrier(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_init_image_barrier_command *command);
+int bvb_command_batch_append_vulkan_end(
+    struct bvb_command_batch_builder *builder);
 int bvb_command_batch_finish(struct bvb_command_batch_builder *builder,
                              size_t *output_length);
 
@@ -149,6 +184,14 @@ int bvb_command_batch_iterator_init(struct bvb_command_batch_iterator *iterator,
                                     const uint8_t *bytes, size_t length);
 int bvb_command_batch_next(struct bvb_command_batch_iterator *iterator,
                            struct bvb_command_record *record);
+int bvb_command_stream_generation_check(
+    const struct bvb_command_stream_generation *generations,
+    size_t generation_count, uint64_t command_buffer_id, uint64_t sequence,
+    size_t *generation_index);
+int bvb_command_stream_generation_commit(
+    struct bvb_command_stream_generation *generations,
+    size_t generation_count, size_t generation_index,
+    uint64_t command_buffer_id, uint64_t sequence);
 int bvb_command_decode_begin_rendering(
     const struct bvb_command_record *record,
     struct bvb_begin_rendering_command *command);
@@ -169,5 +212,14 @@ int bvb_command_decode_fill_buffer(const struct bvb_command_record *record,
 int bvb_command_decode_buffer_host_read_barrier(
     const struct bvb_command_record *record,
     struct bvb_buffer_host_read_barrier_command *command);
+int bvb_command_decode_vulkan_begin(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_begin_command *command);
+int bvb_command_decode_vulkan_clear_color_image(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_clear_color_image_command *command);
+int bvb_command_decode_vulkan_init_image_barrier(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_init_image_barrier_command *command);
 
 #endif
