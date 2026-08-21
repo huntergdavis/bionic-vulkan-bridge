@@ -223,11 +223,6 @@ int bvb_vulkan_global_context_create(
             (PFN_vkGetDeviceProcAddr)context->get_instance_proc_addr(
                 VK_NULL_HANDLE, "vkGetDeviceProcAddr");
     }
-    if (context->get_device_proc_addr == NULL) {
-        set_error(error, error_size, "loader has no vkGetDeviceProcAddr");
-        bvb_vulkan_global_context_destroy(context);
-        return -ENOSYS;
-    }
     PFN_vkEnumerateInstanceVersion enumerate_version =
         (PFN_vkEnumerateInstanceVersion)context->get_instance_proc_addr(
             VK_NULL_HANDLE, "vkEnumerateInstanceVersion");
@@ -460,6 +455,18 @@ int bvb_vulkan_global_context_create_instance(
         if (context->destroy_instance == NULL) {
             set_error(error, error_size,
                       "created instance has no vkDestroyInstance");
+            response->vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+            return 0;
+        }
+    }
+    if (context->get_device_proc_addr == NULL) {
+        context->get_device_proc_addr =
+            (PFN_vkGetDeviceProcAddr)context->get_instance_proc_addr(
+                instance, "vkGetDeviceProcAddr");
+        if (context->get_device_proc_addr == NULL) {
+            context->destroy_instance(instance, NULL);
+            set_error(error, error_size,
+                      "created instance has no vkGetDeviceProcAddr");
             response->vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
             return 0;
         }
