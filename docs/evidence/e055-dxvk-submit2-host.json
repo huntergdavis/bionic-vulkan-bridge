@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "gate": "E055",
+  "date": "2026-08-20",
+  "result": "pass",
+  "scope": "host contracts; no tablet deployment, game frame, or FPS claim",
+  "trigger": {
+    "dxvk_commit": "a6764047e587178283fcde4073ae6e1410af594f",
+    "source": "src/dxvk/dxvk_cmdlist.cpp",
+    "native_call": "vkQueueSubmit2",
+    "submit_count": 1
+  },
+  "wire": {
+    "pointer_free_little_endian": true,
+    "maximum_wait_semaphores": 16,
+    "maximum_command_buffers": 16,
+    "maximum_signal_semaphores": 16,
+    "maximum_payload_bytes": 1312,
+    "core_and_khr_aliases": true,
+    "dummy_submission": false
+  },
+  "validation": {
+    "host_contracts_passed": 28,
+    "host_contracts_failed": 0,
+    "wait_timeline_value": 11,
+    "signal_timeline_value": 13,
+    "command_buffers": 1,
+    "observed_counter_after_submit": 13,
+    "cross_device_handles_rejected": true,
+    "device_group_indices_fail_closed": true
+  },
+  "reuse": [
+    "E030 command-buffer ownership",
+    "E032 fence parent validation",
+    "E034 dispatch policy generation",
+    "E054 timeline semaphore ownership"
+  ],
+  "deja": {
+    "query": "bionic vulkan bridge vkQueueSubmit2 semaphore submit info command buffer wire",
+    "matching_prior_sessions": 0
+  },
+  "remaining": [
+    "descriptor and sampler bootstrap must land before DXVK construction reaches Submit2",
+    "additional Vulkan rendering commands remain unimplemented",
+    "Activity frame consumer remains unproven on hardware",
+    "Tomb Raider frame and FPS remain unproven"
+  ]
+}

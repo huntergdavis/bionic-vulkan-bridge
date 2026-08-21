@@ -1368,6 +1368,56 @@ static VkResult VKAPI_CALL fake_queue_submit(
     return VK_SUCCESS;
 }
 
+static VkResult VKAPI_CALL fake_queue_submit_2(
+    VkQueue queue, uint32_t submit_count, const VkSubmitInfo2 *submits,
+    VkFence fence) {
+    (void)queue;
+    if (submit_count != 1U || submits == NULL ||
+        submits[0].sType != VK_STRUCTURE_TYPE_SUBMIT_INFO_2 ||
+        submits[0].pNext != NULL || submits[0].flags != 0U)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    for (uint32_t index = 0U;
+         index < submits[0].waitSemaphoreInfoCount; ++index) {
+        const VkSemaphoreSubmitInfo *info =
+            &submits[0].pWaitSemaphoreInfos[index];
+        struct bvb_fake_semaphore_record *record =
+            fake_semaphore_record(info->semaphore);
+        if (info->sType != VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO ||
+            info->pNext != NULL || info->deviceIndex != 0U ||
+            record == NULL || record->type != VK_SEMAPHORE_TYPE_TIMELINE ||
+            record->value < info->value)
+            return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    for (uint32_t index = 0U;
+         index < submits[0].commandBufferInfoCount; ++index) {
+        const VkCommandBufferSubmitInfo *info =
+            &submits[0].pCommandBufferInfos[index];
+        if (info->sType != VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO ||
+            info->pNext != NULL || info->commandBuffer == VK_NULL_HANDLE ||
+            info->deviceMask != 0U)
+            return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    for (uint32_t index = 0U;
+         index < submits[0].signalSemaphoreInfoCount; ++index) {
+        const VkSemaphoreSubmitInfo *info =
+            &submits[0].pSignalSemaphoreInfos[index];
+        struct bvb_fake_semaphore_record *record =
+            fake_semaphore_record(info->semaphore);
+        if (info->sType != VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO ||
+            info->pNext != NULL || info->deviceIndex != 0U ||
+            record == NULL || record->type != VK_SEMAPHORE_TYPE_TIMELINE ||
+            record->value >= info->value)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        record->value = info->value;
+    }
+    if (fence != VK_NULL_HANDLE) {
+        if (fake_fence_created == 0 || fence != fake_fence_handle)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        fake_fence_signaled = 1;
+    }
+    return VK_SUCCESS;
+}
+
 static VkResult VKAPI_CALL fake_queue_present(
     VkQueue queue, const VkPresentInfoKHR *present_info) {
     (void)queue;
@@ -1550,6 +1600,8 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkCmdClearColorImage", fake_cmd_clear_color_image)
     BVB_DEVICE_MATCH("vkCmdCopyImageToBuffer", fake_cmd_copy_image_to_buffer)
     BVB_DEVICE_MATCH("vkQueueSubmit", fake_queue_submit)
+    BVB_DEVICE_MATCH("vkQueueSubmit2", fake_queue_submit_2)
+    BVB_DEVICE_MATCH("vkQueueSubmit2KHR", fake_queue_submit_2)
     BVB_DEVICE_MATCH("vkQueuePresentKHR", fake_queue_present)
     BVB_DEVICE_MATCH("vkQueueWaitIdle", fake_queue_wait_idle)
     BVB_DEVICE_MATCH("vkDeviceWaitIdle", fake_device_wait_idle)

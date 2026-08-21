@@ -2114,6 +2114,128 @@ int bvb_protocol_decode_vulkan_semaphore_wait_request(
     return 0;
 }
 
+int bvb_protocol_encode_vulkan_queue_submit_2_request(
+    uint8_t output[BVB_VULKAN_SUBMIT_2_MAX_SIZE],
+    const struct bvb_vulkan_queue_submit_2_request *request,
+    uint32_t *output_length) {
+    if (output == NULL || request == NULL || output_length == NULL ||
+        !wire_id_is_type(request->queue_id, 4U) ||
+        (request->fence_id != 0U &&
+         !wire_id_is_type(request->fence_id, 18U)) ||
+        request->wait_count > BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT ||
+        request->command_count > BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT ||
+        request->signal_count > BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT)
+        return -EINVAL;
+    const uint32_t length = BVB_VULKAN_SUBMIT_2_PREFIX_SIZE +
+        (request->wait_count + request->signal_count) *
+            BVB_VULKAN_SUBMIT_2_SEMAPHORE_RECORD_SIZE +
+        request->command_count * BVB_VULKAN_SUBMIT_2_COMMAND_RECORD_SIZE;
+    memset(output, 0, length);
+    bvb_wire_put_u64(output, request->queue_id);
+    bvb_wire_put_u64(output + 8, request->fence_id);
+    bvb_wire_put_u32(output + 16, request->flags);
+    bvb_wire_put_u32(output + 20, request->wait_count);
+    bvb_wire_put_u32(output + 24, request->command_count);
+    bvb_wire_put_u32(output + 28, request->signal_count);
+    uint32_t offset = BVB_VULKAN_SUBMIT_2_PREFIX_SIZE;
+    for (uint32_t index = 0U; index < request->wait_count; ++index) {
+        const struct bvb_vulkan_submit_2_semaphore_record *record =
+            &request->waits[index];
+        if (!wire_id_is_type(record->semaphore_id, 17U)) return -EINVAL;
+        bvb_wire_put_u64(output + offset, record->semaphore_id);
+        bvb_wire_put_u64(output + offset + 8, record->value);
+        bvb_wire_put_u64(output + offset + 16, record->stage_mask);
+        bvb_wire_put_u32(output + offset + 24, record->device_index);
+        offset += BVB_VULKAN_SUBMIT_2_SEMAPHORE_RECORD_SIZE;
+    }
+    for (uint32_t index = 0U; index < request->command_count; ++index) {
+        const struct bvb_vulkan_submit_2_command_record *record =
+            &request->commands[index];
+        if (!wire_id_is_type(record->command_buffer_id, 11U)) return -EINVAL;
+        bvb_wire_put_u64(output + offset, record->command_buffer_id);
+        bvb_wire_put_u32(output + offset + 8, record->device_mask);
+        offset += BVB_VULKAN_SUBMIT_2_COMMAND_RECORD_SIZE;
+    }
+    for (uint32_t index = 0U; index < request->signal_count; ++index) {
+        const struct bvb_vulkan_submit_2_semaphore_record *record =
+            &request->signals[index];
+        if (!wire_id_is_type(record->semaphore_id, 17U)) return -EINVAL;
+        bvb_wire_put_u64(output + offset, record->semaphore_id);
+        bvb_wire_put_u64(output + offset + 8, record->value);
+        bvb_wire_put_u64(output + offset + 16, record->stage_mask);
+        bvb_wire_put_u32(output + offset + 24, record->device_index);
+        offset += BVB_VULKAN_SUBMIT_2_SEMAPHORE_RECORD_SIZE;
+    }
+    *output_length = length;
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_queue_submit_2_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_queue_submit_2_request *request) {
+    if (input == NULL || request == NULL ||
+        input_length < BVB_VULKAN_SUBMIT_2_PREFIX_SIZE) return -EINVAL;
+    const uint32_t wait_count = bvb_wire_get_u32(input + 20);
+    const uint32_t command_count = bvb_wire_get_u32(input + 24);
+    const uint32_t signal_count = bvb_wire_get_u32(input + 28);
+    if (wait_count > BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT ||
+        command_count > BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT ||
+        signal_count > BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT) return -EPROTO;
+    const uint32_t expected = BVB_VULKAN_SUBMIT_2_PREFIX_SIZE +
+        (wait_count + signal_count) *
+            BVB_VULKAN_SUBMIT_2_SEMAPHORE_RECORD_SIZE +
+        command_count * BVB_VULKAN_SUBMIT_2_COMMAND_RECORD_SIZE;
+    if (input_length != expected) return -EPROTO;
+    *request = (struct bvb_vulkan_queue_submit_2_request){
+        .queue_id = bvb_wire_get_u64(input),
+        .fence_id = bvb_wire_get_u64(input + 8),
+        .flags = bvb_wire_get_u32(input + 16),
+        .wait_count = wait_count,
+        .command_count = command_count,
+        .signal_count = signal_count,
+    };
+    if (!wire_id_is_type(request->queue_id, 4U) ||
+        (request->fence_id != 0U &&
+         !wire_id_is_type(request->fence_id, 18U))) return -EPROTO;
+    uint32_t offset = BVB_VULKAN_SUBMIT_2_PREFIX_SIZE;
+    for (uint32_t index = 0U; index < wait_count; ++index) {
+        request->waits[index] =
+            (struct bvb_vulkan_submit_2_semaphore_record){
+                .semaphore_id = bvb_wire_get_u64(input + offset),
+                .value = bvb_wire_get_u64(input + offset + 8),
+                .stage_mask = bvb_wire_get_u64(input + offset + 16),
+                .device_index = bvb_wire_get_u32(input + offset + 24),
+            };
+        if (!wire_id_is_type(request->waits[index].semaphore_id, 17U) ||
+            bvb_wire_get_u32(input + offset + 28) != 0U) return -EPROTO;
+        offset += BVB_VULKAN_SUBMIT_2_SEMAPHORE_RECORD_SIZE;
+    }
+    for (uint32_t index = 0U; index < command_count; ++index) {
+        request->commands[index] =
+            (struct bvb_vulkan_submit_2_command_record){
+                .command_buffer_id = bvb_wire_get_u64(input + offset),
+                .device_mask = bvb_wire_get_u32(input + offset + 8),
+            };
+        if (!wire_id_is_type(request->commands[index].command_buffer_id,
+                             11U) ||
+            bvb_wire_get_u32(input + offset + 12) != 0U) return -EPROTO;
+        offset += BVB_VULKAN_SUBMIT_2_COMMAND_RECORD_SIZE;
+    }
+    for (uint32_t index = 0U; index < signal_count; ++index) {
+        request->signals[index] =
+            (struct bvb_vulkan_submit_2_semaphore_record){
+                .semaphore_id = bvb_wire_get_u64(input + offset),
+                .value = bvb_wire_get_u64(input + offset + 8),
+                .stage_mask = bvb_wire_get_u64(input + offset + 16),
+                .device_index = bvb_wire_get_u32(input + offset + 24),
+            };
+        if (!wire_id_is_type(request->signals[index].semaphore_id, 17U) ||
+            bvb_wire_get_u32(input + offset + 28) != 0U) return -EPROTO;
+        offset += BVB_VULKAN_SUBMIT_2_SEMAPHORE_RECORD_SIZE;
+    }
+    return 0;
+}
+
 int bvb_protocol_encode_header(
     uint8_t output[BVB_PROTOCOL_HEADER_SIZE],
     const struct bvb_protocol_header *header) {

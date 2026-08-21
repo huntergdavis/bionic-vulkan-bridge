@@ -1984,6 +1984,35 @@ static int answer_vulkan_queue_submit_command_fence(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_queue_submit_2(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_queue_submit_2_request decoded;
+    int result = bvb_protocol_decode_vulkan_queue_submit_2_request(
+        request->payload, request->header.payload_length, &decoded);
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_queue_submit_2(
+            context, &decoded, &vulkan_result, diagnostic, sizeof(diagnostic));
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_result(
+            response.payload, vulkan_result);
+    if (result == 0)
+        response.header.payload_length = BVB_VULKAN_RESULT_SIZE;
+    else {
+        fprintf(stderr, "bvb: queue submit2 failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_swapchain_prepare(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context,
@@ -2486,6 +2515,10 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_QUEUE_SUBMIT_COMMAND_FENCE) {
             result = answer_vulkan_queue_submit_command_fence(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2) {
+            result = answer_vulkan_queue_submit_2(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_SWAPCHAIN_PREPARE) {

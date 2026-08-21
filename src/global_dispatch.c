@@ -4329,6 +4329,122 @@ static VkResult VKAPI_CALL bvb_bridge_vkQueueSubmit(
     return vulkan_result;
 }
 
+static VkResult VKAPI_CALL bvb_bridge_vkQueueSubmit2(
+    VkQueue queue, uint32_t submit_count, const VkSubmitInfo2 *submits,
+    VkFence fence) {
+    struct bvb_queue_proxy *queue_state = queue_proxy(queue);
+    if (queue_state == NULL) return VK_ERROR_INITIALIZATION_FAILED;
+    if (submit_count != 1U || submits == NULL ||
+        submits[0].sType != VK_STRUCTURE_TYPE_SUBMIT_INFO_2 ||
+        submits[0].pNext != NULL || submits[0].flags != 0U ||
+        submits[0].waitSemaphoreInfoCount >
+            BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT ||
+        submits[0].commandBufferInfoCount >
+            BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT ||
+        submits[0].signalSemaphoreInfoCount >
+            BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT ||
+        (submits[0].waitSemaphoreInfoCount != 0U &&
+         submits[0].pWaitSemaphoreInfos == NULL) ||
+        (submits[0].commandBufferInfoCount != 0U &&
+         submits[0].pCommandBufferInfos == NULL) ||
+        (submits[0].signalSemaphoreInfoCount != 0U &&
+         submits[0].pSignalSemaphoreInfos == NULL))
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    const uint64_t fence_id = non_dispatchable_wire_id(&fence, sizeof(fence));
+    struct bvb_resource_proxy *fence_state = fence == VK_NULL_HANDLE
+        ? NULL : resource_proxy_locked(fence_id, BVB_OBJECT_FENCE);
+    int result = fence == VK_NULL_HANDLE ||
+                         (fence_state != NULL &&
+                          fence_state->parent_id == queue_state->parent_id)
+                     ? 0 : -EINVAL;
+    struct bvb_vulkan_queue_submit_2_request decoded = {
+        .queue_id = queue_state->wire_id,
+        .fence_id = fence_id,
+        .flags = submits[0].flags,
+        .wait_count = submits[0].waitSemaphoreInfoCount,
+        .command_count = submits[0].commandBufferInfoCount,
+        .signal_count = submits[0].signalSemaphoreInfoCount,
+    };
+    for (uint32_t index = 0U; result == 0 && index < decoded.wait_count;
+         ++index) {
+        const VkSemaphoreSubmitInfo *info =
+            &submits[0].pWaitSemaphoreInfos[index];
+        const uint64_t wire_id = non_dispatchable_wire_id(
+            &info->semaphore, sizeof(info->semaphore));
+        struct bvb_resource_proxy *state =
+            resource_proxy_locked(wire_id, BVB_OBJECT_SEMAPHORE);
+        if (info->sType != VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO ||
+            info->pNext != NULL || info->deviceIndex != 0U || state == NULL ||
+            state->parent_id != queue_state->parent_id) {
+            result = -EINVAL;
+            break;
+        }
+        decoded.waits[index] =
+            (struct bvb_vulkan_submit_2_semaphore_record){
+                .semaphore_id = wire_id,
+                .value = info->value,
+                .stage_mask = info->stageMask,
+                .device_index = info->deviceIndex,
+            };
+    }
+    for (uint32_t index = 0U; result == 0 && index < decoded.command_count;
+         ++index) {
+        const VkCommandBufferSubmitInfo *info =
+            &submits[0].pCommandBufferInfos[index];
+        struct bvb_command_buffer_proxy *state =
+            command_buffer_proxy(info->commandBuffer);
+        if (info->sType != VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO ||
+            info->pNext != NULL || info->deviceMask != 0U || state == NULL ||
+            state->device_id != queue_state->parent_id) {
+            result = -EINVAL;
+            break;
+        }
+        decoded.commands[index] =
+            (struct bvb_vulkan_submit_2_command_record){
+                .command_buffer_id = state->wire_id,
+                .device_mask = info->deviceMask,
+            };
+    }
+    for (uint32_t index = 0U; result == 0 && index < decoded.signal_count;
+         ++index) {
+        const VkSemaphoreSubmitInfo *info =
+            &submits[0].pSignalSemaphoreInfos[index];
+        const uint64_t wire_id = non_dispatchable_wire_id(
+            &info->semaphore, sizeof(info->semaphore));
+        struct bvb_resource_proxy *state =
+            resource_proxy_locked(wire_id, BVB_OBJECT_SEMAPHORE);
+        if (info->sType != VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO ||
+            info->pNext != NULL || info->deviceIndex != 0U || state == NULL ||
+            state->parent_id != queue_state->parent_id) {
+            result = -EINVAL;
+            break;
+        }
+        decoded.signals[index] =
+            (struct bvb_vulkan_submit_2_semaphore_record){
+                .semaphore_id = wire_id,
+                .value = info->value,
+                .stage_mask = info->stageMask,
+                .device_index = info->deviceIndex,
+            };
+    }
+    VkResult upload_result = result == 0
+        ? flush_mapped_resources_locked(queue_state->parent_id)
+        : VK_ERROR_INITIALIZATION_FAILED;
+    uint8_t payload[BVB_VULKAN_SUBMIT_2_MAX_SIZE];
+    uint32_t payload_length = 0U;
+    if (result == 0 && upload_result == VK_SUCCESS)
+        result = bvb_protocol_encode_vulkan_queue_submit_2_request(
+            payload, &decoded, &payload_length);
+    VkResult vulkan_result = result == 0 && upload_result == VK_SUCCESS
+        ? result_request_locked(BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2,
+                                payload, payload_length)
+        : upload_result;
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return vulkan_result;
+}
+
 static VkResult VKAPI_CALL bvb_bridge_vkQueueWaitIdle(VkQueue queue) {
     return queue_result_operation(BVB_OPCODE_VULKAN_QUEUE_WAIT_IDLE, queue);
 }
@@ -4530,6 +4646,8 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     BVB_DEVICE_MATCH("vkDestroyDevice", bvb_bridge_vkDestroyDevice)
     BVB_DEVICE_MATCH("vkGetDeviceQueue", bvb_bridge_vkGetDeviceQueue)
     BVB_DEVICE_MATCH("vkQueueSubmit", bvb_bridge_vkQueueSubmit)
+    BVB_DEVICE_MATCH("vkQueueSubmit2", bvb_bridge_vkQueueSubmit2)
+    BVB_DEVICE_MATCH("vkQueueSubmit2KHR", bvb_bridge_vkQueueSubmit2)
     BVB_DEVICE_MATCH("vkQueueWaitIdle", bvb_bridge_vkQueueWaitIdle)
     BVB_DEVICE_MATCH("vkDeviceWaitIdle", bvb_bridge_vkDeviceWaitIdle)
     if (device_proxy(device)->virtual_swapchain_enabled) {

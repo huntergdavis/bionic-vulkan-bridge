@@ -81,7 +81,7 @@ int main(void) {
     };
     CHECK(bvb_protocol_encode_header(wire, &last_opcode_header) == 0);
     CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
-    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_SEMAPHORE_SIGNAL);
+    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2);
 
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
@@ -1089,6 +1089,31 @@ int main(void) {
     CHECK(bvb_protocol_decode_vulkan_semaphore_counter_response(
               counter_wire, &counter_decoded) == 0);
     CHECK(counter_decoded.value == UINT64_C(13));
+    const struct bvb_vulkan_queue_submit_2_request submit_2 = {
+        .queue_id = UINT64_C(0x0400000000000001),
+        .fence_id = UINT64_C(0x1200000000000001),
+        .wait_count = 1U,
+        .command_count = 1U,
+        .signal_count = 1U,
+        .waits = {{UINT64_C(0x1100000000000001), UINT64_C(11),
+                   UINT64_C(0x10000), 0U}},
+        .commands = {{UINT64_C(0x0b00000000000001), 0U}},
+        .signals = {{UINT64_C(0x1100000000000002), UINT64_C(13),
+                     UINT64_C(0x10000), 0U}},
+    };
+    uint8_t submit_2_wire[BVB_VULKAN_SUBMIT_2_MAX_SIZE];
+    uint32_t submit_2_length = 0U;
+    CHECK(bvb_protocol_encode_vulkan_queue_submit_2_request(
+              submit_2_wire, &submit_2, &submit_2_length) == 0);
+    CHECK(submit_2_length == BVB_VULKAN_SUBMIT_2_PREFIX_SIZE +
+          2U * BVB_VULKAN_SUBMIT_2_SEMAPHORE_RECORD_SIZE +
+          BVB_VULKAN_SUBMIT_2_COMMAND_RECORD_SIZE);
+    struct bvb_vulkan_queue_submit_2_request submit_2_decoded;
+    CHECK(bvb_protocol_decode_vulkan_queue_submit_2_request(
+              submit_2_wire, submit_2_length, &submit_2_decoded) == 0);
+    CHECK(submit_2_decoded.command_count == 1U);
+    CHECK(submit_2_decoded.waits[0].value == UINT64_C(11));
+    CHECK(submit_2_decoded.signals[0].value == UINT64_C(13));
 
     uint8_t memory_bytes[BVB_VULKAN_MEMORY_IO_MAX_BYTES];
     for (size_t index = 0U; index < sizeof(memory_bytes); ++index) {

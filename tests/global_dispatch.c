@@ -617,6 +617,7 @@ int main(void) {
     PFN_vkGetDeviceQueue get_device_queue = NULL;
     PFN_vkDestroyDevice destroy_device = NULL;
     PFN_vkQueueSubmit queue_submit = NULL;
+    PFN_vkQueueSubmit2 queue_submit_2 = NULL;
     PFN_vkQueueWaitIdle queue_wait_idle = NULL;
     PFN_vkDeviceWaitIdle device_wait_idle = NULL;
     PFN_vkCreateCommandPool create_command_pool = NULL;
@@ -656,6 +657,10 @@ int main(void) {
     erased = vkGetDeviceProcAddr(device, "vkQueueSubmit");
     CHECK(erased != NULL);
     memcpy(&queue_submit, &erased, sizeof(queue_submit));
+    erased = vkGetDeviceProcAddr(device, "vkQueueSubmit2");
+    CHECK(erased != NULL);
+    memcpy(&queue_submit_2, &erased, sizeof(queue_submit_2));
+    CHECK(vkGetDeviceProcAddr(device, "vkQueueSubmit2KHR") == erased);
     erased = vkGetDeviceProcAddr(device, "vkQueueWaitIdle");
     CHECK(erased != NULL);
     memcpy(&queue_wait_idle, &erased, sizeof(queue_wait_idle));
@@ -1002,6 +1007,36 @@ int main(void) {
     CHECK(wait_semaphores(device, &wait_info, 0U) == VK_SUCCESS);
     wait_value = UINT64_C(12);
     CHECK(wait_semaphores(device, &wait_info, 0U) == VK_TIMEOUT);
+    const VkSemaphoreSubmitInfo submit_wait = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        .semaphore = timeline,
+        .value = UINT64_C(11),
+        .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+    };
+    const VkCommandBufferSubmitInfo submit_command = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+        .commandBuffer = command_buffer,
+    };
+    const VkSemaphoreSubmitInfo submit_signal = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+        .semaphore = timeline,
+        .value = UINT64_C(13),
+        .stageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+    };
+    const VkSubmitInfo2 submit_info_2 = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+        .waitSemaphoreInfoCount = 1U,
+        .pWaitSemaphoreInfos = &submit_wait,
+        .commandBufferInfoCount = 1U,
+        .pCommandBufferInfos = &submit_command,
+        .signalSemaphoreInfoCount = 1U,
+        .pSignalSemaphoreInfos = &submit_signal,
+    };
+    CHECK(queue_submit_2(queue, 1U, &submit_info_2, VK_NULL_HANDLE) ==
+          VK_SUCCESS);
+    CHECK(get_semaphore_counter(device, timeline, &timeline_value) ==
+          VK_SUCCESS);
+    CHECK(timeline_value == UINT64_C(13));
     destroy_semaphore(device, timeline, NULL);
     CHECK(reset_command_pool(device, command_pool, 0U) == VK_SUCCESS);
     free_command_buffers(device, command_pool, 1U, &command_buffer);

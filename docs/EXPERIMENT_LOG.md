@@ -2487,3 +2487,24 @@ The required `deja` query found no older implementation. Canonical evidence is
 `docs/evidence/e054-dxvk-timeline-semaphores-host.json`. Descriptor/sampler
 bootstrap, timeline values in queue submission, Activity-side image import,
 the first Tomb Raider frame, and FPS remain separate gates.
+
+## E055 — DXVK Submit2 preserves timeline synchronization (2026-08-20)
+
+Status: passed as a host transport gate; no tablet deployment, frame, or FPS
+claim. Pinned DXVK uses `vkQueueSubmit2` in `dxvk_cmdlist.cpp` with bounded
+arrays of timeline waits, command buffers, and timeline signals. The bridge now
+serializes that exact shape in one request and reconstructs one native
+`VkSubmitInfo2` on the Bionic service. Core and KHR entry points share the same
+implementation.
+
+The wire bounds each array to 16 records and rejects pointers, unsupported
+`pNext` chains, device-group indices, allocators, invalid handle types, and
+cross-device ownership. The host contract waited for timeline value 11,
+submitted one real command-buffer handle, signaled value 13, and read 13 back
+from the native fake driver. All 28 contracts pass. This reuses E030's command
+buffer ownership, E032's fence parent checks, E034's generated policy, and
+E054's timeline semaphore lifecycle. The required `deja` query found no older
+implementation. Canonical evidence is
+`docs/evidence/e055-dxvk-submit2-host.json`. Descriptor/sampler construction,
+the remaining rendering command surface, Activity consumption, a Tomb Raider
+frame, and FPS remain separate gates.

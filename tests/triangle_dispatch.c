@@ -99,6 +99,8 @@ int main(void) {
                        (strcmp(entry->name, "vkDestroyDevice") == 0 ||
                         strcmp(entry->name, "vkGetDeviceQueue") == 0 ||
                         strcmp(entry->name, "vkQueueSubmit") == 0 ||
+                        strcmp(entry->name, "vkQueueSubmit2") == 0 ||
+                        strcmp(entry->name, "vkQueueSubmit2KHR") == 0 ||
                         strcmp(entry->name, "vkQueueWaitIdle") == 0 ||
                         strcmp(entry->name, "vkDeviceWaitIdle") == 0 ||
                         strcmp(entry->name, "vkCreateCommandPool") == 0 ||
@@ -157,8 +159,8 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 62U);
-    CHECK(required_count == 378U);
+    CHECK(executable_count == 64U);
+    CHECK(required_count == 376U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");

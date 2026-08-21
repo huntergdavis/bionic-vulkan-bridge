@@ -3028,6 +3028,125 @@ int bvb_vulkan_global_context_signal_semaphore(
     return 0;
 }
 
+int bvb_vulkan_global_context_queue_submit_2(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_queue_submit_2_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || vulkan_result == NULL ||
+        request->flags != 0U ||
+        request->wait_count > BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT ||
+        request->command_count > BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT ||
+        request->signal_count > BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT)
+        return -EINVAL;
+    VkDevice device = VK_NULL_HANDLE;
+    VkQueue queue = VK_NULL_HANDLE;
+    int result = resolve_queue(context, request->queue_id, &device, &queue);
+    uint64_t device_id = 0U, queue_bits = 0U;
+    if (result == 0)
+        result = bvb_handle_table_lookup(
+            &context->objects, request->queue_id, BVB_OBJECT_QUEUE,
+            &device_id, &queue_bits);
+    VkSemaphoreSubmitInfo waits[BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT];
+    VkCommandBufferSubmitInfo
+        commands[BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT];
+    VkSemaphoreSubmitInfo signals[BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT];
+    for (uint32_t index = 0U; result == 0 && index < request->wait_count;
+         ++index) {
+        uint64_t parent_id = 0U, semaphore_bits = 0U;
+        result = bvb_handle_table_lookup(
+            &context->objects, request->waits[index].semaphore_id,
+            BVB_OBJECT_SEMAPHORE, &parent_id, &semaphore_bits);
+        if (result == 0 &&
+            (parent_id != device_id || request->waits[index].device_index != 0U))
+            result = -EPROTO;
+        if (result == 0)
+            waits[index] = (VkSemaphoreSubmitInfo){
+                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+                .semaphore = semaphore_from_bits(semaphore_bits),
+                .value = request->waits[index].value,
+                .stageMask = request->waits[index].stage_mask,
+                .deviceIndex = request->waits[index].device_index,
+            };
+    }
+    for (uint32_t index = 0U; result == 0 && index < request->command_count;
+         ++index) {
+        uint64_t command_device_id = 0U;
+        VkDevice command_device = VK_NULL_HANDLE;
+        VkCommandPool command_pool = VK_NULL_HANDLE;
+        VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+        result = resolve_command_buffer(
+            context, request->commands[index].command_buffer_id,
+            &command_device_id, &command_device, &command_pool,
+            &command_buffer);
+        if (result == 0 &&
+            (command_device_id != device_id || command_device != device ||
+             request->commands[index].device_mask != 0U))
+            result = -EPROTO;
+        if (result == 0)
+            commands[index] = (VkCommandBufferSubmitInfo){
+                .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+                .commandBuffer = command_buffer,
+                .deviceMask = request->commands[index].device_mask,
+            };
+    }
+    for (uint32_t index = 0U; result == 0 && index < request->signal_count;
+         ++index) {
+        uint64_t parent_id = 0U, semaphore_bits = 0U;
+        result = bvb_handle_table_lookup(
+            &context->objects, request->signals[index].semaphore_id,
+            BVB_OBJECT_SEMAPHORE, &parent_id, &semaphore_bits);
+        if (result == 0 &&
+            (parent_id != device_id ||
+             request->signals[index].device_index != 0U))
+            result = -EPROTO;
+        if (result == 0)
+            signals[index] = (VkSemaphoreSubmitInfo){
+                .sType = VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO,
+                .semaphore = semaphore_from_bits(semaphore_bits),
+                .value = request->signals[index].value,
+                .stageMask = request->signals[index].stage_mask,
+                .deviceIndex = request->signals[index].device_index,
+            };
+    }
+    VkFence fence = VK_NULL_HANDLE;
+    if (result == 0 && request->fence_id != 0U) {
+        uint64_t fence_device_id = 0U, fence_bits = 0U;
+        VkDevice fence_device = VK_NULL_HANDLE;
+        result = resolve_device_child(
+            context, request->fence_id, BVB_OBJECT_FENCE, &fence_device_id,
+            &fence_device, &fence_bits);
+        if (result == 0 &&
+            (fence_device_id != device_id || fence_device != device))
+            result = -EPROTO;
+        if (result == 0) fence = fence_from_bits(fence_bits);
+    }
+    if (result != 0) {
+        set_error(error, error_size,
+                  "submit2 references objects from different devices");
+        return result;
+    }
+    PFN_vkQueueSubmit2 submit =
+        (PFN_vkQueueSubmit2)context->get_device_proc_addr(
+            device, "vkQueueSubmit2");
+    if (submit == NULL)
+        submit = (PFN_vkQueueSubmit2)context->get_device_proc_addr(
+            device, "vkQueueSubmit2KHR");
+    if (submit == NULL) return -ENOSYS;
+    const VkSubmitInfo2 submit_info = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+        .flags = request->flags,
+        .waitSemaphoreInfoCount = request->wait_count,
+        .pWaitSemaphoreInfos = request->wait_count != 0U ? waits : NULL,
+        .commandBufferInfoCount = request->command_count,
+        .pCommandBufferInfos = request->command_count != 0U ? commands : NULL,
+        .signalSemaphoreInfoCount = request->signal_count,
+        .pSignalSemaphoreInfos = request->signal_count != 0U ? signals : NULL,
+    };
+    *vulkan_result = submit(queue, 1U, &submit_info, fence);
+    return 0;
+}
+
 int bvb_vulkan_global_context_queue_submit_command_fence(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_queue_submit_command_fence_request *request,

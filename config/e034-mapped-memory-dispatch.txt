@@ -38,6 +38,8 @@ vkGetPhysicalDeviceQueueFamilyProperties
 vkInvalidateMappedMemoryRanges
 vkMapMemory
 vkQueueSubmit
+vkQueueSubmit2
+vkQueueSubmit2KHR
 vkQueueWaitIdle
 vkResetCommandPool
 vkResetFences

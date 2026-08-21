@@ -86,7 +86,8 @@ enum {
     BVB_OPCODE_VULKAN_SEMAPHORE_COUNTER = 82,
     BVB_OPCODE_VULKAN_SEMAPHORE_WAIT = 83,
     BVB_OPCODE_VULKAN_SEMAPHORE_SIGNAL = 84,
-    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_SEMAPHORE_SIGNAL,
+    BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2 = 85,
+    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -163,6 +164,15 @@ enum {
         BVB_VULKAN_SEMAPHORE_WAIT_PREFIX_SIZE +
         BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT *
             BVB_VULKAN_SEMAPHORE_WAIT_RECORD_SIZE,
+    BVB_VULKAN_SUBMIT_2_PREFIX_SIZE = 32,
+    BVB_VULKAN_SUBMIT_2_SEMAPHORE_RECORD_SIZE = 32,
+    BVB_VULKAN_SUBMIT_2_COMMAND_RECORD_SIZE = 16,
+    BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT = 16,
+    BVB_VULKAN_SUBMIT_2_MAX_SIZE = BVB_VULKAN_SUBMIT_2_PREFIX_SIZE +
+        2 * BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT *
+            BVB_VULKAN_SUBMIT_2_SEMAPHORE_RECORD_SIZE +
+        BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT *
+            BVB_VULKAN_SUBMIT_2_COMMAND_RECORD_SIZE,
     BVB_VULKAN_MEMORY_IO_PREFIX_SIZE = 24,
     BVB_VULKAN_MEMORY_IO_RESPONSE_PREFIX_SIZE = 8,
     BVB_EXTERNAL_MEMORY_IMPORT_REQUEST_SIZE = 16,
@@ -619,6 +629,33 @@ struct bvb_vulkan_semaphore_wait_request {
         semaphores[BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT];
 };
 
+struct bvb_vulkan_submit_2_semaphore_record {
+    uint64_t semaphore_id;
+    uint64_t value;
+    uint64_t stage_mask;
+    uint32_t device_index;
+};
+
+struct bvb_vulkan_submit_2_command_record {
+    uint64_t command_buffer_id;
+    uint32_t device_mask;
+};
+
+struct bvb_vulkan_queue_submit_2_request {
+    uint64_t queue_id;
+    uint64_t fence_id;
+    uint32_t flags;
+    uint32_t wait_count;
+    uint32_t command_count;
+    uint32_t signal_count;
+    struct bvb_vulkan_submit_2_semaphore_record
+        waits[BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT];
+    struct bvb_vulkan_submit_2_command_record
+        commands[BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT];
+    struct bvb_vulkan_submit_2_semaphore_record
+        signals[BVB_VULKAN_MAX_SEMAPHORES_PER_WAIT];
+};
+
 struct bvb_vulkan_memory_io_request {
     uint64_t memory_id;
     uint64_t offset;
@@ -1034,6 +1071,13 @@ int bvb_protocol_encode_vulkan_semaphore_wait_request(
 int bvb_protocol_decode_vulkan_semaphore_wait_request(
     const uint8_t *input, uint32_t input_length,
     struct bvb_vulkan_semaphore_wait_request *request);
+int bvb_protocol_encode_vulkan_queue_submit_2_request(
+    uint8_t output[BVB_VULKAN_SUBMIT_2_MAX_SIZE],
+    const struct bvb_vulkan_queue_submit_2_request *request,
+    uint32_t *output_length);
+int bvb_protocol_decode_vulkan_queue_submit_2_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_queue_submit_2_request *request);
 int bvb_protocol_encode_vulkan_memory_write_request(
     uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
     const struct bvb_vulkan_memory_io_request *request,
