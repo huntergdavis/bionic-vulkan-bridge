@@ -449,6 +449,7 @@ int main(void) {
     const struct bvb_vulkan_core_features core_features = {
         .shader_draw_parameters = 1U,
         .buffer_device_address = 1U,
+        .descriptor_indexing = 1U,
     };
     uint8_t core_features_wire[BVB_VULKAN_CORE_FEATURES_SIZE];
     CHECK(bvb_protocol_encode_vulkan_core_features(
@@ -458,6 +459,7 @@ int main(void) {
               core_features_wire, &core_features_decoded) == 0);
     CHECK(core_features_decoded.shader_draw_parameters == 1U);
     CHECK(core_features_decoded.buffer_device_address == 1U);
+    CHECK(core_features_decoded.descriptor_indexing == 1U);
     core_features_wire[4] = 2U;
     CHECK(bvb_protocol_decode_vulkan_core_features(
               core_features_wire, &core_features_decoded) == -EPROTO);

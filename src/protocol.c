@@ -615,11 +615,13 @@ int bvb_protocol_encode_vulkan_core_features(
     const struct bvb_vulkan_core_features *features) {
     if (output == NULL || features == NULL ||
         features->shader_draw_parameters > 1U ||
-        features->buffer_device_address > 1U) {
+        features->buffer_device_address > 1U ||
+        features->descriptor_indexing > 1U) {
         return -EINVAL;
     }
     bvb_wire_put_u32(output, features->shader_draw_parameters);
     bvb_wire_put_u32(output + 4, features->buffer_device_address);
+    bvb_wire_put_u32(output + 8, features->descriptor_indexing);
     return 0;
 }
 
@@ -631,12 +633,15 @@ int bvb_protocol_decode_vulkan_core_features(
     }
     const uint32_t shader_draw_parameters = bvb_wire_get_u32(input);
     const uint32_t buffer_device_address = bvb_wire_get_u32(input + 4);
-    if (shader_draw_parameters > 1U || buffer_device_address > 1U) {
+    const uint32_t descriptor_indexing = bvb_wire_get_u32(input + 8);
+    if (shader_draw_parameters > 1U || buffer_device_address > 1U ||
+        descriptor_indexing > 1U) {
         return -EPROTO;
     }
     *features = (struct bvb_vulkan_core_features){
         .shader_draw_parameters = shader_draw_parameters,
         .buffer_device_address = buffer_device_address,
+        .descriptor_indexing = descriptor_indexing,
     };
     return 0;
 }

@@ -904,24 +904,24 @@ int bvb_vulkan_global_context_get_core_features(
                   "instance has no vkGetPhysicalDeviceFeatures2");
         return -ENOSYS;
     }
-    VkPhysicalDeviceShaderDrawParametersFeatures native = {
-        .sType =
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES,
+    VkPhysicalDeviceVulkan11Features vulkan11 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
     };
-    VkPhysicalDeviceBufferDeviceAddressFeatures buffer_device_address = {
-        .sType =
-            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
+    VkPhysicalDeviceVulkan12Features vulkan12 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
     };
-    native.pNext = &buffer_device_address;
+    vulkan11.pNext = &vulkan12;
     VkPhysicalDeviceFeatures2 base = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-        .pNext = &native,
+        .pNext = &vulkan11,
     };
     get_features2(physical_device, &base);
     features->shader_draw_parameters =
-        native.shaderDrawParameters == VK_TRUE ? 1U : 0U;
+        vulkan11.shaderDrawParameters == VK_TRUE ? 1U : 0U;
     features->buffer_device_address =
-        buffer_device_address.bufferDeviceAddress == VK_TRUE ? 1U : 0U;
+        vulkan12.bufferDeviceAddress == VK_TRUE ? 1U : 0U;
+    features->descriptor_indexing =
+        vulkan12.descriptorIndexing == VK_TRUE ? 1U : 0U;
     return 0;
 }
 

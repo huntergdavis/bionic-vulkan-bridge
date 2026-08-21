@@ -1976,6 +1976,8 @@ static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFeatures2(
                 (VkPhysicalDeviceVulkan12Features *)entry;
             vulkan12->bufferDeviceAddress =
                 (VkBool32)bridged.buffer_device_address;
+            vulkan12->descriptorIndexing =
+                (VkBool32)bridged.descriptor_indexing;
         } else if (entry->sType ==
                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES) {
             VkPhysicalDeviceBufferDeviceAddressFeatures *buffer_address =

@@ -315,8 +315,10 @@ static void VKAPI_CALL fake_get_device_features2(
                 ->shaderDrawParameters = VK_TRUE;
         } else if (entry->sType ==
                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES) {
-            ((VkPhysicalDeviceVulkan12Features *)entry)
-                ->bufferDeviceAddress = VK_TRUE;
+            VkPhysicalDeviceVulkan12Features *vulkan12 =
+                (VkPhysicalDeviceVulkan12Features *)entry;
+            vulkan12->bufferDeviceAddress = VK_TRUE;
+            vulkan12->descriptorIndexing = VK_TRUE;
         } else if (entry->sType ==
                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES) {
             ((VkPhysicalDeviceBufferDeviceAddressFeatures *)entry)
