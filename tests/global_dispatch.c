@@ -935,18 +935,19 @@ int main(void) {
         },
     };
     char scaled_extension_names[58][64];
-    const char *scaled_extensions[58];
+    const char *scaled_extensions[59];
     for (uint32_t index = 0U; index < 58U; ++index) {
         CHECK(snprintf(scaled_extension_names[index],
                        sizeof(scaled_extension_names[index]),
                        "VK_BVB_scale_extension_%02u", index) > 0);
         scaled_extensions[index] = scaled_extension_names[index];
     }
+    scaled_extensions[58] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
     VkDeviceCreateInfo scaled_create_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
         .queueCreateInfoCount = 2U,
         .pQueueCreateInfos = scaled_queue_infos,
-        .enabledExtensionCount = 58U,
+        .enabledExtensionCount = 59U,
         .ppEnabledExtensionNames = scaled_extensions,
     };
     VkDevice scaled_device = VK_NULL_HANDLE;

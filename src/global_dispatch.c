@@ -2262,7 +2262,8 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
             return VK_ERROR_EXTENSION_NOT_PRESENT;
         }
     }
-    const char *native_extensions[BVB_VULKAN_MAX_ENABLED_EXTENSIONS] = {0};
+    const char *native_extensions[
+        BVB_VULKAN_MAX_DEVICE_CREATE_EXTENSIONS] = {0};
     uint32_t native_extension_count = 0U;
     bool virtual_swapchain_requested = false;
     const bool virtual_wsi_available =
