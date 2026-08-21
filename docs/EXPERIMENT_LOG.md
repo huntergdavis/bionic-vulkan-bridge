@@ -2354,3 +2354,39 @@ additional prior implementation. Bridge commits are `837c402`, `f263026`, and
 contracts and the E048 Adreno hardware gate passed. E050 must connect the two
 external-capability query families before surface or swapchain work can be
 truthfully exposed.
+
+## E051 — Real Wine reaches authenticated virtual WSI (2026-08-20)
+
+Status: passed as an Activity, WSI-discovery, and instance-creation gate; no
+game-frame claim. E050 connected the two external-capability families and
+normalized duplicate loader extension names. E051 then advertised four
+app-facing virtual WSI extensions while filtering those virtual names out of
+the native Bionic `vkCreateInstance`, and answered surface discovery from the
+authenticated Activity's measured 2800×1752 dimensions.
+
+The integrated AppID 203160 run started the installed Activity only after the
+Steam and direct-dispatch readiness markers agreed. Activity event 11 reported
+a live 2800×1752 Vulkan renderer. Wine requested the three command-backed
+native instance extensions plus `VK_KHR_surface` and
+`VK_KHR_xlib_surface`; the bridge normalized the five application names to
+three native names, and Bionic returned `VK_SUCCESS` with an owned instance.
+Wine then resolved the Xlib/XCB/Wayland virtual surface and presentation-query
+entry points through the ICD.
+
+The child exited with status 3 before calling a virtual surface constructor or
+presenting a Tomb Raider frame. Earlier in the same child log, a distinct Zink
+client called `vkCreateDevice` with two queue-create records, a non-null
+`pNext`, and 33 device extensions. The current E046 wire contract deliberately
+accepts one queue record and at most 24 extension names, so that request
+returned before device RPC. This is a measured integration limitation, but it
+is not yet proven to be the sole cause of Wine's later exit; the next gate must
+capture the transition after Wine's WSI function resolution and separately
+extend realistic device creation.
+
+Implementation is bridge commit `14593f9`; the parent handoff corrections are
+`7fed0b0`, `96c7645`, and `940c9a9`. This gate reuses E042's persistent
+Activity renderer, E045's loader-private metadata rule, E046's canonical
+extension encoding, and E049's real-game trace route. Required `deja` searches
+found no additional prior implementation. A native Android Activity and
+successful Wine `vkCreateInstance` are proven; swapchain creation, presentation,
+a game frame, and an FPS comparison remain unproven.
