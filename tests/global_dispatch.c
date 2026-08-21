@@ -349,6 +349,8 @@ int main(void) {
     CHECK(vulkan11_features.shaderDrawParameters == VK_TRUE);
     CHECK(vulkan12_features.bufferDeviceAddress == VK_TRUE);
     CHECK(vulkan12_features.descriptorIndexing == VK_TRUE);
+    CHECK(vulkan12_features.descriptorBindingSampledImageUpdateAfterBind ==
+          VK_TRUE);
     VkPhysicalDeviceProperties2 properties2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
     };

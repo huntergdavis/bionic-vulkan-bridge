@@ -922,6 +922,10 @@ int bvb_vulkan_global_context_get_core_features(
         vulkan12.bufferDeviceAddress == VK_TRUE ? 1U : 0U;
     features->descriptor_indexing =
         vulkan12.descriptorIndexing == VK_TRUE ? 1U : 0U;
+    features->descriptor_binding_sampled_image_update_after_bind =
+        vulkan12.descriptorBindingSampledImageUpdateAfterBind == VK_TRUE
+            ? 1U
+            : 0U;
     return 0;
 }
 

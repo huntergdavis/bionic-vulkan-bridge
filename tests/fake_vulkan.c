@@ -319,6 +319,8 @@ static void VKAPI_CALL fake_get_device_features2(
                 (VkPhysicalDeviceVulkan12Features *)entry;
             vulkan12->bufferDeviceAddress = VK_TRUE;
             vulkan12->descriptorIndexing = VK_TRUE;
+            vulkan12->descriptorBindingSampledImageUpdateAfterBind =
+                VK_TRUE;
         } else if (entry->sType ==
                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES) {
             ((VkPhysicalDeviceBufferDeviceAddressFeatures *)entry)
