@@ -107,7 +107,7 @@ enum {
     BVB_VULKAN_EXTERNAL_BUFFER_PROPERTIES_SIZE = 12,
     BVB_VULKAN_EXTERNAL_SEMAPHORE_QUERY_SIZE = 16,
     BVB_VULKAN_EXTERNAL_SEMAPHORE_PROPERTIES_SIZE = 12,
-    BVB_VULKAN_CORE_FEATURES_SIZE = 92,
+    BVB_VULKAN_CORE_FEATURES_SIZE = 100,
     BVB_VULKAN_DEVICE_EXTENSION_QUERY_SIZE = 16,
     BVB_VULKAN_DEVICE_CREATE_REQUEST_SIZE = 32,
     BVB_VULKAN_ENABLED_EXTENSION_NAME_SIZE = 128,
@@ -158,6 +158,24 @@ enum {
     BVB_SERVICE_BIONIC = 1U << 0,
     BVB_SERVICE_ANDROID_VULKAN_LOADER = 1U << 1,
     BVB_SERVICE_ACTIVITY_INGRESS = 1U << 2,
+};
+
+enum bvb_vulkan_device_feature_struct_bits {
+    BVB_VULKAN_DEVICE_FEATURE_VULKAN_11 = 1U << 0,
+    BVB_VULKAN_DEVICE_FEATURE_VULKAN_12 = 1U << 1,
+    BVB_VULKAN_DEVICE_FEATURE_VULKAN_13 = 1U << 2,
+    BVB_VULKAN_DEVICE_FEATURE_DEPTH_CLIP_ENABLE = 1U << 3,
+    BVB_VULKAN_DEVICE_FEATURE_ROBUSTNESS_2 = 1U << 4,
+    BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_5 = 1U << 5,
+    BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_6 = 1U << 6,
+    BVB_VULKAN_DEVICE_FEATURE_STRUCT_MASK =
+        BVB_VULKAN_DEVICE_FEATURE_VULKAN_11 |
+        BVB_VULKAN_DEVICE_FEATURE_VULKAN_12 |
+        BVB_VULKAN_DEVICE_FEATURE_VULKAN_13 |
+        BVB_VULKAN_DEVICE_FEATURE_DEPTH_CLIP_ENABLE |
+        BVB_VULKAN_DEVICE_FEATURE_ROBUSTNESS_2 |
+        BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_5 |
+        BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_6,
 };
 
 struct bvb_protocol_header {
@@ -342,6 +360,8 @@ struct bvb_vulkan_core_features {
     uint32_t depth_clip_enable;
     uint32_t robust_buffer_access2;
     uint32_t null_descriptor;
+    uint32_t maintenance5;
+    uint32_t maintenance6;
 };
 
 struct bvb_vulkan_device_extension_query {
@@ -380,6 +400,8 @@ struct bvb_vulkan_device_create_packed_request {
     uint32_t queue_priority_count;
     uint32_t enabled_layer_count;
     uint32_t enabled_extension_count;
+    uint32_t enabled_feature_structs;
+    struct bvb_vulkan_core_features enabled_features;
     struct bvb_vulkan_device_queue_create_info
         queue_create_infos[BVB_VULKAN_MAX_DEVICE_QUEUE_CREATE_INFOS];
     uint32_t queue_priority_bits[BVB_VULKAN_MAX_DEVICE_QUEUE_PRIORITIES];

@@ -470,6 +470,8 @@ int main(void) {
         .depth_clip_enable = 1U,
         .robust_buffer_access2 = 1U,
         .null_descriptor = 1U,
+        .maintenance5 = 1U,
+        .maintenance6 = 1U,
     };
     uint8_t core_features_wire[BVB_VULKAN_CORE_FEATURES_SIZE];
     CHECK(bvb_protocol_encode_vulkan_core_features(
@@ -503,6 +505,8 @@ int main(void) {
     CHECK(core_features_decoded.depth_clip_enable == 1U);
     CHECK(core_features_decoded.robust_buffer_access2 == 1U);
     CHECK(core_features_decoded.null_descriptor == 1U);
+    CHECK(core_features_decoded.maintenance5 == 1U);
+    CHECK(core_features_decoded.maintenance6 == 1U);
     core_features_wire[4] = 2U;
     CHECK(bvb_protocol_decode_vulkan_core_features(
               core_features_wire, &core_features_decoded) == -EPROTO);
@@ -577,6 +581,17 @@ int main(void) {
         .queue_create_info_count = 2U,
         .queue_priority_count = 2U,
         .enabled_extension_count = 58U,
+        .enabled_feature_structs =
+            BVB_VULKAN_DEVICE_FEATURE_STRUCT_MASK,
+        .enabled_features = {
+            .shader_draw_parameters = 1U,
+            .timeline_semaphore = 1U,
+            .dynamic_rendering = 1U,
+            .depth_clip_enable = 1U,
+            .null_descriptor = 1U,
+            .maintenance5 = 1U,
+            .maintenance6 = 1U,
+        },
         .queue_create_infos = {
             {.queue_family_index = 0U, .queue_count = 1U,
              .first_priority = 0U},
@@ -606,6 +621,15 @@ int main(void) {
     CHECK(packed_decoded.queue_create_info_count == 2U);
     CHECK(packed_decoded.queue_priority_count == 2U);
     CHECK(packed_decoded.enabled_extension_count == 58U);
+    CHECK(packed_decoded.enabled_feature_structs ==
+          BVB_VULKAN_DEVICE_FEATURE_STRUCT_MASK);
+    CHECK(packed_decoded.enabled_features.shader_draw_parameters == 1U);
+    CHECK(packed_decoded.enabled_features.timeline_semaphore == 1U);
+    CHECK(packed_decoded.enabled_features.dynamic_rendering == 1U);
+    CHECK(packed_decoded.enabled_features.depth_clip_enable == 1U);
+    CHECK(packed_decoded.enabled_features.null_descriptor == 1U);
+    CHECK(packed_decoded.enabled_features.maintenance5 == 1U);
+    CHECK(packed_decoded.enabled_features.maintenance6 == 1U);
     CHECK(packed_decoded.queue_create_infos[1].queue_family_index == 1U);
     CHECK(packed_decoded.queue_create_infos[1].first_priority == 1U);
     CHECK(packed_decoded.queue_priority_bits[1] == UINT32_C(0x3e800000));
@@ -615,7 +639,17 @@ int main(void) {
               packed_create_wire, packed_create_length - 1U,
               &packed_decoded) == -EPROTO);
     bvb_wire_put_u32(
+        packed_create_wire + BVB_VULKAN_DEVICE_CREATE_PACKED_PREFIX_SIZE,
+        2U);
+    CHECK(bvb_protocol_decode_vulkan_device_create_packed_request(
+              packed_create_wire, packed_create_length,
+              &packed_decoded) == -EPROTO);
+    bvb_wire_put_u32(
+        packed_create_wire + BVB_VULKAN_DEVICE_CREATE_PACKED_PREFIX_SIZE,
+        1U);
+    bvb_wire_put_u32(
         packed_create_wire + BVB_VULKAN_DEVICE_CREATE_PACKED_PREFIX_SIZE +
+            BVB_VULKAN_CORE_FEATURES_SIZE +
             BVB_VULKAN_DEVICE_QUEUE_CREATE_INFO_SIZE + 12U,
         2U);
     CHECK(bvb_protocol_decode_vulkan_device_create_packed_request(

@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -2006,7 +2007,11 @@ static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFeatures2(
             entry->sType ==
                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT ||
             entry->sType ==
-                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT;
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT ||
+            entry->sType ==
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR ||
+            entry->sType ==
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_6_FEATURES_KHR;
         entry = entry->pNext;
     }
     if (!requested) {
@@ -2100,6 +2105,18 @@ static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFeatures2(
                 (VkBool32)bridged.robust_buffer_access2;
             robustness2->nullDescriptor =
                 (VkBool32)bridged.null_descriptor;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR) {
+            VkPhysicalDeviceMaintenance5FeaturesKHR *maintenance5 =
+                (VkPhysicalDeviceMaintenance5FeaturesKHR *)entry;
+            maintenance5->maintenance5 =
+                (VkBool32)bridged.maintenance5;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_6_FEATURES_KHR) {
+            VkPhysicalDeviceMaintenance6FeaturesKHR *maintenance6 =
+                (VkPhysicalDeviceMaintenance6FeaturesKHR *)entry;
+            maintenance6->maintenance6 =
+                (VkBool32)bridged.maintenance6;
         } else if (entry->sType ==
                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES) {
             VkPhysicalDeviceBufferDeviceAddressFeatures *buffer_address =
@@ -2210,6 +2227,259 @@ bvb_bridge_vkGetPhysicalDeviceSparseImageFormatProperties2(
     *property_count = 0U;
 }
 
+#define BVB_FEATURE_INDEX(type, first, field) \
+    ((offsetof(type, field) - offsetof(type, first)) / sizeof(VkBool32))
+
+static bool requested_feature_bools_are_supported(
+    const VkBool32 *values, size_t value_count,
+    const size_t *supported_indices, size_t supported_count) {
+    for (size_t index = 0U; index < value_count; ++index) {
+        if (values[index] > VK_TRUE) {
+            return false;
+        }
+        if (values[index] == VK_FALSE) {
+            continue;
+        }
+        bool supported = false;
+        for (size_t candidate = 0U; candidate < supported_count;
+             ++candidate) {
+            if (supported_indices[candidate] == index) {
+                supported = true;
+                break;
+            }
+        }
+        if (!supported) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static VkResult pack_device_feature_chain(
+    const void *chain,
+    struct bvb_vulkan_device_create_packed_request *packed) {
+    const VkBaseInStructure *entry = chain;
+    for (uint32_t index = 0U; entry != NULL && index < 64U; ++index) {
+        /* The standard loader's private chain is client-local metadata. */
+        if ((uint32_t)entry->sType == UINT32_C(0x7ffffffe)) {
+            return VK_SUCCESS;
+        }
+        if (entry->sType == VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO) {
+            entry = entry->pNext;
+            continue;
+        }
+        uint32_t feature_bit = 0U;
+        if (entry->sType ==
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES) {
+            const VkPhysicalDeviceVulkan11Features *features =
+                (const VkPhysicalDeviceVulkan11Features *)entry;
+            const size_t supported[] = {
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan11Features,
+                                  storageBuffer16BitAccess,
+                                  shaderDrawParameters),
+            };
+            const size_t count =
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan11Features,
+                                  storageBuffer16BitAccess,
+                                  shaderDrawParameters) + 1U;
+            if (!requested_feature_bools_are_supported(
+                    &features->storageBuffer16BitAccess, count,
+                    supported, sizeof(supported) / sizeof(supported[0]))) {
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+            feature_bit = BVB_VULKAN_DEVICE_FEATURE_VULKAN_11;
+            packed->enabled_features.shader_draw_parameters =
+                (uint32_t)features->shaderDrawParameters;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES) {
+            const VkPhysicalDeviceVulkan12Features *features =
+                (const VkPhysicalDeviceVulkan12Features *)entry;
+            const size_t supported[] = {
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan12Features,
+                                  samplerMirrorClampToEdge,
+                                  samplerMirrorClampToEdge),
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan12Features,
+                                  samplerMirrorClampToEdge,
+                                  descriptorIndexing),
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan12Features,
+                                  samplerMirrorClampToEdge,
+                                  descriptorBindingSampledImageUpdateAfterBind),
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan12Features,
+                                  samplerMirrorClampToEdge,
+                                  descriptorBindingUpdateUnusedWhilePending),
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan12Features,
+                                  samplerMirrorClampToEdge,
+                                  descriptorBindingPartiallyBound),
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan12Features,
+                                  samplerMirrorClampToEdge,
+                                  runtimeDescriptorArray),
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan12Features,
+                                  samplerMirrorClampToEdge,
+                                  scalarBlockLayout),
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan12Features,
+                                  samplerMirrorClampToEdge,
+                                  uniformBufferStandardLayout),
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan12Features,
+                                  samplerMirrorClampToEdge,
+                                  hostQueryReset),
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan12Features,
+                                  samplerMirrorClampToEdge,
+                                  timelineSemaphore),
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan12Features,
+                                  samplerMirrorClampToEdge,
+                                  bufferDeviceAddress),
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan12Features,
+                                  samplerMirrorClampToEdge,
+                                  vulkanMemoryModel),
+            };
+            const size_t count =
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan12Features,
+                                  samplerMirrorClampToEdge,
+                                  subgroupBroadcastDynamicId) + 1U;
+            if (!requested_feature_bools_are_supported(
+                    &features->samplerMirrorClampToEdge, count,
+                    supported, sizeof(supported) / sizeof(supported[0]))) {
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+            feature_bit = BVB_VULKAN_DEVICE_FEATURE_VULKAN_12;
+            packed->enabled_features.buffer_device_address =
+                (uint32_t)features->bufferDeviceAddress;
+            packed->enabled_features.descriptor_indexing =
+                (uint32_t)features->descriptorIndexing;
+            packed->enabled_features
+                    .descriptor_binding_sampled_image_update_after_bind =
+                (uint32_t)features
+                    ->descriptorBindingSampledImageUpdateAfterBind;
+            packed->enabled_features
+                    .descriptor_binding_update_unused_while_pending =
+                (uint32_t)features
+                    ->descriptorBindingUpdateUnusedWhilePending;
+            packed->enabled_features.descriptor_binding_partially_bound =
+                (uint32_t)features->descriptorBindingPartiallyBound;
+            packed->enabled_features.host_query_reset =
+                (uint32_t)features->hostQueryReset;
+            packed->enabled_features.runtime_descriptor_array =
+                (uint32_t)features->runtimeDescriptorArray;
+            packed->enabled_features.sampler_mirror_clamp_to_edge =
+                (uint32_t)features->samplerMirrorClampToEdge;
+            packed->enabled_features.scalar_block_layout =
+                (uint32_t)features->scalarBlockLayout;
+            packed->enabled_features.timeline_semaphore =
+                (uint32_t)features->timelineSemaphore;
+            packed->enabled_features.uniform_buffer_standard_layout =
+                (uint32_t)features->uniformBufferStandardLayout;
+            packed->enabled_features.vulkan_memory_model =
+                (uint32_t)features->vulkanMemoryModel;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES) {
+            const VkPhysicalDeviceVulkan13Features *features =
+                (const VkPhysicalDeviceVulkan13Features *)entry;
+            const size_t supported[] = {
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan13Features,
+                                  robustImageAccess,
+                                  shaderDemoteToHelperInvocation),
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan13Features,
+                                  robustImageAccess,
+                                  subgroupSizeControl),
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan13Features,
+                                  robustImageAccess,
+                                  computeFullSubgroups),
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan13Features,
+                                  robustImageAccess,
+                                  synchronization2),
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan13Features,
+                                  robustImageAccess,
+                                  shaderZeroInitializeWorkgroupMemory),
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan13Features,
+                                  robustImageAccess,
+                                  dynamicRendering),
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan13Features,
+                                  robustImageAccess,
+                                  maintenance4),
+            };
+            const size_t count =
+                BVB_FEATURE_INDEX(VkPhysicalDeviceVulkan13Features,
+                                  robustImageAccess, maintenance4) + 1U;
+            if (!requested_feature_bools_are_supported(
+                    &features->robustImageAccess, count,
+                    supported, sizeof(supported) / sizeof(supported[0]))) {
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+            feature_bit = BVB_VULKAN_DEVICE_FEATURE_VULKAN_13;
+            packed->enabled_features.compute_full_subgroups =
+                (uint32_t)features->computeFullSubgroups;
+            packed->enabled_features.dynamic_rendering =
+                (uint32_t)features->dynamicRendering;
+            packed->enabled_features.maintenance4 =
+                (uint32_t)features->maintenance4;
+            packed->enabled_features.shader_demote_to_helper_invocation =
+                (uint32_t)features->shaderDemoteToHelperInvocation;
+            packed->enabled_features
+                    .shader_zero_initialize_workgroup_memory =
+                (uint32_t)features->shaderZeroInitializeWorkgroupMemory;
+            packed->enabled_features.subgroup_size_control =
+                (uint32_t)features->subgroupSizeControl;
+            packed->enabled_features.synchronization2 =
+                (uint32_t)features->synchronization2;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT) {
+            const VkPhysicalDeviceDepthClipEnableFeaturesEXT *features =
+                (const VkPhysicalDeviceDepthClipEnableFeaturesEXT *)entry;
+            if (features->depthClipEnable > VK_TRUE) {
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+            feature_bit = BVB_VULKAN_DEVICE_FEATURE_DEPTH_CLIP_ENABLE;
+            packed->enabled_features.depth_clip_enable =
+                (uint32_t)features->depthClipEnable;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT) {
+            const VkPhysicalDeviceRobustness2FeaturesEXT *features =
+                (const VkPhysicalDeviceRobustness2FeaturesEXT *)entry;
+            const size_t supported[] = {0U, 2U};
+            if (!requested_feature_bools_are_supported(
+                    &features->robustBufferAccess2, 3U, supported,
+                    sizeof(supported) / sizeof(supported[0]))) {
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+            feature_bit = BVB_VULKAN_DEVICE_FEATURE_ROBUSTNESS_2;
+            packed->enabled_features.robust_buffer_access2 =
+                (uint32_t)features->robustBufferAccess2;
+            packed->enabled_features.null_descriptor =
+                (uint32_t)features->nullDescriptor;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR) {
+            const VkPhysicalDeviceMaintenance5FeaturesKHR *features =
+                (const VkPhysicalDeviceMaintenance5FeaturesKHR *)entry;
+            if (features->maintenance5 > VK_TRUE) {
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+            feature_bit = BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_5;
+            packed->enabled_features.maintenance5 =
+                (uint32_t)features->maintenance5;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_6_FEATURES_KHR) {
+            const VkPhysicalDeviceMaintenance6FeaturesKHR *features =
+                (const VkPhysicalDeviceMaintenance6FeaturesKHR *)entry;
+            if (features->maintenance6 > VK_TRUE) {
+                return VK_ERROR_FEATURE_NOT_PRESENT;
+            }
+            feature_bit = BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_6;
+            packed->enabled_features.maintenance6 =
+                (uint32_t)features->maintenance6;
+        } else {
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+        if ((packed->enabled_feature_structs & feature_bit) != 0U) {
+            return VK_ERROR_FEATURE_NOT_PRESENT;
+        }
+        packed->enabled_feature_structs |= feature_bit;
+        entry = entry->pNext;
+    }
+    return entry == NULL ? VK_SUCCESS : VK_ERROR_FEATURE_NOT_PRESENT;
+}
+
+#undef BVB_FEATURE_INDEX
+
 static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
     VkPhysicalDevice physical_device, const VkDeviceCreateInfo *create_info,
     const VkAllocationCallbacks *allocator, VkDevice *device) {
@@ -2297,6 +2567,11 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
         .enabled_layer_count = create_info->enabledLayerCount,
         .enabled_extension_count = native_extension_count,
     };
+    const VkResult feature_result =
+        pack_device_feature_chain(create_info->pNext, &packed);
+    if (feature_result != VK_SUCCESS) {
+        return feature_result;
+    }
     for (uint32_t index = 0U;
          index < create_info->queueCreateInfoCount; ++index) {
         const VkDeviceQueueCreateInfo *queue_info =
@@ -2352,10 +2627,8 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
     }
     const bool use_packed = create_info->queueCreateInfoCount != 1U ||
         create_info->pQueueCreateInfos[0].queueCount != 1U ||
-        native_extension_count > BVB_VULKAN_MAX_ENABLED_EXTENSIONS;
-    if (use_packed && create_info->pNext != NULL) {
-        return VK_ERROR_FEATURE_NOT_PRESENT;
-    }
+        native_extension_count > BVB_VULKAN_MAX_ENABLED_EXTENSIONS ||
+        packed.enabled_feature_structs != 0U;
     struct bvb_device_proxy *proxy = calloc(1, sizeof(*proxy));
     if (proxy == NULL) {
         return VK_ERROR_OUT_OF_HOST_MEMORY;

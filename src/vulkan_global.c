@@ -921,10 +921,20 @@ int bvb_vulkan_global_context_get_core_features(
     VkPhysicalDeviceRobustness2FeaturesEXT robustness2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
     };
+    VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5 = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR,
+    };
+    VkPhysicalDeviceMaintenance6FeaturesKHR maintenance6 = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_6_FEATURES_KHR,
+    };
     vulkan11.pNext = &vulkan12;
     vulkan12.pNext = &vulkan13;
     vulkan13.pNext = &depth_clip;
     depth_clip.pNext = &robustness2;
+    robustness2.pNext = &maintenance5;
+    maintenance5.pNext = &maintenance6;
     VkPhysicalDeviceFeatures2 base = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         .pNext = &vulkan11,
@@ -979,6 +989,10 @@ int bvb_vulkan_global_context_get_core_features(
         robustness2.robustBufferAccess2 == VK_TRUE ? 1U : 0U;
     features->null_descriptor =
         robustness2.nullDescriptor == VK_TRUE ? 1U : 0U;
+    features->maintenance5 =
+        maintenance5.maintenance5 == VK_TRUE ? 1U : 0U;
+    features->maintenance6 =
+        maintenance6.maintenance6 == VK_TRUE ? 1U : 0U;
     return 0;
 }
 
@@ -1213,7 +1227,9 @@ int bvb_vulkan_global_context_create_device_packed(
         (request->enabled_extension_count != 0U &&
          enabled_extensions == NULL) ||
         request->enabled_extension_count >
-            BVB_VULKAN_MAX_DEVICE_CREATE_EXTENSIONS) {
+            BVB_VULKAN_MAX_DEVICE_CREATE_EXTENSIONS ||
+        (request->enabled_feature_structs &
+         ~BVB_VULKAN_DEVICE_FEATURE_STRUCT_MASK) != 0U) {
         response->vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
         return 0;
     }
@@ -1285,8 +1301,114 @@ int bvb_vulkan_global_context_create_device_packed(
         set_error(error, error_size, "instance has no vkCreateDevice");
         return -ENOSYS;
     }
+    VkPhysicalDeviceVulkan11Features vulkan11 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+        .shaderDrawParameters =
+            (VkBool32)request->enabled_features.shader_draw_parameters,
+    };
+    VkPhysicalDeviceVulkan12Features vulkan12 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .samplerMirrorClampToEdge =
+            (VkBool32)request->enabled_features.sampler_mirror_clamp_to_edge,
+        .descriptorIndexing =
+            (VkBool32)request->enabled_features.descriptor_indexing,
+        .descriptorBindingSampledImageUpdateAfterBind =
+            (VkBool32)request->enabled_features
+                .descriptor_binding_sampled_image_update_after_bind,
+        .descriptorBindingUpdateUnusedWhilePending =
+            (VkBool32)request->enabled_features
+                .descriptor_binding_update_unused_while_pending,
+        .descriptorBindingPartiallyBound =
+            (VkBool32)request->enabled_features
+                .descriptor_binding_partially_bound,
+        .runtimeDescriptorArray =
+            (VkBool32)request->enabled_features.runtime_descriptor_array,
+        .scalarBlockLayout =
+            (VkBool32)request->enabled_features.scalar_block_layout,
+        .uniformBufferStandardLayout =
+            (VkBool32)request->enabled_features
+                .uniform_buffer_standard_layout,
+        .hostQueryReset =
+            (VkBool32)request->enabled_features.host_query_reset,
+        .timelineSemaphore =
+            (VkBool32)request->enabled_features.timeline_semaphore,
+        .bufferDeviceAddress =
+            (VkBool32)request->enabled_features.buffer_device_address,
+        .vulkanMemoryModel =
+            (VkBool32)request->enabled_features.vulkan_memory_model,
+    };
+    VkPhysicalDeviceVulkan13Features vulkan13 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+        .shaderDemoteToHelperInvocation =
+            (VkBool32)request->enabled_features
+                .shader_demote_to_helper_invocation,
+        .subgroupSizeControl =
+            (VkBool32)request->enabled_features.subgroup_size_control,
+        .computeFullSubgroups =
+            (VkBool32)request->enabled_features.compute_full_subgroups,
+        .synchronization2 =
+            (VkBool32)request->enabled_features.synchronization2,
+        .shaderZeroInitializeWorkgroupMemory =
+            (VkBool32)request->enabled_features
+                .shader_zero_initialize_workgroup_memory,
+        .dynamicRendering =
+            (VkBool32)request->enabled_features.dynamic_rendering,
+        .maintenance4 =
+            (VkBool32)request->enabled_features.maintenance4,
+    };
+    VkPhysicalDeviceDepthClipEnableFeaturesEXT depth_clip = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT,
+        .depthClipEnable =
+            (VkBool32)request->enabled_features.depth_clip_enable,
+    };
+    VkPhysicalDeviceRobustness2FeaturesEXT robustness2 = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
+        .robustBufferAccess2 =
+            (VkBool32)request->enabled_features.robust_buffer_access2,
+        .nullDescriptor =
+            (VkBool32)request->enabled_features.null_descriptor,
+    };
+    VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5 = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR,
+        .maintenance5 =
+            (VkBool32)request->enabled_features.maintenance5,
+    };
+    VkPhysicalDeviceMaintenance6FeaturesKHR maintenance6 = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_6_FEATURES_KHR,
+        .maintenance6 =
+            (VkBool32)request->enabled_features.maintenance6,
+    };
+    void *feature_chain = NULL;
+    void **feature_tail = &feature_chain;
+#define BVB_APPEND_DEVICE_FEATURE(bit, structure) \
+    do { \
+        if ((request->enabled_feature_structs & (bit)) != 0U) { \
+            *feature_tail = &(structure); \
+            feature_tail = &(structure).pNext; \
+        } \
+    } while (0)
+    BVB_APPEND_DEVICE_FEATURE(
+        BVB_VULKAN_DEVICE_FEATURE_VULKAN_11, vulkan11);
+    BVB_APPEND_DEVICE_FEATURE(
+        BVB_VULKAN_DEVICE_FEATURE_VULKAN_12, vulkan12);
+    BVB_APPEND_DEVICE_FEATURE(
+        BVB_VULKAN_DEVICE_FEATURE_VULKAN_13, vulkan13);
+    BVB_APPEND_DEVICE_FEATURE(
+        BVB_VULKAN_DEVICE_FEATURE_DEPTH_CLIP_ENABLE, depth_clip);
+    BVB_APPEND_DEVICE_FEATURE(
+        BVB_VULKAN_DEVICE_FEATURE_ROBUSTNESS_2, robustness2);
+    BVB_APPEND_DEVICE_FEATURE(
+        BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_5, maintenance5);
+    BVB_APPEND_DEVICE_FEATURE(
+        BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_6, maintenance6);
+#undef BVB_APPEND_DEVICE_FEATURE
     const VkDeviceCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pNext = feature_chain,
         .queueCreateInfoCount = request->queue_create_info_count,
         .pQueueCreateInfos = queue_infos,
         .enabledExtensionCount = request->enabled_extension_count,

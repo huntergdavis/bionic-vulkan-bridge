@@ -356,6 +356,14 @@ static void VKAPI_CALL fake_get_device_features2(
                    VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES) {
             ((VkPhysicalDeviceBufferDeviceAddressFeatures *)entry)
                 ->bufferDeviceAddress = VK_TRUE;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR) {
+            ((VkPhysicalDeviceMaintenance5FeaturesKHR *)entry)
+                ->maintenance5 = VK_TRUE;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_6_FEATURES_KHR) {
+            ((VkPhysicalDeviceMaintenance6FeaturesKHR *)entry)
+                ->maintenance6 = VK_TRUE;
         }
         entry = entry->pNext;
     }
@@ -558,6 +566,99 @@ static VkResult VKAPI_CALL fake_enumerate_device_extensions(
     return written < available ? VK_INCOMPLETE : VK_SUCCESS;
 }
 
+static bool fake_feature_bool_count_is(
+    const VkBool32 *features, uint32_t count, uint32_t expected_enabled) {
+    uint32_t enabled = 0U;
+    for (uint32_t index = 0U; index < count; ++index) {
+        if (features[index] > VK_TRUE) {
+            return false;
+        }
+        enabled += features[index] == VK_TRUE ? 1U : 0U;
+    }
+    return enabled == expected_enabled;
+}
+
+static bool fake_scaled_device_features_are_enabled(
+    const void *feature_chain) {
+    const VkPhysicalDeviceVulkan11Features *vulkan11 = feature_chain;
+    if (vulkan11 == NULL ||
+        vulkan11->sType !=
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES ||
+        vulkan11->shaderDrawParameters != VK_TRUE ||
+        !fake_feature_bool_count_is(
+            &vulkan11->storageBuffer16BitAccess, 12U, 1U)) {
+        return false;
+    }
+    const VkPhysicalDeviceVulkan12Features *vulkan12 = vulkan11->pNext;
+    if (vulkan12 == NULL ||
+        vulkan12->sType !=
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES ||
+        vulkan12->samplerMirrorClampToEdge != VK_TRUE ||
+        vulkan12->descriptorIndexing != VK_TRUE ||
+        vulkan12->descriptorBindingSampledImageUpdateAfterBind != VK_TRUE ||
+        vulkan12->descriptorBindingUpdateUnusedWhilePending != VK_TRUE ||
+        vulkan12->descriptorBindingPartiallyBound != VK_TRUE ||
+        vulkan12->runtimeDescriptorArray != VK_TRUE ||
+        vulkan12->scalarBlockLayout != VK_TRUE ||
+        vulkan12->uniformBufferStandardLayout != VK_TRUE ||
+        vulkan12->hostQueryReset != VK_TRUE ||
+        vulkan12->timelineSemaphore != VK_TRUE ||
+        vulkan12->bufferDeviceAddress != VK_TRUE ||
+        vulkan12->vulkanMemoryModel != VK_TRUE ||
+        !fake_feature_bool_count_is(
+            &vulkan12->samplerMirrorClampToEdge, 47U, 12U)) {
+        return false;
+    }
+    const VkPhysicalDeviceVulkan13Features *vulkan13 = vulkan12->pNext;
+    if (vulkan13 == NULL ||
+        vulkan13->sType !=
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES ||
+        vulkan13->shaderDemoteToHelperInvocation != VK_TRUE ||
+        vulkan13->subgroupSizeControl != VK_TRUE ||
+        vulkan13->computeFullSubgroups != VK_TRUE ||
+        vulkan13->synchronization2 != VK_TRUE ||
+        vulkan13->shaderZeroInitializeWorkgroupMemory != VK_TRUE ||
+        vulkan13->dynamicRendering != VK_TRUE ||
+        vulkan13->maintenance4 != VK_TRUE ||
+        !fake_feature_bool_count_is(
+            &vulkan13->robustImageAccess, 15U, 7U)) {
+        return false;
+    }
+    const VkPhysicalDeviceDepthClipEnableFeaturesEXT *depth_clip =
+        vulkan13->pNext;
+    if (depth_clip == NULL ||
+        depth_clip->sType !=
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT ||
+        depth_clip->depthClipEnable != VK_TRUE) {
+        return false;
+    }
+    const VkPhysicalDeviceRobustness2FeaturesEXT *robustness2 =
+        depth_clip->pNext;
+    if (robustness2 == NULL ||
+        robustness2->sType !=
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT ||
+        robustness2->robustBufferAccess2 != VK_TRUE ||
+        robustness2->robustImageAccess2 != VK_FALSE ||
+        robustness2->nullDescriptor != VK_TRUE) {
+        return false;
+    }
+    const VkPhysicalDeviceMaintenance5FeaturesKHR *maintenance5 =
+        robustness2->pNext;
+    if (maintenance5 == NULL ||
+        maintenance5->sType !=
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR ||
+        maintenance5->maintenance5 != VK_TRUE) {
+        return false;
+    }
+    const VkPhysicalDeviceMaintenance6FeaturesKHR *maintenance6 =
+        maintenance5->pNext;
+    return maintenance6 != NULL &&
+        maintenance6->sType ==
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_6_FEATURES_KHR &&
+        maintenance6->maintenance6 == VK_TRUE &&
+        maintenance6->pNext == NULL;
+}
+
 static VkResult VKAPI_CALL fake_create_device(
     VkPhysicalDevice physical_device,
     const VkDeviceCreateInfo *create_info,
@@ -579,7 +680,8 @@ static VkResult VKAPI_CALL fake_create_device(
             create_info->pQueueCreateInfos[0].pQueuePriorities == NULL ||
             create_info->pQueueCreateInfos[1].pQueuePriorities == NULL ||
             create_info->pQueueCreateInfos[0].pQueuePriorities[0] != 0.75F ||
-            create_info->pQueueCreateInfos[1].pQueuePriorities[0] != 0.25F) {
+            create_info->pQueueCreateInfos[1].pQueuePriorities[0] != 0.25F ||
+            !fake_scaled_device_features_are_enabled(create_info->pNext)) {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         for (uint32_t index = 0U; index < 58U; ++index) {

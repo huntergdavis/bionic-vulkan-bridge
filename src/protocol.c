@@ -636,7 +636,9 @@ int bvb_protocol_encode_vulkan_core_features(
         features->synchronization2 > 1U ||
         features->depth_clip_enable > 1U ||
         features->robust_buffer_access2 > 1U ||
-        features->null_descriptor > 1U) {
+        features->null_descriptor > 1U ||
+        features->maintenance5 > 1U ||
+        features->maintenance6 > 1U) {
         return -EINVAL;
     }
     bvb_wire_put_u32(output, features->shader_draw_parameters);
@@ -670,6 +672,8 @@ int bvb_protocol_encode_vulkan_core_features(
     bvb_wire_put_u32(output + 80, features->depth_clip_enable);
     bvb_wire_put_u32(output + 84, features->robust_buffer_access2);
     bvb_wire_put_u32(output + 88, features->null_descriptor);
+    bvb_wire_put_u32(output + 92, features->maintenance5);
+    bvb_wire_put_u32(output + 96, features->maintenance6);
     return 0;
 }
 
@@ -710,6 +714,8 @@ int bvb_protocol_decode_vulkan_core_features(
     const uint32_t depth_clip_enable = bvb_wire_get_u32(input + 80);
     const uint32_t robust_buffer_access2 = bvb_wire_get_u32(input + 84);
     const uint32_t null_descriptor = bvb_wire_get_u32(input + 88);
+    const uint32_t maintenance5 = bvb_wire_get_u32(input + 92);
+    const uint32_t maintenance6 = bvb_wire_get_u32(input + 96);
     if (shader_draw_parameters > 1U || buffer_device_address > 1U ||
         descriptor_indexing > 1U ||
         descriptor_binding_sampled_image_update_after_bind > 1U ||
@@ -726,7 +732,7 @@ int bvb_protocol_decode_vulkan_core_features(
         return -EPROTO;
     }
     if (depth_clip_enable > 1U || robust_buffer_access2 > 1U ||
-        null_descriptor > 1U) {
+        null_descriptor > 1U || maintenance5 > 1U || maintenance6 > 1U) {
         return -EPROTO;
     }
     *features = (struct bvb_vulkan_core_features){
@@ -758,6 +764,8 @@ int bvb_protocol_decode_vulkan_core_features(
         .depth_clip_enable = depth_clip_enable,
         .robust_buffer_access2 = robust_buffer_access2,
         .null_descriptor = null_descriptor,
+        .maintenance5 = maintenance5,
+        .maintenance6 = maintenance6,
     };
     return 0;
 }
@@ -926,7 +934,9 @@ static int validate_packed_device_create_counts(
         request->queue_priority_count >
             BVB_VULKAN_MAX_DEVICE_QUEUE_PRIORITIES ||
         request->enabled_extension_count >
-            BVB_VULKAN_MAX_DEVICE_CREATE_EXTENSIONS) {
+            BVB_VULKAN_MAX_DEVICE_CREATE_EXTENSIONS ||
+        (request->enabled_feature_structs &
+         ~BVB_VULKAN_DEVICE_FEATURE_STRUCT_MASK) != 0U) {
         return -EPROTO;
     }
     for (uint32_t index = 0U;
@@ -943,15 +953,75 @@ static int validate_packed_device_create_counts(
     return 0;
 }
 
+static bool packed_device_feature_groups_match_mask(
+    const struct bvb_vulkan_device_create_packed_request *request) {
+    const struct bvb_vulkan_core_features *features =
+        &request->enabled_features;
+    if ((request->enabled_feature_structs &
+         BVB_VULKAN_DEVICE_FEATURE_VULKAN_11) == 0U &&
+        features->shader_draw_parameters != 0U) {
+        return false;
+    }
+    if ((request->enabled_feature_structs &
+         BVB_VULKAN_DEVICE_FEATURE_VULKAN_12) == 0U &&
+        (features->buffer_device_address != 0U ||
+         features->descriptor_indexing != 0U ||
+         features->descriptor_binding_sampled_image_update_after_bind != 0U ||
+         features->descriptor_binding_update_unused_while_pending != 0U ||
+         features->descriptor_binding_partially_bound != 0U ||
+         features->host_query_reset != 0U ||
+         features->runtime_descriptor_array != 0U ||
+         features->sampler_mirror_clamp_to_edge != 0U ||
+         features->scalar_block_layout != 0U ||
+         features->timeline_semaphore != 0U ||
+         features->uniform_buffer_standard_layout != 0U ||
+         features->vulkan_memory_model != 0U)) {
+        return false;
+    }
+    if ((request->enabled_feature_structs &
+         BVB_VULKAN_DEVICE_FEATURE_VULKAN_13) == 0U &&
+        (features->compute_full_subgroups != 0U ||
+         features->dynamic_rendering != 0U ||
+         features->maintenance4 != 0U ||
+         features->shader_demote_to_helper_invocation != 0U ||
+         features->shader_zero_initialize_workgroup_memory != 0U ||
+         features->subgroup_size_control != 0U ||
+         features->synchronization2 != 0U)) {
+        return false;
+    }
+    if ((request->enabled_feature_structs &
+         BVB_VULKAN_DEVICE_FEATURE_DEPTH_CLIP_ENABLE) == 0U &&
+        features->depth_clip_enable != 0U) {
+        return false;
+    }
+    if ((request->enabled_feature_structs &
+         BVB_VULKAN_DEVICE_FEATURE_ROBUSTNESS_2) == 0U &&
+        (features->robust_buffer_access2 != 0U ||
+         features->null_descriptor != 0U)) {
+        return false;
+    }
+    if ((request->enabled_feature_structs &
+         BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_5) == 0U &&
+        features->maintenance5 != 0U) {
+        return false;
+    }
+    return (request->enabled_feature_structs &
+            BVB_VULKAN_DEVICE_FEATURE_MAINTENANCE_6) != 0U ||
+        features->maintenance6 == 0U;
+}
+
 int bvb_protocol_encode_vulkan_device_create_packed_request(
     uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
     const struct bvb_vulkan_device_create_packed_request *request,
     uint32_t *output_length) {
     if (output == NULL || request == NULL || output_length == NULL ||
-        validate_packed_device_create_counts(request) != 0) {
+        validate_packed_device_create_counts(request) != 0 ||
+        !packed_device_feature_groups_match_mask(request)) {
         return -EINVAL;
     }
     uint32_t length = BVB_VULKAN_DEVICE_CREATE_PACKED_PREFIX_SIZE +
+        (request->enabled_feature_structs == 0U
+             ? 0U : BVB_VULKAN_CORE_FEATURES_SIZE) +
         request->queue_create_info_count *
             BVB_VULKAN_DEVICE_QUEUE_CREATE_INFO_SIZE +
         request->queue_priority_count * sizeof(uint32_t);
@@ -977,7 +1047,15 @@ int bvb_protocol_encode_vulkan_device_create_packed_request(
     bvb_wire_put_u32(output + 16, request->queue_priority_count);
     bvb_wire_put_u32(output + 20, request->enabled_layer_count);
     bvb_wire_put_u32(output + 24, request->enabled_extension_count);
+    bvb_wire_put_u32(output + 28, request->enabled_feature_structs);
     uint32_t cursor = BVB_VULKAN_DEVICE_CREATE_PACKED_PREFIX_SIZE;
+    if (request->enabled_feature_structs != 0U) {
+        if (bvb_protocol_encode_vulkan_core_features(
+                output + cursor, &request->enabled_features) != 0) {
+            return -EINVAL;
+        }
+        cursor += BVB_VULKAN_CORE_FEATURES_SIZE;
+    }
     for (uint32_t index = 0U;
          index < request->queue_create_info_count; ++index) {
         const struct bvb_vulkan_device_queue_create_info *info =
@@ -1008,8 +1086,7 @@ int bvb_protocol_decode_vulkan_device_create_packed_request(
     struct bvb_vulkan_device_create_packed_request *request) {
     if (input == NULL || request == NULL ||
         input_length < BVB_VULKAN_DEVICE_CREATE_PACKED_PREFIX_SIZE ||
-        input_length > BVB_PROTOCOL_MAX_PAYLOAD ||
-        bvb_wire_get_u32(input + 28) != 0U) {
+        input_length > BVB_PROTOCOL_MAX_PAYLOAD) {
         return -EINVAL;
     }
     struct bvb_vulkan_device_create_packed_request decoded = {
@@ -1019,6 +1096,7 @@ int bvb_protocol_decode_vulkan_device_create_packed_request(
         .queue_priority_count = bvb_wire_get_u32(input + 16),
         .enabled_layer_count = bvb_wire_get_u32(input + 20),
         .enabled_extension_count = bvb_wire_get_u32(input + 24),
+        .enabled_feature_structs = bvb_wire_get_u32(input + 28),
     };
     if (!wire_id_is_type(decoded.physical_device_id, 2U) ||
         decoded.queue_create_info_count == 0U ||
@@ -1032,6 +1110,17 @@ int bvb_protocol_decode_vulkan_device_create_packed_request(
         return -EPROTO;
     }
     uint32_t cursor = BVB_VULKAN_DEVICE_CREATE_PACKED_PREFIX_SIZE;
+    if (decoded.enabled_feature_structs != 0U) {
+        if (BVB_VULKAN_CORE_FEATURES_SIZE > input_length - cursor ||
+            bvb_protocol_decode_vulkan_core_features(
+                input + cursor, &decoded.enabled_features) != 0) {
+            return -EPROTO;
+        }
+        cursor += BVB_VULKAN_CORE_FEATURES_SIZE;
+    }
+    if (!packed_device_feature_groups_match_mask(&decoded)) {
+        return -EPROTO;
+    }
     const uint32_t fixed_tail =
         decoded.queue_create_info_count *
             BVB_VULKAN_DEVICE_QUEUE_CREATE_INFO_SIZE +

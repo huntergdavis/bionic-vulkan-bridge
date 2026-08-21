@@ -350,10 +350,20 @@ int main(void) {
     VkPhysicalDeviceRobustness2FeaturesEXT robustness2_features = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
     };
+    VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5_features = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR,
+    };
+    VkPhysicalDeviceMaintenance6FeaturesKHR maintenance6_features = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_6_FEATURES_KHR,
+    };
     vulkan11_features.pNext = &vulkan12_features;
     vulkan12_features.pNext = &vulkan13_features;
     vulkan13_features.pNext = &depth_clip_features;
     depth_clip_features.pNext = &robustness2_features;
+    robustness2_features.pNext = &maintenance5_features;
+    maintenance5_features.pNext = &maintenance6_features;
     VkPhysicalDeviceFeatures2 features2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         .pNext = &vulkan11_features,
@@ -385,6 +395,8 @@ int main(void) {
     CHECK(depth_clip_features.depthClipEnable == VK_TRUE);
     CHECK(robustness2_features.robustBufferAccess2 == VK_TRUE);
     CHECK(robustness2_features.nullDescriptor == VK_TRUE);
+    CHECK(maintenance5_features.maintenance5 == VK_TRUE);
+    CHECK(maintenance6_features.maintenance6 == VK_TRUE);
     VkPhysicalDeviceProperties2 properties2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
     };
@@ -953,13 +965,76 @@ int main(void) {
     VkDevice scaled_device = VK_NULL_HANDLE;
     const VkPhysicalDeviceVulkan12Features unsupported_scaled_features = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-        .timelineSemaphore = VK_TRUE,
+        .drawIndirectCount = VK_TRUE,
     };
     scaled_create_info.pNext = &unsupported_scaled_features;
     CHECK(create_device(physical_device, &scaled_create_info, NULL,
                         &scaled_device) == VK_ERROR_FEATURE_NOT_PRESENT);
     CHECK(scaled_device == VK_NULL_HANDLE);
-    scaled_create_info.pNext = NULL;
+    VkPhysicalDeviceVulkan11Features enabled_vulkan11 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+        .shaderDrawParameters = VK_TRUE,
+    };
+    VkPhysicalDeviceVulkan12Features enabled_vulkan12 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .samplerMirrorClampToEdge = VK_TRUE,
+        .descriptorIndexing = VK_TRUE,
+        .descriptorBindingSampledImageUpdateAfterBind = VK_TRUE,
+        .descriptorBindingUpdateUnusedWhilePending = VK_TRUE,
+        .descriptorBindingPartiallyBound = VK_TRUE,
+        .runtimeDescriptorArray = VK_TRUE,
+        .scalarBlockLayout = VK_TRUE,
+        .uniformBufferStandardLayout = VK_TRUE,
+        .hostQueryReset = VK_TRUE,
+        .timelineSemaphore = VK_TRUE,
+        .bufferDeviceAddress = VK_TRUE,
+        .vulkanMemoryModel = VK_TRUE,
+    };
+    VkPhysicalDeviceVulkan13Features enabled_vulkan13 = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+        .shaderDemoteToHelperInvocation = VK_TRUE,
+        .subgroupSizeControl = VK_TRUE,
+        .computeFullSubgroups = VK_TRUE,
+        .synchronization2 = VK_TRUE,
+        .shaderZeroInitializeWorkgroupMemory = VK_TRUE,
+        .dynamicRendering = VK_TRUE,
+        .maintenance4 = VK_TRUE,
+    };
+    VkPhysicalDeviceDepthClipEnableFeaturesEXT enabled_depth_clip = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DEPTH_CLIP_ENABLE_FEATURES_EXT,
+        .depthClipEnable = VK_TRUE,
+    };
+    VkPhysicalDeviceRobustness2FeaturesEXT enabled_robustness2 = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT,
+        .robustBufferAccess2 = VK_TRUE,
+        .nullDescriptor = VK_TRUE,
+    };
+    VkPhysicalDeviceMaintenance5FeaturesKHR enabled_maintenance5 = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR,
+        .maintenance5 = VK_TRUE,
+    };
+    VkPhysicalDeviceMaintenance6FeaturesKHR enabled_maintenance6 = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_6_FEATURES_KHR,
+        .maintenance6 = VK_TRUE,
+    };
+    enabled_vulkan11.pNext = &enabled_vulkan12;
+    enabled_vulkan12.pNext = &enabled_vulkan13;
+    enabled_vulkan13.pNext = &enabled_depth_clip;
+    enabled_depth_clip.pNext = &enabled_robustness2;
+    enabled_robustness2.pNext = &enabled_maintenance5;
+    enabled_maintenance5.pNext = &enabled_maintenance6;
+    const struct {
+        VkStructureType sType;
+        const void *pNext;
+    } loader_private_device_info = {
+        .sType = VK_STRUCTURE_TYPE_LOADER_DEVICE_CREATE_INFO,
+        .pNext = &enabled_vulkan11,
+    };
+    scaled_create_info.pNext = &loader_private_device_info;
     CHECK(create_device(physical_device, &scaled_create_info, NULL,
                         &scaled_device) == VK_SUCCESS);
     CHECK(scaled_device != VK_NULL_HANDLE);
