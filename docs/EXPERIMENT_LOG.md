@@ -2390,3 +2390,44 @@ extension encoding, and E049's real-game trace route. Required `deja` searches
 found no additional prior implementation. A native Android Activity and
 successful Wine `vkCreateInstance` are proven; swapchain creation, presentation,
 a game frame, and an FPS comparison remain unproven.
+
+## E052 — Private Turnip clears DXVK's native feature ladder (2026-08-20)
+
+Status: passed as a private-driver selection and adapter-feature progression
+gate; no adapter-acceptance or rendering claim. Steam's glibc loader selected
+the BVB ICD, the authenticated Bionic service loaded a private Mesa 26.2.0
+Turnip ICD, and DXVK identified `Turnip Adreno (TM) 730 (26.2.0)` with Vulkan
+1.4.354. The private driver completed logical-device/queue idle in the isolated
+hardware gate. This direct private-ICD result is authoritative for the current
+game path; the earlier E043/E044 system-loader version observations do not
+establish the raw system ICD's DXVK API floor.
+
+Seven real Tomb Raider launches moved the rejection boundary from
+`shaderDrawParameters` through `bufferDeviceAddress`, `descriptorIndexing`,
+the required descriptor-indexing subfeatures, `depthClipEnable`,
+`robustBufferAccess2`, and `nullDescriptor`. A single native
+`vkGetPhysicalDeviceFeatures2` chain now queries the required Vulkan 1.1, 1.2,
+1.3, depth-clip, and robustness structures. The BVB response serializes only
+the booleans Turnip actually returns and writes only matching caller
+structures. No feature is hardcoded true. The existing generated physical
+properties codec was also proven to preserve Turnip's required
+`maxPushConstantsSize=256`.
+
+DXVK now reaches `VK_KHR_maintenance5`. Mesa Turnip implements maintenance5
+and maintenance6, but the private Android API 34 build's strict generated
+allowlist hides them. That build-time filter is the next adapter-selection
+gate. `VK_KHR_swapchain` remains separate: raw Android Turnip exposes
+`VK_ANDROID_native_buffer`, so desktop swapchain semantics must be virtualized
+over the authenticated Activity path rather than forwarded or invented.
+
+Canonical evidence is
+`docs/evidence/e052-private-turnip-dxvk-features.json`, 4,478 bytes, SHA-256
+`2bee7055b0bca6e7ae8f4d81c90170f23db101d946ea26326417a1031c0fe1af`.
+The feature bridge culminates in commits `5780c93`, `3358fff`, and `a38e061`;
+all 23 host contracts passed after each set. This work reused E043-E051's
+fixed-width loader, ownership, query, and Activity contracts plus the exact
+DXVK a6764047 feature order recovered by the feature-map agent. The required
+`deja` search found that current investigation and no older implementation.
+E052 does not prove maintenance5/6 exposure, final adapter acceptance, the
+DXVK feature chain reaching native `vkCreateDevice`, swapchain creation, a
+game frame, or FPS.

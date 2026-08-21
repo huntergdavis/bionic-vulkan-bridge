@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "gate": "E052",
+  "result": "pass",
+  "target": "Galaxy Tab S8+ Android Bionic Turnip Adreno 730",
+  "objective": "select a private modern Turnip ICD from Steam's glibc Vulkan loader and truthfully bridge DXVK's required native feature queries until the first driver-build extension boundary",
+  "route": {
+    "game": "Tomb Raider 2013 AppID 203160 through Proton 11.0 ARM64",
+    "dxvk": "v2.7.1-498-ga6764047e587178",
+    "vulkan_loader": "Steam AArch64 glibc loader",
+    "vulkan_icd": "BVB glibc ICD over an authenticated Unix socket",
+    "vulkan_service": "Android Bionic service loading a private Mesa 26.2.0 Turnip ICD",
+    "device": "Turnip Adreno (TM) 730",
+    "device_api_version": 4211042,
+    "driver_version": 109060096
+  },
+  "private_driver": {
+    "library_sha256": "b202ebfd2800a4203f4a264a36ca5981e665e568310362ebfc39fdb8fc848a7c",
+    "reported_vulkan": "1.4.354",
+    "raw_android_wsi": "VK_ANDROID_native_buffer",
+    "raw_desktop_swapchain": false
+  },
+  "measured_feature_ladder": [
+    {
+      "log": "dxvk-direct-8hjef9a3/TombRaider_d3d9.log",
+      "sha256": "33ae9927ada1b6dcfd911d56b3f4a28ba130afd99999ab1e56cdb60927bb249f",
+      "boundary": "shaderDrawParameters"
+    },
+    {
+      "log": "dxvk-direct-t4o4lubg/TombRaider_d3d9.log",
+      "sha256": "725b405e4e193812259c10e42dd17bf66428eac0752b723c535a5e0f124442f4",
+      "boundary": "bufferDeviceAddress"
+    },
+    {
+      "log": "dxvk-direct-9of7lj79/TombRaider_d3d9.log",
+      "sha256": "fdd200f2d68100b05017998c4cb65bbdcc051d6e7e3e9dc0cc044c84a8db422c",
+      "boundary": "descriptorIndexing"
+    },
+    {
+      "log": "dxvk-direct-evsdy9n6/TombRaider_d3d9.log",
+      "sha256": "0d1bd211898e6768317b7bfcbe5974100de6967a31c6cc7beae6ed329cca1c40",
+      "boundary": "descriptorBindingSampledImageUpdateAfterBind"
+    },
+    {
+      "log": "dxvk-direct-w2xxxydl/TombRaider_d3d9.log",
+      "sha256": "4ff55f275be2ff03face34455d1171c548aedf2a80010a435c34ebfdb291ef30",
+      "boundary": "descriptorBindingUpdateUnusedWhilePending"
+    },
+    {
+      "log": "dxvk-direct-h0a7jnvq/TombRaider_d3d9.log",
+      "sha256": "a9728d9c44ea8114b630e5b1c1ce67e56f5d4b3266d5bc353a9ccf30f71c38cf",
+      "boundary": "depthClipEnable"
+    },
+    {
+      "log": "dxvk-direct-853nctpw/TombRaider_d3d9.log",
+      "sha256": "a2c06c6e582fad80b81c839ec96f966d3b813b6a029fd51caecc2303ca09eb9a",
+      "boundary": "maintenance5"
+    }
+  ],
+  "bridged_features": {
+    "native_query": "VkPhysicalDeviceFeatures2 with Vulkan 1.1, Vulkan 1.2, Vulkan 1.3, depth-clip-enable, and robustness2 structures",
+    "wire_representation": "fixed-width canonical booleans populated only from native Turnip results",
+    "required_core_features_cleared": 20,
+    "required_extension_features_cleared": [
+      "depthClipEnable",
+      "robustBufferAccess2",
+      "nullDescriptor"
+    ],
+    "max_push_constants_size": 256
+  },
+  "current_boundary": {
+    "feature": "maintenance5",
+    "extension": "VK_KHR_maintenance5",
+    "cause": "Mesa Android API 34 strict extension allowlist hides native Turnip maintenance5 and maintenance6",
+    "separate_wsi_gate": "VK_KHR_swapchain must be virtualized over the authenticated Activity path"
+  },
+  "implementation_commits": {
+    "private_icd_lifecycle": "dd4fe1c",
+    "private_turnip_identity": "4c70f48",
+    "core_vs_swapchain_probe": "14d8b13",
+    "device_extension_trace": "b416041",
+    "vulkan_1_3_manifest": "ec8b877",
+    "shader_draw_parameters": "31bab3d",
+    "buffer_device_address": "b1efddf",
+    "descriptor_indexing": "70639d4",
+    "sampled_image_update_after_bind": "d8152a9",
+    "bulk_core_features": "5780c93",
+    "push_constant_contract": "3358fff",
+    "depth_clip_and_robustness2": "a38e061"
+  },
+  "verification": {
+    "bridge_host_contracts": "23/23 passed after every feature set",
+    "private_turnip_device_idle": "passed",
+    "steam_login_preserved": true,
+    "steam_and_x11_survived_probe_cleanup": true
+  },
+  "reuse": "Reused the fixed-width E043-E051 loader, ownership, query, and Activity contracts. The indexed-session search found the current DXVK feature-map investigation; exact DXVK a6764047 source order was then checked against each real Tomb Raider log.",
+  "scope": "Private Turnip selection and DXVK adapter-feature progression only; maintenance5/6 exposure, final adapter acceptance, logical-device creation with the DXVK feature chain, swapchain creation, a game frame, and FPS remain unproven"
+}
