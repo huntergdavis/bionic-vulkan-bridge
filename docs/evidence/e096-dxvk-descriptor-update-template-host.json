@@ -1,8 +1,9 @@
 {
   "schema_version": 1,
   "gate": "E096",
-  "result": "pass_host_contract",
+  "result": "pass_host_and_tablet_runtime_gate",
   "source_base_commit": "945dacdf6b68ec1e16c312527ae0c029f021bbc5",
+  "implementation_commit": "953d24c2d9a5911f38543e886068617db5214af5",
   "objective": "implement the exact vkCreateDescriptorUpdateTemplate call that stopped the E095 Tomb Raider run",
   "measured_input": {
     "authority": "E095 actual-invocation diagnostic and pinned DXVK a6764047e587178283fcde4073ae6e1410af594f",
@@ -54,15 +55,31 @@
     "cross_process": "the real glibc client, socket service, Bionic reconstruction, and fake native driver accepted all four exact E095 entries",
     "native_lifecycle": "fake native Vulkan required layout create, template create, layout destroy, template destroy in pinned DXVK order",
     "negative": "allocator, pNext, and cross-device layout attempts returned fail-closed errors and null handles",
-    "tablet_or_game_after_change": false,
+    "tablet_or_game_after_change": true,
+    "tablet_runtime": {
+      "installed_glibc_icd_sha256": "327fb15650f95f2cabe78a0c60e4fbef900d097f5fccf989072e8dbb36d8d9d0",
+      "installed_bionic_service_sha256": "7047eecd079eb265b99aeab90d2e3bed25a27e877d2e3990633041eaeb677146",
+      "run_id": "20260821T224450Z-4751",
+      "native_template_results": [0, 0, 0],
+      "observed_template_entry_counts": [4, 4, 1],
+      "next_boundary": "vkCreateImageView returned VK_ERROR_INITIALIZATION_FAILED immediately after vkAcquireNextImageKHR",
+      "cause": "the glibc client accepted only ordinary image resource proxies when validating image-view ownership; virtual-swapchain image IDs are held by the swapchain proxy and were rejected locally before any service request"
+    },
+    "tablet_artifacts": {
+      "master": {"bytes": 1104, "sha256": "d6c14c9ed287cf5c880d2b5fc18507864eef671f38c9280eb8d09da507d98707"},
+      "service": {"bytes": 862, "sha256": "856f53c2169d86d7b2a98e975c2f569025c42c04128a35c6cce4f6e6372e33ca"},
+      "wine": {"bytes": 2960342, "sha256": "84e2f6424932ce344db30dfa11b10b0e455b5aea1066301a164680dfa19b5af6"},
+      "fullscreen_activity_screenshot": {"bytes": 144622, "sha256": "28b7305067678da2bc88ffcb75bf49b49141cf49c27c59d79df332dcee89e9f8"}
+    },
     "tomb_raider_frame": false,
     "fps": false
   },
   "reuse": "The required deja query returned no indexed implementation. Reused E056/E093's canonical pointer-free descriptor codec, typed object registry, and Bionic-local reconstruction; reused E095's exact real layout and pinned-DXVK call/destruction shapes rather than guessing a general template ABI.",
-  "next_boundary": "Build and deploy this exact bridge, rerun one bounded Tomb Raider launch, and use E079a's actual-invocation record to select the next missing operation. vkUpdateDescriptorSetWithTemplate remains intentionally unimplemented until constructor progress reaches its real invocation and resource payload shape.",
+  "next_boundary": "Allow vkCreateImageView's existing typed ownership check to recognize same-device virtual-swapchain images, as the command-stream path already does, then rerun. vkUpdateDescriptorSetWithTemplate remains intentionally unimplemented until constructor progress reaches its real invocation and resource payload shape.",
   "claims": {
     "host_create_destroy_path": true,
-    "tablet_deployment": false,
+    "tablet_deployment": true,
+    "tablet_template_create": true,
     "tomb_raider_frame": false,
     "benchmark": false,
     "fps": false

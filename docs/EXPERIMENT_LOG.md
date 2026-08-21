@@ -3775,7 +3775,8 @@ same real Tomb Raider launch.
 
 ## E096 — DXVK descriptor update-template creation (2026-08-21)
 
-Status: 58/58 host contracts pass; tablet deployment and rerun pending. E096
+Status: 58/58 host and 56/56 Android contracts pass; tablet runtime gate passed.
+E096
 implements the exact core `vkCreateDescriptorUpdateTemplate` call observed in
 E095. The glibc side accepts a descriptor-set template with at most 32 entries,
 serializes only fixed-width scalars and typed bridge IDs, and sends opcode 110.
@@ -3803,4 +3804,13 @@ update template"` query returned no indexed implementation. E096 reuses
 E056/E093's canonical pointer-free descriptor wire, typed ownership, and
 Bionic-local reconstruction plus E095's measured call shape. Compact evidence
 is `docs/evidence/e096-dxvk-descriptor-update-template-host.json`. No tablet
-deployment, Tomb Raider frame, benchmark, or FPS result is claimed yet.
+game frame, benchmark, or FPS result is claimed yet.
+
+The exact implementation was then built and transactionally deployed. A
+bounded Tomb Raider rerun created three native update templates successfully
+(entry counts `4,4,1`). It advanced to an implemented `vkCreateImageView`
+rejection immediately after `vkAcquireNextImageKHR`. No corresponding service
+failure exists: the glibc client rejected the virtual-swapchain image locally
+because its image-view path recognized ordinary image proxies only. The shared
+command path already has the correct same-device ordinary-or-swapchain image
+ownership helper. The next gate reuses that helper for image views and reruns.
