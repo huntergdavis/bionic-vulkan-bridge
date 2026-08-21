@@ -267,6 +267,14 @@ int bvb_vulkan_global_context_command_buffer_fill(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_command_buffer_fill_request *request,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_command_buffer_image_barrier(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_command_buffer_image_barrier_request *request,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_command_buffer_clear_color_image(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_command_buffer_clear_color_image_request *request,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_verify_memory_fill(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_memory_verify_fill_request *request,

@@ -4173,6 +4173,108 @@ int bvb_vulkan_global_context_command_buffer_fill(
     return 0;
 }
 
+int bvb_vulkan_global_context_command_buffer_image_barrier(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_command_buffer_image_barrier_request *request,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || request->image_count == 0U ||
+        request->image_count > BVB_VULKAN_INIT_IMAGE_MAX_BARRIERS)
+        return -EINVAL;
+    uint64_t command_device_id = 0U;
+    VkDevice command_device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    int result = resolve_command_buffer(
+        context, request->command_buffer_id, &command_device_id,
+        &command_device, &command_pool, &command_buffer);
+    VkImageMemoryBarrier2 image_barriers[
+        BVB_VULKAN_INIT_IMAGE_MAX_BARRIERS];
+    memset(image_barriers, 0, sizeof(image_barriers));
+    for (uint32_t index = 0U; result == 0 && index < request->image_count;
+         ++index) {
+        uint64_t image_device_id = 0U, image_bits = 0U;
+        VkDevice image_device = VK_NULL_HANDLE;
+        result = resolve_device_child(
+            context, request->image_ids[index], BVB_OBJECT_IMAGE,
+            &image_device_id, &image_device, &image_bits);
+        if (result == 0 &&
+            (image_device_id != command_device_id ||
+             image_device != command_device))
+            result = -EPROTO;
+        if (result == 0) {
+            image_barriers[index] = (VkImageMemoryBarrier2){
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                .srcStageMask = VK_PIPELINE_STAGE_2_NONE,
+                .srcAccessMask = VK_ACCESS_2_NONE,
+                .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+                .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .image = image_from_bits(image_bits),
+                .subresourceRange = {
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0U,
+                    .levelCount = 1U,
+                    .baseArrayLayer = 0U,
+                    .layerCount = 1U,
+                },
+            };
+        }
+    }
+    if (result != 0) return result;
+    PFN_vkCmdPipelineBarrier2 barrier =
+        (PFN_vkCmdPipelineBarrier2)context->get_device_proc_addr(
+            command_device, "vkCmdPipelineBarrier2");
+    if (barrier == NULL) return -ENOSYS;
+    const VkDependencyInfo dependency = {
+        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .imageMemoryBarrierCount = request->image_count,
+        .pImageMemoryBarriers = image_barriers,
+    };
+    barrier(command_buffer, &dependency);
+    return 0;
+}
+
+int bvb_vulkan_global_context_command_buffer_clear_color_image(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_command_buffer_clear_color_image_request *request,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL) return -EINVAL;
+    uint64_t command_device_id = 0U, image_device_id = 0U, image_bits = 0U;
+    VkDevice command_device = VK_NULL_HANDLE, image_device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    int result = resolve_command_buffer(
+        context, request->command_buffer_id, &command_device_id,
+        &command_device, &command_pool, &command_buffer);
+    if (result == 0)
+        result = resolve_device_child(
+            context, request->image_id, BVB_OBJECT_IMAGE, &image_device_id,
+            &image_device, &image_bits);
+    if (result != 0 || command_device_id != image_device_id ||
+        command_device != image_device)
+        return result != 0 ? result : -EPROTO;
+    PFN_vkCmdClearColorImage clear =
+        (PFN_vkCmdClearColorImage)context->get_device_proc_addr(
+            command_device, "vkCmdClearColorImage");
+    if (clear == NULL) return -ENOSYS;
+    const VkClearColorValue color = {0};
+    const VkImageSubresourceRange range = {
+        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .baseMipLevel = 0U,
+        .levelCount = 1U,
+        .baseArrayLayer = 0U,
+        .layerCount = 1U,
+    };
+    clear(command_buffer, image_from_bits(image_bits),
+          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &color, 1U, &range);
+    return 0;
+}
+
 int bvb_vulkan_global_context_verify_memory_fill(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_memory_verify_fill_request *request,

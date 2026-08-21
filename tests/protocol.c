@@ -94,7 +94,10 @@ int main(void) {
     CHECK(BVB_OPCODE_VULKAN_BUFFER_DEVICE_ADDRESS == 79);
     CHECK(BVB_OPCODE_VULKAN_SWAPCHAIN_ACQUIRE == 100);
     CHECK(BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT == 101);
-    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT);
+    CHECK(BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMAGE_BARRIER == 102);
+    CHECK(BVB_OPCODE_VULKAN_COMMAND_BUFFER_CLEAR_COLOR_IMAGE == 103);
+    CHECK(decoded.opcode ==
+          BVB_OPCODE_VULKAN_COMMAND_BUFFER_CLEAR_COLOR_IMAGE);
 
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
@@ -1369,6 +1372,76 @@ int main(void) {
     CHECK(bvb_protocol_decode_vulkan_command_buffer_fill_request(
               buffer_fill_wire, &buffer_fill_decoded) == 0);
     CHECK(buffer_fill_decoded.data == UINT32_C(0xa5c3f00d));
+    const struct bvb_vulkan_command_buffer_clear_color_image_request
+        clear_color_image = {
+            .command_buffer_id = buffer_allocated.command_buffer_id,
+            .image_id = image_created.object_id,
+        };
+    uint8_t clear_color_image_wire[
+        BVB_VULKAN_COMMAND_BUFFER_CLEAR_COLOR_IMAGE_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_command_buffer_clear_color_image_request(
+              clear_color_image_wire, &clear_color_image) == 0);
+    struct bvb_vulkan_command_buffer_clear_color_image_request
+        clear_color_image_decoded;
+    CHECK(bvb_protocol_decode_vulkan_command_buffer_clear_color_image_request(
+              clear_color_image_wire, &clear_color_image_decoded) == 0);
+    CHECK(clear_color_image_decoded.command_buffer_id ==
+          buffer_allocated.command_buffer_id);
+    CHECK(clear_color_image_decoded.image_id == image_created.object_id);
+    bvb_wire_put_u64(clear_color_image_wire + 8U,
+                     UINT64_C(0x1400000000000001));
+    CHECK(bvb_protocol_decode_vulkan_command_buffer_clear_color_image_request(
+              clear_color_image_wire, &clear_color_image_decoded) ==
+          -EPROTO);
+
+    const struct bvb_vulkan_command_buffer_image_barrier_request
+        init_image_barriers = {
+            .command_buffer_id = buffer_allocated.command_buffer_id,
+            .image_count = 2U,
+            .image_ids = {
+                image_created.object_id,
+                UINT64_C(0x0700000000000002),
+            },
+        };
+    uint8_t init_image_barriers_wire[
+        BVB_VULKAN_COMMAND_BUFFER_IMAGE_BARRIER_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_command_buffer_image_barrier_request(
+              init_image_barriers_wire, &init_image_barriers) == 0);
+    struct bvb_vulkan_command_buffer_image_barrier_request
+        init_image_barriers_decoded;
+    CHECK(bvb_protocol_decode_vulkan_command_buffer_image_barrier_request(
+              init_image_barriers_wire, &init_image_barriers_decoded) == 0);
+    CHECK(init_image_barriers_decoded.command_buffer_id ==
+          buffer_allocated.command_buffer_id);
+    CHECK(init_image_barriers_decoded.image_count == 2U);
+    CHECK(init_image_barriers_decoded.image_ids[0] ==
+          image_created.object_id);
+    CHECK(init_image_barriers_decoded.image_ids[1] ==
+          UINT64_C(0x0700000000000002));
+    CHECK(init_image_barriers_decoded.image_ids[2] == 0U);
+    bvb_wire_put_u64(init_image_barriers_wire + 32U,
+                     UINT64_C(0x0700000000000003));
+    CHECK(bvb_protocol_decode_vulkan_command_buffer_image_barrier_request(
+              init_image_barriers_wire, &init_image_barriers_decoded) ==
+          -EPROTO);
+    bvb_wire_put_u64(init_image_barriers_wire + 32U, 0U);
+    bvb_wire_put_u64(init_image_barriers_wire + 24U,
+                     image_created.object_id);
+    CHECK(bvb_protocol_decode_vulkan_command_buffer_image_barrier_request(
+              init_image_barriers_wire, &init_image_barriers_decoded) ==
+          -EPROTO);
+    bvb_wire_put_u64(init_image_barriers_wire + 24U,
+                     UINT64_C(0x0700000000000002));
+    bvb_wire_put_u32(init_image_barriers_wire + 12U, 1U);
+    CHECK(bvb_protocol_decode_vulkan_command_buffer_image_barrier_request(
+              init_image_barriers_wire, &init_image_barriers_decoded) ==
+          -EPROTO);
+    bvb_wire_put_u32(init_image_barriers_wire + 12U, 0U);
+    bvb_wire_put_u32(init_image_barriers_wire + 8U,
+                     BVB_VULKAN_INIT_IMAGE_MAX_BARRIERS + 1U);
+    CHECK(bvb_protocol_decode_vulkan_command_buffer_image_barrier_request(
+              init_image_barriers_wire, &init_image_barriers_decoded) ==
+          -EPROTO);
     const struct bvb_vulkan_memory_verify_fill_request verify_fill = {
         .memory_id = buffer_bind.memory_id,
         .size = 4096U,

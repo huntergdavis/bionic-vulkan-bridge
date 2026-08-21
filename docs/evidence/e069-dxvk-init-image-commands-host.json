@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "gate": "E069",
+  "result": "pass_host_contract",
+  "objective": "forward the exact color-backbuffer initialization commands used by pinned DXVK's Tomb Raider D3D9 device reset while keeping every pointer and Vulkan aggregate local to its ABI",
+  "source": {
+    "dxvk_commit": "a6764047e587178283fcde4073ae6e1410af594f",
+    "d3d9_swapchain_path": "src/d3d9/d3d9_swapchain.cpp",
+    "d3d9_swapchain_sha256": "56e416e5c72254ce7b47fc6f6b8e09c70a38fca21161fc020e9c29a20b718b67",
+    "context_path": "src/dxvk/dxvk_context.cpp",
+    "context_sha256": "6f37deaaa7747aa8352e2942d20ccd76b546e6573756d9796a12297a2d62ed27",
+    "barrier_path": "src/dxvk/dxvk_barrier.cpp",
+    "barrier_sha256": "e48908c15f5736bb3be312d7fb289b8cc350d29c87cbf753d89481336042412e",
+    "command_list_path": "src/dxvk/dxvk_cmdlist.cpp",
+    "command_list_sha256": "72076ccf524ca946d785cb38a7a1ba92b8378076e99b020473b6a6327ab5536e",
+    "loader_path": "src/vulkan/vulkan_loader.h",
+    "loader_sha256": "f03087d3abcd32556b60b18ef4a8ade9ac48c4a67197942df964a8f8f4a5037b",
+    "call_locations": [
+      "D3D9SwapChainEx::CreateBackBuffers lines 1015-1072 injects the target non-Ex device's one through three backbuffers plus optional frontbuffer into DxvkContext::initImage",
+      "DxvkContext::initImage lines 960-996 records zero vkCmdClearColorImage and the undefined-to-transfer-dst transition",
+      "DxvkContext::endCurrentCommands lines 8478-8487 finalizes the accumulated init barrier batch",
+      "DxvkBarrierBatch::flush lines 483-507 calls the core vkCmdPipelineBarrier2 wrapper"
+    ],
+    "loader_core_names": [
+      "vkCmdClearColorImage",
+      "vkCmdPipelineBarrier2"
+    ],
+    "khr_alias_in_pinned_loader": false
+  },
+  "audited_order": {
+    "cpu_invocation": [
+      "vkCmdClearColorImage on InitBuffer",
+      "vkCmdPipelineBarrier2 on InitBarriers when command recording is finalized"
+    ],
+    "gpu_submission": [
+      "InitBarriers",
+      "InitBuffer"
+    ],
+    "semantic_reason": "the command lists are recorded in clear-then-finalize order but submitted in barrier-before-clear order"
+  },
+  "supported_shape": {
+    "images_per_barrier_batch": "one through four distinct color backbuffer images",
+    "clear": {
+      "layout": "VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL",
+      "color": "four zero 32-bit words",
+      "range_count": 1,
+      "subresource": "color aspect, base mip zero, one mip, base layer zero, one layer"
+    },
+    "dependency": {
+      "pNext": null,
+      "flags": 0,
+      "memory_barriers": 0,
+      "buffer_barriers": 0
+    },
+    "image_barrier": {
+      "pNext": null,
+      "source": "NONE stage and NONE access",
+      "destination": "TRANSFER stage and TRANSFER_WRITE access",
+      "layout": "UNDEFINED to TRANSFER_DST_OPTIMAL",
+      "queue_families": "both VK_QUEUE_FAMILY_IGNORED",
+      "subresource": "color aspect, base mip zero, one mip, base layer zero, one layer"
+    }
+  },
+  "wire": {
+    "opcodes": {
+      "vkCmdPipelineBarrier2": 102,
+      "vkCmdClearColorImage": 103
+    },
+    "barrier_request_bytes": 48,
+    "clear_request_bytes": 16,
+    "representation": "typed command-buffer ID, one to four typed image IDs, count, and zeroed reserved slots; all Vulkan constants are validated and reconstructed rather than transmitted",
+    "pointers_crossed": false,
+    "native_reconstruction": "the Bionic service resolves same-device native handles and reconstructs local VkDependencyInfo, VkImageMemoryBarrier2 array, VkClearColorValue, and VkImageSubresourceRange records"
+  },
+  "ownership": {
+    "client": "every image proxy must be a live child of the command buffer's device",
+    "service": "every image and command buffer must resolve to the same typed wire device ID and native VkDevice",
+    "native_handles_returned_to_client": false
+  },
+  "fail_closed": [
+    "null, unknown, or extended dependency and image-barrier pNext chains",
+    "memory barriers, buffer barriers, dependency flags, zero images, more than four images, or duplicate image IDs",
+    "non-zero clear values, non-transfer-destination layouts, multiple ranges, or non-canonical subresource ranges",
+    "non-canonical stage, access, layout, or queue-family fields",
+    "wrong-type, stale, missing, or cross-device command-buffer and image IDs",
+    "malformed lengths, non-zero reserved words, or non-zero unused image slots"
+  ],
+  "dispatch_policy": {
+    "baseline": "E068's complete 86-name executable list, including core buffer requirements2 and buffer device address",
+    "promotion": "core vkCmdClearColorImage and core vkCmdPipelineBarrier2 only",
+    "khr_alias": "vkCmdPipelineBarrier2KHR remains required_unimplemented because pinned DXVK's loader declares only the core member",
+    "counts": {
+      "executable": 88,
+      "required_unimplemented": 352,
+      "probed_null": 302
+    }
+  },
+  "verification": {
+    "base_commit": "30b7c31",
+    "host_contracts": "34/34 passed after final rebase onto E068",
+    "canonical_codec": "round trips both fixed records and rejects wrong handle types, duplicate image IDs, non-zero unused slots, malformed reserved words, and out-of-range batch counts",
+    "cross_process_fake_driver": "observes the exact native zero clear followed by the exact core synchronization2 barrier topology on native command buffer 0x5100 and image 0xa000; vkEndCommandBuffer fails if the native sequence or any field is wrong",
+    "unsupported_shape_contract": "non-zero clear and dependency flags are rejected client-side without reaching the fake native driver",
+    "hardware_or_game_claim": false
+  },
+  "corrected_sparse_audit": {
+    "cancelled_gate": "E067 vkGetDeviceImageMemoryRequirements",
+    "correction": "observing the device-buffer query alone did not prove that DXVK skipped its sparse image query",
+    "target_truth": "Turnip's Adreno 730 configuration reports sparseResidencyImage2D false because the A7xx gen1 profile does not enable ubwc_all_formats_compatible; DXVK therefore clears its sparse feature group and skips both sparse-memory-type probes",
+    "effect": "E067 was cancelled from target-specific native feature truth rather than inferred call order"
+  },
+  "excluded": {
+    "vkCmdClearDepthStencilImage": "conditional on an automatic depth/stencil image shape not yet shown by real Tomb Raider presentation evidence",
+    "opcode_104": "left unassigned"
+  },
+  "next_runtime_boundary": {
+    "exact_eager_unimplemented_call": null,
+    "conditional_candidate": "vkCmdClearDepthStencilImage only if a real presentation trace proves automatic depth/stencil initialization",
+    "next_gate": "deploy the host-proven color initialization slice and capture the first new real resolver/call boundary"
+  },
+  "reuse": "The required deja search found no indexed E069 implementation. E069 reuses E045/E046 fixed-width pointer-local RPC discipline, E031 command-buffer forwarding, E054 synchronization2 validation, and E063 typed native image ownership; the E067 sparse audit was corrected and cancelled before any code was added."
+}

@@ -34,6 +34,7 @@ def main() -> int:
         activity_frame_listener.settimeout(2.0)
         server_environment = os.environ.copy()
         server_environment["BVB_FAKE_HIDE_SWAPCHAIN"] = "1"
+        server_environment["BVB_FAKE_REQUIRE_INIT_IMAGE_COMMANDS"] = "1"
         server = subprocess.Popen(
             [
                 service,

@@ -174,7 +174,11 @@ int main(void) {
                         strcmp(entry->name, "vkDestroyImageView") == 0 ||
                         strcmp(entry->name,
                                "vkCreateGraphicsPipelines") == 0 ||
-                        strcmp(entry->name, "vkDestroyPipeline") == 0)) {
+                        strcmp(entry->name, "vkDestroyPipeline") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdPipelineBarrier2") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdClearColorImage") == 0)) {
                 CHECK(resolved == NULL);
             } else {
                 CHECK(resolved != NULL);
@@ -194,8 +198,8 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 86U);
-    CHECK(required_count == 354U);
+    CHECK(executable_count == 88U);
+    CHECK(required_count == 352U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");

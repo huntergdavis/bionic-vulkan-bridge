@@ -2091,6 +2091,59 @@ static int answer_vulkan_command_buffer_fill(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_command_buffer_image_barrier(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_COMMAND_BUFFER_IMAGE_BARRIER_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_command_buffer_image_barrier_request decoded;
+    int result = bvb_protocol_decode_vulkan_command_buffer_image_barrier_request(
+        request->payload, &decoded);
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_command_buffer_image_barrier(
+            context, &decoded, diagnostic, sizeof(diagnostic));
+    if (result != 0) {
+        fprintf(stderr, "bvb: command-buffer image barrier failed: %s\n",
+                diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_command_buffer_clear_color_image(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_COMMAND_BUFFER_CLEAR_COLOR_IMAGE_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_command_buffer_clear_color_image_request decoded;
+    int result =
+        bvb_protocol_decode_vulkan_command_buffer_clear_color_image_request(
+            request->payload, &decoded);
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_command_buffer_clear_color_image(
+            context, &decoded, diagnostic, sizeof(diagnostic));
+    if (result != 0) {
+        fprintf(stderr, "bvb: command-buffer clear color image failed: %s\n",
+                diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_memory_verify_fill(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context) {
@@ -3040,6 +3093,14 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_COMMAND_BUFFER_FILL) {
             result = answer_vulkan_command_buffer_fill(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMAGE_BARRIER) {
+            result = answer_vulkan_command_buffer_image_barrier(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_COMMAND_BUFFER_CLEAR_COLOR_IMAGE) {
+            result = answer_vulkan_command_buffer_clear_color_image(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_MEMORY_VERIFY_FILL) {

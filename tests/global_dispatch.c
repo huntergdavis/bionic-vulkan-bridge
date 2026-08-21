@@ -672,6 +672,8 @@ int main(void) {
     PFN_vkFlushMappedMemoryRanges flush_mapped_memory_ranges = NULL;
     PFN_vkInvalidateMappedMemoryRanges invalidate_mapped_memory_ranges = NULL;
     PFN_vkCmdFillBuffer cmd_fill_buffer = NULL;
+    PFN_vkCmdClearColorImage cmd_clear_color_image = NULL;
+    PFN_vkCmdPipelineBarrier2 cmd_pipeline_barrier_2 = NULL;
     PFN_vkCreateFence create_fence = NULL;
     PFN_vkDestroyFence destroy_fence = NULL;
     PFN_vkGetFenceStatus get_fence_status = NULL;
@@ -815,6 +817,14 @@ int main(void) {
     erased = vkGetDeviceProcAddr(device, "vkCmdFillBuffer");
     CHECK(erased != NULL);
     memcpy(&cmd_fill_buffer, &erased, sizeof(cmd_fill_buffer));
+    erased = vkGetDeviceProcAddr(device, "vkCmdClearColorImage");
+    CHECK(erased != NULL);
+    memcpy(&cmd_clear_color_image, &erased, sizeof(cmd_clear_color_image));
+    erased = vkGetDeviceProcAddr(device, "vkCmdPipelineBarrier2");
+    CHECK(erased != NULL);
+    memcpy(&cmd_pipeline_barrier_2, &erased,
+           sizeof(cmd_pipeline_barrier_2));
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdPipelineBarrier2KHR") == NULL);
     erased = vkGetDeviceProcAddr(device, "vkCreateFence");
     CHECK(erased != NULL);
     memcpy(&create_fence, &erased, sizeof(create_fence));
@@ -1672,6 +1682,51 @@ int main(void) {
     };
     CHECK(begin_command_buffer(command_buffer, &begin_info) == VK_SUCCESS);
     cmd_fill_buffer(command_buffer, buffer, 0U, 4096U, UINT32_C(0xa5c3f00d));
+    const VkImageSubresourceRange init_image_range = {
+        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .levelCount = 1U,
+        .layerCount = 1U,
+    };
+    VkClearColorValue rejected_init_color = {
+        .uint32 = {1U, 0U, 0U, 0U},
+    };
+    cmd_clear_color_image(command_buffer, image,
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                          &rejected_init_color, 1U, &init_image_range);
+    const VkClearColorValue init_color = {0};
+    cmd_clear_color_image(command_buffer, image,
+                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                          &init_color, 1U, &init_image_range);
+    VkImageMemoryBarrier2 init_image_barrier = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+        .srcStageMask = VK_PIPELINE_STAGE_2_NONE,
+        .srcAccessMask = VK_ACCESS_2_NONE,
+        .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+        .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+        .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = image,
+        .subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .levelCount = 1U,
+            .layerCount = 1U,
+        },
+    };
+    VkDependencyInfo rejected_dependency = {
+        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
+        .imageMemoryBarrierCount = 1U,
+        .pImageMemoryBarriers = &init_image_barrier,
+    };
+    cmd_pipeline_barrier_2(command_buffer, &rejected_dependency);
+    const VkDependencyInfo init_dependency = {
+        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .imageMemoryBarrierCount = 1U,
+        .pImageMemoryBarriers = &init_image_barrier,
+    };
+    cmd_pipeline_barrier_2(command_buffer, &init_dependency);
     CHECK(end_command_buffer(command_buffer) == VK_SUCCESS);
     const VkSubmitInfo command_submit = {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,

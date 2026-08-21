@@ -47,7 +47,7 @@ def main() -> int:
                 "--additional-executable",
                 str(additional),
                 "--gate",
-                "E068",
+                "E069",
             ],
             check=True,
         )
@@ -58,11 +58,11 @@ def main() -> int:
         assert summary == {
             "command_count": 742,
             "resolved_name_count": 440,
-            "executable_name_count": 86,
+            "executable_name_count": 88,
             "support_counts": {
                 "probed_null": 302,
-                "required_unimplemented": 354,
-                "executable": 86,
+                "required_unimplemented": 352,
+                "executable": 88,
             },
             "dispatch_scope_counts": {
                 "global": 4,
@@ -105,7 +105,7 @@ def main() -> int:
                 expected_support = "BVB_DXVK_SUPPORT_PROBED_NULL"
             assert support == expected_support
 
-    print("PASS: generated E068 DXVK dispatch policy")
+    print("PASS: generated E069 DXVK dispatch policy")
     return 0
 
 

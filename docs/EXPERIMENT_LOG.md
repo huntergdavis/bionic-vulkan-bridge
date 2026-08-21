@@ -2787,3 +2787,40 @@ E046 typed ownership, E056/E063 bounded local `pNext` reconstruction, E066
 requirements validation, and the existing generated policy mechanism. Real
 Turnip execution, feature gating, Tomb Raider progress, dedicated buffer
 allocation, and the next runtime boundary remain unproven pending deployment.
+## E069 — DXVK D3D9 color-image initialization commands (2026-08-21)
+
+Status: passed through the cross-process host fake driver; no Android, game
+frame, or FPS claim. Pinned DXVK
+`a6764047e587178283fcde4073ae6e1410af594f` creates Tomb Raider's D3D9
+backbuffers in batches of one through four and initializes each ordinary color
+image with a zero `vkCmdClearColorImage`. It records the clear first, then
+finalizes the accumulated undefined-to-transfer-destination transition through
+core `vkCmdPipelineBarrier2`; submission deliberately executes the barrier
+command buffer before the clear command buffer.
+
+E069 carries those exact shapes through opcodes 102 and 103. The 48-byte
+barrier record contains one typed command-buffer ID, a count, and four bounded
+typed image slots. The 16-byte clear record contains only the command-buffer
+and image IDs. No pointer or Vulkan aggregate crosses the ABI: the Bionic
+service verifies same-device native ownership and reconstructs local
+`VkDependencyInfo`, `VkImageMemoryBarrier2`, `VkClearColorValue`, and
+`VkImageSubresourceRange` records. Unsupported chains, flags, layouts, access
+masks, stages, ranges, duplicate images, and stale or cross-device handles are
+rejected without forwarding.
+
+The cross-process fake driver checks every native field and requires the exact
+DXVK CPU call order before `vkEndCommandBuffer` can succeed. Generated policy
+promotes only core `vkCmdClearColorImage` and core `vkCmdPipelineBarrier2`, for
+88 executable, 352 required-unimplemented, and 302 probed-null names. The KHR
+barrier alias stays null because the pinned loader has no alias member.
+Conditional depth/stencil initialization remains excluded pending a real
+Tomb Raider presentation trace, and opcode 104 remains unassigned.
+
+Canonical evidence is
+`docs/evidence/e069-dxvk-init-image-commands-host.json`. The required `deja`
+query found no indexed implementation. E069 reuses E045/E046 fixed-width
+pointer-local transport, E031 command-buffer forwarding, E054 synchronization2
+validation, and E063 typed native image ownership. The earlier E067 proposal
+was corrected and cancelled: the Adreno 730's native Turnip feature truth makes
+DXVK disable sparse image probing; observing the buffer query alone did not
+prove that conclusion.

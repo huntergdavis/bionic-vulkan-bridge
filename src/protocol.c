@@ -2569,6 +2569,85 @@ int bvb_protocol_decode_vulkan_command_buffer_fill_request(
                ? 0 : -EPROTO;
 }
 
+static int init_image_barrier_request_valid(
+    const struct bvb_vulkan_command_buffer_image_barrier_request *request) {
+    if (request == NULL ||
+        !wire_id_is_type(request->command_buffer_id, 11U) ||
+        request->image_count == 0U ||
+        request->image_count > BVB_VULKAN_INIT_IMAGE_MAX_BARRIERS)
+        return 0;
+    for (uint32_t index = 0U; index < request->image_count; ++index) {
+        if (!wire_id_is_type(request->image_ids[index], BVB_OBJECT_IMAGE))
+            return 0;
+        for (uint32_t earlier = 0U; earlier < index; ++earlier)
+            if (request->image_ids[earlier] == request->image_ids[index])
+                return 0;
+    }
+    return 1;
+}
+
+int bvb_protocol_encode_vulkan_command_buffer_image_barrier_request(
+    uint8_t output[BVB_VULKAN_COMMAND_BUFFER_IMAGE_BARRIER_REQUEST_SIZE],
+    const struct bvb_vulkan_command_buffer_image_barrier_request *request) {
+    if (output == NULL || !init_image_barrier_request_valid(request))
+        return -EINVAL;
+    memset(output, 0, BVB_VULKAN_COMMAND_BUFFER_IMAGE_BARRIER_REQUEST_SIZE);
+    bvb_wire_put_u64(output, request->command_buffer_id);
+    bvb_wire_put_u32(output + 8, request->image_count);
+    for (uint32_t index = 0U; index < request->image_count; ++index)
+        bvb_wire_put_u64(output + 16U + index * sizeof(uint64_t),
+                         request->image_ids[index]);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_command_buffer_image_barrier_request(
+    const uint8_t input[BVB_VULKAN_COMMAND_BUFFER_IMAGE_BARRIER_REQUEST_SIZE],
+    struct bvb_vulkan_command_buffer_image_barrier_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    struct bvb_vulkan_command_buffer_image_barrier_request decoded = {
+        .command_buffer_id = bvb_wire_get_u64(input),
+        .image_count = bvb_wire_get_u32(input + 8),
+    };
+    if (bvb_wire_get_u32(input + 12) != 0U) return -EPROTO;
+    for (uint32_t index = 0U; index < BVB_VULKAN_INIT_IMAGE_MAX_BARRIERS;
+         ++index) {
+        decoded.image_ids[index] =
+            bvb_wire_get_u64(input + 16U + index * sizeof(uint64_t));
+        if (index >= decoded.image_count && decoded.image_ids[index] != 0U)
+            return -EPROTO;
+    }
+    if (!init_image_barrier_request_valid(&decoded)) return -EPROTO;
+    *request = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_command_buffer_clear_color_image_request(
+    uint8_t output[
+        BVB_VULKAN_COMMAND_BUFFER_CLEAR_COLOR_IMAGE_REQUEST_SIZE],
+    const struct bvb_vulkan_command_buffer_clear_color_image_request *request) {
+    if (output == NULL || request == NULL ||
+        !wire_id_is_type(request->command_buffer_id, 11U) ||
+        !wire_id_is_type(request->image_id, BVB_OBJECT_IMAGE))
+        return -EINVAL;
+    bvb_wire_put_u64(output, request->command_buffer_id);
+    bvb_wire_put_u64(output + 8, request->image_id);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_command_buffer_clear_color_image_request(
+    const uint8_t input[
+        BVB_VULKAN_COMMAND_BUFFER_CLEAR_COLOR_IMAGE_REQUEST_SIZE],
+    struct bvb_vulkan_command_buffer_clear_color_image_request *request) {
+    if (input == NULL || request == NULL) return -EINVAL;
+    *request = (struct bvb_vulkan_command_buffer_clear_color_image_request){
+        .command_buffer_id = bvb_wire_get_u64(input),
+        .image_id = bvb_wire_get_u64(input + 8),
+    };
+    return wire_id_is_type(request->command_buffer_id, 11U) &&
+                   wire_id_is_type(request->image_id, BVB_OBJECT_IMAGE)
+               ? 0 : -EPROTO;
+}
+
 int bvb_protocol_encode_vulkan_memory_verify_fill_request(
     uint8_t output[BVB_VULKAN_MEMORY_VERIFY_FILL_REQUEST_SIZE],
     const struct bvb_vulkan_memory_verify_fill_request *request) {

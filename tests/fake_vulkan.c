@@ -43,6 +43,9 @@ static int fake_submitted;
 static int fake_fence_created;
 static int fake_fence_signaled;
 static uint32_t fake_descriptor_step;
+static uint32_t fake_init_image_step;
+static VkCommandBuffer fake_init_image_command = VK_NULL_HANDLE;
+static int fake_init_image_violation;
 static const VkDescriptorSetLayout fake_descriptor_layout =
     (VkDescriptorSetLayout)(uintptr_t)UINT64_C(0xa100);
 static const VkDescriptorPool fake_descriptor_pool =
@@ -784,6 +787,9 @@ static void VKAPI_CALL fake_destroy_device(
     fake_to_present_barrier = 0;
     fake_submitted = 0;
     fake_descriptor_step = 0U;
+    fake_init_image_step = 0U;
+    fake_init_image_command = VK_NULL_HANDLE;
+    fake_init_image_violation = 0;
 }
 
 static VkResult VKAPI_CALL fake_create_descriptor_set_layout(
@@ -1835,6 +1841,9 @@ static VkResult VKAPI_CALL fake_allocate_command_buffers(
          ++index)
         command_buffers[index] =
             (VkCommandBuffer)(uintptr_t)(0x5100U + index);
+    if (getenv("BVB_FAKE_REQUIRE_INIT_IMAGE_COMMANDS") != NULL)
+        fake_init_image_command = allocate_info->commandBufferCount == 1U
+            ? command_buffers[0] : VK_NULL_HANDLE;
     return VK_SUCCESS;
 }
 
@@ -1850,14 +1859,25 @@ static void VKAPI_CALL fake_free_command_buffers(
 static VkResult VKAPI_CALL fake_begin_command_buffer(
     VkCommandBuffer command_buffer,
     const VkCommandBufferBeginInfo *begin_info) {
-    (void)command_buffer;
     (void)begin_info;
+    if (getenv("BVB_FAKE_REQUIRE_INIT_IMAGE_COMMANDS") != NULL &&
+        command_buffer == fake_init_image_command) {
+        fake_init_image_step = 1U;
+        fake_init_image_violation = 0;
+    }
     return VK_SUCCESS;
 }
 
 static VkResult VKAPI_CALL fake_end_command_buffer(
     VkCommandBuffer command_buffer) {
     (void)command_buffer;
+    if (command_buffer == fake_init_image_command) {
+        if (fake_init_image_step != 3U || fake_init_image_violation != 0)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        fake_init_image_step = 0U;
+        fake_init_image_command = VK_NULL_HANDLE;
+        fake_init_image_violation = 0;
+    }
     return VK_SUCCESS;
 }
 
@@ -1919,9 +1939,24 @@ static void VKAPI_CALL fake_cmd_clear_color_image(
     VkCommandBuffer command_buffer, VkImage image, VkImageLayout image_layout,
     const VkClearColorValue *color, uint32_t range_count,
     const VkImageSubresourceRange *ranges) {
-    (void)command_buffer;
-    (void)image;
-    (void)ranges;
+    const bool exact_init_clear =
+        command_buffer == fake_init_image_command &&
+        image == (VkImage)(uintptr_t)UINT64_C(0xa000) &&
+        image_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+        color != NULL && color->uint32[0] == 0U &&
+        color->uint32[1] == 0U && color->uint32[2] == 0U &&
+        color->uint32[3] == 0U && range_count == 1U && ranges != NULL &&
+        ranges[0].aspectMask == VK_IMAGE_ASPECT_COLOR_BIT &&
+        ranges[0].baseMipLevel == 0U && ranges[0].levelCount == 1U &&
+        ranges[0].baseArrayLayer == 0U && ranges[0].layerCount == 1U &&
+        fake_init_image_step == 1U;
+    if (command_buffer == fake_init_image_command &&
+        fake_init_image_step == 1U) {
+        if (exact_init_clear)
+            fake_init_image_step = 2U;
+        else
+            fake_init_image_violation = 1;
+    }
     if (fake_image_acquired != 0 && fake_to_clear_barrier != 0 &&
         image_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
         color != NULL && color->float32[0] == 1.0F &&
@@ -1929,6 +1964,49 @@ static void VKAPI_CALL fake_cmd_clear_color_image(
         color->float32[3] == 1.0F && range_count == 1U) {
         fake_clear_recorded = 1;
     }
+}
+
+static void VKAPI_CALL fake_cmd_pipeline_barrier_2(
+    VkCommandBuffer command_buffer,
+    const VkDependencyInfo *dependency_info) {
+    if (fake_init_image_step != 2U ||
+        command_buffer != fake_init_image_command ||
+        dependency_info == NULL ||
+        dependency_info->sType != VK_STRUCTURE_TYPE_DEPENDENCY_INFO ||
+        dependency_info->pNext != NULL ||
+        dependency_info->dependencyFlags != 0U ||
+        dependency_info->memoryBarrierCount != 0U ||
+        dependency_info->pMemoryBarriers != NULL ||
+        dependency_info->bufferMemoryBarrierCount != 0U ||
+        dependency_info->pBufferMemoryBarriers != NULL ||
+        dependency_info->imageMemoryBarrierCount != 1U ||
+        dependency_info->pImageMemoryBarriers == NULL) {
+        if (command_buffer == fake_init_image_command)
+            fake_init_image_violation = 1;
+        return;
+    }
+    const VkImageMemoryBarrier2 *barrier =
+        &dependency_info->pImageMemoryBarriers[0];
+    if (barrier->sType == VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 &&
+        barrier->pNext == NULL &&
+        barrier->srcStageMask == VK_PIPELINE_STAGE_2_NONE &&
+        barrier->srcAccessMask == VK_ACCESS_2_NONE &&
+        barrier->dstStageMask == VK_PIPELINE_STAGE_2_TRANSFER_BIT &&
+        barrier->dstAccessMask == VK_ACCESS_2_TRANSFER_WRITE_BIT &&
+        barrier->oldLayout == VK_IMAGE_LAYOUT_UNDEFINED &&
+        barrier->newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+        barrier->srcQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED &&
+        barrier->dstQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED &&
+        barrier->image == (VkImage)(uintptr_t)UINT64_C(0xa000) &&
+        barrier->subresourceRange.aspectMask ==
+            VK_IMAGE_ASPECT_COLOR_BIT &&
+        barrier->subresourceRange.baseMipLevel == 0U &&
+        barrier->subresourceRange.levelCount == 1U &&
+        barrier->subresourceRange.baseArrayLayer == 0U &&
+        barrier->subresourceRange.layerCount == 1U) {
+        fake_init_image_step = 3U;
+    } else
+        fake_init_image_violation = 1;
 }
 
 static void VKAPI_CALL fake_cmd_copy_image_to_buffer(
@@ -2241,6 +2319,7 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkEndCommandBuffer", fake_end_command_buffer)
     BVB_DEVICE_MATCH("vkCmdFillBuffer", fake_cmd_fill_buffer)
     BVB_DEVICE_MATCH("vkCmdPipelineBarrier", fake_cmd_pipeline_barrier)
+    BVB_DEVICE_MATCH("vkCmdPipelineBarrier2", fake_cmd_pipeline_barrier_2)
     BVB_DEVICE_MATCH("vkCmdClearColorImage", fake_cmd_clear_color_image)
     BVB_DEVICE_MATCH("vkCmdCopyImageToBuffer", fake_cmd_copy_image_to_buffer)
     BVB_DEVICE_MATCH("vkQueueSubmit", fake_queue_submit)
