@@ -777,6 +777,18 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
   )
   add_test(
+    NAME e077-tablet-evidence-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e077_tablet_evidence.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e077-upload-memory-transport-tablet.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e077-predeployment-rollback-tablet.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-rich-frame-animation-v40-termux.sh"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/EXPERIMENT_LOG.md"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/raw/e077-authoritative-strict-global.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/raw/e077-authoritative-shared-global.json"
+  )
+  add_test(
     NAME global-activity-harness-contract
     COMMAND
       "${Python3_EXECUTABLE}"

@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "gate": "E077-predeployment-rollback-snapshot",
+  "result": "pass",
+  "captured_at": "2026-08-21T05:35:00-07:00",
+  "snapshot": {
+    "path": "/data/data/com.termux/files/home/steam-arm64/bvb-backups/e073-and-selectors-pre-e077-20260821T0535PDT",
+    "owner": "u0_a469",
+    "mode": "0700",
+    "no_clobber": true
+  },
+  "files": [
+    {
+      "label": "installed E073 glibc ICD",
+      "source": "/data/data/com.termux/files/home/steam-arm64/bvb/lib/libvulkan-bvb-glibc.so",
+      "backup": "/data/data/com.termux/files/home/steam-arm64/bvb-backups/e073-and-selectors-pre-e077-20260821T0535PDT/bvb/lib/libvulkan-bvb-glibc.so",
+      "mode": "0700",
+      "source_sha256": "c0b3dbf36f45bad941a8579bf37bcc8d5773ac7b4d3c0e10a601b58fc4aee3eb",
+      "backup_sha256": "c0b3dbf36f45bad941a8579bf37bcc8d5773ac7b4d3c0e10a601b58fc4aee3eb"
+    },
+    {
+      "label": "installed E073 Bionic service",
+      "source": "/data/data/com.termux/files/home/steam-arm64/bvb/bin/bvb-bridge-service",
+      "backup": "/data/data/com.termux/files/home/steam-arm64/bvb-backups/e073-and-selectors-pre-e077-20260821T0535PDT/bvb/bin/bvb-bridge-service",
+      "mode": "0700",
+      "source_sha256": "0917ef33209b0ea32a337de48646908057854f829387671d0a832ec707371241",
+      "backup_sha256": "0917ef33209b0ea32a337de48646908057854f829387671d0a832ec707371241"
+    },
+    {
+      "label": "installed E073 ICD manifest",
+      "source": "/data/data/com.termux/files/home/steam-arm64/bvb/icd.d/bvb_icd.aarch64.json",
+      "backup": "/data/data/com.termux/files/home/steam-arm64/bvb-backups/e073-and-selectors-pre-e077-20260821T0535PDT/bvb/icd.d/bvb_icd.aarch64.json",
+      "mode": "0600",
+      "source_sha256": "77f3395e3f657b6a7274c182afe994edacda2a4b38d49814ea84440520af33df",
+      "backup_sha256": "77f3395e3f657b6a7274c182afe994edacda2a4b38d49814ea84440520af33df"
+    },
+    {
+      "label": "installed E073 stamp",
+      "source": "/data/data/com.termux/files/home/steam-arm64/bvb/install.sha256",
+      "backup": "/data/data/com.termux/files/home/steam-arm64/bvb-backups/e073-and-selectors-pre-e077-20260821T0535PDT/bvb/install.sha256",
+      "mode": "0600",
+      "source_sha256": "8ca779fff99eeebfedbba5b6d7a97a8715d0d9ff44dcfbdb2931180e9c673cb3",
+      "backup_sha256": "8ca779fff99eeebfedbba5b6d7a97a8715d0d9ff44dcfbdb2931180e9c673cb3"
+    },
+    {
+      "label": "installed Tomb Raider BVB probe",
+      "source": "/data/data/com.termux/files/home/start-tombraider-bvb-probe",
+      "backup": "/data/data/com.termux/files/home/steam-arm64/bvb-backups/e073-and-selectors-pre-e077-20260821T0535PDT/selectors/home/start-tombraider-bvb-probe",
+      "mode": "0700",
+      "source_sha256": "e534c471608e6cbd8213730b8073b858559eba88dd761985254ad1bafc8ba74f",
+      "backup_sha256": "e534c471608e6cbd8213730b8073b858559eba88dd761985254ad1bafc8ba74f"
+    },
+    {
+      "label": "installed Tomb Raider direct wrapper",
+      "source": "/data/data/com.termux/files/home/start-tombraider-direct-dispatch",
+      "backup": "/data/data/com.termux/files/home/steam-arm64/bvb-backups/e073-and-selectors-pre-e077-20260821T0535PDT/selectors/home/start-tombraider-direct-dispatch",
+      "mode": "0700",
+      "source_sha256": "63c4df870fce5f9af4db4634f545bff90b020d370b8f4af27f4e41456463c137",
+      "backup_sha256": "63c4df870fce5f9af4db4634f545bff90b020d370b8f4af27f4e41456463c137"
+    },
+    {
+      "label": "installed Pressure Vessel dispatcher",
+      "source": "/data/data/com.termux/files/home/steam-arm64/compat-bin/pressure-vessel-direct-dispatch.py",
+      "backup": "/data/data/com.termux/files/home/steam-arm64/bvb-backups/e073-and-selectors-pre-e077-20260821T0535PDT/selectors/compat-bin/pressure-vessel-direct-dispatch.py",
+      "mode": "0700",
+      "source_sha256": "f5025f54b64ecf22f1a849710cf14fba6a2afe95cadcbbf0a355151c7dc85b4c",
+      "backup_sha256": "f5025f54b64ecf22f1a849710cf14fba6a2afe95cadcbbf0a355151c7dc85b4c"
+    }
+  ],
+  "private_turnip": {
+    "path": "/data/data/com.termux/files/home/steam-arm64/bvb/driver/libvulkan_freedreno.so",
+    "sha256": "8ac6ef78c3c92998aa46c59fd0081edcba82756f5bad561d1b24a57684874a45",
+    "copied": false,
+    "installer_does_not_replace": true
+  },
+  "protected_processes": [
+    {
+      "name": "Steam",
+      "pid": 5973,
+      "start_ticks": 97713020,
+      "survived": true
+    },
+    {
+      "name": "Termux:X11",
+      "pid": 27923,
+      "start_ticks": 97300251,
+      "survived": true
+    }
+  ],
+  "changes": {
+    "installed_files_replaced": false,
+    "bridge_deployed": false,
+    "apk_installed": false,
+    "ui_launched": false
+  },
+  "recall": {
+    "query": "E077 bridge runtime candidate deployment rollback E073 Steam X11 v40",
+    "result": "no indexed implementation",
+    "reused": [
+      "E073 installed payload identities",
+      "E074 v40 fail-closed preflight",
+      "E077 candidate artifact identities"
+    ]
+  }
+}

@@ -3233,7 +3233,7 @@ abbreviated `7dd1ffe` to a nonexistent full hash. Both strict-kept-mapped and
 shared-upload-only hardware runs were repeated from the unchanged exact archive
 with Git's authoritative full hash above; this log and the compact evidence now
 reference only the repeated raw artifacts. The same review also corrected the
-historical `--bridge-client` default to the actual installed E073 baseline ICD
+historical baseline-artifact default to the actual installed E073 glibc ICD
 path. That baseline identity check is separate from the newly pinned candidate
 ICD that the producer really loads.
 
@@ -3247,3 +3247,12 @@ dispatcher (`f5025f54...b4c`). Every source/backup SHA-256 pair matched before
 the snapshot was accepted. The operation did not replace installed files or
 change the live Steam/X11 processes. This closes the deployment review's E073
 rollback gap; it does not authorize deployment before the v40 RGBW visual gate.
+The complete source/backup paths, modes, full SHA-256 values, unchanged Turnip
+identity, and protected process start ticks are retained in
+`docs/evidence/e077-predeployment-rollback-tablet.json`. The
+`e077-tablet-evidence-contract` mechanically ties that rollback manifest to the
+compact transport evidence, RGBW artifact pins, round-trip arithmetic, and the
+compact evidence checksum.
+The two authoritative 12,785-byte and 12,797-byte hardware records are archived
+byte-for-byte under `docs/evidence/raw/`; their recomputed SHA-256 values are the
+strict/shared raw hashes recorded by the compact evidence.

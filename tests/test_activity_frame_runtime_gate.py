@@ -120,6 +120,32 @@ def main() -> int:
         )
         gate.validate_client_bridge_icd(producer, bridge_icd, str(readelf), 2.0)
 
+        renamed_icd = root / "renamed.so"
+        renamed_icd.write_bytes(bridge_icd.read_bytes())
+        try:
+            gate.validate_client_bridge_icd(producer, renamed_icd, str(readelf), 2.0)
+        except gate.GateFailure:
+            pass
+        else:
+            raise AssertionError("renamed pinned ICD was accepted for the literal soname")
+
+        shadow = root / "shadow"
+        shadow.mkdir()
+        (shadow / "libvulkan-bvb-glibc.so").write_bytes(b"shadow")
+        shadow_readelf = write_tool(
+            root / "readelf-shadow",
+            "print(' 0x1 (NEEDED) Shared library: [libvulkan-bvb-glibc.so]')\n"
+            f"print(' 0x1d (RUNPATH) Library runpath: [{shadow}:{root}]')\n",
+        )
+        try:
+            gate.validate_client_bridge_icd(
+                producer, bridge_icd, str(shadow_readelf), 2.0
+            )
+        except gate.GateFailure:
+            pass
+        else:
+            raise AssertionError("shadowing RUNPATH entry was accepted")
+
         pm = write_tool(
             root / "pm",
             f"print('package:{installed}')\n",
@@ -236,7 +262,7 @@ def main() -> int:
         "force-stop",
         "visible_game_claim",
         "fps_claim",
-        "EXPECTED_BRIDGE_CLIENT_SHA256",
+        "EXPECTED_INSTALLED_GLIBC_ICD_SHA256",
         "EXPECTED_BRIDGE_SERVICE_SHA256",
         "EXPECTED_PRIVATE_TURNIP_SHA256",
         '"libvulkan-bvb-glibc.so"',
@@ -272,7 +298,10 @@ def main() -> int:
     assert evidence["runtime_contract"]["wrong_token_status"] == -13
     assert evidence["installed_payload_before_gate"]["one_shot_icd_test"] == "pass"
     installed_payload = evidence["installed_payload_before_gate"]
-    assert installed_payload["bridge_client_sha256"] == gate.EXPECTED_BRIDGE_CLIENT_SHA256
+    assert (
+        installed_payload["bridge_client_sha256"]
+        == gate.EXPECTED_INSTALLED_GLIBC_ICD_SHA256
+    )
     assert installed_payload["bridge_service_sha256"] == gate.EXPECTED_BRIDGE_SERVICE_SHA256
     assert installed_payload["private_turnip_sha256"] == gate.EXPECTED_PRIVATE_TURNIP_SHA256
 

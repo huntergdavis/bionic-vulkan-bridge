@@ -39,7 +39,7 @@ PACKAGE = "io.github.huntergdavis.bvb.visiblehost"
 ACTIVITY = f"{PACKAGE}/.VisibleHostActivity"
 FRAME_CLIENT = f"{PACKAGE}.FrameTransportClient"
 EXPECTED_VERSION_CODE = 40
-EXPECTED_BRIDGE_CLIENT_SHA256 = "c0b3dbf36f45bad941a8579bf37bcc8d5773ac7b4d3c0e10a601b58fc4aee3eb"
+EXPECTED_INSTALLED_GLIBC_ICD_SHA256 = "c0b3dbf36f45bad941a8579bf37bcc8d5773ac7b4d3c0e10a601b58fc4aee3eb"
 EXPECTED_BRIDGE_SERVICE_SHA256 = "0917ef33209b0ea32a337de48646908057854f829387671d0a832ec707371241"
 EXPECTED_PRIVATE_TURNIP_SHA256 = "8ac6ef78c3c92998aa46c59fd0081edcba82756f5bad561d1b24a57684874a45"
 ANDROID_NAMESPACE = "{http://schemas.android.com/apk/res/android}"
@@ -435,8 +435,11 @@ def validate_client_bridge_icd(
     readelf: str,
     timeout: float,
 ) -> None:
+    soname = "libvulkan-bvb-glibc.so"
+    if bridge_icd.name != soname:
+        raise GateFailure(f"pinned producer ICD must have the literal soname {soname}")
     dynamic = run_text([readelf, "-d", str(client)], timeout=timeout).stdout
-    needed = "Shared library: [libvulkan-bvb-glibc.so]"
+    needed = f"Shared library: [{soname}]"
     if dynamic.count(needed) != 1:
         raise GateFailure("producer does not need exactly one BVB glibc ICD")
     runpath_match = re.search(
@@ -450,11 +453,11 @@ def validate_client_bridge_icd(
         for item in runpath_match.group(1).split(":")
         if item
     ]
-    if bridge_icd.parent != client.parent or client.parent not in runpaths:
+    if bridge_icd.parent != client.parent or runpaths != [client.parent]:
         raise GateFailure(
-            "producer RUNPATH does not select the pinned adjacent BVB glibc ICD"
+            "producer RUNPATH must contain only its pinned adjacent BVB glibc ICD directory"
         )
-    adjacent = resolve_regular_file(client.parent / bridge_icd.name)
+    adjacent = resolve_regular_file(client.parent / soname)
     if not adjacent.samefile(bridge_icd):
         raise GateFailure("producer-adjacent BVB glibc ICD is not the pinned artifact")
 
@@ -483,7 +486,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--service-loader", default=str(pathlib.Path.home() / "steam-arm64" / "bvb" / "driver" / "libvulkan_freedreno.so"))
     parser.add_argument("--service", default=str(pathlib.Path.home() / "steam-arm64" / "bvb" / "bin" / "bvb-bridge-service"))
     parser.add_argument(
-        "--bridge-client",
+        "--installed-glibc-icd",
         default=str(
             pathlib.Path.home()
             / "steam-arm64"
@@ -665,8 +668,9 @@ def run(arguments: argparse.Namespace) -> int:
             arguments.expected_service_sha256 or EXPECTED_BRIDGE_SERVICE_SHA256,
             "selected bridge service", executable=True,
         )
-        installed_bridge_client = require_artifact_sha256(
-            pathlib.Path(arguments.bridge_client), EXPECTED_BRIDGE_CLIENT_SHA256,
+        installed_glibc_icd = require_artifact_sha256(
+            pathlib.Path(arguments.installed_glibc_icd),
+            EXPECTED_INSTALLED_GLIBC_ICD_SHA256,
             "installed E073 baseline glibc ICD",
         )
 
@@ -696,7 +700,7 @@ def run(arguments: argparse.Namespace) -> int:
             validate_client_bridge_icd(client, bridge_icd, readelf, arguments.timeout)
         result["artifacts"] = {
             "service": artifact(service),
-            "installed_bridge_client": artifact(installed_bridge_client),
+            "installed_glibc_icd": artifact(installed_glibc_icd),
             "client": artifact(client),
             "service_loader": artifact(loader),
         }
