@@ -320,12 +320,21 @@ def wait_for_renderer(
 
 
 def wait_for_abstract_socket(
-    process: subprocess.Popen[Any], socket_name: str, proc_net_unix: pathlib.Path, timeout: float
+    process: subprocess.Popen[Any], socket_name: str, proc_net_unix: pathlib.Path,
+    timeout: float, adb_shell_prefix: list[str] | None = None,
 ) -> None:
     deadline = time.monotonic() + timeout
     marker = f"@{socket_name}"
     while time.monotonic() < deadline:
-        text = proc_net_unix.read_text(errors="replace")
+        if adb_shell_prefix:
+            result = run_text(
+                adb_shell_prefix + ["cat", "/proc/net/unix"],
+                timeout=min(2.0, max(0.1, deadline - time.monotonic())),
+                check=False,
+            )
+            text = result.stdout
+        else:
+            text = proc_net_unix.read_text(errors="replace")
         if marker in text:
             return
         if process.poll() is not None:
@@ -818,6 +827,7 @@ def run(arguments: argparse.Namespace) -> int:
         wait_for_abstract_socket(
             helper_process, frame_socket, pathlib.Path(arguments.proc_net_unix),
             min(arguments.timeout, 15.0),
+            android_shell_prefix if arguments.adb_serial else None,
         )
 
         client_out_handle = client_stdout.open("wb")

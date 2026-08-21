@@ -276,6 +276,7 @@ def main() -> int:
         'android_shell_prefix + ["am"]',
         '[adb, "-s", arguments.adb_serial, "logcat"]',
         'android_shell_prefix + ["pidof", PACKAGE]',
+        'adb_shell_prefix + ["cat", "/proc/net/unix"]',
         "remains visible for human confirmation",
         "visible_game_claim",
         "fps_claim",
