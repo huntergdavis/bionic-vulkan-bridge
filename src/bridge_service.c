@@ -1690,8 +1690,8 @@ static int answer_vulkan_builtin_graphics_pipeline_create(
             sizeof(diagnostic));
     }
     if (result != 0) {
-        fprintf(stderr, "bvb: built-in graphics create failed: %s\n",
-                diagnostic);
+        fprintf(stderr, "bvb: built-in graphics create failed: %d %s\n",
+                result, diagnostic);
         response.header.status = result;
     } else {
         result = bvb_protocol_encode_vulkan_object_create_response(

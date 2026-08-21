@@ -33,7 +33,7 @@
     "transport": "one immutable sealed memfd passed once with SCM_RIGHTS",
     "pointer_free": true,
     "client_validation": "exact measured DXVK swapchain-blit shape",
-    "service_validation": "exact fd size and seals, canonical offsets and specialization bounds, typed same-device layout lineage",
+    "service_validation": "exact fd size and seals, immutable read-only MAP_PRIVATE view, canonical offsets and specialization bounds, typed same-device layout lineage",
     "native_reconstruction": "all Vulkan structs, pointers, embedded shader modules, specialization map, and fixed state reconstructed in Bionic-owned storage",
     "legacy_null_fragment_pipeline_unchanged": true
   },
@@ -56,7 +56,7 @@
     "focused_contracts": "2/2",
     "full_host_suite": "58/58",
     "global_dispatch_test_sha256": "c0db0a85b0e61ed51a95f9f7405797110bb9c76769cbe323a920b6f348b0a175",
-    "bridge_service_sha256": "6c09096f530092ca5e3dcfbaf299030e22737de8eab3132cafd3d19ee526495f",
+    "bridge_service_sha256": "8ed75d2f8051f9198daf0376dd39e55adcc2f51f0e0191969de3644ab89f855f",
     "host_icd_sha256": "9f172a2cbb53daf1929af5ea7403320f5b6729ee75f9baa79916078a68166376"
   },
   "reuse": [

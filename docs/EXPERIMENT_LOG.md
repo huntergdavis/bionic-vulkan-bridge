@@ -3883,3 +3883,11 @@ graphics pipeline DXVK E098"` query returned no indexed implementation. E098
 reuses E064's Bionic-local embedded-module reconstruction, E075/E077's sealed
 memfd discipline, E097's real boundary, and E079a's actual-invocation proof.
 No tablet pipeline result, game frame, benchmark, or FPS is claimed yet.
+
+The first Android contract run exposed a platform-specific sealed-memfd detail
+before deployment: this kernel rejects even read-only `MAP_SHARED` mappings
+after `F_SEAL_WRITE` with `EPERM`. The service only needs an immutable private
+view for synchronous reconstruction, so it now uses `PROT_READ|MAP_PRIVATE`.
+The exact strict Android global contract then passes while retaining all four
+content/size seals. Active E097 and the authenticated Steam/X session were not
+modified during this correction.

@@ -3550,7 +3550,7 @@ int bvb_vulkan_global_context_create_builtin_graphics_pipeline(
         return -EPROTO;
     }
     const uint8_t *mapping = mmap(
-        NULL, request->blob_bytes, PROT_READ, MAP_SHARED, blob_fd, 0);
+        NULL, request->blob_bytes, PROT_READ, MAP_PRIVATE, blob_fd, 0);
     if (mapping == MAP_FAILED) return -errno;
     struct bvb_vulkan_builtin_graphics_pipeline_blob_view blob = {0};
     int result = bvb_protocol_decode_vulkan_builtin_graphics_pipeline_blob(
