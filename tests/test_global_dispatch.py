@@ -13,6 +13,8 @@ import tempfile
 import threading
 import time
 
+from android_hardware_buffer import load_android_hardware_buffer_api
+
 
 def main() -> int:
     if len(sys.argv) not in (4, 5):
@@ -29,6 +31,7 @@ def main() -> int:
         lambda value: str(pathlib.Path(value).resolve()), sys.argv[1:4]
     )
     validation_mode = sys.argv[4] if len(sys.argv) == 5 else "strict-fake"
+    hardware_buffer_api = load_android_hardware_buffer_api()
     if validation_mode not in (
         "strict-fake", "hardware", "shared-command-stream",
         "shared-command-stream-concurrency",
@@ -187,6 +190,7 @@ def main() -> int:
 
             def consume_activity_frames(expected_frames: int) -> None:
                 received_fds = array.array("i")
+                received_hardware_buffers = []
                 ring_mapping = None
                 try:
                     frame_connection, _ = activity_frame_listener.accept()
@@ -194,23 +198,38 @@ def main() -> int:
                         setup, ancillary, _, _ = frame_connection.recvmsg(
                             128, socket.CMSG_SPACE(4 * struct.calcsize("i"))
                         )
-                    assert len(setup) == 128
-                    for level, kind, value in ancillary:
-                        if level == socket.SOL_SOCKET and kind == socket.SCM_RIGHTS:
-                            received_fds.frombytes(
-                                value[
-                                    : len(value)
-                                    - len(value) % received_fds.itemsize
-                                ]
+                        assert len(setup) == 128
+                        for level, kind, value in ancillary:
+                            if (level == socket.SOL_SOCKET and
+                                    kind == socket.SCM_RIGHTS):
+                                received_fds.frombytes(
+                                    value[
+                                        : len(value)
+                                        - len(value) % received_fds.itemsize
+                                    ]
+                                )
+                        magic, version, header_bytes, image_count = (
+                            struct.unpack_from("<IHHI", setup)
+                        )
+                        setup_flags = struct.unpack_from("<I", setup, 28)[0]
+                        if hardware_buffer_api is not None:
+                            assert setup_flags == 2
+                            received_hardware_buffers = (
+                                hardware_buffer_api.receive_many(
+                                    frame_connection, image_count
+                                )
                             )
-                    magic, version, header_bytes, image_count = struct.unpack_from(
-                        "<IHHI", setup
-                    )
                     assert magic == 0x31544642
                     assert version == 1
                     assert header_bytes == 128
                     assert image_count == 3
-                    assert len(received_fds) == image_count + 1
+                    assert len(received_fds) == (
+                        1 if hardware_buffer_api is not None
+                        else image_count + 1
+                    )
+                    assert len(received_hardware_buffers) == (
+                        image_count if hardware_buffer_api is not None else 0
+                    )
                     ring_mapping = mmap.mmap(
                         received_fds[-1], 4096, access=mmap.ACCESS_WRITE
                     )
@@ -266,6 +285,10 @@ def main() -> int:
                         ring_mapping.close()
                     for descriptor in received_fds:
                         os.close(descriptor)
+                    if hardware_buffer_api is not None:
+                        hardware_buffer_api.release_many(
+                            received_hardware_buffers
+                        )
 
             diagnostic_mode = validation_mode.startswith("first-rejection-")
             diagnostic_wsi = validation_mode == "first-rejection-wsi"

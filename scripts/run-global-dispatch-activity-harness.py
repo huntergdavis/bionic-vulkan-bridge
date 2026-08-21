@@ -28,6 +28,9 @@ import threading
 import time
 from typing import Any
 
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "tests"))
+from android_hardware_buffer import load_android_hardware_buffer_api
+
 
 LIFECYCLE_MAGIC = 0x314C5642
 LIFECYCLE_VERSION = 1
@@ -97,7 +100,9 @@ def send_lifecycle(
         )
 
 
-def decode_frame_setup(wire: bytes, descriptor_count: int) -> dict[str, Any]:
+def decode_frame_setup(
+    wire: bytes, descriptor_count: int, hardware_buffer_count: int
+) -> dict[str, Any]:
     if len(wire) != FRAME_SETUP_BYTES:
         raise HarnessFailure(f"frame setup length is {len(wire)}, expected 128")
     (
@@ -125,15 +130,22 @@ def decode_frame_setup(wire: bytes, descriptor_count: int) -> dict[str, Any]:
         raise HarnessFailure(f"frame setup image count is invalid: {image_count}")
     if width == 0 or height == 0 or image_format == 0 or image_usage == 0:
         raise HarnessFailure("frame setup has zero required image metadata")
-    if flags != 1 or generation == 0 or any(reserved):
+    if flags not in (1, 2) or generation == 0 or any(reserved):
         raise HarnessFailure("frame setup has unsupported flags/generation/reserved data")
     if any(size == 0 for size in allocation_sizes[:image_count]):
         raise HarnessFailure("active frame setup allocation size is zero")
     if any(size != 0 for size in allocation_sizes[image_count:]):
         raise HarnessFailure("inactive frame setup allocation size is nonzero")
-    if descriptor_count != image_count + 1:
+    expected_descriptors = 1 if flags == 2 else image_count + 1
+    expected_hardware_buffers = image_count if flags == 2 else 0
+    if descriptor_count != expected_descriptors:
         raise HarnessFailure(
             f"frame setup carried {descriptor_count} FDs for {image_count} images"
+        )
+    if hardware_buffer_count != expected_hardware_buffers:
+        raise HarnessFailure(
+            "frame setup carried "
+            f"{hardware_buffer_count} AHardwareBuffers for {image_count} images"
         )
     return {
         "received": True,
@@ -147,6 +159,7 @@ def decode_frame_setup(wire: bytes, descriptor_count: int) -> dict[str, Any]:
         "allocation_sizes": allocation_sizes[:image_count],
         "memory_type_indices": memory_type_indices[:image_count],
         "descriptor_count": descriptor_count,
+        "hardware_buffer_count": hardware_buffer_count,
     }
 
 
@@ -161,6 +174,8 @@ class FrameSetupSink:
         self._done = threading.Event()
         self._thread = threading.Thread(target=self._receive, daemon=True)
         self.descriptors: list[int] = []
+        self.hardware_buffers = []
+        self.hardware_buffer_api = load_android_hardware_buffer_api()
         self.setup: dict[str, Any] | None = None
         self.error: BaseException | None = None
 
@@ -171,6 +186,7 @@ class FrameSetupSink:
         deadline = time.monotonic() + self._timeout
         connection: socket.socket | None = None
         received_descriptors: list[int] = []
+        received_hardware_buffers = []
         try:
             while not self._stop.is_set() and time.monotonic() < deadline:
                 try:
@@ -207,11 +223,28 @@ class FrameSetupSink:
                 wire += receive_exact(connection, FRAME_SETUP_BYTES - len(wire))
             if len(wire) != FRAME_SETUP_BYTES:
                 raise HarnessFailure("frame setup included trailing payload bytes")
+            image_count = struct.unpack_from("<I", wire, 8)[0]
+            flags = struct.unpack_from("<I", wire, 28)[0]
+            if flags == 2:
+                if self.hardware_buffer_api is None:
+                    raise HarnessFailure(
+                        "AHardwareBuffer setup received without Android API"
+                    )
+                received_hardware_buffers = (
+                    self.hardware_buffer_api.receive_many(
+                        connection, image_count
+                    )
+                )
             for descriptor in received_descriptors:
                 os.fstat(descriptor)
-            self.setup = decode_frame_setup(wire, len(received_descriptors))
+            self.setup = decode_frame_setup(
+                wire, len(received_descriptors),
+                len(received_hardware_buffers)
+            )
             self.descriptors = received_descriptors
+            self.hardware_buffers = received_hardware_buffers
             received_descriptors = []
+            received_hardware_buffers = []
         except BaseException as error:  # Propagate thread failures to the owner.
             self.error = error
         finally:
@@ -222,6 +255,10 @@ class FrameSetupSink:
                     os.close(descriptor)
                 except OSError:
                     pass
+            if self.hardware_buffer_api is not None:
+                self.hardware_buffer_api.release_many(
+                    received_hardware_buffers
+                )
             self._done.set()
 
     def wait(self) -> dict[str, Any]:
@@ -237,6 +274,8 @@ class FrameSetupSink:
         self._stop.set()
         self._listener.close()
         self._thread.join(timeout=1.0)
+        if self.hardware_buffer_api is not None:
+            self.hardware_buffer_api.release_many(self.hardware_buffers)
         for descriptor in self.descriptors:
             try:
                 os.close(descriptor)

@@ -15,6 +15,11 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#ifndef VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME
+#define VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME     \
+    "VK_ANDROID_external_memory_android_hardware_buffer"
+#endif
+
 #define CHECK(expression)                                                       \
     do {                                                                        \
         if (!(expression)) {                                                    \
@@ -49,6 +54,9 @@ int main(int argc, char **argv) {
         VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
         VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
         VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
+#ifdef __ANDROID__
+        VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME,
+#endif
     };
     const float priority = 1.0F;
     uint32_t priority_bits = 0U;
@@ -60,7 +68,8 @@ int main(int argc, char **argv) {
         .queue_family_index = 0U,
         .queue_count = 1U,
         .queue_priority_bits = priority_bits,
-        .enabled_extension_count = 3U,
+        .enabled_extension_count =
+            (uint32_t)(sizeof(extensions) / sizeof(extensions[0])),
     };
     struct bvb_vulkan_device_create_response device = {0};
     CHECK(bvb_vulkan_global_context_create_device(
@@ -106,6 +115,10 @@ int main(int argc, char **argv) {
             hardware_buffers, &hardware_buffer_count, error, sizeof(error));
     const char *expected_missing =
         getenv("BVB_EXPECT_MISSING_SWAPCHAIN_ENTRY_POINT");
+#ifdef __ANDROID__
+    if (expected_missing != NULL)
+        expected_missing = "vkGetAndroidHardwareBufferPropertiesANDROID";
+#endif
     if (expected_missing != NULL) {
         CHECK(prepare_result == -ENOSYS);
         CHECK(strstr(error, expected_missing) != NULL);
@@ -117,8 +130,14 @@ int main(int argc, char **argv) {
     }
     CHECK(prepare_result == 0);
     CHECK(response.vulkan_result == VK_SUCCESS);
+#ifdef __ANDROID__
+    CHECK(response.flags == BVB_VULKAN_SWAPCHAIN_PREPARE_FLAG_AHARDWAREBUFFER);
+    CHECK(response.image_count == 3U && descriptor_count == 1U);
+    CHECK(hardware_buffer_count == response.image_count);
+#else
     CHECK(response.flags == 0U && hardware_buffer_count == 0U);
     CHECK(response.image_count == 3U && descriptor_count == 4U);
+#endif
     CHECK(bvb_handle_type(response.swapchain_id) == BVB_OBJECT_SWAPCHAIN);
     CHECK(response.generation == request.generation);
     CHECK(response.control_region_bytes == BVB_WSI_FRAME_RING_REGION_BYTES);
@@ -126,17 +145,26 @@ int main(int argc, char **argv) {
         CHECK(bvb_handle_type(response.images[index].image_id) ==
               BVB_OBJECT_IMAGE);
         CHECK(response.images[index].allocation_size == 16384U);
+#ifdef __ANDROID__
+        CHECK(hardware_buffers[index] != NULL);
+#else
         struct stat status;
         CHECK(fstat(descriptors[index], &status) == 0);
         CHECK((uint64_t)status.st_size ==
               response.images[index].allocation_size);
+#endif
     }
     struct stat control_status;
-    CHECK(fstat(descriptors[response.image_count], &control_status) == 0);
+#ifdef __ANDROID__
+    const size_t control_descriptor_index = 0U;
+#else
+    const size_t control_descriptor_index = response.image_count;
+#endif
+    CHECK(fstat(descriptors[control_descriptor_index], &control_status) == 0);
     CHECK(control_status.st_size == BVB_WSI_FRAME_RING_REGION_BYTES);
     struct bvb_wsi_frame_ring *ring = mmap(
         NULL, BVB_WSI_FRAME_RING_REGION_BYTES, PROT_READ | PROT_WRITE,
-        MAP_SHARED, descriptors[response.image_count], 0U);
+        MAP_SHARED, descriptors[control_descriptor_index], 0U);
     CHECK(ring != MAP_FAILED);
     CHECK(bvb_wsi_frame_ring_validate(ring, request.generation) == 0);
     const struct bvb_vulkan_swapchain_acquire_request acquire_request = {

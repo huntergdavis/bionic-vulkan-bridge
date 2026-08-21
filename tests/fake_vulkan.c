@@ -3,6 +3,11 @@
 #endif
 #define VK_NO_PROTOTYPES
 
+#ifdef __ANDROID__
+#define VK_USE_PLATFORM_ANDROID_KHR
+#include <android/hardware_buffer.h>
+#endif
+
 #include <vulkan/vulkan.h>
 
 #ifndef VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME
@@ -592,7 +597,12 @@ static VkResult VKAPI_CALL fake_get_image_format_properties2(
         external_handle_type !=
             VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT &&
         external_handle_type !=
-            VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) {
+            VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT
+#ifdef __ANDROID__
+        && external_handle_type !=
+            VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID
+#endif
+    ) {
         return VK_ERROR_FORMAT_NOT_SUPPORTED;
     }
     if (fake_real_hardware_values()) {
@@ -1776,6 +1786,9 @@ static VkResult VKAPI_CALL fake_allocate_memory(
     const VkExportMemoryAllocateInfo *export_info = NULL;
     const VkMemoryDedicatedAllocateInfo *dedicated_info = NULL;
     const VkMemoryAllocateFlagsInfo *flags_info = NULL;
+#ifdef __ANDROID__
+    const VkImportAndroidHardwareBufferInfoANDROID *hardware_buffer_info = NULL;
+#endif
     for (const VkBaseInStructure *next = allocate_info->pNext;
          next != NULL; next = next->pNext) {
         if (next->sType == VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR) {
@@ -1793,6 +1806,14 @@ static VkResult VKAPI_CALL fake_allocate_memory(
                    VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_FLAGS_INFO) {
             if (flags_info != NULL) return VK_ERROR_INITIALIZATION_FAILED;
             flags_info = (const VkMemoryAllocateFlagsInfo *)next;
+#ifdef __ANDROID__
+        } else if (next->sType ==
+                   VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID) {
+            if (hardware_buffer_info != NULL)
+                return VK_ERROR_INITIALIZATION_FAILED;
+            hardware_buffer_info =
+                (const VkImportAndroidHardwareBufferInfoANDROID *)next;
+#endif
         } else {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -1803,7 +1824,10 @@ static VkResult VKAPI_CALL fake_allocate_memory(
          flags_info->pNext != dedicated_info)) {
         return VK_ERROR_FEATURE_NOT_PRESENT;
     }
-    if (dedicated_info != NULL && export_info == NULL &&
+    if (dedicated_info != NULL && export_info == NULL && import_info == NULL &&
+#ifdef __ANDROID__
+        hardware_buffer_info == NULL &&
+#endif
         (dedicated_info->buffer != VK_NULL_HANDLE ||
          dedicated_info->image !=
              (VkImage)(uintptr_t)UINT64_C(0xa000) ||
@@ -1811,8 +1835,20 @@ static VkResult VKAPI_CALL fake_allocate_memory(
              (fake_real_hardware_values()
                   ? 64U * 64U * sizeof(uint32_t)
                   : fake_native_image_allocation_size))) {
-        return VK_ERROR_FEATURE_NOT_PRESENT;
+            return VK_ERROR_FEATURE_NOT_PRESENT;
     }
+#ifdef __ANDROID__
+    if (hardware_buffer_info != NULL &&
+        (hardware_buffer_info->buffer == NULL || dedicated_info == NULL ||
+         dedicated_info->pNext != hardware_buffer_info ||
+         dedicated_info->buffer != VK_NULL_HANDLE ||
+         dedicated_info->image !=
+             (VkImage)(uintptr_t)UINT64_C(0xa000) ||
+         allocate_info->allocationSize !=
+             64U * 64U * sizeof(uint32_t))) {
+        return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+    }
+#endif
     struct bvb_fake_memory_record *record = fake_memory_slot();
     if (record == NULL) return VK_ERROR_TOO_MANY_OBJECTS;
     const size_t size = (size_t)allocate_info->allocationSize;
@@ -1830,7 +1866,13 @@ static VkResult VKAPI_CALL fake_allocate_memory(
         allocation = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED,
                           descriptor, 0);
         if (allocation == MAP_FAILED) allocation = NULL;
-    } else if (export_info != NULL) {
+    }
+#ifdef __ANDROID__
+    else if (hardware_buffer_info != NULL) {
+        allocation = calloc(1, size);
+    }
+#endif
+    else if (export_info != NULL) {
         if ((export_info->handleTypes &
              (VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT |
               VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT)) == 0U) {
@@ -1860,6 +1902,24 @@ static VkResult VKAPI_CALL fake_allocate_memory(
     *memory = (VkDeviceMemory)(uintptr_t)allocation;
     return VK_SUCCESS;
 }
+
+#ifdef __ANDROID__
+static VkResult VKAPI_CALL fake_get_android_hardware_buffer_properties(
+    VkDevice device, const AHardwareBuffer *buffer,
+    VkAndroidHardwareBufferPropertiesANDROID *properties) {
+    (void)device;
+    if (fake_ahardwarebuffer_enabled == 0 || buffer == NULL ||
+        properties == NULL ||
+        properties->sType !=
+            VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_PROPERTIES_ANDROID ||
+        properties->pNext != NULL) {
+        return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+    }
+    properties->allocationSize = 64U * 64U * sizeof(uint32_t);
+    properties->memoryTypeBits = 1U;
+    return VK_SUCCESS;
+}
+#endif
 
 static void VKAPI_CALL fake_free_memory(
     VkDevice device,
@@ -2812,6 +2872,12 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
           fake_external_memory_dma_buf_enabled == 0))) {
         return NULL;
     }
+#ifdef __ANDROID__
+    if (strcmp(name, "vkGetAndroidHardwareBufferPropertiesANDROID") == 0 &&
+        getenv("BVB_FAKE_HIDE_GET_MEMORY_FD") != NULL) {
+        return NULL;
+    }
+#endif
 #define BVB_DEVICE_MATCH(vulkan_name, fake_name)                                \
     if (strcmp(name, vulkan_name) == 0) {                                       \
         return (PFN_vkVoidFunction)(fake_name);                                 \
@@ -2860,6 +2926,10 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkGetBufferDeviceAddress",
                      fake_get_buffer_device_address)
     BVB_DEVICE_MATCH("vkAllocateMemory", fake_allocate_memory)
+#ifdef __ANDROID__
+    BVB_DEVICE_MATCH("vkGetAndroidHardwareBufferPropertiesANDROID",
+                     fake_get_android_hardware_buffer_properties)
+#endif
     BVB_DEVICE_MATCH("vkFreeMemory", fake_free_memory)
     BVB_DEVICE_MATCH("vkBindBufferMemory", fake_bind_buffer_memory)
     BVB_DEVICE_MATCH("vkCreateImage", fake_create_image)

@@ -11,6 +11,8 @@ import sys
 import tempfile
 import time
 
+from android_hardware_buffer import load_android_hardware_buffer_api
+
 
 MAGIC = 0x31425642
 HEADER = struct.Struct("<IHHHHIIi")
@@ -107,6 +109,7 @@ def main() -> int:
         "00112233445566778899aabbccddeeff"
         "fedcba98765432100123456789abcdef"
     )
+    hardware_buffer_api = load_android_hardware_buffer_api()
     with tempfile.TemporaryDirectory(prefix="bvb-wsi-service-") as temporary:
         socket_path = pathlib.Path(temporary) / "runtime" / "bridge.sock"
         activity_frame_socket = f"bvb-activity-frame-host-{os.getpid()}"
@@ -136,6 +139,7 @@ def main() -> int:
         connection = None
         descriptors: list[int] = []
         activity_descriptors: list[int] = []
+        activity_hardware_buffers = []
         try:
             assert server.stdout is not None
             ready = server.stdout.readline()
@@ -169,12 +173,20 @@ def main() -> int:
             assert physical_id >> 56 == 2
 
             priority_bits = struct.unpack("<I", struct.pack("<f", 1.0))[0]
-            extension_names = (
-                b"VK_KHR_external_memory\0".ljust(128, b"\0")
-                + b"VK_KHR_external_memory_fd\0".ljust(128, b"\0")
+            extension_list = [
+                b"VK_KHR_external_memory",
+                b"VK_KHR_external_memory_fd",
+            ]
+            if hardware_buffer_api is not None:
+                extension_list.append(
+                    b"VK_ANDROID_external_memory_android_hardware_buffer"
+                )
+            extension_names = b"".join(
+                name.ljust(128, b"\0") for name in extension_list
             )
             device_payload = struct.pack(
-                "<QIIIIII", physical_id, 0, 0, 1, priority_bits, 0, 2
+                "<QIIIIII", physical_id, 0, 0, 1, priority_bits, 0,
+                len(extension_list),
             ) + extension_names
             connection.sendall(packet(57, 4, device_payload))
             status, created_device = receive_response(connection, 57, 4)
@@ -202,6 +214,13 @@ def main() -> int:
                             value[: len(value) - len(value) % received.itemsize]
                         )
                         activity_descriptors.extend(received)
+                setup_image_count = struct.unpack_from("<I", setup_data, 8)[0]
+                setup_wire_flags = struct.unpack_from("<I", setup_data, 28)[0]
+                if hardware_buffer_api is not None:
+                    assert setup_wire_flags == 2
+                    activity_hardware_buffers = hardware_buffer_api.receive_many(
+                        activity_connection, setup_image_count
+                    )
             assert struct.unpack_from("<IHH", setup_data) == (0x31544642, 1, 128)
             setup_image_count, setup_width, setup_height, setup_format, setup_usage, setup_flags = struct.unpack_from(
                 "<IIIIII", setup_data, 8
@@ -209,9 +228,16 @@ def main() -> int:
             setup_generation = struct.unpack_from("<Q", setup_data, 32)[0]
             assert (setup_image_count, setup_width, setup_height, setup_format,
                     setup_usage, setup_flags, setup_generation) == (
-                3, 64, 64, 37, 0x10, 1, generation
+                3, 64, 64, 37, 0x10,
+                2 if hardware_buffer_api is not None else 1,
+                generation,
             )
-            assert len(activity_descriptors) == setup_image_count + 1
+            assert len(activity_descriptors) == (
+                1 if hardware_buffer_api is not None else setup_image_count + 1
+            )
+            assert len(activity_hardware_buffers) == (
+                setup_image_count if hardware_buffer_api is not None else 0
+            )
             status, prepared, descriptors = receive_fd_response(connection, 64, 5)
             assert status == 0 and len(prepared) == 128
             vulkan_result, image_count, swapchain_id, returned_generation, control_bytes, reserved = struct.unpack_from(
@@ -221,14 +247,19 @@ def main() -> int:
             assert swapchain_id >> 56 == 6
             assert returned_generation == generation
             assert control_bytes == 4096 and reserved == 0
-            assert len(descriptors) == image_count + 1
+            assert len(descriptors) == (
+                1 if hardware_buffer_api is not None else image_count + 1
+            )
             for index in range(image_count):
                 image_id, allocation_size, memory_type, image_reserved = struct.unpack_from(
                     "<QQII", prepared, 32 + index * 24
                 )
                 assert image_id >> 56 == 7
-                assert allocation_size == os.fstat(descriptors[index]).st_size
-                assert allocation_size == os.fstat(activity_descriptors[index]).st_size
+                if hardware_buffer_api is None:
+                    assert allocation_size == os.fstat(descriptors[index]).st_size
+                    assert allocation_size == os.fstat(
+                        activity_descriptors[index]
+                    ).st_size
                 assert memory_type == 0 and image_reserved == 0
             assert os.fstat(descriptors[-1]).st_size == 4096
             assert os.fstat(activity_descriptors[-1]).st_size == 4096
@@ -251,6 +282,8 @@ def main() -> int:
             for descriptor in activity_descriptors:
                 os.close(descriptor)
             activity_descriptors = []
+            if hardware_buffer_api is not None:
+                hardware_buffer_api.release_many(activity_hardware_buffers)
             connection.sendall(packet(65, 6, struct.pack("<Q", swapchain_id)))
             status, destroyed = receive_response(connection, 65, 6)
             assert status == 0 and destroyed == b""
@@ -263,6 +296,8 @@ def main() -> int:
                 os.close(descriptor)
             for descriptor in activity_descriptors:
                 os.close(descriptor)
+            if hardware_buffer_api is not None:
+                hardware_buffer_api.release_many(activity_hardware_buffers)
             activity_frame_listener.close()
             if connection is not None:
                 connection.close()

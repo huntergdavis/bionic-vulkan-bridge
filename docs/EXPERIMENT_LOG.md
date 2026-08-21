@@ -3706,3 +3706,27 @@ host evidence is
 `33b3f87f3439dcab583279f65a5085f04360d4ce62855208a4f84388b25ebbf2`).
 No post-change tablet execution, game frame, benchmark, or FPS result is
 claimed.
+
+## E094 — Android-native AHardwareBuffer contract parity (2026-08-21)
+
+Status: 58/58 host contracts pass; tablet rerun pending. The first exact E093
+Termux build compiled successfully, but 13 tests failed before exercising E093
+because the Android-compiled E092 service required
+`vkGetAndroidHardwareBufferPropertiesANDROID` while the fake Vulkan driver and
+synthetic frame sinks still modeled only the non-Android FD transport. Active
+E092 runtime files were not changed.
+
+E094 makes the tests execute the production Android branch. The fake driver
+now validates the Android external-image query, dedicated AHardwareBuffer import
+allocation, bind, and typed teardown. The C and Python sinks expect the one
+control FD plus three native handles, receive those handles through
+`AHardwareBuffer_recvHandleFromUnixSocket`, keep them alive through the test,
+and release them deterministically. Non-Android tests retain their original
+four-FD path and all 58 host contracts remain green.
+
+The required `deja "Termux Android build fake Vulkan missing
+vkGetAndroidHardwareBufferPropertiesANDROID E092 swapchain tests"` search found
+no indexed implementation. E094 reuses E092's one-time AHardwareBuffer handle
+transport and E060's hold-through-client-exit test lifetime. This is a test-gate
+correction only; it does not change production transport, render a game frame,
+or claim FPS.

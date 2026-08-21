@@ -7,6 +7,8 @@ import subprocess
 import sys
 import tempfile
 
+from android_hardware_buffer import load_android_hardware_buffer_api
+
 
 def main() -> int:
     if len(sys.argv) != 7:
@@ -17,6 +19,9 @@ def main() -> int:
     harness, service, client, loader, evidence_path, termux_gate_path = map(
         lambda value: str(pathlib.Path(value).resolve()), sys.argv[1:]
     )
+    hardware_buffer_api = load_android_hardware_buffer_api()
+    expected_frame_fds = 1 if hardware_buffer_api is not None else 4
+    expected_hardware_buffers = 3 if hardware_buffer_api is not None else 0
     evidence = json.loads(pathlib.Path(evidence_path).read_text())
     assert evidence == {
         "schema_version": 1,
@@ -107,7 +112,8 @@ def main() -> int:
         assert completed.returncode == 0, completed.stderr
         assert completed.stderr == ""
         assert completed.stdout == (
-            "global_activity_harness=PASS events=6 frame_fds=4 "
+            f"global_activity_harness=PASS events=6 "
+            f"frame_fds={expected_frame_fds} "
             "visible_frame_claim=false fps_claim=false\n"
         )
         result = json.loads(result_path.read_text())
@@ -127,7 +133,8 @@ def main() -> int:
         assert setup["image_count"] == 3
         assert setup["width"] == 2800
         assert setup["height"] == 1752
-        assert setup["descriptor_count"] == 4
+        assert setup["descriptor_count"] == expected_frame_fds
+        assert setup["hardware_buffer_count"] == expected_hardware_buffers
         assert all(size > 0 for size in setup["allocation_sizes"])
         assert len(setup["memory_type_indices"]) == 3
         assert (outputs / "client.stderr").read_bytes() == b""

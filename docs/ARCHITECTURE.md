@@ -317,3 +317,10 @@ creation now accept Vulkan's eleven core descriptor types; immutable samplers,
 extension-only descriptor types, unsupported flags/pNext shapes, and malformed
 counts remain fail-closed. Descriptor writes are deliberately unchanged, so
 this gate does not imply that arbitrary game descriptor updates are executable.
+
+E094 keeps the same AHardwareBuffer production path on Android and extends the
+cross-process fake-driver contracts to execute that platform branch. Android
+test sinks receive and retain the native handles with
+`AHardwareBuffer_recvHandleFromUnixSocket`, then release them after the service
+and client finish. Non-Android hosts retain the original DMA-BUF/FD contracts;
+no production transport selector or runtime fallback is added.
