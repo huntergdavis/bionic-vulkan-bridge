@@ -424,6 +424,10 @@ assert animated_reused_image == 0
 assert animated_recording_rtts == 0
 shared_command_stream = os.environ.get("BVB_COMMAND_STREAM") == "shared"
 shared_mapped_memory = os.environ.get("BVB_MAPPED_MEMORY") == "shared"
+keep_strict_mapped_memory = (
+    not shared_mapped_memory and
+    os.environ.get("BVB_TEST_KEEP_MEMORY_MAPPED") is not None
+)
 assert recording_rtts == (0 if shared_command_stream else 5)
 assert command_pool >> 56 == 10
 assert command_buffer >> 56 == 11
@@ -448,7 +452,11 @@ assert image_requires_dedicated in (0, 1)
 assert mapped_bytes == 4096
 assert mapped_mismatches == 0
 assert (map_rtts, flush_rtts, invalidate_rtts, unmap_rtts, submit_rtts) == (
-    (1, 1, 1, 1, 1) if shared_mapped_memory else (2, 2, 2, 2, 1)
+    (1, 1, 1, 1, 1)
+    if shared_mapped_memory
+    else (2, 2, 2, 2, 3)
+    if keep_strict_mapped_memory
+    else (2, 2, 2, 2, 1)
 )
 assert (map_opcode, flush_opcode, invalidate_opcode, unmap_opcode) == (
     (106, 107, 108, 109) if shared_mapped_memory else (49, 48, 49, 48)
@@ -577,7 +585,11 @@ document = {
             "shared" if shared_command_stream else "strict"
         ),
         "mapped_memory_mode": (
-            "shared-upload-only" if shared_mapped_memory else "strict"
+            "shared-upload-only"
+            if shared_mapped_memory
+            else "strict-kept-mapped"
+            if keep_strict_mapped_memory
+            else "strict"
         ),
         "animated_frame_count": animated_frames,
         "animated_reused_image": bool(animated_reused_image),

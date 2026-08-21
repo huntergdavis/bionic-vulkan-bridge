@@ -50,7 +50,10 @@ def main() -> int:
     assert 'r"animated_frames=(\\d+) animated_reused_image=(\\d+) "' in termux_gate
     assert 'r"memory_rtts=(\\d+),(\\d+),(\\d+),(\\d+),(\\d+) "' in termux_gate
     assert 'r"memory_opcodes=(\\d+),(\\d+),(\\d+),(\\d+),(\\d+) "' in termux_gate
-    assert '"shared-upload-only" if shared_mapped_memory else "strict"' in termux_gate
+    assert '"shared-upload-only"' in termux_gate
+    assert 'os.environ.get("BVB_TEST_KEEP_MEMORY_MAPPED") is not None' in termux_gate
+    assert 'else (2, 2, 2, 2, 3)' in termux_gate
+    assert 'else "strict-kept-mapped"' in termux_gate
     assert '(106, 107, 108, 109)' in termux_gate
     assert 'harness_result["authenticated_event_count"] == 6' in termux_gate
     assert 'harness_result["visible_frame_claim"] is False' in termux_gate
