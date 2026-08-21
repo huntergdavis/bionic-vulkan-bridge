@@ -2318,3 +2318,39 @@ does not advertise surface/WSI extensions whose commands are not yet connected,
 and it does not prove extended `pNext` chains, DXVK execution, or a game frame.
 The next gate is the virtual surface/WSI contract backed by E042's persistent
 Android image path.
+
+## E049 — Real Tomb Raider Wine instance requirements measured (2026-08-20)
+
+Status: passed as a discovery gate, with no rendering claim. The authenticated
+ARM64 Steam client launched Tomb Raider 2013 through the existing direct glibc
+dispatcher and selected the BVB ICD through Steam's standard Vulkan loader. A
+concurrent Bionic service independently completed hello negotiation for both
+Wine's Zink client and the real `TombRaider.exe` process.
+
+Diagnostics-only WSI advertisement made Wine's pre-instance decision visible.
+Zink requested `VK_KHR_get_physical_device_properties2`, `VK_KHR_surface`,
+`VK_KHR_wayland_surface`, and `VK_KHR_xcb_surface`. Tomb Raider's Wine Vulkan
+path recognized the properties2, surface, Xlib-surface, and Wayland-surface
+names, rejected XCB surface at Wine's own boundary, then required exactly three
+host instance extensions: `VK_KHR_external_memory_capabilities`,
+`VK_KHR_external_semaphore_capabilities`, and
+`VK_KHR_get_physical_device_properties2`.
+
+Only the last extension is command-backed by E048, so Steam's loader correctly
+returned `VK_ERROR_EXTENSION_NOT_PRESENT` before calling the ICD's
+`vkCreateInstance`. This is now the measured E050 boundary; Steam login, X11,
+and the private bridge route remained alive through cleanup. The opt-in Wine
+Vulkan channel is excluded from normal and benchmark launches, which retain
+`WINEDEBUG=-all`.
+
+Canonical evidence is
+`docs/evidence/e049-tombraider-wine-instance-requirements.json`, 3,440 bytes,
+SHA-256
+`20ec2b6b1618297b2d2ba9d1c80b3be036795b50bc4f5b863051f7c60e1da66f`.
+The work reuses E011's Tomb Raider dispatch evidence and E043-E048's standard
+loader, proxy, wire, and hardware contracts. Required `deja` searches found no
+additional prior implementation. Bridge commits are `837c402`, `f263026`, and
+`169449a`; parent diagnostics commits are `048854b` and `0d35605`. All 23 host
+contracts and the E048 Adreno hardware gate passed. E050 must connect the two
+external-capability query families before surface or swapchain work can be
+truthfully exposed.

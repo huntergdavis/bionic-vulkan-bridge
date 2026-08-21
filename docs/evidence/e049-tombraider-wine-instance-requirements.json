@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "gate": "E049",
+  "result": "pass",
+  "target": "Galaxy Tab S8+ Android Bionic Adreno 730",
+  "objective": "measure the first real Wine/DXVK instance-extension boundary through the BVB ICD without claiming rendering support",
+  "route": {
+    "steam_client": "existing authenticated AArch64 glibc Steam process",
+    "game": "Tomb Raider 2013 AppID 203160 through Proton 11.0 ARM64",
+    "hot_game_path": "direct glibc dispatcher outside PRoot",
+    "vulkan_loader": "Steam AArch64 glibc loader",
+    "vulkan_icd": "BVB glibc ICD over a private Unix socket",
+    "vulkan_service": "concurrent Android Bionic service using /system/lib64/libvulkan.so"
+  },
+  "concurrent_clients": {
+    "observed": 2,
+    "zink": {
+      "hello_completed": true,
+      "create_instance_called": true,
+      "requested_extensions": [
+        "VK_KHR_get_physical_device_properties2",
+        "VK_KHR_surface",
+        "VK_KHR_wayland_surface",
+        "VK_KHR_xcb_surface"
+      ],
+      "result": "VK_ERROR_EXTENSION_NOT_PRESENT at the diagnostics-only WSI probe boundary"
+    },
+    "tomb_raider_wine": {
+      "executable_observed": "TombRaider.exe -nolauncher",
+      "hello_completed": true,
+      "host_extensions_recognized_by_wine": [
+        "VK_KHR_get_physical_device_properties2",
+        "VK_KHR_surface",
+        "VK_KHR_xlib_surface",
+        "VK_KHR_wayland_surface"
+      ],
+      "host_extension_rejected_by_wine": "VK_KHR_xcb_surface",
+      "required_instance_extensions": [
+        "VK_KHR_external_memory_capabilities",
+        "VK_KHR_external_semaphore_capabilities",
+        "VK_KHR_get_physical_device_properties2"
+      ],
+      "create_instance_reached_icd": false,
+      "result": "VK_ERROR_EXTENSION_NOT_PRESENT in the standard loader because the first two required capability extensions are not yet advertised"
+    }
+  },
+  "diagnostics": {
+    "icd_function_resolution_trace": true,
+    "wine_vulkan_channel": true,
+    "normal_launch_winedebug": "-all",
+    "probe_only_wsi_advertisement": true
+  },
+  "artifacts": {
+    "direct_server_log": {
+      "bytes": 1093541,
+      "sha256": "3c8fbc00ebfc28c6cffcaeb3a9deecaeb7dac9fbb17e7e86bbe424d03b84aa75"
+    },
+    "bionic_service_log": {
+      "bytes": 181,
+      "sha256": "631af23cefda7621cf5ae49d3b54b7ce9c1141f09b5b49959155dceee0d0da09"
+    },
+    "icd_library_sha256": "b49ae9dd18057b9493555be4e96cc1795ce4ac744a749fe57b2e684db2ca6126",
+    "service_binary_sha256": "7308fb3e54b4e1e2058abd31c4af62eaf6ad3598aa76c6b61ad158fabc797c7a"
+  },
+  "implementation_commits": {
+    "bridge_probe_routing_diagnostics": "9b838f6",
+    "bridge_concurrent_clients": "837c402",
+    "bridge_wsi_probe_advertisement": "f263026",
+    "bridge_function_resolution_diagnostics": "169449a",
+    "parent_wine_vulkan_diagnostics": "048854b",
+    "parent_diagnostics_propagation_fix": "0d35605"
+  },
+  "verification": {
+    "bridge_host_contracts": "23/23 passed",
+    "e048_hardware_loader_device_gate": "passed after each ICD deployment",
+    "steam_login_preserved": true,
+    "steam_and_x11_survived_probe_cleanup": true
+  },
+  "reuse": "Reused E011 Tomb Raider dispatch evidence and E043-E048 loader, proxy, extension-wire, and hardware-gate contracts; required deja searches found no additional prior implementation.",
+  "scope": "Wine/DXVK requirement discovery only; no capability-query commands, WSI surface, swapchain, DXVK device, frame, or rendering claim"
+}
