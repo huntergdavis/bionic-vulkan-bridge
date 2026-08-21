@@ -68,14 +68,18 @@ static int receive_exact(int socket_fd, uint8_t *bytes, size_t length) {
     return 0;
 }
 
-static int connect_broker(void) {
+static int connect_broker(const char *broker_socket) {
+    if (broker_socket == NULL || broker_socket[0] == '\0' ||
+        strlen(broker_socket) >= sizeof(((struct sockaddr_un *)0)->sun_path) -
+                                     1U)
+        return -EINVAL;
     int socket_fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (socket_fd < 0) return -errno;
     struct sockaddr_un address;
     memset(&address, 0, sizeof(address));
     address.sun_family = AF_UNIX;
-    const size_t name_length = strlen(BVB_BROKER_SOCKET);
-    memcpy(address.sun_path + 1, BVB_BROKER_SOCKET, name_length);
+    const size_t name_length = strlen(broker_socket);
+    memcpy(address.sun_path + 1, broker_socket, name_length);
     const socklen_t address_size =
         (socklen_t)(offsetof(struct sockaddr_un, sun_path) + 1U + name_length);
     if (connect(socket_fd, (const struct sockaddr *)&address,
@@ -88,7 +92,12 @@ static int connect_broker(void) {
 }
 
 static int open_datagram_broker(struct sockaddr_un *broker_address,
-                                socklen_t *broker_address_size) {
+                                socklen_t *broker_address_size,
+                                const char *broker_socket) {
+    if (broker_address == NULL || broker_address_size == NULL ||
+        broker_socket == NULL || broker_socket[0] == '\0' ||
+        strlen(broker_socket) >= sizeof(broker_address->sun_path) - 1U)
+        return -EINVAL;
     int socket_fd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
     if (socket_fd < 0) return -errno;
     int enabled = 1;
@@ -118,7 +127,7 @@ static int open_datagram_broker(struct sockaddr_un *broker_address,
         return result;
     }
     *broker_address_size = abstract_address(
-        broker_address, BVB_DATAGRAM_BROKER_SOCKET);
+        broker_address, broker_socket);
     return socket_fd;
 }
 
@@ -181,6 +190,8 @@ static int receive_response(int socket_fd, uint8_t response[BVB_RESPONSE_BYTES],
 int main(int argc, char **argv) {
     const char *token = NULL;
     const char *loader_path = BVB_DEFAULT_LOADER;
+    const char *broker_socket = BVB_BROKER_SOCKET;
+    const char *datagram_broker_socket = BVB_DATAGRAM_BROKER_SOCKET;
     bool datagram = false;
     for (int index = 1; index < argc; ++index) {
         if (strcmp(argv[index], "--token") == 0 && index + 1 < argc) {
@@ -190,10 +201,17 @@ int main(int argc, char **argv) {
             loader_path = argv[++index];
         } else if (strcmp(argv[index], "--datagram") == 0) {
             datagram = true;
+        } else if (strcmp(argv[index], "--socket") == 0 &&
+                   index + 1 < argc) {
+            broker_socket = argv[++index];
+        } else if (strcmp(argv[index], "--datagram-socket") == 0 &&
+                   index + 1 < argc) {
+            datagram_broker_socket = argv[++index];
         } else {
             fprintf(stderr,
                     "usage: %s --token 64_HEX [--loader ABSOLUTE_PATH] "
-                    "[--datagram]\n",
+                    "[--socket NAME] [--datagram] "
+                    "[--datagram-socket NAME]\n",
                     argv[0]);
             return 2;
         }
@@ -209,8 +227,9 @@ int main(int argc, char **argv) {
     struct sockaddr_un broker_address;
     socklen_t broker_address_size = 0;
     int socket_fd = datagram
-        ? open_datagram_broker(&broker_address, &broker_address_size)
-        : connect_broker();
+        ? open_datagram_broker(&broker_address, &broker_address_size,
+                               datagram_broker_socket)
+        : connect_broker(broker_socket);
     if (socket_fd < 0) {
         fprintf(stderr, "direct broker open failed: %s (%d)\n",
                 strerror(-socket_fd), socket_fd);

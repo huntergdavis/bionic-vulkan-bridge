@@ -58,11 +58,13 @@ def assert_result(client, width, height, transport):
 
 
 def test_stream(client_path, loader, token):
+    socket_name = f"bvb-e039-host-{os.getpid()}-stream"
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    listener.bind("\0bvb-visible-external-memory")
+    listener.bind("\0" + socket_name)
     listener.listen(1)
     client = subprocess.Popen(
-        [client_path, "--token", token, "--loader", loader],
+        [client_path, "--token", token, "--loader", loader,
+         "--socket", socket_name],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -89,10 +91,12 @@ def test_stream(client_path, loader, token):
 
 
 def test_datagram(client_path, loader, token):
+    socket_name = f"bvb-e039-host-{os.getpid()}-dgram"
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
-    listener.bind("\0bvb-visible-external-memory-dgram")
+    listener.bind("\0" + socket_name)
     client = subprocess.Popen(
-        [client_path, "--token", token, "--loader", loader, "--datagram"],
+        [client_path, "--token", token, "--loader", loader, "--datagram",
+         "--datagram-socket", socket_name],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
