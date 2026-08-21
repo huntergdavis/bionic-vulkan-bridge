@@ -300,3 +300,13 @@ host contract destroys such a buffer and verifies both rejection and an
 unchanged native-memory sentinel. Strict mode and all opcodes/wire records are
 unchanged. This is a bounded client lookup reduction, not native validation,
 tablet, Tomb Raider, or FPS evidence.
+
+E092 replaces cross-driver DMA-BUF frame images with Android Hardware Buffers.
+Private Turnip imports each buffer into the game-facing virtual-swapchain
+image; Samsung Vulkan imports the same allocation into the fullscreen Activity.
+Three native handles plus one futex control region cross setup exactly once.
+Acquire/present ownership and sequence changes stay in native Vulkan plus the
+shared ring: there is no per-frame Java, Binder, socket, or FD transport. The
+Activity copies the imported producer image into its Android swapchain, so the
+remaining steady-state performance cost is one consumer-side GPU copy/blit and
+the current synchronization boundary, not an additional Linux graphics stack.

@@ -14,6 +14,7 @@
 #include <netinet/in.h>
 #include <poll.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -2715,11 +2716,14 @@ static int answer_vulkan_swapchain_prepare(
     struct bvb_vulkan_swapchain_prepare_response prepared = {0};
     int descriptors[BVB_WSI_FRAME_RING_MAX_SLOTS + 1U];
     size_t descriptor_count = 0U;
+    void *hardware_buffers[BVB_WSI_FRAME_RING_MAX_SLOTS] = {0};
+    size_t hardware_buffer_count = 0U;
     char diagnostic[512] = {0};
     if (result == 0) {
         result = bvb_vulkan_global_context_prepare_swapchain(
             context, &decoded, &prepared, descriptors, &descriptor_count,
-            diagnostic, sizeof(diagnostic));
+            hardware_buffers, &hardware_buffer_count, diagnostic,
+            sizeof(diagnostic));
     }
     if (result == 0) {
         result = bvb_protocol_encode_vulkan_swapchain_prepare_response(
@@ -2728,6 +2732,12 @@ static int answer_vulkan_swapchain_prepare(
     if (result == 0) {
         response.header.payload_length =
             BVB_VULKAN_SWAPCHAIN_PREPARE_RESPONSE_SIZE;
+        if (prepared.vulkan_result != VK_SUCCESS) {
+            fprintf(stderr,
+                    "bvb: swapchain preparation returned Vulkan error %d: "
+                    "%s\n",
+                    prepared.vulkan_result, diagnostic);
+        }
     } else {
         fprintf(stderr, "bvb: swapchain preparation failed: %s\n",
                 diagnostic);
@@ -2743,7 +2753,11 @@ static int answer_vulkan_swapchain_prepare(
             .height = decoded.height,
             .format = decoded.format,
             .image_usage = decoded.image_usage,
-            .flags = BVB_ACTIVITY_FRAME_FLAG_DMA_BUF,
+            .flags =
+                (prepared.flags &
+                 BVB_VULKAN_SWAPCHAIN_PREPARE_FLAG_AHARDWAREBUFFER) != 0U
+                    ? BVB_ACTIVITY_FRAME_FLAG_AHARDWAREBUFFER
+                    : BVB_ACTIVITY_FRAME_FLAG_DMA_BUF,
             .generation = prepared.generation,
         };
         for (uint32_t index = 0U; index < prepared.image_count; ++index) {
@@ -2753,7 +2767,8 @@ static int answer_vulkan_swapchain_prepare(
                 prepared.images[index].memory_type_index;
         }
         result = bvb_activity_frame_setup_send(
-            activity_frame_socket, &setup, descriptors, descriptor_count);
+            activity_frame_socket, &setup, descriptors, descriptor_count,
+            hardware_buffers, hardware_buffer_count);
         if (result != 0) {
             char destroy_diagnostic[256] = {0};
             (void)bvb_vulkan_global_context_destroy_swapchain(
@@ -2768,7 +2783,12 @@ static int answer_vulkan_swapchain_prepare(
     }
     int send_result = 0;
     if (result == 0 && prepared.vulkan_result == VK_SUCCESS) {
-        if (descriptor_count != (size_t)prepared.image_count + 1U) {
+        const size_t expected_descriptors =
+            (prepared.flags &
+             BVB_VULKAN_SWAPCHAIN_PREPARE_FLAG_AHARDWAREBUFFER) != 0U
+                ? 1U
+                : (size_t)prepared.image_count + 1U;
+        if (descriptor_count != expected_descriptors) {
             send_result = -EPROTO;
         } else {
             send_result = bvb_transport_send_fds(
@@ -3485,6 +3505,15 @@ int main(int argc, char **argv) {
     int exit_code = parse_arguments(argc, argv, &options);
     if (exit_code != 0) {
         return exit_code;
+    }
+    struct sigaction ignore_sigpipe = {
+        .sa_handler = SIG_IGN,
+    };
+    if (sigemptyset(&ignore_sigpipe.sa_mask) != 0 ||
+        sigaction(SIGPIPE, &ignore_sigpipe, NULL) != 0) {
+        fprintf(stderr, "bvb: could not ignore SIGPIPE: %s\n",
+                strerror(errno));
+        return 3;
     }
 
     int listener = bvb_transport_listen(options.socket_path, geteuid());

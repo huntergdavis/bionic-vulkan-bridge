@@ -12,6 +12,8 @@
 #include <bvb/wsi_frame_ring.h>
 
 #include <android/log.h>
+#include <android/hardware_buffer.h>
+#include <android/hardware_buffer_jni.h>
 #include <android/native_activity.h>
 #include <android/native_window.h>
 #include <android/window.h>
@@ -95,6 +97,8 @@ struct bvb_visible_state {
     uint32_t external_image_memory_type_index;
     PFN_vkGetMemoryFdKHR get_memory_fd;
     PFN_vkGetMemoryFdPropertiesKHR get_memory_fd_properties;
+    PFN_vkGetAndroidHardwareBufferPropertiesANDROID
+        get_hardware_buffer_properties;
     PFN_vkGetSemaphoreFdKHR get_semaphore_fd;
 };
 
@@ -110,6 +114,7 @@ struct bvb_game_frame_transport {
     VkFormat format;
     VkImage images[BVB_WSI_FRAME_RING_MAX_SLOTS];
     VkDeviceMemory memories[BVB_WSI_FRAME_RING_MAX_SLOTS];
+    AHardwareBuffer *hardware_buffers[BVB_WSI_FRAME_RING_MAX_SLOTS];
     struct bvb_wsi_frame_ring *ring;
     VkCommandPool command_pool;
     VkCommandBuffer command_buffer;
@@ -1970,6 +1975,9 @@ static void clear_game_frame_transport_locked(void) {
             if (game_frames.memories[index] != VK_NULL_HANDLE) {
                 vkFreeMemory(state.device, game_frames.memories[index], NULL);
             }
+            if (game_frames.hardware_buffers[index] != NULL) {
+                AHardwareBuffer_release(game_frames.hardware_buffers[index]);
+            }
         }
     }
     if (game_frames.ring != NULL) {
@@ -1982,6 +1990,8 @@ static void clear_game_frame_transport_locked(void) {
     game_frames.format = VK_FORMAT_UNDEFINED;
     memset(game_frames.images, 0, sizeof(game_frames.images));
     memset(game_frames.memories, 0, sizeof(game_frames.memories));
+    memset(game_frames.hardware_buffers, 0,
+           sizeof(game_frames.hardware_buffers));
     game_frames.ring = NULL;
     game_frames.command_pool = VK_NULL_HANDLE;
     game_frames.command_buffer = VK_NULL_HANDLE;
@@ -2205,6 +2215,12 @@ static void *game_frame_consumer_main(void *unused) {
             (void)pthread_mutex_unlock(&game_frames.mutex);
             BVB_LOGI("E057_FRAME_PRESENTED generation=%llu sequence=%u slot=%u",
                      (unsigned long long)ring->generation, sequence, slot);
+        } else if (status == -EPIPE && after_sequence != 0U) {
+            BVB_LOGI("E057_FRAME_CONSUMER_STOP status=%d sequence=%u",
+                     status, after_sequence);
+            (void)pthread_mutex_lock(&game_frames.mutex);
+            game_frames.installed = false;
+            (void)pthread_mutex_unlock(&game_frames.mutex);
         } else if (status != -ETIMEDOUT && status != -EAGAIN) {
             (void)bvb_wsi_frame_ring_fail_consumer(ring, status);
             BVB_LOGE("E057_FRAME_CONSUMER_FAIL status=%d", status);
@@ -2231,7 +2247,8 @@ static int start_game_frame_consumer_locked(void) {
 }
 
 static int import_game_frame_transport(
-    const struct bvb_activity_frame_setup *setup, int *descriptors) {
+    const struct bvb_activity_frame_setup *setup, int *descriptors,
+    AHardwareBuffer *const *hardware_buffers) {
     const uint32_t descriptor_count = setup->image_count + 1U;
     int status = 0;
     (void)pthread_mutex_lock(&renderer_device_mutex);
@@ -2317,7 +2334,9 @@ static int import_game_frame_transport(
     (void)close(descriptors[setup->image_count]);
     descriptors[setup->image_count] = -1;
     const VkExternalMemoryHandleTypeFlagBits memory_handle_type =
-        (setup->flags & BVB_ACTIVITY_FRAME_FLAG_DMA_BUF) != 0U
+        (setup->flags & BVB_ACTIVITY_FRAME_FLAG_AHARDWAREBUFFER) != 0U
+            ? VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID
+        : (setup->flags & BVB_ACTIVITY_FRAME_FLAG_DMA_BUF) != 0U
             ? VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT
             : VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
     const VkExternalMemoryImageCreateInfo external_info = {
@@ -2342,6 +2361,10 @@ static int import_game_frame_transport(
     VkPhysicalDeviceMemoryProperties consumer_memory_properties = {0};
     vkGetPhysicalDeviceMemoryProperties(state.physical_device,
                                         &consumer_memory_properties);
+    state.get_hardware_buffer_properties =
+        (PFN_vkGetAndroidHardwareBufferPropertiesANDROID)vkGetDeviceProcAddr(
+            state.device,
+            "vkGetAndroidHardwareBufferPropertiesANDROID");
     for (uint32_t index = 0U; index < setup->image_count; ++index) {
         VkResult result = vkCreateImage(state.device, &image_info, NULL,
                                         &imported.images[index]);
@@ -2362,10 +2385,26 @@ static int import_game_frame_transport(
             }
         }
         uint32_t compatible_types = requirements.memoryTypeBits;
+        VkAndroidHardwareBufferPropertiesANDROID hardware_properties = {
+            .sType =
+                VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_PROPERTIES_ANDROID,
+        };
         VkMemoryFdPropertiesKHR fd_properties = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_FD_PROPERTIES_KHR,
         };
         if (result == VK_SUCCESS &&
+            memory_handle_type ==
+                VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID) {
+            if (hardware_buffers == NULL || hardware_buffers[index] == NULL ||
+                state.get_hardware_buffer_properties == NULL) {
+                result = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+            } else {
+                result = state.get_hardware_buffer_properties(
+                    state.device, hardware_buffers[index],
+                    &hardware_properties);
+                compatible_types &= hardware_properties.memoryTypeBits;
+            }
+        } else if (result == VK_SUCCESS &&
             memory_handle_type ==
                 VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) {
             result = state.get_memory_fd_properties(
@@ -2379,8 +2418,10 @@ static int import_game_frame_transport(
             consumer_memory_type < consumer_memory_properties.memoryTypeCount &&
             (compatible_types & (UINT32_C(1) << consumer_memory_type)) != 0U;
         if (!consumer_type_valid &&
-            memory_handle_type ==
-                VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT) {
+            (memory_handle_type ==
+                 VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT ||
+             memory_handle_type ==
+                 VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID)) {
             for (uint32_t candidate = 0U;
                  candidate < consumer_memory_properties.memoryTypeCount;
                  ++candidate) {
@@ -2411,6 +2452,12 @@ static int import_game_frame_transport(
             .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
             .image = imported.images[index],
         };
+        const VkImportAndroidHardwareBufferInfoANDROID hardware_import = {
+            .sType =
+                VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID,
+            .pNext = &dedicated,
+            .buffer = hardware_buffers == NULL ? NULL : hardware_buffers[index],
+        };
         const VkImportMemoryFdInfoKHR import_info = {
             .sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_FD_INFO_KHR,
             .pNext = &dedicated,
@@ -2419,14 +2466,23 @@ static int import_game_frame_transport(
         };
         const VkMemoryAllocateInfo allocation = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-            .pNext = &import_info,
-            .allocationSize = setup->allocation_sizes[index],
+            .pNext = memory_handle_type ==
+                    VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID
+                ? (const void *)&hardware_import
+                : (const void *)&import_info,
+            .allocationSize = memory_handle_type ==
+                    VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID
+                ? hardware_properties.allocationSize
+                : setup->allocation_sizes[index],
             .memoryTypeIndex = consumer_memory_type,
         };
         if (result == VK_SUCCESS) {
             result = vkAllocateMemory(state.device, &allocation, NULL,
                                       &imported.memories[index]);
-            if (result == VK_SUCCESS) descriptors[index] = -1;
+            if (result == VK_SUCCESS &&
+                memory_handle_type !=
+                    VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID)
+                descriptors[index] = -1;
             if (result != VK_SUCCESS) {
                 BVB_LOGE("E088_IMPORT_FAIL stage=allocate image=%u "
                          "vk_result=%d allocation=%llu consumer_type=%u "
@@ -2448,6 +2504,11 @@ static int import_game_frame_transport(
         if (result != VK_SUCCESS) {
             status = -EIO;
             goto import_failed;
+        }
+        if (memory_handle_type ==
+            VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID) {
+            AHardwareBuffer_acquire(hardware_buffers[index]);
+            imported.hardware_buffers[index] = hardware_buffers[index];
         }
     }
     const VkCommandPoolCreateInfo pool_info = {
@@ -2500,6 +2561,8 @@ static int import_game_frame_transport(
     memcpy(game_frames.images, imported.images, sizeof(game_frames.images));
     memcpy(game_frames.memories, imported.memories,
            sizeof(game_frames.memories));
+    memcpy(game_frames.hardware_buffers, imported.hardware_buffers,
+           sizeof(game_frames.hardware_buffers));
     game_frames.ring = imported.ring;
     game_frames.command_pool = imported.command_pool;
     game_frames.command_buffer = imported.command_buffer;
@@ -2535,6 +2598,8 @@ import_failed:
             vkDestroyImage(state.device, imported.images[index], NULL);
         if (imported.memories[index] != VK_NULL_HANDLE)
             vkFreeMemory(state.device, imported.memories[index], NULL);
+        if (imported.hardware_buffers[index] != NULL)
+            AHardwareBuffer_release(imported.hardware_buffers[index]);
     }
     if (imported.ring != NULL)
         (void)munmap(imported.ring, BVB_WSI_FRAME_RING_REGION_BYTES);
@@ -2545,19 +2610,72 @@ done:
     return status;
 }
 
+JNIEXPORT jobjectArray JNICALL
+Java_io_github_huntergdavis_bvb_visiblehost_SharedRegionProvider_nativeReceiveHardwareBuffers(
+    JNIEnv *env, jclass provider_class, jint socket_fd, jint image_count) {
+    (void)provider_class;
+    if (socket_fd < 0 || image_count < 2 ||
+        image_count > BVB_WSI_FRAME_RING_MAX_SLOTS) {
+        if (socket_fd >= 0) (void)close(socket_fd);
+        return NULL;
+    }
+    jclass hardware_buffer_class =
+        (*env)->FindClass(env, "android/hardware/HardwareBuffer");
+    jobjectArray result = hardware_buffer_class == NULL
+        ? NULL
+        : (*env)->NewObjectArray(env, image_count, hardware_buffer_class,
+                                 NULL);
+    for (jint index = 0; result != NULL && index < image_count; ++index) {
+        AHardwareBuffer *buffer = NULL;
+        if (AHardwareBuffer_recvHandleFromUnixSocket(socket_fd, &buffer) != 0 ||
+            buffer == NULL) {
+            result = NULL;
+            break;
+        }
+        jobject java_buffer = AHardwareBuffer_toHardwareBuffer(env, buffer);
+        AHardwareBuffer_release(buffer);
+        if (java_buffer == NULL) {
+            result = NULL;
+            break;
+        }
+        (*env)->SetObjectArrayElement(env, result, index, java_buffer);
+        (*env)->DeleteLocalRef(env, java_buffer);
+        if ((*env)->ExceptionCheck(env)) result = NULL;
+    }
+    (void)close(socket_fd);
+    if (hardware_buffer_class != NULL)
+        (*env)->DeleteLocalRef(env, hardware_buffer_class);
+    if ((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionClear(env);
+        return NULL;
+    }
+    return result;
+}
+
 JNIEXPORT jint JNICALL
 Java_io_github_huntergdavis_bvb_visiblehost_SharedRegionProvider_nativeInstallFrameTransport(
     JNIEnv *env, jclass provider_class, jstring token_string, jint image_count,
     jint width, jint height, jint format, jint image_usage, jint setup_flags,
     jlong generation, jlongArray allocation_array,
-    jintArray memory_type_array, jintArray descriptor_array) {
+    jintArray memory_type_array, jobjectArray hardware_buffer_array,
+    jintArray descriptor_array) {
     (void)provider_class;
     if (token_string == NULL || allocation_array == NULL ||
-        memory_type_array == NULL || descriptor_array == NULL ||
+        memory_type_array == NULL || hardware_buffer_array == NULL ||
+        descriptor_array == NULL ||
         image_count < 2 || image_count > BVB_WSI_FRAME_RING_MAX_SLOTS ||
         (*env)->GetArrayLength(env, allocation_array) != image_count ||
         (*env)->GetArrayLength(env, memory_type_array) != image_count ||
-        (*env)->GetArrayLength(env, descriptor_array) != image_count + 1) {
+        (*env)->GetArrayLength(env, hardware_buffer_array) !=
+            (((uint32_t)setup_flags &
+              BVB_ACTIVITY_FRAME_FLAG_AHARDWAREBUFFER) != 0U
+                 ? image_count
+                 : 0) ||
+        (*env)->GetArrayLength(env, descriptor_array) !=
+            (((uint32_t)setup_flags &
+              BVB_ACTIVITY_FRAME_FLAG_AHARDWAREBUFFER) != 0U
+                 ? 1
+                 : image_count + 1)) {
         return -EINVAL;
     }
     jlong allocations[BVB_WSI_FRAME_RING_MAX_SLOTS] = {0};
@@ -2565,12 +2683,34 @@ Java_io_github_huntergdavis_bvb_visiblehost_SharedRegionProvider_nativeInstallFr
     jint java_descriptors[BVB_WSI_FRAME_RING_MAX_SLOTS + 1U] = {
         -1, -1, -1, -1, -1,
     };
-    (*env)->GetIntArrayRegion(env, descriptor_array, 0, image_count + 1,
+    const uint32_t java_descriptor_count =
+        ((uint32_t)setup_flags &
+         BVB_ACTIVITY_FRAME_FLAG_AHARDWAREBUFFER) != 0U
+            ? 1U
+            : (uint32_t)image_count + 1U;
+    (*env)->GetIntArrayRegion(env, descriptor_array, 0,
+                              (jint)java_descriptor_count,
                               java_descriptors);
     int descriptors[BVB_WSI_FRAME_RING_MAX_SLOTS + 1U] = {-1, -1, -1, -1,
                                                            -1};
-    for (uint32_t index = 0U; index < (uint32_t)image_count + 1U; ++index) {
-        descriptors[index] = java_descriptors[index];
+    if (java_descriptor_count == 1U)
+        descriptors[image_count] = java_descriptors[0];
+    else
+        for (uint32_t index = 0U; index < java_descriptor_count; ++index)
+            descriptors[index] = java_descriptors[index];
+    AHardwareBuffer *hardware_buffers[BVB_WSI_FRAME_RING_MAX_SLOTS] = {0};
+    for (uint32_t index = 0U;
+         index < (uint32_t)(*env)->GetArrayLength(
+                     env, hardware_buffer_array);
+         ++index) {
+        jobject java_buffer = (*env)->GetObjectArrayElement(
+            env, hardware_buffer_array, (jsize)index);
+        hardware_buffers[index] = java_buffer == NULL
+            ? NULL
+            : AHardwareBuffer_fromHardwareBuffer(env, java_buffer);
+        if (hardware_buffers[index] != NULL)
+            AHardwareBuffer_acquire(hardware_buffers[index]);
+        if (java_buffer != NULL) (*env)->DeleteLocalRef(env, java_buffer);
     }
     (*env)->GetLongArrayRegion(env, allocation_array, 0, image_count,
                                allocations);
@@ -2580,12 +2720,18 @@ Java_io_github_huntergdavis_bvb_visiblehost_SharedRegionProvider_nativeInstallFr
         (*env)->ExceptionClear(env);
         close_frame_setup_descriptors(descriptors,
                                       (uint32_t)image_count + 1U);
+        for (uint32_t index = 0U; index < (uint32_t)image_count; ++index)
+            if (hardware_buffers[index] != NULL)
+                AHardwareBuffer_release(hardware_buffers[index]);
         return -EINVAL;
     }
     const char *token = (*env)->GetStringUTFChars(env, token_string, NULL);
     if (token == NULL) {
         close_frame_setup_descriptors(descriptors,
                                       (uint32_t)image_count + 1U);
+        for (uint32_t index = 0U; index < (uint32_t)image_count; ++index)
+            if (hardware_buffers[index] != NULL)
+                AHardwareBuffer_release(hardware_buffers[index]);
         return -EINVAL;
     }
     uint8_t parsed_token[BVB_LIFECYCLE_TOKEN_SIZE];
@@ -2598,6 +2744,9 @@ Java_io_github_huntergdavis_bvb_visiblehost_SharedRegionProvider_nativeInstallFr
     if (!authorized) {
         close_frame_setup_descriptors(descriptors,
                                       (uint32_t)image_count + 1U);
+        for (uint32_t index = 0U; index < (uint32_t)image_count; ++index)
+            if (hardware_buffers[index] != NULL)
+                AHardwareBuffer_release(hardware_buffers[index]);
         return -EACCES;
     }
     struct bvb_activity_frame_setup setup = {
@@ -2622,9 +2771,17 @@ Java_io_github_huntergdavis_bvb_visiblehost_SharedRegionProvider_nativeInstallFr
         if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
         close_frame_setup_descriptors(descriptors,
                                       (uint32_t)image_count + 1U);
+        for (uint32_t index = 0U; index < (uint32_t)image_count; ++index)
+            if (hardware_buffers[index] != NULL)
+                AHardwareBuffer_release(hardware_buffers[index]);
         return -EINVAL;
     }
-    return import_game_frame_transport(&setup, descriptors);
+    status = import_game_frame_transport(&setup, descriptors,
+                                         hardware_buffers);
+    for (uint32_t index = 0U; index < (uint32_t)image_count; ++index)
+        if (hardware_buffers[index] != NULL)
+            AHardwareBuffer_release(hardware_buffers[index]);
+    return status;
 }
 
 static void destroy_renderer(void) {
@@ -3656,7 +3813,7 @@ static bool create_renderer(ANativeWindow *window) {
                               VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) ||
         !has_device_extension(
             physical_device,
-            VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME) ||
+            VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME) ||
         !has_device_extension(physical_device,
                               VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME) ||
         !has_device_extension(physical_device,
@@ -3764,7 +3921,7 @@ static bool create_renderer(ANativeWindow *window) {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME,
         VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME,
-        VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME,
+        VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME,
         VK_KHR_EXTERNAL_SEMAPHORE_EXTENSION_NAME,
         VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME,
     };

@@ -11,14 +11,17 @@ enum {
     BVB_ACTIVITY_FRAME_SETUP_VERSION = 1,
     BVB_ACTIVITY_FRAME_SETUP_BYTES = 128,
     BVB_ACTIVITY_FRAME_FLAG_DMA_BUF = 1U << 0,
-    BVB_ACTIVITY_FRAME_KNOWN_FLAGS = BVB_ACTIVITY_FRAME_FLAG_DMA_BUF,
+    BVB_ACTIVITY_FRAME_FLAG_AHARDWAREBUFFER = 1U << 1,
+    BVB_ACTIVITY_FRAME_KNOWN_FLAGS = BVB_ACTIVITY_FRAME_FLAG_DMA_BUF |
+        BVB_ACTIVITY_FRAME_FLAG_AHARDWAREBUFFER,
 };
 
 /*
  * One-time same-UID native-socket envelope around the service's swapchain
- * preparation response. Exactly image_count image-memory FDs followed by the
- * frame-ring control FD accompany this fixed-width record. No part of this
- * setup envelope is used in the per-frame path.
+ * preparation response. FD transports carry image_count image-memory FDs then
+ * the frame-ring FD. AHardwareBuffer transport carries only the frame-ring FD
+ * in the envelope, followed by image_count native-buffer handles on the same
+ * socket. No part of setup is used in the per-frame path.
  */
 struct bvb_activity_frame_setup {
     uint32_t magic;
@@ -47,10 +50,11 @@ int bvb_activity_frame_setup_decode(
     const uint8_t input[BVB_ACTIVITY_FRAME_SETUP_BYTES],
     struct bvb_activity_frame_setup *setup);
 
-/* Sends setup plus image_count+1 FDs to a same-UID abstract Unix listener. */
+/* Sends setup, its FDs, and optional setup-only AHardwareBuffer handles. */
 int bvb_activity_frame_setup_send(
     const char *abstract_socket_name,
     const struct bvb_activity_frame_setup *setup, const int *descriptors,
-    size_t descriptor_count);
+    size_t descriptor_count, void *const *hardware_buffers,
+    size_t hardware_buffer_count);
 
 #endif

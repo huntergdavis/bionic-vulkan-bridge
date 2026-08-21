@@ -38,7 +38,7 @@ int main(void) {
     wire[127] = 1U;
     CHECK(bvb_activity_frame_setup_decode(wire, &actual) == -EPROTO);
     struct bvb_activity_frame_setup invalid = expected;
-    invalid.flags = UINT32_C(1) << 1;
+    invalid.flags = UINT32_C(1) << 2;
     CHECK(bvb_activity_frame_setup_encode(wire, &invalid) == -EINVAL);
     puts("PASS: fixed-width Activity frame setup envelope");
     return 0;

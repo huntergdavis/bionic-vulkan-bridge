@@ -149,6 +149,27 @@ def require_e057_payload(apk: pathlib.Path) -> None:
             raise GateFailure(f"APK native library is missing {marker}; refusing pre-v40 payload")
 
 
+def require_installed_native_library(installed_apk: pathlib.Path) -> pathlib.Path:
+    native_library = resolve_regular_file(
+        installed_apk.parent / "lib" / "arm64" /
+        pathlib.PurePosixPath(NATIVE_LIBRARY).name,
+        executable=True,
+    )
+    try:
+        with zipfile.ZipFile(installed_apk) as archive:
+            embedded = archive.read(NATIVE_LIBRARY)
+    except (OSError, KeyError, zipfile.BadZipFile) as error:
+        raise GateFailure(
+            f"could not verify installed Activity native library: {error}"
+        ) from error
+    embedded_sha256 = hashlib.sha256(embedded).hexdigest()
+    if sha256_file(native_library) != embedded_sha256:
+        raise GateFailure(
+            "installed Activity native library differs from the verified APK"
+        )
+    return native_library
+
+
 def inspect_apk(
     apk: pathlib.Path, aapt: str, apksigner: str, timeout: float
 ) -> ApkIdentity:
@@ -476,18 +497,23 @@ def validate_client_bridge_icd(
         raise GateFailure("producer-adjacent BVB glibc ICD is not the pinned artifact")
 
 
-def validate_frame_document(document: Any, animated_rgbw: bool) -> None:
+def validate_frame_document(document: Any, animated_rgbw: bool) -> int:
     if not isinstance(document, dict) or document.get("result") != "pass":
         raise GateFailure(f"Activity frame helper did not import: {document}")
     for name in ("generation", "image_count", "per_frame_java_calls", "per_frame_binder_calls"):
         if type(document.get(name)) is not int:
             raise GateFailure(f"Activity frame helper field is not an integer: {name}")
-    if document["generation"] <= 0 or not 2 <= document["image_count"] <= 4:
+    signed_generation = document["generation"]
+    if (signed_generation == 0 or
+            signed_generation < -(1 << 63) or
+            signed_generation > (1 << 63) - 1 or
+            not 2 <= document["image_count"] <= 4):
         raise GateFailure("Activity frame helper generation/image count is invalid")
     if animated_rgbw and document["image_count"] != 3:
         raise GateFailure("RGBW proof requires the exact three-image ring")
     if document["per_frame_java_calls"] != 0 or document["per_frame_binder_calls"] != 0:
         raise GateFailure("Activity frame helper reported per-frame Java/Binder work")
+    return signed_generation & ((1 << 64) - 1)
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -680,6 +706,10 @@ def run(arguments: argparse.Namespace) -> int:
             )
             return 0
 
+        installed_native_library = require_installed_native_library(
+            installed.path
+        )
+
         if arguments.adb_serial:
             adb = resolve_executable(arguments.adb)
         else:
@@ -747,6 +777,7 @@ def run(arguments: argparse.Namespace) -> int:
         result["artifacts"] = {
             "service": artifact(service),
             "installed_glibc_icd": artifact(installed_glibc_icd),
+            "installed_activity_native": artifact(installed_native_library),
             "client": artifact(client),
             "service_loader": artifact(loader),
         }
@@ -845,6 +876,9 @@ def run(arguments: argparse.Namespace) -> int:
         helper_environment = os.environ.copy()
         helper_environment.pop("LD_LIBRARY_PATH", None)
         helper_environment.pop("LD_PRELOAD", None)
+        helper_environment["BVB_VISIBLE_HOST_NATIVE_LIBRARY"] = str(
+            installed_native_library
+        )
         helper_environment["CLASSPATH"] = str(installed.path)
         helper_process = subprocess.Popen(
             [
@@ -893,7 +927,9 @@ def run(arguments: argparse.Namespace) -> int:
             handle.flush()
 
         frame_document = json.loads(helper_result.read_text())
-        validate_frame_document(frame_document, arguments.animated_rgbw)
+        frame_generation = validate_frame_document(
+            frame_document, arguments.animated_rgbw
+        )
         client_text = client_stdout.read_text(errors="replace")
         if not client_text.startswith("PASS: global Vulkan discovery validation_mode=hardware"):
             raise GateFailure("global WSI client did not report its hardware PASS record")
@@ -931,7 +967,7 @@ def run(arguments: argparse.Namespace) -> int:
         present_match = selected_presents[0]
         present_generation = int(present_match.group(1))
         if (
-            import_generation != int(frame_document["generation"])
+            import_generation != frame_generation
             or int(import_match.group(2)) != int(frame_document["image_count"])
             or present_generation != import_generation
             or int(present_match.group(2)) < 1

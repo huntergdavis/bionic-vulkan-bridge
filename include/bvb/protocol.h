@@ -390,12 +390,19 @@ struct bvb_vulkan_swapchain_image_record {
     uint32_t memory_type_index;
 };
 
+enum {
+    BVB_VULKAN_SWAPCHAIN_PREPARE_FLAG_AHARDWAREBUFFER = 1U << 0,
+    BVB_VULKAN_SWAPCHAIN_PREPARE_KNOWN_FLAGS =
+        BVB_VULKAN_SWAPCHAIN_PREPARE_FLAG_AHARDWAREBUFFER,
+};
+
 struct bvb_vulkan_swapchain_prepare_response {
     int32_t vulkan_result;
     uint32_t image_count;
     uint64_t swapchain_id;
     uint64_t generation;
     uint32_t control_region_bytes;
+    uint32_t flags;
     struct bvb_vulkan_swapchain_image_record
         images[BVB_WSI_FRAME_RING_MAX_SLOTS];
 };

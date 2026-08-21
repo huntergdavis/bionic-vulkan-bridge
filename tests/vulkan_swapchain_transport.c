@@ -98,10 +98,12 @@ int main(int argc, char **argv) {
     struct bvb_vulkan_swapchain_prepare_response response = {0};
     int descriptors[BVB_WSI_FRAME_RING_MAX_SLOTS + 1U];
     size_t descriptor_count = 0U;
+    void *hardware_buffers[BVB_WSI_FRAME_RING_MAX_SLOTS] = {0};
+    size_t hardware_buffer_count = 0U;
     const int prepare_result =
         bvb_vulkan_global_context_prepare_swapchain(
             context, &request, &response, descriptors, &descriptor_count,
-            error, sizeof(error));
+            hardware_buffers, &hardware_buffer_count, error, sizeof(error));
     const char *expected_missing =
         getenv("BVB_EXPECT_MISSING_SWAPCHAIN_ENTRY_POINT");
     if (expected_missing != NULL) {
@@ -115,6 +117,7 @@ int main(int argc, char **argv) {
     }
     CHECK(prepare_result == 0);
     CHECK(response.vulkan_result == VK_SUCCESS);
+    CHECK(response.flags == 0U && hardware_buffer_count == 0U);
     CHECK(response.image_count == 3U && descriptor_count == 4U);
     CHECK(bvb_handle_type(response.swapchain_id) == BVB_OBJECT_SWAPCHAIN);
     CHECK(response.generation == request.generation);

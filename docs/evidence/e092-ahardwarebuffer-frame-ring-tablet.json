@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "gate": "E092",
+  "date": "2026-08-21",
+  "result": "pass",
+  "source_base_commit": "44c76f81d7b01bc5ff0d48407b3b4310bad2e789",
+  "target": "Samsung Galaxy Tab S8+ / Adreno 730 / 2800x1752",
+  "transport": {
+    "image_allocation": "AHardwareBuffer",
+    "image_count": 3,
+    "format": "VK_FORMAT_R8G8B8A8_UNORM",
+    "allocation_size_each": 19734528,
+    "setup_handle_transfer": "one-time same-UID Unix socket then Binder parcel",
+    "frame_control": "shared futex ring",
+    "per_frame_java_calls": 0,
+    "per_frame_binder_calls": 0,
+    "ring_slots": [0, 1, 2, 0]
+  },
+  "drivers": {
+    "producer": "private Turnip",
+    "producer_sha256": "8ac6ef78c3c92998aa46c59fd0081edcba82756f5bad561d1b24a57684874a45",
+    "consumer": "Samsung system Vulkan",
+    "simultaneous_shared_allocations": true
+  },
+  "runtime": {
+    "formal_evidence_sha256": "0831b118f447ef9aff2f18fa3c1bfdb9524f142ac7e93aa8ba6a180c6c3f9f5a",
+    "activity_log_sha256": "57beb0524d80880d450c6f3b9111e41ce509d8e5c135c24db1309e74923f4dea",
+    "producer_log_sha256": "fcde88b2136fb6fe02a826d20658bb4bf99641fe78502eba586543b57d231f93",
+    "frame_helper_sha256": "e22d934315295cb2c5735088f04424faed11d5b6b84a6a5ad49449fbfd62a934",
+    "generation": 16167922662260080641,
+    "imported_images": 3,
+    "presented_sequences": [1, 2, 3, 4],
+    "producer_colors": ["red", "green", "blue", "white"],
+    "native_import": true,
+    "native_present": true,
+    "graceful_producer_stop_after_sequence": 4
+  },
+  "artifacts": {
+    "apk_sha256": "f60a24bc1f6de8c17d8b33fc4cb0625b0ee84d7fa7eb87f71844dc27dce1bbda",
+    "apk_certificate_sha256": "295299525da2d35d34d72b4681febaac0066630ebbcee9a5315a82af452bf6e5",
+    "activity_native_sha256": "43eee75966a9a55fda060f7843b37774fe37cbe63fd3207ad5aae1f9f199b6c5",
+    "service_sha256": "79b67ae8beec4769945490881306a6eadddb40f995bbc540e980f2ee9afcc8f9",
+    "glibc_icd_sha256": "693b14634d625224a736c34fc32fccc02b63810b459f41560ac98583e40e4779",
+    "producer_client_sha256": "82ca47178d26b8193a223bede62b088958c9c6d2cc68ee5a49f80c0563e201da"
+  },
+  "visual": {
+    "fullscreen": true,
+    "width": 2800,
+    "height": 1752,
+    "final_frame": "white",
+    "screenshot_tablet_path": "/sdcard/Download/bvb-e092-formal-white.png",
+    "screenshot_sha256": "d20d42e78fdab25902ba5ad1a47fb1b536e48119a0495e3dd9fa1cb00658f852",
+    "screenshot_inspected": true,
+    "all_four_colors_visually_confirmed": false
+  },
+  "reuse": [
+    "E025/E052 private Vulkan loader fallback",
+    "E035 external-image and dedicated-allocation validation",
+    "E057 Activity consumer and setup-only handle lifecycle",
+    "E076 four-frame RGBW producer and ring reuse",
+    "E091 cross-driver AHardwareBuffer compatibility proof"
+  ],
+  "recall": {
+    "query": "BVB AHardwareBuffer Vulkan private Turnip Android system driver cross process frame transport",
+    "indexed_implementation_found": false
+  },
+  "tomb_raider_frame": false,
+  "visible_game_claim": false,
+  "fps_claim": false
+}

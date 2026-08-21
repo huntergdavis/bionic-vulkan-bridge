@@ -434,7 +434,7 @@ int main(void) {
     CHECK(get_surface_formats(physical_device, surface,
                               &surface_format_count,
                               surface_formats) == VK_SUCCESS);
-    CHECK(surface_formats[0].format == VK_FORMAT_B8G8R8A8_UNORM);
+    CHECK(surface_formats[0].format == VK_FORMAT_R8G8B8A8_UNORM);
     uint32_t present_mode_count = 0U;
     CHECK(get_present_modes(physical_device, surface, &present_mode_count,
                             NULL) == VK_SUCCESS);
@@ -1101,7 +1101,7 @@ int main(void) {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .surface = surface,
         .minImageCount = 2U,
-        .imageFormat = VK_FORMAT_B8G8R8A8_UNORM,
+        .imageFormat = VK_FORMAT_R8G8B8A8_UNORM,
         .imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR,
         .imageExtent = {wsi_width, wsi_height},
         .imageArrayLayers = 1U,

@@ -4,6 +4,7 @@ import android.content.Intent;
 import android.net.Credentials;
 import android.net.LocalServerSocket;
 import android.net.LocalSocket;
+import android.hardware.HardwareBuffer;
 import android.os.Binder;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -24,12 +25,14 @@ public final class FrameTransportClient extends Binder {
     private static final int SETUP_VERSION = 1;
     private static final int SETUP_BYTES = 128;
     private static final int SETUP_FLAG_DMA_BUF = 1;
+    private static final int SETUP_FLAG_AHARDWAREBUFFER = 2;
     private static final int MAX_IMAGES = 4;
     private static final long RESULT_TIMEOUT_NS = 10000000000L;
     private static final String HOST_PACKAGE =
             "io.github.huntergdavis.bvb.visiblehost";
 
     private final ParcelFileDescriptor[] descriptors;
+    private final HardwareBuffer[] hardwareBuffers;
     private final long[] allocationSizes = new long[MAX_IMAGES];
     private final int[] memoryTypes = new int[MAX_IMAGES];
     private int imageCount;
@@ -43,7 +46,8 @@ public final class FrameTransportClient extends Binder {
     private int nativeStatus;
     private String nativeDetail;
 
-    private FrameTransportClient(byte[] setup, FileDescriptor[] received)
+    private FrameTransportClient(byte[] setup, FileDescriptor[] received,
+                                 HardwareBuffer[] receivedBuffers)
             throws Exception {
         if (getI32(setup, 0) != SETUP_MAGIC || getU16(setup, 4) != SETUP_VERSION
                 || getU16(setup, 6) != SETUP_BYTES) {
@@ -59,7 +63,13 @@ public final class FrameTransportClient extends Binder {
         if (imageCount < 2 || imageCount > MAX_IMAGES || width <= 0
                 || height <= 0 || format == 0 || imageUsage == 0
                 || generation == 0L || received == null
-                || received.length != imageCount + 1) {
+                || receivedBuffers == null ||
+                received.length !=
+                    ((setupFlags & SETUP_FLAG_AHARDWAREBUFFER) != 0
+                        ? 1 : imageCount + 1) ||
+                receivedBuffers.length !=
+                    ((setupFlags & SETUP_FLAG_AHARDWAREBUFFER) != 0
+                        ? imageCount : 0)) {
             throw new IllegalArgumentException("invalid frame setup values");
         }
         for (int index = 0; index < MAX_IMAGES; ++index) {
@@ -69,7 +79,10 @@ public final class FrameTransportClient extends Binder {
                 throw new IllegalArgumentException("invalid allocation table");
             }
         }
-        if ((setupFlags & ~SETUP_FLAG_DMA_BUF) != 0) {
+        if ((setupFlags &
+             ~(SETUP_FLAG_DMA_BUF | SETUP_FLAG_AHARDWAREBUFFER)) != 0 ||
+                (setupFlags & SETUP_FLAG_DMA_BUF) != 0 &&
+                (setupFlags & SETUP_FLAG_AHARDWAREBUFFER) != 0) {
             throw new IllegalArgumentException("unsupported setup flags");
         }
         for (int offset = 88; offset < SETUP_BYTES; offset += 4) {
@@ -78,6 +91,7 @@ public final class FrameTransportClient extends Binder {
             }
         }
         descriptors = new ParcelFileDescriptor[received.length];
+        hardwareBuffers = receivedBuffers;
         try {
             for (int index = 0; index < received.length; ++index) {
                 descriptors[index] = ParcelFileDescriptor.dup(received[index]);
@@ -127,6 +141,9 @@ public final class FrameTransportClient extends Binder {
                 descriptor.close();
             } catch (Exception ignored) {}
         }
+        for (HardwareBuffer buffer : hardwareBuffers) {
+            if (buffer != null) buffer.close();
+        }
     }
 
     @Override
@@ -150,6 +167,9 @@ public final class FrameTransportClient extends Binder {
             for (int index = 0; index < imageCount; ++index) {
                 reply.writeLong(allocationSizes[index]);
                 reply.writeInt(memoryTypes[index]);
+            }
+            for (HardwareBuffer buffer : hardwareBuffers) {
+                buffer.writeToParcel(reply, 0);
             }
             for (ParcelFileDescriptor descriptor : descriptors) {
                 descriptor.writeToParcel(reply, 0);
@@ -222,7 +242,24 @@ public final class FrameTransportClient extends Binder {
             byte[] setup = new byte[SETUP_BYTES];
             readExact(socket.getInputStream(), setup);
             FileDescriptor[] received = socket.getAncillaryFileDescriptors();
-            client = new FrameTransportClient(setup, received);
+            int setupFlags = getI32(setup, 28);
+            int imageCount = getI32(setup, 8);
+            HardwareBuffer[] hardwareBuffers = new HardwareBuffer[0];
+            if ((setupFlags & SETUP_FLAG_AHARDWAREBUFFER) != 0) {
+                ParcelFileDescriptor duplicate =
+                        ParcelFileDescriptor.dup(socket.getFileDescriptor());
+                int nativeSocket = duplicate.detachFd();
+                hardwareBuffers =
+                        SharedRegionProvider.nativeReceiveHardwareBuffers(
+                                nativeSocket, imageCount);
+                if (hardwareBuffers == null ||
+                        hardwareBuffers.length != imageCount) {
+                    throw new IllegalStateException(
+                            "native AHardwareBuffer receive failed");
+                }
+            }
+            client = new FrameTransportClient(setup, received,
+                                              hardwareBuffers);
             socket.close();
             stage = "binder_install";
             requestInstall(arguments[0], client);

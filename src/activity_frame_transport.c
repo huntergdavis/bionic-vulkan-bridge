@@ -4,10 +4,16 @@
 #include <bvb/protocol.h>
 
 #include <errno.h>
+#include <stdbool.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+#ifdef __ANDROID__
+#include <android/hardware_buffer.h>
+#include <dlfcn.h>
+#endif
 
 static int validate(const struct bvb_activity_frame_setup *setup) {
     if (setup == NULL || setup->magic != BVB_ACTIVITY_FRAME_SETUP_MAGIC ||
@@ -90,13 +96,21 @@ int bvb_activity_frame_setup_decode(
 int bvb_activity_frame_setup_send(
     const char *abstract_socket_name,
     const struct bvb_activity_frame_setup *setup, const int *descriptors,
-    size_t descriptor_count) {
+    size_t descriptor_count, void *const *hardware_buffers,
+    size_t hardware_buffer_count) {
+    const bool ahardwarebuffer = setup != NULL &&
+        (setup->flags & BVB_ACTIVITY_FRAME_FLAG_AHARDWAREBUFFER) != 0U;
     if (abstract_socket_name == NULL || abstract_socket_name[0] == '\0' ||
         setup == NULL || descriptors == NULL ||
-        descriptor_count != (size_t)setup->image_count + 1U ||
+        descriptor_count !=
+            (ahardwarebuffer ? 1U : (size_t)setup->image_count + 1U) ||
         descriptor_count > BVB_WSI_FRAME_RING_MAX_SLOTS + 1U) {
         return -EINVAL;
     }
+    if ((ahardwarebuffer &&
+         (hardware_buffers == NULL ||
+          hardware_buffer_count != setup->image_count)) ||
+        (!ahardwarebuffer && hardware_buffer_count != 0U)) return -EINVAL;
     const size_t name_length = strlen(abstract_socket_name);
     if (name_length > sizeof(((struct sockaddr_un *)0)->sun_path) - 2U) {
         return -ENAMETOOLONG;
@@ -156,6 +170,39 @@ int bvb_activity_frame_setup_send(
             status = -EIO;
         }
     }
+#ifdef __ANDROID__
+    if (status == 0 && ahardwarebuffer) {
+        void *android = dlopen(
+            "/system/lib64/libandroid.so", RTLD_NOW | RTLD_LOCAL);
+        union {
+            void *object;
+            int (*function)(const AHardwareBuffer *, int);
+        } resolve = {
+            .object = android == NULL
+                ? NULL
+                : dlsym(android,
+                        "AHardwareBuffer_sendHandleToUnixSocket"),
+        };
+        if (resolve.function == NULL) {
+            status = -ENOSYS;
+        } else {
+            for (size_t index = 0U;
+                 index < hardware_buffer_count && status == 0; ++index) {
+                if (hardware_buffers[index] == NULL) {
+                    status = -EINVAL;
+                } else {
+                    const int result = resolve.function(
+                        (const AHardwareBuffer *)hardware_buffers[index],
+                        channel);
+                    if (result != 0) status = result < 0 ? result : -result;
+                }
+            }
+        }
+        if (android != NULL) (void)dlclose(android);
+    }
+#else
+    if (status == 0 && ahardwarebuffer) status = -ENOTSUP;
+#endif
     if (channel >= 0) (void)close(channel);
     return status;
 }

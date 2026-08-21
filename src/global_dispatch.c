@@ -16,6 +16,11 @@
 #include <vulkan/vk_icd.h>
 #include <vulkan/vk_layer.h>
 
+#ifndef VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME
+#define VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME     \
+    "VK_ANDROID_external_memory_android_hardware_buffer"
+#endif
+
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/memfd.h>
@@ -1886,10 +1891,10 @@ static VkResult VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceSurfaceFormatsKHR(
     VkPhysicalDevice physical_device, VkSurfaceKHR surface,
     uint32_t *format_count, VkSurfaceFormatKHR *formats) {
     static const VkSurfaceFormatKHR virtual_formats[] = {
-        {VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
-        {VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
         {VK_FORMAT_R8G8B8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
         {VK_FORMAT_R8G8B8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
+        {VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
+        {VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR},
     };
     if (format_count == NULL) return VK_ERROR_INITIALIZATION_FAILED;
     struct bvb_physical_device_proxy *physical =
@@ -3318,9 +3323,11 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
     }
     bool external_memory_fd_injected = false;
     bool external_memory_dma_buf_injected = false;
+    bool ahardwarebuffer_injected = false;
     if (virtual_swapchain_requested) {
         bool native_external_memory_fd_supported = false;
         bool native_external_memory_dma_buf_supported = false;
+        bool native_ahardwarebuffer_supported = false;
         if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
             return VK_ERROR_INITIALIZATION_FAILED;
         }
@@ -3339,6 +3346,11 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
                 native_external_memory_dma_buf_supported |=
                     strcmp(extension_name,
                            VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME) == 0;
+                native_ahardwarebuffer_supported |=
+                    strcmp(
+                        extension_name,
+                        VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME) ==
+                    0;
             }
         }
         (void)pthread_mutex_unlock(&bvb_global_client.mutex);
@@ -3346,11 +3358,13 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
             return VK_ERROR_INITIALIZATION_FAILED;
         }
         if (!native_external_memory_fd_supported ||
-            !native_external_memory_dma_buf_supported) {
+            !native_external_memory_dma_buf_supported ||
+            !native_ahardwarebuffer_supported) {
             return VK_ERROR_EXTENSION_NOT_PRESENT;
         }
         bool external_memory_fd_enabled = false;
         bool external_memory_dma_buf_enabled = false;
+        bool ahardwarebuffer_enabled = false;
         for (uint32_t index = 0U;
              index < native_extension_count; ++index) {
             if (strcmp(native_extensions[index],
@@ -3360,6 +3374,12 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
             if (strcmp(native_extensions[index],
                        VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME) == 0) {
                 external_memory_dma_buf_enabled = true;
+            }
+            if (strcmp(
+                    native_extensions[index],
+                    VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME) ==
+                0) {
+                ahardwarebuffer_enabled = true;
             }
         }
         if (!external_memory_fd_enabled) {
@@ -3380,6 +3400,15 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
                 VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME;
             external_memory_dma_buf_injected = true;
         }
+        if (!ahardwarebuffer_enabled) {
+            if (native_extension_count >=
+                BVB_VULKAN_MAX_DEVICE_CREATE_EXTENSIONS) {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            native_extensions[native_extension_count++] =
+                VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME;
+            ahardwarebuffer_injected = true;
+        }
     }
     if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
         for (uint32_t index = 0U;
@@ -3391,11 +3420,13 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDevice(
         fprintf(stderr,
                 "BVB_ICD_CREATE_DEVICE_NORMALIZED original=%u native=%u "
                 "virtual_swapchain=%u external_memory_fd_injected=%u "
-                "external_memory_dma_buf_injected=%u\n",
+                "external_memory_dma_buf_injected=%u "
+                "ahardwarebuffer_injected=%u\n",
                 create_info->enabledExtensionCount, native_extension_count,
                 virtual_swapchain_requested ? 1U : 0U,
                 external_memory_fd_injected ? 1U : 0U,
-                external_memory_dma_buf_injected ? 1U : 0U);
+                external_memory_dma_buf_injected ? 1U : 0U,
+                ahardwarebuffer_injected ? 1U : 0U);
     }
     struct bvb_vulkan_device_create_packed_request packed = {
         .physical_device_id = physical->wire_id,
@@ -7565,12 +7596,18 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateSwapchainKHR(
         result = bvb_protocol_decode_vulkan_swapchain_prepare_response(
             response.payload, &prepared);
     if (result == 0 && prepared.vulkan_result == VK_SUCCESS &&
-        descriptor_count != (size_t)prepared.image_count + 1U)
+        descriptor_count !=
+            ((prepared.flags &
+              BVB_VULKAN_SWAPCHAIN_PREPARE_FLAG_AHARDWAREBUFFER) != 0U
+                 ? 1U
+                 : (size_t)prepared.image_count + 1U))
         result = -EPROTO;
     if (result == 0 && prepared.vulkan_result != VK_SUCCESS &&
         descriptor_count != 0U)
         result = -EPROTO;
-    if (result == 0 && prepared.vulkan_result == VK_SUCCESS) {
+    if (result == 0 && prepared.vulkan_result == VK_SUCCESS &&
+        (prepared.flags &
+         BVB_VULKAN_SWAPCHAIN_PREPARE_FLAG_AHARDWAREBUFFER) == 0U) {
         for (uint32_t index = 0U; index < prepared.image_count; ++index) {
             struct stat descriptor_status;
             if (fstat(descriptors[index], &descriptor_status) != 0 ||
@@ -7585,7 +7622,11 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateSwapchainKHR(
         }
     }
     if (result == 0 && prepared.vulkan_result == VK_SUCCESS) {
-        const uint32_t control_index = prepared.image_count;
+        const uint32_t control_index =
+            (prepared.flags &
+             BVB_VULKAN_SWAPCHAIN_PREPARE_FLAG_AHARDWAREBUFFER) != 0U
+                ? 0U
+                : prepared.image_count;
         struct stat control_status;
         if (fstat(descriptors[control_index], &control_status) != 0 ||
             control_status.st_size != BVB_WSI_FRAME_RING_REGION_BYTES) {

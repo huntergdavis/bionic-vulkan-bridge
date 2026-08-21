@@ -3636,3 +3636,40 @@ intended game-to-Activity driver pair. It does not yet prove synchronization,
 ring reuse, visible pixels, Tomb Raider, or FPS. The next gate replaces the
 three DMA-BUF frame images with three AHardwareBuffers, relays each setup handle
 once, and reruns the fullscreen red/green/blue/white sequence.
+
+## E092 — visible AHardwareBuffer frame ring (2026-08-21)
+
+Status: passed on the Galaxy Tab S8+ at native `2800x1752`; 58/58 host
+contracts pass. E092 replaces the three DMA-BUF virtual-swapchain images with
+three `AHardwareBuffer` allocations imported simultaneously by private Turnip
+and Samsung system Vulkan. The same-UID Java helper receives the three native
+handles once, parcels them once to the Activity, then exits. The existing
+shared futex ring remains the only per-frame transport; Java and Binder calls
+per frame remain zero.
+
+The producer rendered and presented red, green, blue, then white through slots
+`0,1,2,0`. Android logged one three-image import and four matching native
+present completions for generation `16167922662260080641`. Normal producer
+teardown after sequence four is now recorded as `E057_FRAME_CONSUMER_STOP`,
+not a false consumer failure. The formal runner passed, and an independently
+captured fullscreen `2800x1752` screenshot contains the final white frame
+(SHA-256 `d20d42e78fdab25902ba5ad1a47fb1b536e48119a0495e3dd9fa1cb00658f852`).
+The full four-color sequence is correlated by native logs but was not visually
+sampled frame-by-frame.
+
+Two target-specific corrections were required. Private Turnip reports zero
+legacy `VkMemoryRequirements.size` for an image whose authoritative Android
+allocation size is 19,734,528 bytes; E092 correctly uses
+`VkAndroidHardwareBufferPropertiesANDROID.allocationSize` while retaining the
+intersected image/native-buffer memory-type check. The standalone `app_process`
+helper also loads only the installed APK's exact, byte-verified native library
+through an explicit absolute path; the normal Activity continues to use
+`System.loadLibrary`.
+
+The required `deja "BVB AHardwareBuffer Vulkan private Turnip Android system
+driver cross process frame transport"` query returned no indexed
+implementation. E092 reuses E025/E052, E035, E057, E076, and E091 as listed in
+`docs/evidence/e092-ahardwarebuffer-frame-ring-tablet.json`. This proves the
+intended visible zero-copy presentation transport, not a Tomb Raider frame or
+FPS improvement. The next gate is a bounded Tomb Raider run through this exact
+Activity transport with E079a first-rejection diagnostics enabled.

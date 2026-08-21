@@ -23,12 +23,14 @@ def run_case(service: str, client: str, loader: str, mode: str) -> None:
             server_environment[
                 "BVB_FAKE_EXPECT_EXTERNAL_MEMORY_DMA_BUF_COUNT"
             ] = "1"
-            server_environment["BVB_FAKE_EXPECT_DEVICE_EXTENSION_COUNT"] = "2"
+            server_environment["BVB_FAKE_EXPECT_AHARDWAREBUFFER_COUNT"] = "1"
+            server_environment["BVB_FAKE_EXPECT_DEVICE_EXTENSION_COUNT"] = "3"
         elif mode == "no-swapchain":
             server_environment["BVB_FAKE_EXPECT_EXTERNAL_MEMORY_FD_COUNT"] = "0"
             server_environment[
                 "BVB_FAKE_EXPECT_EXTERNAL_MEMORY_DMA_BUF_COUNT"
             ] = "0"
+            server_environment["BVB_FAKE_EXPECT_AHARDWAREBUFFER_COUNT"] = "0"
             server_environment["BVB_FAKE_EXPECT_DEVICE_EXTENSION_COUNT"] = "0"
         else:
             server_environment[

@@ -3389,7 +3389,7 @@ static int swapchain_response_is_valid(
     if (response->vulkan_result != 0) {
         if (response->image_count != 0U || response->swapchain_id != 0U ||
             response->generation != 0U ||
-            response->control_region_bytes != 0U) {
+            response->control_region_bytes != 0U || response->flags != 0U) {
             return -EINVAL;
         }
         for (uint32_t index = 0U;
@@ -3406,7 +3406,9 @@ static int swapchain_response_is_valid(
         response->image_count > BVB_WSI_FRAME_RING_MAX_SLOTS ||
         !wire_id_is_type(response->swapchain_id, BVB_OBJECT_SWAPCHAIN) ||
         response->generation == 0U ||
-        response->control_region_bytes != BVB_WSI_FRAME_RING_REGION_BYTES) {
+        response->control_region_bytes != BVB_WSI_FRAME_RING_REGION_BYTES ||
+        (response->flags &
+         ~BVB_VULKAN_SWAPCHAIN_PREPARE_KNOWN_FLAGS) != 0U) {
         return -EINVAL;
     }
     for (uint32_t index = 0U;
@@ -3436,6 +3438,7 @@ int bvb_protocol_encode_vulkan_swapchain_prepare_response(
     bvb_wire_put_u64(output + 8, response->swapchain_id);
     bvb_wire_put_u64(output + 16, response->generation);
     bvb_wire_put_u32(output + 24, response->control_region_bytes);
+    bvb_wire_put_u32(output + 28, response->flags);
     for (uint32_t index = 0U; index < response->image_count; ++index) {
         const uint32_t offset = 32U +
             index * BVB_VULKAN_SWAPCHAIN_IMAGE_RECORD_SIZE;
@@ -3451,14 +3454,14 @@ int bvb_protocol_encode_vulkan_swapchain_prepare_response(
 int bvb_protocol_decode_vulkan_swapchain_prepare_response(
     const uint8_t input[BVB_VULKAN_SWAPCHAIN_PREPARE_RESPONSE_SIZE],
     struct bvb_vulkan_swapchain_prepare_response *response) {
-    if (input == NULL || response == NULL ||
-        bvb_wire_get_u32(input + 28) != 0U) return -EINVAL;
+    if (input == NULL || response == NULL) return -EINVAL;
     struct bvb_vulkan_swapchain_prepare_response decoded = {
         .vulkan_result = bvb_wire_get_i32(input),
         .image_count = bvb_wire_get_u32(input + 4),
         .swapchain_id = bvb_wire_get_u64(input + 8),
         .generation = bvb_wire_get_u64(input + 16),
         .control_region_bytes = bvb_wire_get_u32(input + 24),
+        .flags = bvb_wire_get_u32(input + 28),
     };
     for (uint32_t index = 0U;
          index < BVB_WSI_FRAME_RING_MAX_SLOTS; ++index) {

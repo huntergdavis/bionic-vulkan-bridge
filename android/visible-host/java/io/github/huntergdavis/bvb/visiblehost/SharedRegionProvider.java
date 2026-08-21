@@ -3,6 +3,7 @@ package io.github.huntergdavis.bvb.visiblehost;
 import android.content.ContentProvider;
 import android.content.ContentValues;
 import android.database.Cursor;
+import android.hardware.HardwareBuffer;
 import android.net.LocalSocket;
 import android.net.LocalSocketAddress;
 import android.net.Uri;
@@ -18,9 +19,16 @@ public final class SharedRegionProvider extends ContentProvider {
     private static final String EXTERNAL_BROKER_SOCKET =
             "bvb-visible-external-memory";
     private static final int EXTERNAL_RESPONSE_BYTES = 24;
+    private static final String NATIVE_LIBRARY_ENV =
+            "BVB_VISIBLE_HOST_NATIVE_LIBRARY";
 
     static {
-        System.loadLibrary("bvb-visible-host");
+        String explicitNativeLibrary = System.getenv(NATIVE_LIBRARY_ENV);
+        if (explicitNativeLibrary == null || explicitNativeLibrary.isEmpty()) {
+            System.loadLibrary("bvb-visible-host");
+        } else {
+            System.load(explicitNativeLibrary);
+        }
     }
 
     static native int nativeOpenRegion(String token);
@@ -29,7 +37,11 @@ public final class SharedRegionProvider extends ContentProvider {
             String token, int imageCount, int width, int height, int format,
             int imageUsage, int setupFlags, long generation,
             long[] allocationSizes,
-            int[] memoryTypes, int[] descriptors);
+            int[] memoryTypes, HardwareBuffer[] hardwareBuffers,
+            int[] descriptors);
+
+    static native HardwareBuffer[] nativeReceiveHardwareBuffers(
+            int socketFd, int imageCount);
 
     static final class ExternalMemoryResult {
         int status;

@@ -13,6 +13,7 @@ provider_java="$java_dir/SharedRegionProvider.java"
 client_java="$java_dir/SharedRegionClient.java"
 receiver_java="$java_dir/SharedRegionReceiver.java"
 frame_transport_client_java="$java_dir/FrameTransportClient.java"
+hardware_buffer_stub="$project_dir/android/visible-host/java-stubs/android/hardware/HardwareBuffer.java"
 lifecycle_source="$project_dir/src/lifecycle.c"
 frame_sync_source="$project_dir/src/frame_sync.c"
 protocol_source="$project_dir/src/protocol.c"
@@ -27,6 +28,7 @@ fragment_shader="$project_dir/android/visible-host/shaders/triangle.frag"
 shader_dir="$out_dir/shaders"
 shader_include="$shader_dir/triangle_shaders.inc"
 java_classes="$out_dir/java-classes"
+hardware_buffer_stub_jar="$out_dir/hardware-buffer-api26-stub.jar"
 dex_dir="$out_dir/dex"
 tool_dir="$out_dir/android-tools"
 r8_version=9.4.14
@@ -46,7 +48,7 @@ keystore="$out_dir/debug.keystore"
 : "${PREFIX:?PREFIX must name the Termux prefix}"
 
 for command_name in clang aapt zipalign apksigner keytool readelf \
-    glslangValidator python curl javac java sha256sum; do
+    glslangValidator python curl javac java jar sha256sum; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         printf 'missing required command: %s\n' "$command_name" >&2
         exit 2
@@ -55,6 +57,7 @@ done
 for required_file in "$manifest" "$source_file" "$activity_java" \
     "$provider_java" \
     "$client_java" "$receiver_java" "$frame_transport_client_java" \
+    "$hardware_buffer_stub" \
     "$lifecycle_source" \
     "$protocol_source" "$handle_source" "$batch_source" \
     "$transport_source" "$visible_batch_source" "$visible_ingress_source" \
@@ -109,11 +112,15 @@ fetch_pinned "$r8_url" "$r8_sha256" "$r8_jar"
 fetch_pinned "$android_jar_url" "$android_jar_sha256" "$android_jar"
 
 javac --release 8 -classpath "$android_jar" -d "$java_classes" \
+    "$hardware_buffer_stub" \
     "$activity_java" "$provider_java" "$client_java" "$receiver_java" \
     "$frame_transport_client_java"
+jar cf "$hardware_buffer_stub_jar" -C "$java_classes" \
+    android/hardware/HardwareBuffer.class
 rm -f "$dex_dir/classes.dex"
 java -cp "$r8_jar" com.android.tools.r8.D8 \
     --release --no-desugaring --min-api 24 --lib "$android_jar" \
+    --lib "$hardware_buffer_stub_jar" \
     --output "$dex_dir" \
     "$java_classes/io/github/huntergdavis/bvb/visiblehost/VisibleHostActivity.class" \
     "$java_classes/io/github/huntergdavis/bvb/visiblehost/SharedRegionProvider.class" \

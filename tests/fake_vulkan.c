@@ -5,6 +5,11 @@
 
 #include <vulkan/vulkan.h>
 
+#ifndef VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME
+#define VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME     \
+    "VK_ANDROID_external_memory_android_hardware_buffer"
+#endif
+
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
@@ -42,6 +47,7 @@ static int fake_android_surface_enabled;
 static int fake_swapchain_enabled;
 static int fake_external_memory_fd_enabled;
 static int fake_external_memory_dma_buf_enabled;
+static int fake_ahardwarebuffer_enabled;
 static int fake_swapchain_created;
 static int fake_image_acquired;
 static int fake_to_clear_barrier;
@@ -804,11 +810,13 @@ static VkResult VKAPI_CALL fake_create_device(
     fake_swapchain_enabled = 0;
     fake_external_memory_fd_enabled = 0;
     fake_external_memory_dma_buf_enabled = 0;
+    fake_ahardwarebuffer_enabled = 0;
     if (create_info == NULL || device == NULL) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     uint32_t external_memory_fd_count = 0U;
     uint32_t external_memory_dma_buf_count = 0U;
+    uint32_t ahardwarebuffer_count = 0U;
     for (uint32_t index = 0U;
          index < create_info->enabledExtensionCount; ++index) {
         fake_swapchain_enabled |=
@@ -822,6 +830,12 @@ static VkResult VKAPI_CALL fake_create_device(
             strcmp(create_info->ppEnabledExtensionNames[index],
                    VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME) == 0
                 ? 1U : 0U;
+        ahardwarebuffer_count +=
+            strcmp(
+                create_info->ppEnabledExtensionNames[index],
+                VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME) ==
+                0
+            ? 1U : 0U;
     }
     const char *expected_external_memory_fd_count =
         getenv("BVB_FAKE_EXPECT_EXTERNAL_MEMORY_FD_COUNT");
@@ -847,6 +861,17 @@ static VkResult VKAPI_CALL fake_create_device(
     }
     const char *expected_extension_count =
         getenv("BVB_FAKE_EXPECT_DEVICE_EXTENSION_COUNT");
+    const char *expected_ahardwarebuffer_count =
+        getenv("BVB_FAKE_EXPECT_AHARDWAREBUFFER_COUNT");
+    if (expected_ahardwarebuffer_count != NULL &&
+        ((strcmp(expected_ahardwarebuffer_count, "0") == 0 &&
+          ahardwarebuffer_count != 0U) ||
+         (strcmp(expected_ahardwarebuffer_count, "1") == 0 &&
+          ahardwarebuffer_count != 1U) ||
+         (strcmp(expected_ahardwarebuffer_count, "0") != 0 &&
+          strcmp(expected_ahardwarebuffer_count, "1") != 0))) {
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
     if (expected_extension_count != NULL &&
         ((strcmp(expected_extension_count, "0") == 0 &&
           create_info->enabledExtensionCount != 0U) ||
@@ -854,9 +879,12 @@ static VkResult VKAPI_CALL fake_create_device(
           create_info->enabledExtensionCount != 1U) ||
          (strcmp(expected_extension_count, "2") == 0 &&
           create_info->enabledExtensionCount != 2U) ||
+         (strcmp(expected_extension_count, "3") == 0 &&
+          create_info->enabledExtensionCount != 3U) ||
          (strcmp(expected_extension_count, "0") != 0 &&
           strcmp(expected_extension_count, "1") != 0 &&
-          strcmp(expected_extension_count, "2") != 0))) {
+          strcmp(expected_extension_count, "2") != 0 &&
+          strcmp(expected_extension_count, "3") != 0))) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     if (getenv("BVB_FAKE_FORBID_CREATE_DEVICE") != NULL) {
@@ -876,7 +904,8 @@ static VkResult VKAPI_CALL fake_create_device(
     }
     if (create_info->enabledExtensionCount == 58U ||
         create_info->enabledExtensionCount == 59U ||
-        create_info->enabledExtensionCount == 60U) {
+        create_info->enabledExtensionCount == 60U ||
+        create_info->enabledExtensionCount == 61U) {
         if (create_info->queueCreateInfoCount != 2U ||
             create_info->pQueueCreateInfos == NULL ||
             create_info->pQueueCreateInfos[0].queueFamilyIndex != 0U ||
@@ -916,6 +945,17 @@ static VkResult VKAPI_CALL fake_create_device(
                     VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME) != 0)) {
             return VK_ERROR_EXTENSION_NOT_PRESENT;
         }
+        if (create_info->enabledExtensionCount == 61U &&
+            (strcmp(create_info->ppEnabledExtensionNames[58],
+                    VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) != 0 ||
+             strcmp(create_info->ppEnabledExtensionNames[59],
+                    VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME) != 0 ||
+             strcmp(
+                 create_info->ppEnabledExtensionNames[60],
+                 VK_ANDROID_EXTERNAL_MEMORY_ANDROID_HARDWARE_BUFFER_EXTENSION_NAME) !=
+                 0)) {
+            return VK_ERROR_EXTENSION_NOT_PRESENT;
+        }
     }
     if (getenv("BVB_FAKE_HIDE_SWAPCHAIN") != NULL &&
         fake_swapchain_enabled != 0) {
@@ -924,6 +964,7 @@ static VkResult VKAPI_CALL fake_create_device(
     fake_external_memory_fd_enabled = external_memory_fd_count != 0U;
     fake_external_memory_dma_buf_enabled =
         external_memory_dma_buf_count != 0U;
+    fake_ahardwarebuffer_enabled = ahardwarebuffer_count != 0U;
     *device = (VkDevice)(uintptr_t)0x3000U;
     return VK_SUCCESS;
 }
@@ -937,6 +978,7 @@ static void VKAPI_CALL fake_destroy_device(
     fake_swapchain_enabled = 0;
     fake_external_memory_fd_enabled = 0;
     fake_external_memory_dma_buf_enabled = 0;
+    fake_ahardwarebuffer_enabled = 0;
     fake_swapchain_created = 0;
     fake_image_acquired = 0;
     fake_to_clear_barrier = 0;

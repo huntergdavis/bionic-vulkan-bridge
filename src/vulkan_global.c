@@ -3,6 +3,15 @@
 #endif
 #define VK_NO_PROTOTYPES
 
+#ifdef __ANDROID__
+#define VK_USE_PLATFORM_ANDROID_KHR
+#include <android/hardware_buffer.h>
+typedef int (*bvb_ahb_is_supported_fn)(const AHardwareBuffer_Desc *);
+typedef int (*bvb_ahb_allocate_fn)(const AHardwareBuffer_Desc *,
+                                   AHardwareBuffer **);
+typedef void (*bvb_ahb_release_fn)(AHardwareBuffer *);
+#endif
+
 #include <bvb/command_batch.h>
 #include <bvb/handle.h>
 #include <bvb/vulkan_global.h>
@@ -101,6 +110,7 @@ struct bvb_swapchain_metadata {
     uint64_t image_ids[BVB_WSI_FRAME_RING_MAX_SLOTS];
     VkImage images[BVB_WSI_FRAME_RING_MAX_SLOTS];
     VkDeviceMemory memories[BVB_WSI_FRAME_RING_MAX_SLOTS];
+    void *hardware_buffers[BVB_WSI_FRAME_RING_MAX_SLOTS];
     uint64_t allocation_sizes[BVB_WSI_FRAME_RING_MAX_SLOTS];
     uint32_t memory_type_indices[BVB_WSI_FRAME_RING_MAX_SLOTS];
     uint32_t queue_family_index;
@@ -120,6 +130,12 @@ struct bvb_vulkan_global_context {
     PFN_vkCreateInstance create_instance;
     PFN_vkDestroyInstance destroy_instance;
     PFN_vkGetDeviceProcAddr get_device_proc_addr;
+#ifdef __ANDROID__
+    void *android_library;
+    bvb_ahb_is_supported_fn ahardwarebuffer_is_supported;
+    bvb_ahb_allocate_fn ahardwarebuffer_allocate;
+    bvb_ahb_release_fn ahardwarebuffer_release;
+#endif
     struct bvb_vulkan_global_info info;
     VkExtensionProperties exposed_instance_extensions[
         BVB_EXPOSED_INSTANCE_EXTENSION_CAPACITY];
@@ -177,6 +193,47 @@ static void set_error(char *output, size_t output_size, const char *format, ...)
     (void)vsnprintf(output, output_size, format, arguments);
     va_end(arguments);
 }
+
+#ifdef __ANDROID__
+static int ensure_android_hardware_buffer_api(
+    struct bvb_vulkan_global_context *context) {
+    if (context->android_library != NULL) return 0;
+    void *library = dlopen(
+        "/system/lib64/libandroid.so", RTLD_NOW | RTLD_LOCAL);
+    if (library == NULL) return -ENOENT;
+#define BVB_ANDROID_RESOLVE(member, type, name)                                \
+    do {                                                                       \
+        union {                                                                \
+            void *object;                                                      \
+            type function;                                                     \
+        } conversion = {.object = dlsym(library, (name))};                     \
+        context->member = conversion.function;                                 \
+    } while (0)
+    BVB_ANDROID_RESOLVE(
+        ahardwarebuffer_is_supported,
+        bvb_ahb_is_supported_fn,
+        "AHardwareBuffer_isSupported");
+    BVB_ANDROID_RESOLVE(
+        ahardwarebuffer_allocate,
+        bvb_ahb_allocate_fn,
+        "AHardwareBuffer_allocate");
+    BVB_ANDROID_RESOLVE(
+        ahardwarebuffer_release, bvb_ahb_release_fn,
+        "AHardwareBuffer_release");
+#undef BVB_ANDROID_RESOLVE
+    if (context->ahardwarebuffer_is_supported == NULL ||
+        context->ahardwarebuffer_allocate == NULL ||
+        context->ahardwarebuffer_release == NULL) {
+        (void)dlclose(library);
+        context->ahardwarebuffer_is_supported = NULL;
+        context->ahardwarebuffer_allocate = NULL;
+        context->ahardwarebuffer_release = NULL;
+        return -ENOSYS;
+    }
+    context->android_library = library;
+    return 0;
+}
+#endif
 
 static void append_error_entry_point(
     char *output, size_t output_size, const char *name) {
@@ -549,6 +606,11 @@ void bvb_vulkan_global_context_destroy(
     if (context->loader != NULL) {
         (void)dlclose(context->loader);
     }
+#ifdef __ANDROID__
+    if (context->android_library != NULL) {
+        (void)dlclose(context->android_library);
+    }
+#endif
     free(context);
 }
 
@@ -6020,6 +6082,13 @@ static int destroy_swapchain_metadata(
             free_memory != NULL) {
             free_memory(metadata->device, metadata->memories[index], NULL);
         }
+#ifdef __ANDROID__
+        if (metadata->hardware_buffers[index] != NULL &&
+            context->ahardwarebuffer_release != NULL) {
+            context->ahardwarebuffer_release(
+                (AHardwareBuffer *)metadata->hardware_buffers[index]);
+        }
+#endif
     }
     if (metadata->swapchain_id != 0U) {
         const int removed = bvb_handle_table_remove(
@@ -6163,14 +6232,21 @@ int bvb_vulkan_global_context_prepare_swapchain(
     const struct bvb_vulkan_swapchain_prepare_request *request,
     struct bvb_vulkan_swapchain_prepare_response *response,
     int descriptors[BVB_WSI_FRAME_RING_MAX_SLOTS + 1U],
-    size_t *descriptor_count, char *error, size_t error_size) {
+    size_t *descriptor_count,
+    void *hardware_buffers[BVB_WSI_FRAME_RING_MAX_SLOTS],
+    size_t *hardware_buffer_count, char *error, size_t error_size) {
     if (error != NULL && error_size != 0U) error[0] = '\0';
     if (context == NULL || request == NULL || response == NULL ||
         descriptors == NULL || descriptor_count == NULL) return -EINVAL;
+    if (hardware_buffers == NULL || hardware_buffer_count == NULL)
+        return -EINVAL;
     *response = (struct bvb_vulkan_swapchain_prepare_response){0};
     *descriptor_count = 0U;
+    *hardware_buffer_count = 0U;
     for (size_t index = 0U; index < BVB_WSI_FRAME_RING_MAX_SLOTS + 1U;
          ++index) descriptors[index] = -1;
+    for (size_t index = 0U; index < BVB_WSI_FRAME_RING_MAX_SLOTS; ++index)
+        hardware_buffers[index] = NULL;
     uint8_t request_validation[BVB_VULKAN_SWAPCHAIN_PREPARE_REQUEST_SIZE];
     if (bvb_protocol_encode_vulkan_swapchain_prepare_request(
             request_validation, request) != 0 ||
@@ -6240,12 +6316,26 @@ int bvb_vulkan_global_context_prepare_swapchain(
     PFN_vkBindImageMemory bind_image =
         (PFN_vkBindImageMemory)context->get_device_proc_addr(
             metadata->device, "vkBindImageMemory");
+#ifdef __ANDROID__
+    PFN_vkGetAndroidHardwareBufferPropertiesANDROID get_hardware_buffer_properties =
+        (PFN_vkGetAndroidHardwareBufferPropertiesANDROID)
+            context->get_device_proc_addr(
+                metadata->device,
+                "vkGetAndroidHardwareBufferPropertiesANDROID");
+#else
     PFN_vkGetMemoryFdKHR get_memory_fd =
         (PFN_vkGetMemoryFdKHR)context->get_device_proc_addr(
             metadata->device, "vkGetMemoryFdKHR");
+#endif
     if (query == NULL || create_image == NULL || destroy_image == NULL ||
         get_requirements == NULL || allocate_memory == NULL ||
-        free_memory == NULL || bind_image == NULL || get_memory_fd == NULL) {
+        free_memory == NULL || bind_image == NULL
+#ifdef __ANDROID__
+        || get_hardware_buffer_properties == NULL
+#else
+        || get_memory_fd == NULL
+#endif
+    ) {
         set_error(error, error_size,
                   "device lacks external-image ring entry points:");
         if (query == NULL)
@@ -6265,16 +6355,54 @@ int bvb_vulkan_global_context_prepare_swapchain(
             append_error_entry_point(error, error_size, "vkFreeMemory");
         if (bind_image == NULL)
             append_error_entry_point(error, error_size, "vkBindImageMemory");
+#ifdef __ANDROID__
+        if (get_hardware_buffer_properties == NULL)
+            append_error_entry_point(
+                error, error_size,
+                "vkGetAndroidHardwareBufferPropertiesANDROID");
+#else
         if (get_memory_fd == NULL)
             append_error_entry_point(error, error_size, "vkGetMemoryFdKHR");
+#endif
         *metadata = (struct bvb_swapchain_metadata){.control_fd = -1};
         return -ENOSYS;
     }
     const VkImageUsageFlags transport_usage =
+#ifdef __ANDROID__
+        (VkImageUsageFlags)request->image_usage;
+#else
         (VkImageUsageFlags)request->image_usage |
         VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+#endif
+#ifdef __ANDROID__
+    const VkExternalMemoryHandleTypeFlagBits transport_handle_type =
+        VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
+    status = ensure_android_hardware_buffer_api(context);
+    if (status != 0 || request->format != VK_FORMAT_R8G8B8A8_UNORM) {
+        response->vulkan_result = status == 0
+            ? VK_ERROR_FORMAT_NOT_SUPPORTED
+            : VK_ERROR_INITIALIZATION_FAILED;
+        *metadata = (struct bvb_swapchain_metadata){.control_fd = -1};
+        return status == 0 ? 0 : status;
+    }
+    const AHardwareBuffer_Desc hardware_buffer_description = {
+        .width = request->width,
+        .height = request->height,
+        .layers = 1U,
+        .format = AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM,
+        .usage = AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE |
+                 AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT,
+    };
+    if (context->ahardwarebuffer_is_supported(
+            &hardware_buffer_description) == 0) {
+        response->vulkan_result = VK_ERROR_FORMAT_NOT_SUPPORTED;
+        *metadata = (struct bvb_swapchain_metadata){.control_fd = -1};
+        return 0;
+    }
+#else
     const VkExternalMemoryHandleTypeFlagBits transport_handle_type =
         VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
+#endif
     const VkPhysicalDeviceExternalImageFormatInfo external_query = {
         .sType =
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO,
@@ -6298,8 +6426,12 @@ int bvb_vulkan_global_context_prepare_swapchain(
     VkResult vulkan_result = query(
         physical_device, &format_query, &format_properties);
     const VkExternalMemoryFeatureFlags required_features =
+#ifdef __ANDROID__
+        VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT;
+#else
         VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT |
         VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT;
+#endif
     if (vulkan_result != VK_SUCCESS ||
         request->width > format_properties.imageFormatProperties.maxExtent.width ||
         request->height > format_properties.imageFormatProperties.maxExtent.height ||
@@ -6350,21 +6482,87 @@ int bvb_vulkan_global_context_prepare_swapchain(
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     };
+    const char *failure_stage = "none";
+    uint32_t failure_index = 0U;
+    uint32_t failure_image_memory_bits = 0U;
+    uint32_t failure_hardware_memory_bits = 0U;
+    uint64_t failure_image_size = 0U;
+    uint64_t failure_allocation_size = 0U;
     for (uint32_t index = 0U; index < metadata->image_count; ++index) {
-        vulkan_result = create_image(
-            metadata->device, &image_info, NULL, &metadata->images[index]);
-        if (vulkan_result != VK_SUCCESS) break;
-        VkMemoryRequirements requirements = {0};
-        get_requirements(
-            metadata->device, metadata->images[index], &requirements);
-        status = choose_swapchain_memory_type(
-            &memory_properties, requirements.memoryTypeBits,
-            &metadata->memory_type_indices[index]);
-        if (status != 0 || requirements.size == 0U) {
+        failure_index = index;
+#ifdef __ANDROID__
+        AHardwareBuffer *hardware_buffer = NULL;
+        if (context->ahardwarebuffer_allocate(
+                &hardware_buffer_description, &hardware_buffer) != 0 ||
+            hardware_buffer == NULL) {
+            failure_stage = "ahardwarebuffer_allocate";
             vulkan_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
             break;
         }
+        metadata->hardware_buffers[index] = hardware_buffer;
+#endif
+        vulkan_result = create_image(
+            metadata->device, &image_info, NULL, &metadata->images[index]);
+        if (vulkan_result != VK_SUCCESS) {
+            failure_stage = "vkCreateImage";
+            break;
+        }
+        VkMemoryRequirements requirements = {0};
+        get_requirements(
+            metadata->device, metadata->images[index], &requirements);
+        failure_image_memory_bits = requirements.memoryTypeBits;
+        failure_image_size = requirements.size;
+#ifdef __ANDROID__
+        VkAndroidHardwareBufferPropertiesANDROID hardware_properties = {
+            .sType =
+                VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_PROPERTIES_ANDROID,
+        };
+        vulkan_result = get_hardware_buffer_properties(
+            metadata->device, hardware_buffer, &hardware_properties);
+        failure_hardware_memory_bits = hardware_properties.memoryTypeBits;
+        failure_allocation_size = hardware_properties.allocationSize;
+        const uint32_t compatible_memory_types =
+            requirements.memoryTypeBits & hardware_properties.memoryTypeBits;
+        status = vulkan_result == VK_SUCCESS
+            ? choose_swapchain_memory_type(
+                  &memory_properties, compatible_memory_types,
+                  &metadata->memory_type_indices[index])
+            : -ENOTSUP;
+        metadata->allocation_sizes[index] =
+            hardware_properties.allocationSize;
+#else
+        status = choose_swapchain_memory_type(
+            &memory_properties, requirements.memoryTypeBits,
+            &metadata->memory_type_indices[index]);
         metadata->allocation_sizes[index] = requirements.size;
+#endif
+        const bool invalid_allocation_size =
+#ifdef __ANDROID__
+            metadata->allocation_sizes[index] == 0U;
+#else
+            requirements.size == 0U;
+#endif
+        if (vulkan_result != VK_SUCCESS || status != 0 ||
+            invalid_allocation_size) {
+            failure_stage = vulkan_result != VK_SUCCESS
+                ? "vkGetAndroidHardwareBufferPropertiesANDROID"
+                : status != 0 ? "choose_memory_type"
+                              : "memory_requirements";
+            vulkan_result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+            break;
+        }
+#ifdef __ANDROID__
+        const VkImportAndroidHardwareBufferInfoANDROID import_info = {
+            .sType =
+                VK_STRUCTURE_TYPE_IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID,
+            .buffer = hardware_buffer,
+        };
+        const VkMemoryDedicatedAllocateInfo dedicated_info = {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
+            .pNext = &import_info,
+            .image = metadata->images[index],
+        };
+#else
         const VkMemoryDedicatedAllocateInfo dedicated_info = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
             .image = metadata->images[index],
@@ -6374,10 +6572,15 @@ int bvb_vulkan_global_context_prepare_swapchain(
             .pNext = &dedicated_info,
             .handleTypes = transport_handle_type,
         };
+#endif
         const VkMemoryAllocateInfo allocation_info = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+#ifdef __ANDROID__
+            .pNext = &dedicated_info,
+#else
             .pNext = &export_info,
-            .allocationSize = requirements.size,
+#endif
+            .allocationSize = metadata->allocation_sizes[index],
             .memoryTypeIndex = metadata->memory_type_indices[index],
         };
         vulkan_result = allocate_memory(
@@ -6387,7 +6590,12 @@ int bvb_vulkan_global_context_prepare_swapchain(
             vulkan_result = bind_image(
                 metadata->device, metadata->images[index],
                 metadata->memories[index], 0U);
+            if (vulkan_result != VK_SUCCESS)
+                failure_stage = "vkBindImageMemory";
+        } else {
+            failure_stage = "vkAllocateMemory";
         }
+#ifndef __ANDROID__
         const VkMemoryGetFdInfoKHR fd_info = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
             .memory = metadata->memories[index],
@@ -6400,6 +6608,7 @@ int bvb_vulkan_global_context_prepare_swapchain(
         if (vulkan_result == VK_SUCCESS && descriptors[index] < 0) {
             vulkan_result = VK_ERROR_INVALID_EXTERNAL_HANDLE;
         }
+#endif
         if (vulkan_result != VK_SUCCESS) break;
         metadata->image_ids[index] = bvb_handle_id(
             BVB_OBJECT_IMAGE, context->next_image_serial++);
@@ -6413,8 +6622,13 @@ int bvb_vulkan_global_context_prepare_swapchain(
         }
     }
     if (vulkan_result == VK_SUCCESS) {
+#ifdef __ANDROID__
+        descriptors[0] = dup(metadata->control_fd);
+        if (descriptors[0] < 0) status = -errno;
+#else
         descriptors[metadata->image_count] = dup(metadata->control_fd);
         if (descriptors[metadata->image_count] < 0) status = -errno;
+#endif
     }
     if (vulkan_result == VK_SUCCESS && status == 0) {
         metadata->swapchain_id = bvb_handle_id(
@@ -6437,6 +6651,14 @@ int bvb_vulkan_global_context_prepare_swapchain(
                       status);
             return status;
         }
+        set_error(error, error_size,
+                  "swapchain image stage=%s index=%u vulkan=%d status=%d "
+                  "image_size=%llu allocation_size=%llu image_bits=0x%x "
+                  "hardware_bits=0x%x",
+                  failure_stage, failure_index, (int)vulkan_result, status,
+                  (unsigned long long)failure_image_size,
+                  (unsigned long long)failure_allocation_size,
+                  failure_image_memory_bits, failure_hardware_memory_bits);
         response->vulkan_result = vulkan_result;
         return 0;
     }
@@ -6445,6 +6667,9 @@ int bvb_vulkan_global_context_prepare_swapchain(
     response->swapchain_id = metadata->swapchain_id;
     response->generation = metadata->generation;
     response->control_region_bytes = BVB_WSI_FRAME_RING_REGION_BYTES;
+#ifdef __ANDROID__
+    response->flags = BVB_VULKAN_SWAPCHAIN_PREPARE_FLAG_AHARDWAREBUFFER;
+#endif
     for (uint32_t index = 0U; index < metadata->image_count; ++index) {
         response->images[index] = (struct bvb_vulkan_swapchain_image_record){
             .image_id = metadata->image_ids[index],
@@ -6452,7 +6677,14 @@ int bvb_vulkan_global_context_prepare_swapchain(
             .memory_type_index = metadata->memory_type_indices[index],
         };
     }
+#ifdef __ANDROID__
+    for (uint32_t index = 0U; index < metadata->image_count; ++index)
+        hardware_buffers[index] = metadata->hardware_buffers[index];
+    *hardware_buffer_count = metadata->image_count;
+    *descriptor_count = 1U;
+#else
     *descriptor_count = (size_t)metadata->image_count + 1U;
+#endif
     return 0;
 }
 

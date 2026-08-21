@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Bundle;
+import android.hardware.HardwareBuffer;
 import android.os.IBinder;
 import android.os.Parcel;
 import android.os.ParcelFileDescriptor;
@@ -42,6 +43,7 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
         Parcel data = Parcel.obtain();
         Parcel reply = Parcel.obtain();
         ParcelFileDescriptor[] descriptors = null;
+        HardwareBuffer[] hardwareBuffers = null;
         int[] detached = null;
         try {
             if (!VisibleHostActivity.authorizes(token)) {
@@ -75,8 +77,19 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
                 allocationSizes[index] = reply.readLong();
                 memoryTypes[index] = reply.readInt();
             }
-            descriptors = new ParcelFileDescriptor[imageCount + 1];
-            detached = new int[imageCount + 1];
+            if ((setupFlags & 2) != 0) {
+                hardwareBuffers = new HardwareBuffer[imageCount];
+                for (int index = 0; index < imageCount; ++index) {
+                    hardwareBuffers[index] =
+                            HardwareBuffer.CREATOR.createFromParcel(reply);
+                }
+            } else {
+                hardwareBuffers = new HardwareBuffer[0];
+            }
+            int descriptorCount = (setupFlags & 2) != 0
+                    ? 1 : imageCount + 1;
+            descriptors = new ParcelFileDescriptor[descriptorCount];
+            detached = new int[descriptorCount];
             for (int index = 0; index < detached.length; ++index) {
                 detached[index] = -1;
             }
@@ -88,7 +101,7 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
             status = SharedRegionProvider.nativeInstallFrameTransport(
                     token, imageCount, width, height, format, imageUsage,
                     setupFlags, generation, allocationSizes, memoryTypes,
-                    detached);
+                    hardwareBuffers, detached);
             /* Native consumes or closes every detached descriptor. */
             detached = null;
             detail = status == 0 ? "installed" : "native_status=" + status;
@@ -112,6 +125,11 @@ public final class SharedRegionReceiver extends BroadcastReceiver {
                     try {
                         descriptor.close();
                     } catch (Exception ignored) {}
+                }
+            }
+            if (hardwareBuffers != null) {
+                for (HardwareBuffer buffer : hardwareBuffers) {
+                    if (buffer != null) buffer.close();
                 }
             }
             data.recycle();
