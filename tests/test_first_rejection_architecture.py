@@ -21,11 +21,12 @@ def require(text: str, needle: str, context: str) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) != 11:
+    if len(sys.argv) != 12:
         raise SystemExit(
             "usage: test_first_rejection_architecture.py "
             "<evidence> <generator> <generated> <vk.xml> <manifest> "
-            "<triangle.inc> <config> <first.c> <global.c> <triangle.c>"
+            "<triangle.inc> <config> <first.c> <global.c> <triangle.c> "
+            "<glibc-builder>"
         )
     (
         evidence_path,
@@ -38,6 +39,7 @@ def main() -> int:
         first_source_path,
         global_source_path,
         triangle_source_path,
+        glibc_builder_path,
     ) = map(Path, sys.argv[1:])
     evidence = json.loads(evidence_path.read_text())
     generation = evidence["generation"]
@@ -100,6 +102,23 @@ def main() -> int:
         triangle_source,
         "bvb_first_rejection_record_command_poison(",
         "triangle finish poison",
+    )
+
+    glibc_builder = glibc_builder_path.read_text()
+    require(
+        glibc_builder,
+        'scripts/generate-first-rejection-dispatch.py"',
+        "Termux glibc ICD builder",
+    )
+    require(
+        glibc_builder,
+        '"$generated_dir/bvb_first_rejection_dispatch.inc"',
+        "Termux glibc ICD builder",
+    )
+    require(
+        glibc_builder,
+        '"$project_dir/src/first_rejection.c"',
+        "Termux glibc ICD builder",
     )
 
     if evidence["claims"]["resolver_order_is_evidence"]:

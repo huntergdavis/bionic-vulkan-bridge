@@ -680,6 +680,7 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/first_rejection.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/triangle_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-triangle-dispatch-glibc-termux.sh"
   )
   add_executable(
     bvb-device-extension-dependency-test

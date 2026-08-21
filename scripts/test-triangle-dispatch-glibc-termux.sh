@@ -41,6 +41,11 @@ python "$project_dir/scripts/generate-dxvk-dispatch-policy.py" \
 python "$project_dir/scripts/generate-vulkan-discovery-wire.py" \
     "$registry" \
     "$generated_dir/bvb_vulkan_discovery_wire.inc"
+python "$project_dir/scripts/generate-first-rejection-dispatch.py" \
+    "$registry" "$manifest" \
+    "$generated_dir/bvb_triangle_dispatch.inc" \
+    "$additional_dispatch" \
+    "$generated_dir/bvb_first_rejection_dispatch.inc"
 
 library="$out_dir/libvulkan-bvb-glibc.so"
 icd_manifest="$out_dir/bvb_icd.aarch64.json"
@@ -59,6 +64,7 @@ grun -s gcc -std=c17 -O3 -DNDEBUG -fPIC -fvisibility=hidden \
     "$project_dir/src/vulkan_discovery.c" \
     "$project_dir/src/wsi_frame_ring.c" \
     "$project_dir/src/dxvk_dispatch_policy.c" \
+    "$project_dir/src/first_rejection.c" \
     "$project_dir/src/global_dispatch.c" \
     "$project_dir/src/triangle_dispatch.c" \
     -pthread \
