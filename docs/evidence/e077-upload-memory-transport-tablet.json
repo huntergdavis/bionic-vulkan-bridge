@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "gate": "E077-upload-memory-transport-tablet",
+  "result": "pass",
+  "captured_at": "2026-08-21T05:18:41-07:00",
+  "target": {
+    "model": "Samsung Galaxy Tab S8+",
+    "gpu": "Turnip Adreno (TM) 730",
+    "width": 2800,
+    "height": 1752,
+    "image_count": 3,
+    "image_allocation_bytes": 19910656
+  },
+  "source": {
+    "commit": "7dd1ffeed3be900451479e996b88865135681714",
+    "provenance": "exact git archive extracted into an isolated tablet candidate",
+    "vulkan_headers_commit": "01393c3df0e5285b54ee6527466513f9e614be94",
+    "vulkan_registry_sha256": "80e7394d0e787d6ec78b67aa324add6f96129fdd042ba640cc336a5481a208ee"
+  },
+  "candidate_artifacts": {
+    "bionic_service_sha256": "214e8b112ade7a727af6748c8e4cd029f4f273ca38fef018613ca6481773a9a8",
+    "glibc_icd_sha256": "e6479b4abb15cca258a44d72a674c93900ea716e7030a1643409e8bcc7049d2f",
+    "glibc_client_sha256": "50a2589e2b166e8e3b796eda7839fb49c78a23a8506f357d553710fd44819024",
+    "icd_manifest_sha256": "af6c8509490f9a97ee4da09f994ef0da353ba1a15b043c3c69b3cca9c61c578b",
+    "private_turnip_sha256": "8ac6ef78c3c92998aa46c59fd0081edcba82756f5bad561d1b24a57684874a45"
+  },
+  "strict_kept_mapped": {
+    "mode": "strict-kept-mapped",
+    "round_trips": {
+      "map": 2,
+      "flush": 2,
+      "invalidate": 2,
+      "unmap": 2,
+      "submit": 3
+    },
+    "opcodes": {
+      "map": 49,
+      "flush": 48,
+      "invalidate": 49,
+      "unmap": 48,
+      "submit": 47
+    },
+    "mapped_mismatches": 0,
+    "gpu_fill_mismatches": 0,
+    "raw_evidence_bytes": 12785,
+    "raw_evidence_sha256": "542011ad6acd4884c3721d668463c505939e28955067103a093c38f8742330c6",
+    "client_stdout_sha256": "23f793e6e4f51753041807460081273c3e3a2e804031616108b9e6f58cd5c64d",
+    "service_stdout_sha256": "7b8687cbf18c2b72b9a8eb50008a94e721ba75c42eb0a5c1f3c6abb33dd1b429",
+    "harness_sha256": "6ae504ccea0d5e6cab78380277b32f4a8ca5e73f53e4fa8e22a69546093bce8d"
+  },
+  "shared_upload_only": {
+    "mode": "shared-upload-only",
+    "round_trips": {
+      "map": 1,
+      "flush": 1,
+      "invalidate": 1,
+      "unmap": 1,
+      "submit": 1
+    },
+    "opcodes": {
+      "map": 106,
+      "flush": 107,
+      "invalidate": 108,
+      "unmap": 109,
+      "submit": 47
+    },
+    "ineligible_gpu_writable_fallback": {
+      "map_round_trips": 2,
+      "unmap_round_trips": 2,
+      "map_opcode": 49,
+      "unmap_opcode": 48
+    },
+    "mapped_mismatches": 0,
+    "gpu_fill_mismatches": 0,
+    "raw_evidence_bytes": 12797,
+    "raw_evidence_sha256": "928fe110f1ad6abe6a520911e8aaead39eb1abf2366e900d7fcc62c3982af3b3",
+    "client_stdout_sha256": "8d1191abcde06f0b2d7d63563ee72a7f73a8186fd0c78b29b7769e0cc622ba82",
+    "service_stdout_sha256": "f3a3fad0a36225d23ab227bef9611df845d8301d23c7d4ac79efa0e2292bce53",
+    "harness_sha256": "6ae504ccea0d5e6cab78380277b32f4a8ca5e73f53e4fa8e22a69546093bce8d"
+  },
+  "comparison": {
+    "same_source_commit": true,
+    "same_candidate_artifacts": true,
+    "same_private_turnip": true,
+    "same_device_and_extent": true,
+    "mapping_held_through_submit_in_both_modes": true,
+    "eligible_control_round_trips_strict": 11,
+    "eligible_control_round_trips_shared": 5,
+    "eligible_control_round_trip_reduction_percent": 54.54545454545455
+  },
+  "installed_state": {
+    "changed": false,
+    "installed_service_sha256": "0917ef33209b0ea32a337de48646908057854f829387671d0a832ec707371241",
+    "installed_glibc_icd_sha256": "c0b3dbf36f45bad941a8579bf37bcc8d5773ac7b4d3c0e10a601b58fc4aee3eb",
+    "installed_manifest_sha256": "77f3395e3f657b6a7274c182afe994edacda2a4b38d49814ea84440520af33df",
+    "steam_pid_5973_survived": true,
+    "termux_x11_pid_27923_survived": true
+  },
+  "claims": {
+    "real_turnip_cross_libc_transport": true,
+    "shared_upload_transport": true,
+    "activity_received_frame_fd_bundle": true,
+    "activity_imported_images": false,
+    "visible_frame": false,
+    "tomb_raider": false,
+    "benchmark": false,
+    "fps": false
+  },
+  "recall": {
+    "query": "E077 tablet cross-libc global gate candidate test-global-dispatch-glibc-termux result",
+    "result": "no indexed implementation",
+    "reused": [
+      "E034 mapped-memory lifecycle",
+      "E014 and Decision 0003 sealed shared data plane",
+      "E042 setup-only descriptor transfer",
+      "E060 typed ownership",
+      "E075 and E075a strict/shared fail-closed transport"
+    ]
+  }
+}

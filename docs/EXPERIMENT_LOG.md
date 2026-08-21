@@ -3173,3 +3173,36 @@ setup-only descriptor transfer, E060's typed ownership, and E075/E075a's
 strict/shared fail-closed setup model. No Activity/APK/launcher file changed;
 there is no tablet deployment, visible-frame, Tomb Raider, benchmark, or FPS
 claim.
+
+### E077 tablet candidate transport A/B
+
+An exact `7dd1ffeed3be900451479e996b88865135681714` git archive was
+built on the Galaxy Tab S8+ against clean Vulkan-Headers commit
+`01393c3df0e5285b54ee6527466513f9e614be94` and the unchanged private
+Turnip SHA-256 `8ac6ef78...a45`. The stale Termux evidence parser was first
+fixed to understand the E075--E077 telemetry, then tightened so the strict
+control keeps its mapping alive through Submit just like shared mode. All
+49/49 host contracts passed after both fixes.
+
+The final real-hardware comparison holds source, binaries, Turnip, Adreno 730,
+and 2800x1752 three-image frame setup constant. Strict-kept-mapped reports
+map/flush/invalidate/unmap/submit round trips `2/2/2/2/3`; E077
+shared-upload-only reports `1/1/1/1/1`. That is 11 versus 5 eligible control
+round trips, a 54.5% reduction for this bounded sequence. Both modes report
+zero mapped-byte and GPU-fill mismatches. Shared mode also proves an ineligible
+GPU-writable allocation falls back to strict opcodes 49/48 instead of silently
+using the mirror.
+
+The compact evidence is
+`docs/evidence/e077-upload-memory-transport-tablet.json`; the retained tablet
+evidence file SHA-256 is `daba5516e47df5247b83e033c80240dfa1b6751962d98227b3ac6231eb49191b`.
+The retained tablet
+raw evidence SHA-256 values are `542011ad...0c6` (strict) and
+`928fe110...3b3` (shared). The installed E073 service/client/manifest hashes
+remain unchanged, and live Steam PID 5973 plus Termux:X11 PID 27923 survived.
+This is a real Turnip cross-libc transport proof only. The synthetic Activity
+received the one-time FD bundle but did not import/display it, so no visible
+frame, Tomb Raider, benchmark, or FPS improvement is claimed.
+
+The exact tablet-result `deja` query returned no indexed implementation. The
+run reused the E034/E014/E042/E060/E075/E075a contracts already cited above.
