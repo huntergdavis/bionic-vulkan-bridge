@@ -103,7 +103,8 @@ static void emit_first_rejection(
         snapshot->end_poison ? 1U : 0U);
     if (length <= 0 || (size_t)length >= sizeof(record)) return;
     /* No retry: one winner produces at most one stderr syscall. */
-    (void)write(STDERR_FILENO, record, (size_t)length);
+    const ssize_t written = write(STDERR_FILENO, record, (size_t)length);
+    (void)written;
 }
 
 static void record_first_rejection(
