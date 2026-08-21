@@ -384,6 +384,14 @@ if(TARGET bvb-vulkan-resolve-trace)
 endif()
 
 if(BUILD_TESTING)
+  add_test(
+    NAME private-turnip-maintenance56-patch-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_private_turnip_patch_contract.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}"
+  )
+
   add_executable(bvb-frame-sync-test tests/frame_sync.c)
   target_link_libraries(bvb-frame-sync-test PRIVATE bvb-frame-sync)
   bvb_enable_warnings(bvb-frame-sync-test)

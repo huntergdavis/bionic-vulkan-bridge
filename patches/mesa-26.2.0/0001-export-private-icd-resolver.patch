@@ -1,0 +1,22 @@
+diff --git a/src/vulkan/vulkan-android.sym b/src/vulkan/vulkan-android.sym
+index 3a121f191cc..957525b2cc3 100644
+--- a/src/vulkan/vulkan-android.sym
++++ b/src/vulkan/vulkan-android.sym
+@@ -3,4 +3,7 @@
+         # Andoid looks for this global in HAL modules. In the source it occurs
+         # as HAL_MODULE_INFO_SYM (which is just a #define for HMI) and it's an
+         # instance of struct hwvulkan_module_t.
++		# BVB loads the private Android driver directly instead of replacing
++		# the system HAL module.
++		vk_icdGetInstanceProcAddr;
+         HMI;
+diff --git a/src/vulkan/vulkan-icd-android-symbols.txt b/src/vulkan/vulkan-icd-android-symbols.txt
+index 01f63590cfb..398436961f4 100644
+--- a/src/vulkan/vulkan-icd-android-symbols.txt
++++ b/src/vulkan/vulkan-icd-android-symbols.txt
+@@ -1,4 +1,5 @@
+ # Android looks for this global in HAL modules. In the source it occurs
+ # as HAL_MODULE_INFO_SYM (which is just a #define for HMI) and it's an
+ # instance of struct hwvulkan_module_t.
++vk_icdGetInstanceProcAddr
+ HMI
