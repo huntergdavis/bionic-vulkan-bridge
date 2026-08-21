@@ -871,10 +871,10 @@ int bvb_vulkan_global_context_get_physical_device_features(
     return 0;
 }
 
-int bvb_vulkan_global_context_get_shader_draw_parameters_features(
+int bvb_vulkan_global_context_get_core_features(
     const struct bvb_vulkan_global_context *context,
     uint64_t physical_device_id,
-    struct bvb_vulkan_shader_draw_parameters_features *features,
+    struct bvb_vulkan_core_features *features,
     char *error, size_t error_size) {
     if (error != NULL && error_size != 0U) {
         error[0] = '\0';
@@ -882,7 +882,7 @@ int bvb_vulkan_global_context_get_shader_draw_parameters_features(
     if (features == NULL) {
         return -EINVAL;
     }
-    *features = (struct bvb_vulkan_shader_draw_parameters_features){0};
+    *features = (struct bvb_vulkan_core_features){0};
     VkInstance instance = VK_NULL_HANDLE;
     VkPhysicalDevice physical_device = VK_NULL_HANDLE;
     int result = resolve_physical_device(
@@ -908,6 +908,11 @@ int bvb_vulkan_global_context_get_shader_draw_parameters_features(
         .sType =
             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES,
     };
+    VkPhysicalDeviceBufferDeviceAddressFeatures buffer_device_address = {
+        .sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
+    };
+    native.pNext = &buffer_device_address;
     VkPhysicalDeviceFeatures2 base = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         .pNext = &native,
@@ -915,6 +920,8 @@ int bvb_vulkan_global_context_get_shader_draw_parameters_features(
     get_features2(physical_device, &base);
     features->shader_draw_parameters =
         native.shaderDrawParameters == VK_TRUE ? 1U : 0U;
+    features->buffer_device_address =
+        buffer_device_address.bufferDeviceAddress == VK_TRUE ? 1U : 0U;
     return 0;
 }
 

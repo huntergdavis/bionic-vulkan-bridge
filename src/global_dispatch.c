@@ -1896,19 +1896,19 @@ bvb_bridge_vkGetPhysicalDeviceSparseImageFormatProperties(
     *property_count = 0U;
 }
 
-static int shader_draw_parameters_features_locked(
+static int core_features_locked(
     const struct bvb_physical_device_proxy *proxy,
-    struct bvb_vulkan_shader_draw_parameters_features *features) {
+    struct bvb_vulkan_core_features *features) {
     struct bvb_protocol_packet response = {0};
     int result = physical_query_locked(
-        BVB_OPCODE_VULKAN_SHADER_DRAW_PARAMETERS_FEATURES, proxy, &response);
+        BVB_OPCODE_VULKAN_CORE_FEATURES, proxy, &response);
     if (result == 0 &&
         response.header.payload_length !=
-            BVB_VULKAN_SHADER_DRAW_PARAMETERS_FEATURES_SIZE) {
+            BVB_VULKAN_CORE_FEATURES_SIZE) {
         result = -EPROTO;
     }
     if (result == 0) {
-        result = bvb_protocol_decode_vulkan_shader_draw_parameters_features(
+        result = bvb_protocol_decode_vulkan_core_features(
             response.payload, features);
     }
     return result;
@@ -1934,7 +1934,11 @@ static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFeatures2(
             entry->sType ==
                 VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES ||
             entry->sType ==
-                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES;
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES ||
+            entry->sType ==
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_DRAW_PARAMETERS_FEATURES ||
+            entry->sType ==
+                VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES;
         entry = entry->pNext;
     }
     if (!requested) {
@@ -1946,8 +1950,8 @@ static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFeatures2(
         pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
         return;
     }
-    struct bvb_vulkan_shader_draw_parameters_features bridged = {0};
-    const int result = shader_draw_parameters_features_locked(proxy, &bridged);
+    struct bvb_vulkan_core_features bridged = {0};
+    const int result = core_features_locked(proxy, &bridged);
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
     if (result != 0) {
         return;
@@ -1966,6 +1970,18 @@ static void VKAPI_CALL bvb_bridge_vkGetPhysicalDeviceFeatures2(
                 (VkPhysicalDeviceShaderDrawParametersFeatures *)entry;
             shader_draw->shaderDrawParameters =
                 (VkBool32)bridged.shader_draw_parameters;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES) {
+            VkPhysicalDeviceVulkan12Features *vulkan12 =
+                (VkPhysicalDeviceVulkan12Features *)entry;
+            vulkan12->bufferDeviceAddress =
+                (VkBool32)bridged.buffer_device_address;
+        } else if (entry->sType ==
+                   VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES) {
+            VkPhysicalDeviceBufferDeviceAddressFeatures *buffer_address =
+                (VkPhysicalDeviceBufferDeviceAddressFeatures *)entry;
+            buffer_address->bufferDeviceAddress =
+                (VkBool32)bridged.buffer_device_address;
         }
         entry = entry->pNext;
     }

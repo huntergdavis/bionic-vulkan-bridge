@@ -54,10 +54,10 @@ int bvb_vulkan_global_context_get_physical_device_features(
     const struct bvb_vulkan_global_context *context,
     uint64_t physical_device_id, VkPhysicalDeviceFeatures *features,
     char *error, size_t error_size);
-int bvb_vulkan_global_context_get_shader_draw_parameters_features(
+int bvb_vulkan_global_context_get_core_features(
     const struct bvb_vulkan_global_context *context,
     uint64_t physical_device_id,
-    struct bvb_vulkan_shader_draw_parameters_features *features,
+    struct bvb_vulkan_core_features *features,
     char *error, size_t error_size);
 int bvb_vulkan_global_context_get_format_properties(
     const struct bvb_vulkan_global_context *context,

@@ -81,8 +81,7 @@ int main(void) {
     };
     CHECK(bvb_protocol_encode_header(wire, &last_opcode_header) == 0);
     CHECK(bvb_protocol_decode_header(wire, &decoded) == 0);
-    CHECK(decoded.opcode ==
-          BVB_OPCODE_VULKAN_SHADER_DRAW_PARAMETERS_FEATURES);
+    CHECK(decoded.opcode == BVB_OPCODE_VULKAN_CORE_FEATURES);
 
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
@@ -447,22 +446,21 @@ int main(void) {
     CHECK(external_semaphore_properties_decoded
               .external_semaphore_features == 3U);
 
-    const struct bvb_vulkan_shader_draw_parameters_features
-        shader_draw_parameters = {.shader_draw_parameters = 1U};
-    uint8_t shader_draw_parameters_wire[
-        BVB_VULKAN_SHADER_DRAW_PARAMETERS_FEATURES_SIZE];
-    CHECK(bvb_protocol_encode_vulkan_shader_draw_parameters_features(
-              shader_draw_parameters_wire, &shader_draw_parameters) == 0);
-    struct bvb_vulkan_shader_draw_parameters_features
-        shader_draw_parameters_decoded;
-    CHECK(bvb_protocol_decode_vulkan_shader_draw_parameters_features(
-              shader_draw_parameters_wire,
-              &shader_draw_parameters_decoded) == 0);
-    CHECK(shader_draw_parameters_decoded.shader_draw_parameters == 1U);
-    shader_draw_parameters_wire[0] = 2U;
-    CHECK(bvb_protocol_decode_vulkan_shader_draw_parameters_features(
-              shader_draw_parameters_wire,
-              &shader_draw_parameters_decoded) == -EPROTO);
+    const struct bvb_vulkan_core_features core_features = {
+        .shader_draw_parameters = 1U,
+        .buffer_device_address = 1U,
+    };
+    uint8_t core_features_wire[BVB_VULKAN_CORE_FEATURES_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_core_features(
+              core_features_wire, &core_features) == 0);
+    struct bvb_vulkan_core_features core_features_decoded;
+    CHECK(bvb_protocol_decode_vulkan_core_features(
+              core_features_wire, &core_features_decoded) == 0);
+    CHECK(core_features_decoded.shader_draw_parameters == 1U);
+    CHECK(core_features_decoded.buffer_device_address == 1U);
+    core_features_wire[4] = 2U;
+    CHECK(bvb_protocol_decode_vulkan_core_features(
+              core_features_wire, &core_features_decoded) == -EPROTO);
 
     const struct bvb_vulkan_device_extension_query extension_query = {
         .physical_device_id = physical_devices.ids[0],

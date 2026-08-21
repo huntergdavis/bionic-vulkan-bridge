@@ -336,6 +336,10 @@ int main(void) {
     VkPhysicalDeviceVulkan11Features vulkan11_features = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
     };
+    VkPhysicalDeviceVulkan12Features vulkan12_features = {
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+    };
+    vulkan11_features.pNext = &vulkan12_features;
     VkPhysicalDeviceFeatures2 features2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
         .pNext = &vulkan11_features,
@@ -343,6 +347,7 @@ int main(void) {
     get_features2(physical_device, &features2);
     CHECK(features2.features.samplerAnisotropy == VK_TRUE);
     CHECK(vulkan11_features.shaderDrawParameters == VK_TRUE);
+    CHECK(vulkan12_features.bufferDeviceAddress == VK_TRUE);
     VkPhysicalDeviceProperties2 properties2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
     };
