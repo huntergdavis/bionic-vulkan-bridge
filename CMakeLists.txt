@@ -686,6 +686,26 @@ if(BUILD_TESTING)
       "shared-command-stream-non-success"
   )
   add_test(
+    NAME global-command-stream-concurrency-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+      "$<TARGET_FILE:bvb-bridge-service>"
+      "$<TARGET_FILE:bvb-global-dispatch-test>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+      "shared-command-stream-concurrency"
+  )
+  add_test(
+    NAME command-stream-client-locking-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_command_stream_client_locking.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e078-command-stream-client-locking-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+  )
+  add_test(
     NAME command-stream-correctness-architecture-contract
     COMMAND
       "${Python3_EXECUTABLE}"

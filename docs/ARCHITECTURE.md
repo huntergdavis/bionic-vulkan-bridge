@@ -208,3 +208,25 @@ map/flush/invalidate/unmap/submit exchanges; an eligible upload measures
 1/1/1/1/1 with opcodes 106/107/108/109/47, while an ineligible mapping still
 uses strict opcodes 49/48. This is a host upload-transport contract, not a
 tablet deployment, visible frame, Tomb Raider run, benchmark, or FPS result.
+
+E078 removes the socket/control mutex from the opt-in shared command-recording
+path without changing the strict default or any wire record. Each command
+buffer owns its recording mutex, so different command buffers can build their
+disjoint shared slots concurrently. A dedicated bounded allocator protects
+only slot leases and sequence assignment. Typed buffer/image ownership checks
+use a read-mostly resource/swapchain registry; create/destroy remains
+control-serialized and takes the matching write lock. `vkQueueSubmit2` retains
+the control mutex for the socket exchange, then locks the bounded set of
+submitted command buffers before reading or retiring their stream state. Lock
+order is control, command buffer, then slot allocator; ownership reads are
+released before recording locks.
+
+This does not relax Vulkan external synchronization: the application must
+still serialize access to each command buffer and its command pool, while
+distinct command buffers may record on different threads. The focused host
+contract starts two threads together, records 256 fills into each of two
+command buffers with zero recording exchanges, and submits both immutable
+streams for whole-batch validation and native replay. Existing poison,
+cross-device, stale/corrupt, and non-success acknowledgement contracts remain
+in force. This is host synchronization/replay evidence only; it has not been
+deployed and carries no Tomb Raider or FPS claim.

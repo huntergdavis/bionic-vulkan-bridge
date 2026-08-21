@@ -1,0 +1,54 @@
+{
+  "gate": "E078",
+  "base": "e193e241844f993fb97fed5e4802e7fb9ed281f0",
+  "objective": "remove the socket/control mutex from opt-in shared command recording without weakening Vulkan object ownership or command-buffer lifetime rules",
+  "deja": {
+    "query": "E075 shared command recording process global client mutex per command buffer synchronization Vulkan external sync",
+    "result": "no indexed hit",
+    "reuse": [
+      "E075 shared slot lease and zero-recording-RTT wire contract",
+      "E075a immutable service snapshot and transactional generation apply",
+      "E076 bounded rich Barrier2/ClearColor records and typed same-device rejection",
+      "E077 shared mapped-memory selector remains independent"
+    ]
+  },
+  "synchronization": {
+    "socket_and_control": "existing process-global client mutex",
+    "recording": "one mutex per command-buffer proxy",
+    "slot_lease": "dedicated bounded slot allocator mutex reached only while the command-buffer mutex is held",
+    "typed_ownership": "read-mostly resource/swapchain registry lock; writes remain control-serialized",
+    "publication": "release-store enables the immutable mapping; acquire-load selects the shared path; EndCommandBuffer retains the release fence",
+    "lock_order": [
+      "control -> command-buffer -> slot allocator",
+      "control -> object registry write",
+      "object registry read is released before command-buffer recording lock"
+    ],
+    "vulkan_external_sync": "application remains responsible for externally synchronizing each command buffer and command-pool reset/free/destroy; different command buffers may record concurrently"
+  },
+  "focused_concurrency": {
+    "threads": 2,
+    "distinct_command_buffers": 2,
+    "commands_per_thread": 256,
+    "recording_socket_exchanges": 0,
+    "submit_streams": 2,
+    "whole_stream_validation_and_replay": true
+  },
+  "corruption_and_validation": {
+    "cross_device_buffer_poison": true,
+    "cross_device_image_poison": true,
+    "non_success_acknowledgement_contract_preserved": true,
+    "service_snapshot_before_validate_replay_preserved": true
+  },
+  "default_strict_unchanged": true,
+  "wire_changes": [],
+  "validation": {
+    "focused_contracts": "2/2",
+    "full_host_suite": "53/53",
+    "thread_sanitizer_concurrency": "pass"
+  },
+  "claims": {
+    "host_concurrency_and_replay": true,
+    "tablet_deployed": false,
+    "tomb_raider_fps": null
+  }
+}

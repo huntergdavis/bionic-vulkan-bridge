@@ -9,6 +9,7 @@
 #include <vulkan/vk_layer.h>
 
 #include <errno.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -147,6 +148,45 @@ static bool bvb_image_format_properties_match(
            left->maxResourceSize == right->maxResourceSize;
 }
 
+struct bvb_concurrent_record_context {
+    pthread_barrier_t *start;
+    PFN_vkBeginCommandBuffer begin_command_buffer;
+    PFN_vkCmdFillBuffer cmd_fill_buffer;
+    PFN_vkEndCommandBuffer end_command_buffer;
+    VkCommandBuffer command_buffer;
+    VkBuffer buffer;
+    VkResult begin_result;
+    VkResult end_result;
+};
+
+static void *bvb_record_shared_command_buffer(void *opaque) {
+    struct bvb_concurrent_record_context *context = opaque;
+    const VkCommandBufferBeginInfo begin_info = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+    };
+    const int barrier_result = pthread_barrier_wait(context->start);
+    if (barrier_result != 0 &&
+        barrier_result != PTHREAD_BARRIER_SERIAL_THREAD) {
+        context->begin_result = VK_ERROR_INITIALIZATION_FAILED;
+        context->end_result = VK_ERROR_INITIALIZATION_FAILED;
+        return NULL;
+    }
+    context->begin_result = context->begin_command_buffer(
+        context->command_buffer, &begin_info);
+    if (context->begin_result != VK_SUCCESS) {
+        context->end_result = VK_ERROR_INITIALIZATION_FAILED;
+        return NULL;
+    }
+    for (uint32_t index = 0U; index < 256U; ++index) {
+        context->cmd_fill_buffer(
+            context->command_buffer, context->buffer, 0U, 4096U,
+            UINT32_C(0xa5c3f00d));
+    }
+    context->end_result =
+        context->end_command_buffer(context->command_buffer);
+    return NULL;
+}
+
 static VkResult VKAPI_CALL test_set_device_loader_data(
     VkDevice device, void *object) {
     if (device == VK_NULL_HANDLE || object == NULL) {
@@ -171,6 +211,9 @@ static VkResult VKAPI_CALL test_set_device_loader_data(
 int main(void) {
     const bool hardware_mode = bvb_hardware_validation_enabled();
     const bool shared_command_stream = bvb_shared_command_stream_enabled();
+    const bool concurrent_command_stream =
+        shared_command_stream &&
+        getenv("BVB_TEST_CONCURRENT_COMMAND_STREAMS") != NULL;
     const bool animated_wsi =
         shared_command_stream && getenv("BVB_TEST_ANIMATED_WSI") != NULL;
     const bool shared_mapped_memory = bvb_shared_mapped_memory_enabled();
@@ -2325,6 +2368,70 @@ int main(void) {
               device_memory, 0U, 4096U, UINT32_C(0xa5c3f00d),
               &mismatched_words) == 0);
     CHECK(mismatched_words == 0U);
+    uint32_t concurrent_streams = 0U;
+    uint32_t concurrent_commands = 0U;
+    if (concurrent_command_stream) {
+        VkCommandBuffer concurrent[2] = {VK_NULL_HANDLE, VK_NULL_HANDLE};
+        CHECK(allocate_command_buffers(device, &allocate_info,
+                                       &concurrent[0]) == VK_SUCCESS);
+        CHECK(allocate_command_buffers(device, &allocate_info,
+                                       &concurrent[1]) == VK_SUCCESS);
+        pthread_barrier_t start;
+        CHECK(pthread_barrier_init(&start, NULL, 3U) == 0);
+        struct bvb_concurrent_record_context contexts[2] = {0};
+        pthread_t threads[2];
+        for (uint32_t index = 0U; index < 2U; ++index) {
+            contexts[index] = (struct bvb_concurrent_record_context){
+                .start = &start,
+                .begin_command_buffer = begin_command_buffer,
+                .cmd_fill_buffer = cmd_fill_buffer,
+                .end_command_buffer = end_command_buffer,
+                .command_buffer = concurrent[index],
+                .buffer = buffer,
+                .begin_result = VK_ERROR_INITIALIZATION_FAILED,
+                .end_result = VK_ERROR_INITIALIZATION_FAILED,
+            };
+            CHECK(pthread_create(&threads[index], NULL,
+                                 bvb_record_shared_command_buffer,
+                                 &contexts[index]) == 0);
+        }
+        const uint64_t exchanges_before_concurrent =
+            bvb_global_dispatch_exchange_count();
+        const int barrier_result = pthread_barrier_wait(&start);
+        CHECK(barrier_result == 0 ||
+              barrier_result == PTHREAD_BARRIER_SERIAL_THREAD);
+        for (uint32_t index = 0U; index < 2U; ++index)
+            CHECK(pthread_join(threads[index], NULL) == 0);
+        CHECK(pthread_barrier_destroy(&start) == 0);
+        CHECK(bvb_global_dispatch_exchange_count() ==
+              exchanges_before_concurrent);
+        for (uint32_t index = 0U; index < 2U; ++index) {
+            CHECK(contexts[index].begin_result == VK_SUCCESS);
+            CHECK(contexts[index].end_result == VK_SUCCESS);
+        }
+        const VkCommandBufferSubmitInfo concurrent_infos[2] = {
+            {
+                .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+                .commandBuffer = concurrent[0],
+            },
+            {
+                .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO,
+                .commandBuffer = concurrent[1],
+            },
+        };
+        const VkSubmitInfo2 concurrent_submit = {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO_2,
+            .commandBufferInfoCount = 2U,
+            .pCommandBufferInfos = concurrent_infos,
+        };
+        CHECK(queue_submit_2(queue, 1U, &concurrent_submit,
+                             VK_NULL_HANDLE) == VK_SUCCESS);
+        CHECK(queue_wait_idle(queue) == VK_SUCCESS);
+        free_command_buffers(device, command_pool, 1U, &concurrent[0]);
+        free_command_buffers(device, command_pool, 1U, &concurrent[1]);
+        concurrent_streams = 2U;
+        concurrent_commands = 512U;
+    }
     if (noncoherent_mapped_memory) mapped[0] = UINT8_C(0x44);
     if (keep_mapped_memory) {
         const uint64_t exchanges_before_unmap =
@@ -2681,6 +2788,7 @@ int main(void) {
            "animated_frames=%u animated_reused_image=%u "
            "animated_recording_rtts=%llu "
            "command_pool=%llu command_buffer=%llu recording_rtts=%llu "
+           "concurrent_streams=%u concurrent_commands=%u "
            "command_submit=0 "
            "pool_reset=0 buffer=%llu memory=%llu memory_type=%u "
            "buffer_requirements2=%llu,%llu,%u buffer_address=%llu "
@@ -2720,6 +2828,7 @@ int main(void) {
            (unsigned long long)command_pool_id,
            (unsigned long long)command_buffer_id,
            (unsigned long long)recording_rtts,
+           concurrent_streams, concurrent_commands,
            (unsigned long long)buffer_id,
            (unsigned long long)memory_id,
            memory_type_index,

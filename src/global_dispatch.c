@@ -92,6 +92,7 @@ struct bvb_command_buffer_proxy {
     uint64_t wire_id;
     uint64_t parent_pool_id;
     uint64_t device_id;
+    pthread_mutex_t stream_mutex;
     struct bvb_command_batch_builder stream_builder;
     uint64_t stream_sequence;
     uint32_t stream_length;
@@ -139,6 +140,7 @@ struct bvb_swapchain_proxy {
 
 struct bvb_global_client_state {
     pthread_mutex_t mutex;
+    pthread_mutex_t command_stream_slots_mutex;
     int socket_fd;
     uint32_t next_request_id;
     uint32_t service_flags;
@@ -158,7 +160,7 @@ struct bvb_global_client_state {
     uint64_t command_stream_generation;
     uint64_t next_command_stream_sequence;
     uint64_t command_stream_slots[BVB_COMMAND_STREAM_SLOT_COUNT / 64U];
-    bool command_stream_enabled;
+    atomic_bool command_stream_enabled;
     bool memory_mirror_enabled;
     bool connection_poisoned;
     uint64_t exchange_count;
@@ -169,11 +171,19 @@ static const uint64_t bvb_dispatch_anchor = UINT64_C(0x4256424449535030);
 static atomic_bool bvb_icd_loader_active;
 static struct bvb_global_client_state bvb_global_client = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
+    .command_stream_slots_mutex = PTHREAD_MUTEX_INITIALIZER,
     .socket_fd = -1,
     .next_request_id = UINT32_C(0x42565000),
     .next_surface_serial = 1U,
     .next_swapchain_generation = 1U,
 };
+static pthread_rwlock_t bvb_object_registry_lock =
+    PTHREAD_RWLOCK_INITIALIZER;
+
+static bool command_stream_is_enabled(void) {
+    return atomic_load_explicit(&bvb_global_client.command_stream_enabled,
+                                memory_order_acquire);
+}
 
 static bool buffer_usage_is_upload_only(uint32_t usage) {
     const uint32_t gpu_read_only =
@@ -365,7 +375,8 @@ static int setup_command_stream_locked(void) {
         bvb_global_client.command_stream_mapping = mapping;
         bvb_global_client.command_stream_generation = generation;
         bvb_global_client.next_command_stream_sequence = 1U;
-        bvb_global_client.command_stream_enabled = true;
+        atomic_store_explicit(&bvb_global_client.command_stream_enabled, true,
+                              memory_order_release);
         mapping = MAP_FAILED;
     }
 done:
@@ -747,6 +758,7 @@ static void remove_swapchain_proxy_locked(
 }
 
 static void remove_swapchains_for_device_locked(uint64_t parent_id) {
+    if (pthread_rwlock_wrlock(&bvb_object_registry_lock) != 0) return;
     struct bvb_swapchain_proxy **cursor = &bvb_global_client.swapchains;
     while (*cursor != NULL) {
         struct bvb_swapchain_proxy *proxy = *cursor;
@@ -757,6 +769,7 @@ static void remove_swapchains_for_device_locked(uint64_t parent_id) {
             cursor = &proxy->next;
         }
     }
+    (void)pthread_rwlock_unlock(&bvb_object_registry_lock);
 }
 
 static struct bvb_resource_proxy *resource_proxy_locked(
@@ -783,6 +796,39 @@ static bool image_owned_by_device_locked(uint64_t image_id,
             if (swapchain->image_ids[index] == image_id) return true;
     }
     return false;
+}
+
+static bool shared_image_owned_by_device(uint64_t image_id,
+                                         uint64_t device_id) {
+    if (pthread_rwlock_rdlock(&bvb_object_registry_lock) != 0) return false;
+    const bool owned = image_owned_by_device_locked(image_id, device_id);
+    (void)pthread_rwlock_unlock(&bvb_object_registry_lock);
+    return owned;
+}
+
+static bool shared_images_owned_by_device(const uint64_t *image_ids,
+                                          uint32_t image_count,
+                                          uint64_t device_id) {
+    if (image_ids == NULL ||
+        pthread_rwlock_rdlock(&bvb_object_registry_lock) != 0) {
+        return false;
+    }
+    bool owned = true;
+    for (uint32_t index = 0U; owned && index < image_count; ++index)
+        owned = image_owned_by_device_locked(image_ids[index], device_id);
+    (void)pthread_rwlock_unlock(&bvb_object_registry_lock);
+    return owned;
+}
+
+static bool shared_resource_owned_by_device(uint64_t wire_id,
+                                            enum bvb_object_type type,
+                                            uint64_t device_id) {
+    if (pthread_rwlock_rdlock(&bvb_object_registry_lock) != 0) return false;
+    const struct bvb_resource_proxy *proxy =
+        resource_proxy_locked(wire_id, type);
+    const bool owned = proxy != NULL && proxy->parent_id == device_id;
+    (void)pthread_rwlock_unlock(&bvb_object_registry_lock);
+    return owned;
 }
 
 BVB_GLOBAL_EXPORT uint64_t bvb_buffer_proxy_id(VkBuffer buffer) {
@@ -915,34 +961,58 @@ static void remove_queue_proxies_locked(uint64_t parent_id) {
     }
 }
 
-static uint32_t reserve_command_stream_slot_locked(void) {
-    if (!bvb_global_client.command_stream_enabled) return UINT32_MAX;
+static int lease_command_stream_slot(
+    struct bvb_command_buffer_proxy *proxy) {
+    if (proxy == NULL || !command_stream_is_enabled() ||
+        pthread_mutex_lock(&bvb_global_client.command_stream_slots_mutex) !=
+            0) {
+        return -EINVAL;
+    }
+    int result = -ENOSPC;
     for (uint32_t slot = 0U; slot < BVB_COMMAND_STREAM_SLOT_COUNT; ++slot) {
         const uint32_t word = slot / 64U;
         const uint64_t bit = UINT64_C(1) << (slot % 64U);
         if ((bvb_global_client.command_stream_slots[word] & bit) == 0U) {
+            if (bvb_global_client.next_command_stream_sequence == 0U) {
+                result = -EOVERFLOW;
+                break;
+            }
             bvb_global_client.command_stream_slots[word] |= bit;
-            return slot;
+            proxy->stream_slot = slot;
+            proxy->stream_sequence =
+                bvb_global_client.next_command_stream_sequence++;
+            result = 0;
+            break;
         }
     }
-    return UINT32_MAX;
+    (void)pthread_mutex_unlock(
+        &bvb_global_client.command_stream_slots_mutex);
+    return result;
 }
 
-static void release_command_stream_slot_locked(
+/* The caller owns proxy->stream_mutex. */
+static void release_command_stream_slot(
     struct bvb_command_buffer_proxy *proxy) {
     if (proxy == NULL || proxy->stream_slot >= BVB_COMMAND_STREAM_SLOT_COUNT) {
+        return;
+    }
+    if (pthread_mutex_lock(&bvb_global_client.command_stream_slots_mutex) !=
+        0) {
         return;
     }
     const uint32_t word = proxy->stream_slot / 64U;
     bvb_global_client.command_stream_slots[word] &=
         ~(UINT64_C(1) << (proxy->stream_slot % 64U));
     proxy->stream_slot = UINT32_MAX;
+    (void)pthread_mutex_unlock(
+        &bvb_global_client.command_stream_slots_mutex);
 }
 
-static void reset_command_stream_state_locked(
+/* The caller owns proxy->stream_mutex. */
+static void reset_command_stream_state(
     struct bvb_command_buffer_proxy *proxy) {
     if (proxy == NULL) return;
-    release_command_stream_slot_locked(proxy);
+    release_command_stream_slot(proxy);
     memset(&proxy->stream_builder, 0, sizeof(proxy->stream_builder));
     proxy->stream_sequence = 0U;
     proxy->stream_length = 0U;
@@ -957,7 +1027,10 @@ static void reset_command_streams_for_pool_locked(uint64_t parent_pool_id) {
              bvb_global_client.command_buffers;
          proxy != NULL; proxy = proxy->next) {
         if (proxy->parent_pool_id == parent_pool_id) {
-            reset_command_stream_state_locked(proxy);
+            if (pthread_mutex_lock(&proxy->stream_mutex) == 0) {
+                reset_command_stream_state(proxy);
+                (void)pthread_mutex_unlock(&proxy->stream_mutex);
+            }
         }
     }
 }
@@ -970,8 +1043,12 @@ static void remove_command_buffer_proxy_locked(
         struct bvb_command_buffer_proxy *proxy = *cursor;
         if (proxy == target) {
             *cursor = proxy->next;
-            release_command_stream_slot_locked(proxy);
-            proxy->magic = 0U;
+            if (pthread_mutex_lock(&proxy->stream_mutex) == 0) {
+                release_command_stream_slot(proxy);
+                proxy->magic = 0U;
+                (void)pthread_mutex_unlock(&proxy->stream_mutex);
+            }
+            (void)pthread_mutex_destroy(&proxy->stream_mutex);
             free(proxy);
             return;
         }
@@ -986,8 +1063,12 @@ static void remove_command_buffers_for_pool_locked(uint64_t parent_pool_id) {
         struct bvb_command_buffer_proxy *proxy = *cursor;
         if (proxy->parent_pool_id == parent_pool_id) {
             *cursor = proxy->next;
-            release_command_stream_slot_locked(proxy);
-            proxy->magic = 0U;
+            if (pthread_mutex_lock(&proxy->stream_mutex) == 0) {
+                release_command_stream_slot(proxy);
+                proxy->magic = 0U;
+                (void)pthread_mutex_unlock(&proxy->stream_mutex);
+            }
+            (void)pthread_mutex_destroy(&proxy->stream_mutex);
             free(proxy);
         } else {
             cursor = &proxy->next;
@@ -1068,6 +1149,7 @@ static void remove_descriptor_sets_for_pool_locked(uint64_t pool_id) {
 }
 
 static void remove_resources_for_device_locked(uint64_t parent_id) {
+    if (pthread_rwlock_wrlock(&bvb_object_registry_lock) != 0) return;
     for (struct bvb_resource_proxy *proxy = bvb_global_client.resources;
          proxy != NULL; proxy = proxy->next) {
         if (proxy->type == BVB_OBJECT_DESCRIPTOR_POOL &&
@@ -1086,6 +1168,7 @@ static void remove_resources_for_device_locked(uint64_t parent_id) {
             cursor = &proxy->next;
         }
     }
+    (void)pthread_rwlock_unlock(&bvb_object_registry_lock);
 }
 
 static void remove_device_proxy_locked(struct bvb_device_proxy *target) {
@@ -3691,8 +3774,13 @@ static VkResult VKAPI_CALL bvb_bridge_vkAllocateCommandBuffers(
     if (command_state == NULL) {
         return VK_ERROR_OUT_OF_HOST_MEMORY;
     }
+    if (pthread_mutex_init(&command_state->stream_mutex, NULL) != 0) {
+        free(command_state);
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
+    }
     command_state->stream_slot = UINT32_MAX;
     if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        (void)pthread_mutex_destroy(&command_state->stream_mutex);
         free(command_state);
         return VK_ERROR_INITIALIZATION_FAILED;
     }
@@ -3745,10 +3833,12 @@ static VkResult VKAPI_CALL bvb_bridge_vkAllocateCommandBuffers(
     }
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
     if (result != 0) {
+        (void)pthread_mutex_destroy(&command_state->stream_mutex);
         free(command_state);
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     if (decoded.vulkan_result != VK_SUCCESS) {
+        (void)pthread_mutex_destroy(&command_state->stream_mutex);
         free(command_state);
         return (VkResult)decoded.vulkan_result;
     }
@@ -3824,25 +3914,22 @@ static VkResult VKAPI_CALL bvb_bridge_vkBeginCommandBuffer(
         begin_info->sType != VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO ||
         begin_info->pNext != NULL || begin_info->pInheritanceInfo != NULL ||
         (begin_info->flags & ~VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT) !=
-            0U ||
-        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+            0U) {
         return VK_ERROR_FEATURE_NOT_PRESENT;
     }
-    if (bvb_global_client.command_stream_enabled) {
+    if (command_stream_is_enabled()) {
+        if (pthread_mutex_lock(&command_state->stream_mutex) != 0)
+            return VK_ERROR_INITIALIZATION_FAILED;
         int result = 0;
         if (command_state->stream_recording ||
-            bvb_global_client.command_stream_mapping == NULL ||
-            bvb_global_client.next_command_stream_sequence == 0U) {
+            bvb_global_client.command_stream_mapping == NULL) {
             result = -EINVAL;
         }
         if (result == 0) {
-            reset_command_stream_state_locked(command_state);
-            command_state->stream_slot = reserve_command_stream_slot_locked();
-            if (command_state->stream_slot == UINT32_MAX) result = -ENOSPC;
+            reset_command_stream_state(command_state);
+            result = lease_command_stream_slot(command_state);
         }
         if (result == 0) {
-            command_state->stream_sequence =
-                bvb_global_client.next_command_stream_sequence++;
             uint8_t *slot = bvb_global_client.command_stream_mapping +
                 (size_t)command_state->stream_slot *
                     BVB_COMMAND_STREAM_SLOT_BYTES;
@@ -3860,10 +3947,12 @@ static VkResult VKAPI_CALL bvb_bridge_vkBeginCommandBuffer(
         }
         command_state->stream_recording = result == 0;
         command_state->stream_error = result != 0;
-        if (result != 0) release_command_stream_slot_locked(command_state);
-        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+        if (result != 0) release_command_stream_slot(command_state);
+        (void)pthread_mutex_unlock(&command_state->stream_mutex);
         return result == 0 ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED;
     }
+    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
     const struct bvb_vulkan_command_buffer_begin_request begin_request = {
         .command_buffer_id = command_state->wire_id,
         .flags = begin_info->flags,
@@ -3884,11 +3973,12 @@ static VkResult VKAPI_CALL bvb_bridge_vkEndCommandBuffer(
     VkCommandBuffer command_buffer) {
     struct bvb_command_buffer_proxy *command_state =
         command_buffer_proxy(command_buffer);
-    if (command_state == NULL ||
-        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+    if (command_state == NULL) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    if (bvb_global_client.command_stream_enabled) {
+    if (command_stream_is_enabled()) {
+        if (pthread_mutex_lock(&command_state->stream_mutex) != 0)
+            return VK_ERROR_INITIALIZATION_FAILED;
         int result = command_state->stream_recording &&
                              !command_state->stream_error
                          ? bvb_command_batch_append_vulkan_end(
@@ -3907,12 +3997,14 @@ static VkResult VKAPI_CALL bvb_bridge_vkEndCommandBuffer(
             command_state->stream_length = 0U;
             command_state->stream_sealed = false;
             command_state->stream_error = true;
-            release_command_stream_slot_locked(command_state);
+            release_command_stream_slot(command_state);
         }
         command_state->stream_recording = false;
-        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+        (void)pthread_mutex_unlock(&command_state->stream_mutex);
         return result == 0 ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED;
     }
+    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0)
+        return VK_ERROR_INITIALIZATION_FAILED;
     uint8_t payload[BVB_VULKAN_COMMAND_BUFFER_ID_SIZE];
     int result = bvb_protocol_encode_vulkan_command_buffer_id(
         payload, command_state->wire_id);
@@ -3959,8 +4051,11 @@ static VkResult create_resource_locked(
     state->wire_id = decoded.object_id;
     state->parent_id = parent_id;
     state->type = type;
+    if (pthread_rwlock_wrlock(&bvb_object_registry_lock) != 0)
+        return VK_ERROR_INITIALIZATION_FAILED;
     state->next = bvb_global_client.resources;
     bvb_global_client.resources = state;
+    (void)pthread_rwlock_unlock(&bvb_object_registry_lock);
     *wire_id = decoded.object_id;
     return VK_SUCCESS;
 }
@@ -4200,6 +4295,11 @@ static VkResult VKAPI_CALL bvb_bridge_vkAllocateDescriptorSets(
         vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
     }
     if (vulkan_result == VK_SUCCESS) {
+        if (pthread_rwlock_wrlock(&bvb_object_registry_lock) != 0) {
+            vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+        }
+    }
+    if (vulkan_result == VK_SUCCESS) {
         for (uint32_t index = 0U; index < allocated.descriptor_set_count;
              ++index) {
             states[index]->wire_id = allocated.descriptor_set_ids[index];
@@ -4211,6 +4311,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkAllocateDescriptorSets(
                    &allocated.descriptor_set_ids[index],
                    sizeof(descriptor_sets[index]));
         }
+        (void)pthread_rwlock_unlock(&bvb_object_registry_lock);
     } else {
         for (uint32_t index = 0U; index < allocate_info->descriptorSetCount;
              ++index) free(states[index]);
@@ -4753,10 +4854,16 @@ static void destroy_resource(
         (response.header.status != 0 || response.header.payload_length != 0U))
         result = -EPROTO;
     if (result == 0) {
+        if (pthread_rwlock_wrlock(&bvb_object_registry_lock) != 0) {
+            result = -EDEADLK;
+        }
+    }
+    if (result == 0) {
         if (type == BVB_OBJECT_DESCRIPTOR_POOL) {
             remove_descriptor_sets_for_pool_locked(wire_id);
         }
         remove_resource_proxy_locked(state);
+        (void)pthread_rwlock_unlock(&bvb_object_registry_lock);
     }
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
 }
@@ -6001,15 +6108,13 @@ static VkResult flush_mapped_resources_locked(uint64_t device_id) {
 
 static void poison_shared_command_stream(
     struct bvb_command_buffer_proxy *command_state) {
-    if (command_state == NULL ||
-        pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+    if (command_state == NULL || !command_stream_is_enabled() ||
+        pthread_mutex_lock(&command_state->stream_mutex) != 0) {
         return;
     }
-    if (bvb_global_client.command_stream_enabled) {
-        command_state->stream_error = true;
-        command_state->stream_sealed = false;
-    }
-    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    command_state->stream_error = true;
+    command_state->stream_sealed = false;
+    (void)pthread_mutex_unlock(&command_state->stream_mutex);
 }
 
 static int init_image_subresource_range_supported(
@@ -6167,16 +6272,15 @@ static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
             }
         }
     }
-    if (!fixed_init_shape && !bvb_global_client.command_stream_enabled) return;
-    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) return;
-    int result = 0;
-    for (uint32_t index = 0U; result == 0 && index < decoded.image_count;
-         ++index) {
-        if (!image_owned_by_device_locked(decoded.image_ids[index],
-                                          command_state->device_id))
-            result = -EINVAL;
-    }
-    if (bvb_global_client.command_stream_enabled) {
+    const bool shared_stream = command_stream_is_enabled();
+    if (!fixed_init_shape && !shared_stream) return;
+    if (shared_stream) {
+        int result = shared_images_owned_by_device(
+                         decoded.image_ids, decoded.image_count,
+                         command_state->device_id)
+                         ? 0
+                         : -EINVAL;
+        if (pthread_mutex_lock(&command_state->stream_mutex) != 0) return;
         if (result == 0 && command_state->stream_recording &&
             !command_state->stream_error) {
             if (fixed_init_shape) {
@@ -6198,8 +6302,16 @@ static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
             command_state->stream_error = true;
             command_state->stream_sealed = false;
         }
-        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+        (void)pthread_mutex_unlock(&command_state->stream_mutex);
         return;
+    }
+    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) return;
+    int result = 0;
+    for (uint32_t index = 0U; result == 0 && index < decoded.image_count;
+         ++index) {
+        if (!image_owned_by_device_locked(decoded.image_ids[index],
+                                          command_state->device_id))
+            result = -EINVAL;
     }
     if (result == 0) result = connect_locked();
     struct bvb_protocol_packet request = {0};
@@ -6254,14 +6366,16 @@ static void VKAPI_CALL bvb_bridge_vkCmdClearColorImage(
         color_words[0] == 0U && color_words[1] == 0U &&
         color_words[2] == 0U && color_words[3] == 0U && range_count == 1U &&
         init_image_subresource_range_supported(ranges);
-    if (!fixed_clear_shape && !bvb_global_client.command_stream_enabled) return;
+    const bool shared_stream = command_stream_is_enabled();
+    if (!fixed_clear_shape && !shared_stream) return;
     const uint64_t image_id =
         non_dispatchable_wire_id(&image, sizeof(image));
-    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) return;
-    int result = image_owned_by_device_locked(image_id,
-                                              command_state->device_id)
-                     ? 0 : -EINVAL;
-    if (bvb_global_client.command_stream_enabled) {
+    if (shared_stream) {
+        int result = shared_image_owned_by_device(
+                         image_id, command_state->device_id)
+                         ? 0
+                         : -EINVAL;
+        if (pthread_mutex_lock(&command_state->stream_mutex) != 0) return;
         if (result == 0 && command_state->stream_recording &&
             !command_state->stream_error) {
             if (fixed_clear_shape) {
@@ -6292,9 +6406,13 @@ static void VKAPI_CALL bvb_bridge_vkCmdClearColorImage(
             command_state->stream_error = true;
             command_state->stream_sealed = false;
         }
-        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+        (void)pthread_mutex_unlock(&command_state->stream_mutex);
         return;
     }
+    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) return;
+    int result = image_owned_by_device_locked(image_id,
+                                              command_state->device_id)
+                     ? 0 : -EINVAL;
     if (result == 0) result = connect_locked();
     const struct bvb_vulkan_command_buffer_clear_color_image_request decoded = {
         .command_buffer_id = command_state->wire_id,
@@ -6334,13 +6452,13 @@ static void VKAPI_CALL bvb_bridge_vkCmdFillBuffer(
         poison_shared_command_stream(command_state);
         return;
     }
-    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) return;
-    struct bvb_resource_proxy *buffer_state =
-        resource_proxy_locked(buffer_id, BVB_OBJECT_BUFFER);
-    int result = buffer_state != NULL &&
-                         buffer_state->parent_id == command_state->device_id
-                     ? 0 : -EINVAL;
-    if (bvb_global_client.command_stream_enabled) {
+    if (command_stream_is_enabled()) {
+        int result = shared_resource_owned_by_device(
+                         buffer_id, BVB_OBJECT_BUFFER,
+                         command_state->device_id)
+                         ? 0
+                         : -EINVAL;
+        if (pthread_mutex_lock(&command_state->stream_mutex) != 0) return;
         if (result == 0 && command_state->stream_recording &&
             !command_state->stream_error) {
             result = bvb_command_batch_append_fill_buffer(
@@ -6358,9 +6476,15 @@ static void VKAPI_CALL bvb_bridge_vkCmdFillBuffer(
             command_state->stream_error = true;
             command_state->stream_sealed = false;
         }
-        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+        (void)pthread_mutex_unlock(&command_state->stream_mutex);
         return;
     }
+    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) return;
+    struct bvb_resource_proxy *buffer_state =
+        resource_proxy_locked(buffer_id, BVB_OBJECT_BUFFER);
+    int result = buffer_state != NULL &&
+                         buffer_state->parent_id == command_state->device_id
+                     ? 0 : -EINVAL;
     if (result == 0) result = connect_locked();
     const struct bvb_vulkan_command_buffer_fill_request decoded = {
         .command_buffer_id = command_state->wire_id,
@@ -6804,8 +6928,15 @@ static VkResult VKAPI_CALL bvb_bridge_vkQueueSubmit(
         pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    if (bvb_global_client.command_stream_enabled &&
+    const bool shared_stream = command_stream_is_enabled();
+    if (shared_stream &&
+        pthread_mutex_lock(&command_state->stream_mutex) != 0) {
+        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (shared_stream &&
         command_state->stream_sealed && !command_state->stream_uploaded) {
+        (void)pthread_mutex_unlock(&command_state->stream_mutex);
         (void)pthread_mutex_unlock(&bvb_global_client.mutex);
         return VK_ERROR_FEATURE_NOT_PRESENT;
     }
@@ -6815,12 +6946,16 @@ static VkResult VKAPI_CALL bvb_bridge_vkQueueSubmit(
     if (fence != VK_NULL_HANDLE &&
         (fence_state == NULL ||
          fence_state->parent_id != queue_state->parent_id)) {
+        if (shared_stream)
+            (void)pthread_mutex_unlock(&command_state->stream_mutex);
         (void)pthread_mutex_unlock(&bvb_global_client.mutex);
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     VkResult upload_result =
         flush_mapped_resources_locked(queue_state->parent_id);
     if (upload_result != VK_SUCCESS) {
+        if (shared_stream)
+            (void)pthread_mutex_unlock(&command_state->stream_mutex);
         (void)pthread_mutex_unlock(&bvb_global_client.mutex);
         return upload_result;
     }
@@ -6841,6 +6976,8 @@ static VkResult VKAPI_CALL bvb_bridge_vkQueueSubmit(
                   BVB_OPCODE_VULKAN_QUEUE_SUBMIT_COMMAND_FENCE,
                   payload, sizeof(payload))
             : VK_ERROR_INITIALIZATION_FAILED;
+        if (shared_stream)
+            (void)pthread_mutex_unlock(&command_state->stream_mutex);
         (void)pthread_mutex_unlock(&bvb_global_client.mutex);
         return vulkan_result;
     }
@@ -6856,6 +6993,8 @@ static VkResult VKAPI_CALL bvb_bridge_vkQueueSubmit(
                                        BVB_OPCODE_VULKAN_QUEUE_SUBMIT_COMMAND,
                                        payload, sizeof(payload))
                                  : VK_ERROR_INITIALIZATION_FAILED;
+    if (shared_stream)
+        (void)pthread_mutex_unlock(&command_state->stream_mutex);
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
     return vulkan_result;
 }
@@ -6898,6 +7037,10 @@ static VkResult VKAPI_CALL bvb_bridge_vkQueueSubmit2(
         .command_count = submits[0].commandBufferInfoCount,
         .signal_count = submits[0].signalSemaphoreInfoCount,
     };
+    const bool shared_stream = command_stream_is_enabled();
+    struct bvb_command_buffer_proxy *locked_commands[
+        BVB_VULKAN_MAX_COMMAND_BUFFERS_PER_SUBMIT] = {0};
+    uint32_t locked_command_count = 0U;
     bool stream_submit = false;
     for (uint32_t index = 0U; result == 0 && index < decoded.wait_count;
          ++index) {
@@ -6933,12 +7076,25 @@ static VkResult VKAPI_CALL bvb_bridge_vkQueueSubmit2(
             result = -EINVAL;
             break;
         }
+        if (shared_stream) {
+            bool already_locked = false;
+            for (uint32_t locked = 0U; locked < locked_command_count;
+                 ++locked) {
+                already_locked |= locked_commands[locked] == state;
+            }
+            if (!already_locked) {
+                if (pthread_mutex_lock(&state->stream_mutex) != 0) {
+                    result = -EDEADLK;
+                    break;
+                }
+                locked_commands[locked_command_count++] = state;
+            }
+        }
         decoded.commands[index] = (struct bvb_vulkan_submit_2_command_record){
             .command_buffer_id = state->wire_id,
             .device_mask = info->deviceMask,
         };
-        if (bvb_global_client.command_stream_enabled &&
-            !state->stream_uploaded) {
+        if (shared_stream && !state->stream_uploaded) {
             if (state->stream_recording || state->stream_error ||
                 !state->stream_sealed || state->stream_length == 0U ||
                 state->stream_slot >= BVB_COMMAND_STREAM_SLOT_COUNT) {
@@ -7015,10 +7171,15 @@ static VkResult VKAPI_CALL bvb_bridge_vkQueueSubmit2(
                     state->stream_sequence ==
                         decoded.commands[index].stream_sequence) {
                     state->stream_uploaded = true;
-                    release_command_stream_slot_locked(state);
+                    release_command_stream_slot(state);
                 }
             }
         }
+    }
+    while (locked_command_count != 0U) {
+        --locked_command_count;
+        (void)pthread_mutex_unlock(
+            &locked_commands[locked_command_count]->stream_mutex);
     }
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
     return vulkan_result;
@@ -7210,9 +7371,14 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateSwapchainKHR(
         proxy->image_count = prepared.image_count;
         for (uint32_t index = 0U; index < prepared.image_count; ++index)
             proxy->image_ids[index] = prepared.images[index].image_id;
-        proxy->next = bvb_global_client.swapchains;
-        bvb_global_client.swapchains = proxy;
-        *swapchain = swapchain_from_wire_id(proxy->wire_id);
+        if (pthread_rwlock_wrlock(&bvb_object_registry_lock) != 0) {
+            result = -EDEADLK;
+        } else {
+            proxy->next = bvb_global_client.swapchains;
+            bvb_global_client.swapchains = proxy;
+            (void)pthread_rwlock_unlock(&bvb_object_registry_lock);
+            *swapchain = swapchain_from_wire_id(proxy->wire_id);
+        }
     }
     if (result != 0 && prepared.vulkan_result == VK_SUCCESS &&
         bvb_handle_expect(prepared.swapchain_id,
@@ -7288,7 +7454,14 @@ static void VKAPI_CALL bvb_bridge_vkDestroySwapchainKHR(
     if (result == 0 &&
         (response.header.status != 0 || response.header.payload_length != 0U))
         result = -EPROTO;
-    if (result == 0) remove_swapchain_proxy_locked(proxy);
+    if (result == 0) {
+        if (pthread_rwlock_wrlock(&bvb_object_registry_lock) != 0) {
+            result = -EDEADLK;
+        } else {
+            remove_swapchain_proxy_locked(proxy);
+            (void)pthread_rwlock_unlock(&bvb_object_registry_lock);
+        }
+    }
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
 }
 

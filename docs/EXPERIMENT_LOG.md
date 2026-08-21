@@ -3287,3 +3287,39 @@ exercising its real `flock`, `sync -f`, `stat -c`, rename, and signal behavior
 against temporary fake install roots only. No tablet installation was performed. The required transactional
 installer `deja` query returned no indexed implementation; this reuses E077's
 verified rollback boundary rather than inventing a second recovery path.
+
+## E078 — per-command-buffer shared recording locks (2026-08-21)
+
+The required `deja "E075 shared command recording process global client mutex
+per command buffer synchronization Vulkan external sync"` query returned no
+indexed hit. This gate reuses E075's fixed shared slots and zero-recording-RTT
+contract, E075a's immutable snapshot/transaction semantics, E076's bounded
+rich records and typed ownership rejection, and leaves E077 mapped-memory
+selection independent.
+
+The client previously held its one process-global mutex through every shared
+`Begin`, command append, and `End`. That mutex also owns the transport socket,
+proxy lists, and control RPCs, so unrelated recording threads serialized with
+each other and with control traffic. E078 gives every command-buffer proxy a
+recording mutex. Slot lease/sequence state moves behind a dedicated bounded
+allocator mutex; an acquire/release atomic publishes the immutable shared
+mapping. Image and buffer validation reads a registry rwlock while
+control-serialized create/destroy operations take its write side. The registry
+read is released before taking a recording mutex. Submit remains the socket
+boundary and uses control -> command buffer -> slot allocator ordering.
+
+The default strict branches retain the same per-command RPC opcodes and the
+wire protocol has no changes. Vulkan's external-synchronization obligation is
+also unchanged: the application must serialize a command buffer and its pool;
+only distinct command buffers gain concurrency. A focused fake-native/service
+contract starts two threads at one barrier, records 256 `vkCmdFillBuffer`
+commands into each of two separate command buffers, observes zero recording
+socket exchanges, submits both streams in one `vkQueueSubmit2`, and requires
+whole-stream validation plus native replay. The established invalid-shape,
+cross-device buffer/image poison, immutable snapshot, and acknowledged
+non-success tests remain active. The complete host suite passes 53/53, and the
+focused two-thread scenario also passes a ThreadSanitizer build. Compact
+evidence is
+`docs/evidence/e078-command-stream-client-locking-host.json`. No tablet files,
+APK, Activity, Steam, or X process were touched; there is no visible-frame,
+Tomb Raider, benchmark, or FPS claim.

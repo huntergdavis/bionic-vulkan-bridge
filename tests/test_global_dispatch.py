@@ -19,6 +19,7 @@ def main() -> int:
         raise SystemExit(
             "usage: test_global_dispatch.py SERVICE CLIENT FAKE_LOADER "
             "[strict-fake|hardware|shared-command-stream|"
+            "shared-command-stream-concurrency|"
             "shared-command-stream-non-success|strict-mapped-memory|"
             "shared-mapped-memory|shared-noncoherent-memory|"
             "shared-memory-unmap-lost-ack]"
@@ -29,6 +30,7 @@ def main() -> int:
     validation_mode = sys.argv[4] if len(sys.argv) == 5 else "strict-fake"
     if validation_mode not in (
         "strict-fake", "hardware", "shared-command-stream",
+        "shared-command-stream-concurrency",
         "shared-command-stream-non-success",
         "strict-mapped-memory", "shared-mapped-memory",
         "shared-noncoherent-memory", "shared-memory-unmap-lost-ack",
@@ -48,7 +50,8 @@ def main() -> int:
         activity_frame_listener.settimeout(2.0)
         server_environment = os.environ.copy()
         server_environment["BVB_FAKE_HIDE_SWAPCHAIN"] = "1"
-        server_environment["BVB_FAKE_REQUIRE_INIT_IMAGE_COMMANDS"] = "1"
+        if validation_mode != "shared-command-stream-concurrency":
+            server_environment["BVB_FAKE_REQUIRE_INIT_IMAGE_COMMANDS"] = "1"
         if validation_mode == "shared-command-stream":
             server_environment["BVB_FAKE_REQUIRE_ANIMATED_WSI"] = "1"
         if validation_mode == "hardware":
@@ -147,6 +150,8 @@ def main() -> int:
                 environment["BVB_EXPECT_STREAM_SUBMIT_FAILURE"] = "1"
             if validation_mode == "shared-command-stream":
                 environment["BVB_TEST_ANIMATED_WSI"] = "1"
+            if validation_mode == "shared-command-stream-concurrency":
+                environment["BVB_TEST_CONCURRENT_COMMAND_STREAMS"] = "1"
 
             if validation_mode in (
                 "shared-mapped-memory", "shared-noncoherent-memory",
@@ -307,6 +312,11 @@ def main() -> int:
             assert "empty_submit=0 queue_wait=0 device_wait=0" in completed.stdout
             assert "command_submit=0 pool_reset=0" in completed.stdout
             assert (
+                "concurrent_streams=2 concurrent_commands=512"
+                if validation_mode == "shared-command-stream-concurrency"
+                else "concurrent_streams=0 concurrent_commands=0"
+            ) in completed.stdout
+            assert (
                 "recording_rtts=0" if shared_command_stream
                 else "recording_rtts=5"
             ) in completed.stdout
@@ -352,6 +362,7 @@ def main() -> int:
                 else "memory_opcodes=49,48,49,48,105"
                 if validation_mode in (
                     "shared-command-stream",
+                    "shared-command-stream-concurrency",
                     "shared-command-stream-non-success",
                 )
                 else "memory_opcodes=49,48,49,48,47"
