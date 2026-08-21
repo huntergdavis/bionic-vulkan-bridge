@@ -3029,6 +3029,10 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
 
 BVB_GLOBAL_EXPORT VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL
 vkGetInstanceProcAddr(VkInstance instance, const char *name) {
+    if (name != NULL && getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        fprintf(stderr, "BVB_ICD_GIPA_QUERY instance=%p name=%s\n",
+                (void *)instance, name);
+    }
     if (name == NULL ||
         (instance != VK_NULL_HANDLE && instance_proxy(instance) == NULL)) {
         return NULL;
