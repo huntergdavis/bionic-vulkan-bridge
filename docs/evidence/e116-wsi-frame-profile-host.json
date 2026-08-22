@@ -22,9 +22,44 @@
   "validation": {
     "source_contract": "passed",
     "host_suite": "76/76 passed",
-    "tablet_build": "pending exact archive",
-    "tablet_profile": "pending",
+    "tablet_build": "passed from exact source archive 08da1f8; Termux suite 74/74 passed",
+    "tablet_profile": "passed: one complete 32-present summary at 2800x1752",
     "speedup_or_fps_claimed": false
+  },
+  "tablet_artifacts": {
+    "source_commit": "08da1f8",
+    "source_archive_sha256": "3dd5ba2eaee7c8037559712795cea77cc5accbf8fcc66ee63fd0e797563c3d27",
+    "service_sha256": "012a905031d2d71b0607f84ea540282305140fce6666a17c3722e0a45e31f146",
+    "glibc_icd_sha256": "0fb256161827071b0a924d5a793c8353d5276c518e0f6aa4c2c836f1fc34d2b5",
+    "apk_sha256": "09e63d73dbc9976ef104e649478dc5ad5012df2e17d0e9c6fc7b013173cc1ac8",
+    "private_turnip_sha256": "8ac6ef78c3c92998aa46c59fd0081edcba82756f5bad561d1b24a57684874a45"
+  },
+  "tablet_sample": {
+    "run_id": "20260822T093623Z-12208",
+    "resolution": "2800x1752",
+    "present_count": 32,
+    "client_present_total_ns": 209132189,
+    "client_present_average_ns": 6535381,
+    "client_acquire_total_ns": 21344372,
+    "client_acquire_average_ns": 666999,
+    "service_present_total_ns": 176550365,
+    "service_present_average_ns": 5517199,
+    "service_present_fence_wait_total_ns": 165319426,
+    "service_present_fence_wait_average_ns": 5166232,
+    "service_acquire_total_ns": 11405157,
+    "service_acquire_average_ns": 356411,
+    "activity_copy_total_ns": 95684840,
+    "activity_copy_average_ns": 2990151,
+    "activity_queue_present_total_ns": 51546509,
+    "activity_queue_present_average_ns": 1610828,
+    "activity_completion_wait_total_ns": 13877654,
+    "activity_completion_wait_average_ns": 433677,
+    "observed_presentation_interval_seconds": "approximately 3",
+    "interpretation": "The complete measured WSI and Activity work is in milliseconds, not seconds. The remaining dominant interval is before QueuePresentKHR, in game CPU work, command construction/submission, shader work, or another synchronous bridge operation."
+  },
+  "retained_logs": {
+    "service_sha256": "0b9f71cdcd92374b154e0ead5137407fab09eed0afc3ffbb90092455f503a6b4",
+    "direct_game_sha256": "dd7d33a379b7cc4b36b6bbd52870bf19ff0a9c040c3e589c14f22a6bfb25379d"
   },
   "reuse": "The required deja query returned no indexed implementation. E116 reuses E060's typed virtual swapchain, E075's default-off performance selector discipline, and E115's real opaque Tomb Raider frame boundary."
 }

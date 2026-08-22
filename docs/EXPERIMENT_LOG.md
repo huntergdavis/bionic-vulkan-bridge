@@ -4578,4 +4578,20 @@ pay no clock or log cost in these paths, and profiling emits no per-frame log
 lines. The required `deja "BVB virtual swapchain per-frame profiling acquire
 present fence activity copy submit replay timing E116"` query returned no
 indexed implementation. E116 reuses E060, E075, and the E115 opaque real-frame
-boundary. Exact-archive tablet timing remains pending; no FPS claim is made.
+boundary. At that host-only checkpoint, exact-archive tablet timing remained
+pending and no FPS claim was made.
+
+The exact `08da1f8` archive then passed 74/74 Termux contracts and produced one
+complete real 32-present window at 2800x1752. Client request/reply averaged
+6.535 ms for present and 0.667 ms for acquire. The Bionic service averaged
+5.517 ms for present, including 5.166 ms waiting for its producer fence, and
+0.356 ms for acquire. The Activity copy/present path averaged 2.990 ms total,
+including 1.611 ms in Android queue-present and 0.434 ms in its completion
+wait. Actual game presentations were still roughly three seconds apart.
+
+That result rejects WSI copy/present as the multi-second bottleneck: measured
+transport and GPU ownership work is in single-digit milliseconds. The next
+bounded gate must profile the synchronous bridge exchanges between presents,
+especially submission and upload traffic, instead of prematurely optimizing
+the Activity copy or removing the producer fence. This is still a per-present
+timing sample, not Tomb Raider's built-in benchmark or an FPS result.
