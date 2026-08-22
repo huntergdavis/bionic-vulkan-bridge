@@ -33,6 +33,10 @@ BVB_GLOBAL_EXPORT uint64_t bvb_memory_proxy_id(VkDeviceMemory memory);
 BVB_GLOBAL_EXPORT int bvb_memory_proxy_is_mapped(VkDeviceMemory memory);
 BVB_GLOBAL_EXPORT uint64_t bvb_fence_proxy_id(VkFence fence);
 BVB_GLOBAL_EXPORT uint64_t bvb_global_dispatch_exchange_count(void);
+BVB_GLOBAL_EXPORT uint64_t bvb_global_dispatch_descriptor_ring_call_count(
+    void);
+BVB_GLOBAL_EXPORT uint64_t bvb_global_dispatch_descriptor_lease_hit_count(
+    void);
 BVB_GLOBAL_EXPORT uint64_t bvb_command_buffer_ownership_registry_reads(
     VkCommandBuffer command_buffer);
 BVB_GLOBAL_EXPORT uint16_t bvb_global_dispatch_last_opcode(void);

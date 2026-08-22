@@ -6,9 +6,10 @@
 
 enum {
     BVB_DESCRIPTOR_TRANSACTION_RING_MAGIC = 0x31524442U,
-    BVB_DESCRIPTOR_TRANSACTION_RING_VERSION = 2,
+    BVB_DESCRIPTOR_TRANSACTION_RING_VERSION = 3,
     BVB_DESCRIPTOR_TRANSACTION_RING_CONTROL_BYTES = 128,
-    BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES = 8192,
+    BVB_DESCRIPTOR_TRANSACTION_RING_LEASE_OFFSET = 8192,
+    BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES = 65536,
     BVB_DESCRIPTOR_TRANSACTION_RING_SLOT_COUNT = 16,
     BVB_DESCRIPTOR_TRANSACTION_RING_SLOT_BYTES = 384,
     BVB_DESCRIPTOR_TRANSACTION_RING_REQUEST_BYTES = 176,
@@ -19,6 +20,10 @@ enum {
     BVB_DESCRIPTOR_TRANSACTION_WAIT_IDLE = 0,
     BVB_DESCRIPTOR_TRANSACTION_WAIT_SPINNING = 1,
     BVB_DESCRIPTOR_TRANSACTION_WAIT_SLEEPING = 2,
+    BVB_DESCRIPTOR_LEASE_BANK_COUNT = 4,
+    BVB_DESCRIPTOR_LEASE_BANK_CAPACITY = 512,
+    BVB_DESCRIPTOR_LEASE_MAX_CLAIM = 16,
+    BVB_DESCRIPTOR_LEASE_BANK_READY = 1,
 };
 
 /*
@@ -56,12 +61,37 @@ struct bvb_descriptor_transaction_slot {
     uint8_t reserved[48];
 };
 
+struct bvb_descriptor_lease_record {
+    uint64_t layout_id;
+    uint64_t descriptor_set_id;
+};
+
+struct bvb_descriptor_lease_bank {
+    uint64_t pool_id;
+    uint64_t epoch;
+    uint32_t count;
+    uint32_t cursor;
+    uint32_t ready;
+    uint32_t reserved;
+    struct bvb_descriptor_lease_record
+        records[BVB_DESCRIPTOR_LEASE_BANK_CAPACITY];
+};
+
 _Static_assert(sizeof(struct bvb_descriptor_transaction_ring) ==
                    BVB_DESCRIPTOR_TRANSACTION_RING_CONTROL_BYTES,
                "descriptor transaction ring header must remain 128 bytes");
 _Static_assert(sizeof(struct bvb_descriptor_transaction_slot) ==
                    BVB_DESCRIPTOR_TRANSACTION_RING_SLOT_BYTES,
                "descriptor transaction ring slot must remain 384 bytes");
+_Static_assert(sizeof(struct bvb_descriptor_lease_record) == 16,
+               "descriptor lease record must remain 16 bytes");
+_Static_assert(sizeof(struct bvb_descriptor_lease_bank) == 8224,
+               "descriptor lease bank must remain 8224 bytes");
+_Static_assert(BVB_DESCRIPTOR_TRANSACTION_RING_LEASE_OFFSET +
+                       BVB_DESCRIPTOR_LEASE_BANK_COUNT *
+                           sizeof(struct bvb_descriptor_lease_bank) <=
+                   BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES,
+               "descriptor lease banks must fit the bounded shared region");
 
 int bvb_descriptor_transaction_ring_initialize(
     void *address, size_t length, uint32_t slot_count, uint64_t generation);
@@ -90,5 +120,20 @@ int bvb_descriptor_transaction_ring_fail_client(
     struct bvb_descriptor_transaction_ring *ring, int status);
 int bvb_descriptor_transaction_ring_fail_service(
     struct bvb_descriptor_transaction_ring *ring, int status);
+
+int bvb_descriptor_lease_bank_publish(
+    struct bvb_descriptor_transaction_ring *ring, size_t length,
+    uint32_t bank_index, uint64_t pool_id, uint64_t epoch,
+    const struct bvb_descriptor_lease_record *records, uint32_t count);
+int bvb_descriptor_lease_bank_disable(
+    struct bvb_descriptor_transaction_ring *ring, size_t length,
+    uint32_t bank_index);
+int bvb_descriptor_lease_claim(
+    struct bvb_descriptor_transaction_ring *ring, size_t length,
+    uint64_t pool_id, const uint64_t *layout_ids, uint32_t count,
+    uint64_t *descriptor_set_ids, uint64_t *epoch);
+int bvb_descriptor_lease_bank_cursor(
+    const struct bvb_descriptor_transaction_ring *ring, size_t length,
+    uint32_t bank_index, uint32_t *cursor, uint32_t *count);
 
 #endif

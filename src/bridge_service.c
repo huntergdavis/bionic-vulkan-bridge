@@ -53,6 +53,23 @@ struct shared_batch_region {
     bool descriptor_journal;
 };
 
+struct descriptor_lease_plan_call {
+    uint16_t first_set;
+    uint16_t set_count;
+};
+
+struct descriptor_lease_plan {
+    uint64_t pool_id;
+    uint64_t epoch;
+    uint32_t call_count;
+    uint32_t set_count;
+    bool published;
+    bool cooldown;
+    struct descriptor_lease_plan_call
+        calls[BVB_DESCRIPTOR_LEASE_BANK_CAPACITY];
+    uint64_t layout_ids[BVB_DESCRIPTOR_LEASE_BANK_CAPACITY];
+};
+
 struct descriptor_transaction_worker {
     struct bvb_descriptor_transaction_ring *ring;
     size_t ring_length;
@@ -75,6 +92,8 @@ struct descriptor_transaction_worker {
     uint64_t profile_completion_ns;
     uint64_t profile_total_max_ns;
     uint64_t profile_allocate_max_ns;
+    struct descriptor_lease_plan
+        lease_plans[BVB_DESCRIPTOR_LEASE_BANK_COUNT];
 };
 
 struct connection_worker {
@@ -85,6 +104,13 @@ struct connection_worker {
     struct bvb_activity_status activity_status;
     pid_t peer_pid;
 };
+
+static void descriptor_lease_forget_pool(
+    struct descriptor_transaction_worker *worker, uint64_t pool_id);
+static int descriptor_lease_after_pool_reset(
+    struct descriptor_transaction_worker *worker,
+    const struct bvb_vulkan_descriptor_pool_reset_request *reset_request,
+    int32_t reset_result, char *diagnostic, size_t diagnostic_size);
 
 static void usage(const char *program) {
     fprintf(stderr,
@@ -1768,7 +1794,8 @@ static int answer_vulkan_builtin_graphics_pipeline_create(
 
 static int answer_vulkan_resource_destroy(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
-    struct bvb_vulkan_global_context *context) {
+    struct bvb_vulkan_global_context *context,
+    struct descriptor_transaction_worker *descriptor_worker) {
     struct bvb_protocol_packet response;
     prepare_response(&response, request);
     if (!negotiated || context == NULL ||
@@ -1876,6 +1903,8 @@ static int answer_vulkan_resource_destroy(
     if (result != 0) {
         fprintf(stderr, "bvb: resource destroy failed: %s\n", diagnostic);
         response.header.status = result;
+    } else if (descriptor_pool) {
+        descriptor_lease_forget_pool(descriptor_worker, object_id);
     }
     return bvb_transport_send(client_fd, &response);
 }
@@ -1912,7 +1941,8 @@ static int answer_vulkan_descriptor_set_allocate(
 
 static int answer_vulkan_descriptor_pool_reset(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
-    struct bvb_vulkan_global_context *context) {
+    struct bvb_vulkan_global_context *context,
+    struct descriptor_transaction_worker *descriptor_worker) {
     struct bvb_protocol_packet response;
     prepare_response(&response, request);
     if (!negotiated || context == NULL ||
@@ -1929,6 +1959,11 @@ static int answer_vulkan_descriptor_pool_reset(
     if (result == 0) {
         result = bvb_vulkan_global_context_reset_descriptor_pool(
             context, &decoded, &vulkan_result,
+            diagnostic, sizeof(diagnostic));
+    }
+    if (result == 0 && vulkan_result == VK_SUCCESS) {
+        result = descriptor_lease_after_pool_reset(
+            descriptor_worker, &decoded, vulkan_result,
             diagnostic, sizeof(diagnostic));
     }
     if (result != 0) {
@@ -2311,6 +2346,165 @@ static void descriptor_worker_profile_record(
         descriptor_worker_profile_emit(worker);
 }
 
+static struct descriptor_lease_plan *descriptor_lease_plan_find(
+    struct descriptor_transaction_worker *worker, uint64_t pool_id,
+    bool create, uint32_t *bank_index) {
+    if (worker == NULL || pool_id == 0U) return NULL;
+    struct descriptor_lease_plan *empty = NULL;
+    uint32_t empty_index = 0U;
+    for (uint32_t index = 0U; index < BVB_DESCRIPTOR_LEASE_BANK_COUNT;
+         ++index) {
+        struct descriptor_lease_plan *plan = &worker->lease_plans[index];
+        if (plan->pool_id == pool_id) {
+            if (bank_index != NULL) *bank_index = index;
+            return plan;
+        }
+        if (empty == NULL && plan->pool_id == 0U) {
+            empty = plan;
+            empty_index = index;
+        }
+    }
+    if (!create || empty == NULL) return NULL;
+    *empty = (struct descriptor_lease_plan){
+        .pool_id = pool_id,
+    };
+    if (bank_index != NULL) *bank_index = empty_index;
+    return empty;
+}
+
+static void descriptor_lease_record_allocation(
+    struct descriptor_transaction_worker *worker,
+    const struct bvb_vulkan_descriptor_set_allocate_request *request,
+    const struct bvb_vulkan_descriptor_set_allocate_response *response) {
+    if (worker == NULL || !worker->started || worker->ring == NULL ||
+        request == NULL || response == NULL ||
+        response->vulkan_result != VK_SUCCESS ||
+        response->descriptor_set_count != request->descriptor_set_count) {
+        return;
+    }
+    uint32_t bank_index = 0U;
+    struct descriptor_lease_plan *plan = descriptor_lease_plan_find(
+        worker, request->descriptor_pool_id, true, &bank_index);
+    if (plan == NULL) return;
+    if (plan->published) {
+        uint32_t cursor = 0U, count = 0U;
+        const int cursor_result = bvb_descriptor_lease_bank_cursor(
+            worker->ring, worker->ring_length, bank_index, &cursor, &count);
+        if (cursor_result == 0 && cursor < count) {
+            (void)bvb_descriptor_lease_bank_disable(
+                worker->ring, worker->ring_length, bank_index);
+            plan->published = false;
+            plan->cooldown = true;
+            plan->call_count = 0U;
+            plan->set_count = 0U;
+        }
+        return;
+    }
+    if (plan->cooldown || request->descriptor_set_count == 0U ||
+        plan->call_count >= BVB_DESCRIPTOR_LEASE_BANK_CAPACITY ||
+        request->descriptor_set_count >
+            BVB_DESCRIPTOR_LEASE_BANK_CAPACITY - plan->set_count) {
+        return;
+    }
+    struct descriptor_lease_plan_call *call =
+        &plan->calls[plan->call_count++];
+    call->first_set = (uint16_t)plan->set_count;
+    call->set_count = (uint16_t)request->descriptor_set_count;
+    for (uint32_t index = 0U; index < request->descriptor_set_count;
+         ++index) {
+        plan->layout_ids[plan->set_count++] = request->set_layout_ids[index];
+    }
+}
+
+static void descriptor_lease_forget_pool(
+    struct descriptor_transaction_worker *worker, uint64_t pool_id) {
+    uint32_t bank_index = 0U;
+    struct descriptor_lease_plan *plan = descriptor_lease_plan_find(
+        worker, pool_id, false, &bank_index);
+    if (plan == NULL) return;
+    if (worker->ring != NULL)
+        (void)bvb_descriptor_lease_bank_disable(
+            worker->ring, worker->ring_length, bank_index);
+    *plan = (struct descriptor_lease_plan){0};
+}
+
+static int descriptor_lease_after_pool_reset(
+    struct descriptor_transaction_worker *worker,
+    const struct bvb_vulkan_descriptor_pool_reset_request *reset_request,
+    int32_t reset_result, char *diagnostic, size_t diagnostic_size) {
+    if (worker == NULL || !worker->started || worker->ring == NULL ||
+        reset_request == NULL || reset_result != VK_SUCCESS) {
+        return 0;
+    }
+    uint32_t bank_index = 0U;
+    struct descriptor_lease_plan *plan = descriptor_lease_plan_find(
+        worker, reset_request->descriptor_pool_id, false, &bank_index);
+    if (plan == NULL) return 0;
+    (void)bvb_descriptor_lease_bank_disable(
+        worker->ring, worker->ring_length, bank_index);
+    plan->published = false;
+    if (plan->cooldown) {
+        plan->cooldown = false;
+        plan->call_count = 0U;
+        plan->set_count = 0U;
+        return 0;
+    }
+    if (plan->set_count == 0U || plan->call_count == 0U) return 0;
+    if (plan->epoch == UINT64_MAX) return -EOVERFLOW;
+
+    struct bvb_descriptor_lease_record
+        leases[BVB_DESCRIPTOR_LEASE_BANK_CAPACITY] = {0};
+    uint32_t lease_count = 0U;
+    int result = 0;
+    for (uint32_t call_index = 0U;
+         result == 0 && call_index < plan->call_count; ++call_index) {
+        const struct descriptor_lease_plan_call *call =
+            &plan->calls[call_index];
+        struct bvb_vulkan_descriptor_set_allocate_request request = {
+            .descriptor_pool_id = plan->pool_id,
+            .descriptor_set_count = call->set_count,
+        };
+        for (uint32_t index = 0U; index < call->set_count; ++index) {
+            request.set_layout_ids[index] =
+                plan->layout_ids[call->first_set + index];
+        }
+        struct bvb_vulkan_descriptor_set_allocate_response response = {0};
+        result = bvb_vulkan_global_context_allocate_descriptor_sets(
+            worker->context, &request, &response,
+            diagnostic, diagnostic_size);
+        if (result == 0 && response.vulkan_result != VK_SUCCESS)
+            result = -ENOSPC;
+        if (result == 0 &&
+            response.descriptor_set_count != request.descriptor_set_count)
+            result = -EPROTO;
+        for (uint32_t index = 0U;
+             result == 0 && index < response.descriptor_set_count; ++index) {
+            leases[lease_count++] = (struct bvb_descriptor_lease_record){
+                .layout_id = request.set_layout_ids[index],
+                .descriptor_set_id = response.descriptor_set_ids[index],
+            };
+        }
+    }
+    if (result != 0) {
+        int32_t cleanup_result = VK_ERROR_INITIALIZATION_FAILED;
+        const int cleanup_status =
+            bvb_vulkan_global_context_reset_descriptor_pool(
+                worker->context, reset_request, &cleanup_result,
+                diagnostic, diagnostic_size);
+        plan->call_count = 0U;
+        plan->set_count = 0U;
+        plan->cooldown = false;
+        return cleanup_status != 0 ? cleanup_status
+             : cleanup_result != VK_SUCCESS ? -EIO : 0;
+    }
+    ++plan->epoch;
+    result = bvb_descriptor_lease_bank_publish(
+        worker->ring, worker->ring_length, bank_index, plan->pool_id,
+        plan->epoch, leases, lease_count);
+    if (result == 0) plan->published = true;
+    return result;
+}
+
 static void *descriptor_transaction_worker_main(void *opaque) {
     struct descriptor_transaction_worker *worker = opaque;
     uint32_t after_sequence = 0U;
@@ -2364,6 +2558,11 @@ static void *descriptor_transaction_worker_main(void *opaque) {
             (worker->journal_region->last_sequence == UINT64_MAX ||
              transaction.journal_sequence !=
                  worker->journal_region->last_sequence + 1U)) {
+            snprintf(diagnostic, sizeof(diagnostic),
+                     "descriptor journal sequence got=%llu expected=%llu",
+                     (unsigned long long)transaction.journal_sequence,
+                     (unsigned long long)(
+                         worker->journal_region->last_sequence + 1U));
             result = -ESTALE;
         }
         if (result == 0 &&
@@ -2404,6 +2603,10 @@ static void *descriptor_transaction_worker_main(void *opaque) {
             result = bvb_vulkan_global_context_allocate_descriptor_sets(
                 worker->context, &transaction.allocation, &allocated,
                 diagnostic, sizeof(diagnostic));
+        }
+        if (result == 0) {
+            descriptor_lease_record_allocation(
+                worker, &transaction.allocation, &allocated);
         }
         const uint64_t allocate_finished_ns = monotonic_ns();
         allocate_ns = elapsed_ns(allocate_started_ns, allocate_finished_ns);
@@ -4157,7 +4360,8 @@ static int serve_connection(int client_fd, const char *loader_path,
                    request.header.opcode ==
                        BVB_OPCODE_VULKAN_IMAGE_VIEW_DESTROY) {
             result = answer_vulkan_resource_destroy(
-                client_fd, &request, negotiated, global_context);
+                client_fd, &request, negotiated, global_context,
+                &descriptor_worker);
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_DESCRIPTOR_SET_ALLOCATE) {
             result = answer_vulkan_descriptor_set_allocate(
@@ -4165,7 +4369,8 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_DESCRIPTOR_POOL_RESET) {
             result = answer_vulkan_descriptor_pool_reset(
-                client_fd, &request, negotiated, global_context);
+                client_fd, &request, negotiated, global_context,
+                &descriptor_worker);
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_QUERY_POOL_RESULTS) {
             result = answer_vulkan_query_pool_results(

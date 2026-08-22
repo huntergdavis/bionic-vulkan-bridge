@@ -32,7 +32,7 @@ def main() -> int:
     assert evidence["claims"]["tablet_deployed"] is False
 
     require(protocol, "BVB_OPCODE_VULKAN_DESCRIPTOR_TRANSACTION_RING_SETUP = 124", "setup opcode")
-    require(ring_header, "BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES = 8192", "bounded region")
+    require(ring_header, "BVB_DESCRIPTOR_TRANSACTION_RING_LEASE_OFFSET = 8192", "preserved ring boundary")
     require(ring_header, "BVB_DESCRIPTOR_TRANSACTION_RING_SLOT_COUNT = 16", "bounded slots")
     require(ring_source, "FUTEX_WAIT", "shared wait")
     require(ring_source, "FUTEX_WAKE", "shared wake")

@@ -94,6 +94,13 @@ static struct bvb_descriptor_transaction_slot *slot_at(
         index;
 }
 
+static struct bvb_descriptor_lease_bank *lease_bank_at(
+    struct bvb_descriptor_transaction_ring *ring, uint32_t index) {
+    return (struct bvb_descriptor_lease_bank *)
+        ((uint8_t *)ring + BVB_DESCRIPTOR_TRANSACTION_RING_LEASE_OFFSET) +
+        index;
+}
+
 static int peer_status(const struct bvb_descriptor_transaction_ring *ring) {
     const int32_t client = load_i32(&ring->client_status);
     if (client < 0) return client;
@@ -212,6 +219,22 @@ int bvb_descriptor_transaction_ring_validate(
                 BVB_DESCRIPTOR_TRANSACTION_RING_REQUEST_BYTES ||
             slot->response_length >
                 BVB_DESCRIPTOR_TRANSACTION_RING_RESPONSE_BYTES) {
+            return -EPROTO;
+        }
+    }
+    for (uint32_t index = 0U; index < BVB_DESCRIPTOR_LEASE_BANK_COUNT;
+         ++index) {
+        const struct bvb_descriptor_lease_bank *bank =
+            lease_bank_at((struct bvb_descriptor_transaction_ring *)ring,
+                          index);
+        const uint32_t ready = load_u32(&bank->ready);
+        const uint32_t count = load_u32(&bank->count);
+        const uint32_t cursor = load_u32(&bank->cursor);
+        if (ready > BVB_DESCRIPTOR_LEASE_BANK_READY ||
+            count > BVB_DESCRIPTOR_LEASE_BANK_CAPACITY || cursor > count ||
+            bank->reserved != 0U ||
+            (ready == BVB_DESCRIPTOR_LEASE_BANK_READY &&
+             (bank->pool_id == 0U || bank->epoch == 0U || count == 0U))) {
             return -EPROTO;
         }
     }
@@ -357,4 +380,105 @@ int bvb_descriptor_transaction_ring_fail_client(
 int bvb_descriptor_transaction_ring_fail_service(
     struct bvb_descriptor_transaction_ring *ring, int status) {
     return fail_peer(ring, &ring->service_status, status);
+}
+
+int bvb_descriptor_lease_bank_disable(
+    struct bvb_descriptor_transaction_ring *ring, size_t length,
+    uint32_t bank_index) {
+    int result = validate_header(ring, length, 0U);
+    if (result != 0 || bank_index >= BVB_DESCRIPTOR_LEASE_BANK_COUNT)
+        return result != 0 ? result : -EINVAL;
+    struct bvb_descriptor_lease_bank *bank =
+        lease_bank_at(ring, bank_index);
+    store_u32(&bank->ready, 0U);
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    memset(bank, 0, sizeof(*bank));
+    return 0;
+}
+
+int bvb_descriptor_lease_bank_publish(
+    struct bvb_descriptor_transaction_ring *ring, size_t length,
+    uint32_t bank_index, uint64_t pool_id, uint64_t epoch,
+    const struct bvb_descriptor_lease_record *records, uint32_t count) {
+    int result = validate_header(ring, length, 0U);
+    if (result != 0 || bank_index >= BVB_DESCRIPTOR_LEASE_BANK_COUNT ||
+        pool_id == 0U || epoch == 0U || records == NULL || count == 0U ||
+        count > BVB_DESCRIPTOR_LEASE_BANK_CAPACITY) {
+        return result != 0 ? result : -EINVAL;
+    }
+    for (uint32_t index = 0U; index < count; ++index) {
+        if (records[index].layout_id == 0U ||
+            records[index].descriptor_set_id == 0U)
+            return -EINVAL;
+    }
+    struct bvb_descriptor_lease_bank *bank =
+        lease_bank_at(ring, bank_index);
+    store_u32(&bank->ready, 0U);
+    memset(bank, 0, sizeof(*bank));
+    bank->pool_id = pool_id;
+    bank->epoch = epoch;
+    bank->count = count;
+    memcpy(bank->records, records,
+           (size_t)count * sizeof(bank->records[0]));
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    store_u32(&bank->ready, BVB_DESCRIPTOR_LEASE_BANK_READY);
+    return 0;
+}
+
+int bvb_descriptor_lease_claim(
+    struct bvb_descriptor_transaction_ring *ring, size_t length,
+    uint64_t pool_id, const uint64_t *layout_ids, uint32_t count,
+    uint64_t *descriptor_set_ids, uint64_t *epoch) {
+    int result = validate_header(ring, length, 0U);
+    if (result != 0 || pool_id == 0U || layout_ids == NULL || count == 0U ||
+        count > BVB_DESCRIPTOR_LEASE_MAX_CLAIM ||
+        descriptor_set_ids == NULL) {
+        return result != 0 ? result : -EINVAL;
+    }
+    for (uint32_t bank_index = 0U;
+         bank_index < BVB_DESCRIPTOR_LEASE_BANK_COUNT; ++bank_index) {
+        struct bvb_descriptor_lease_bank *bank =
+            lease_bank_at(ring, bank_index);
+        if (load_u32(&bank->ready) != BVB_DESCRIPTOR_LEASE_BANK_READY ||
+            bank->pool_id != pool_id) {
+            continue;
+        }
+        __atomic_thread_fence(__ATOMIC_ACQUIRE);
+        const uint32_t cursor = load_u32(&bank->cursor);
+        const uint32_t bank_count = load_u32(&bank->count);
+        if (cursor > bank_count || count > bank_count - cursor)
+            return -ENOENT;
+        for (uint32_t index = 0U; index < count; ++index) {
+            const struct bvb_descriptor_lease_record *record =
+                &bank->records[cursor + index];
+            if (record->layout_id != layout_ids[index] ||
+                record->descriptor_set_id == 0U) {
+                return -ENOENT;
+            }
+        }
+        for (uint32_t index = 0U; index < count; ++index)
+            descriptor_set_ids[index] =
+                bank->records[cursor + index].descriptor_set_id;
+        if (epoch != NULL) *epoch = bank->epoch;
+        store_u32(&bank->cursor, cursor + count);
+        return 0;
+    }
+    return -ENOENT;
+}
+
+int bvb_descriptor_lease_bank_cursor(
+    const struct bvb_descriptor_transaction_ring *ring, size_t length,
+    uint32_t bank_index, uint32_t *cursor, uint32_t *count) {
+    int result = validate_header(ring, length, 0U);
+    if (result != 0 || bank_index >= BVB_DESCRIPTOR_LEASE_BANK_COUNT ||
+        cursor == NULL || count == NULL)
+        return result != 0 ? result : -EINVAL;
+    const struct bvb_descriptor_lease_bank *bank =
+        lease_bank_at((struct bvb_descriptor_transaction_ring *)ring,
+                      bank_index);
+    if (load_u32(&bank->ready) != BVB_DESCRIPTOR_LEASE_BANK_READY)
+        return -ENOENT;
+    *cursor = load_u32(&bank->cursor);
+    *count = load_u32(&bank->count);
+    return *cursor <= *count ? 0 : -EPROTO;
 }

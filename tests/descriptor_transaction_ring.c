@@ -4,6 +4,7 @@
 
 #include <bvb/descriptor_transaction_ring.h>
 
+#include <errno.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -112,12 +113,51 @@ int main(void) {
     CHECK(ring->request_wait_state == BVB_DESCRIPTOR_TRANSACTION_WAIT_IDLE);
     CHECK(ring->completion_wait_state ==
           BVB_DESCRIPTOR_TRANSACTION_WAIT_IDLE);
+    const uint64_t pool_id = UINT64_C(0x1500000000000001);
+    const struct bvb_descriptor_lease_record leases[] = {
+        {UINT64_C(0x1400000000000001), UINT64_C(0x1600000000000001)},
+        {UINT64_C(0x1400000000000002), UINT64_C(0x1600000000000002)},
+        {UINT64_C(0x1400000000000003), UINT64_C(0x1600000000000003)},
+    };
+    CHECK(bvb_descriptor_lease_bank_publish(
+              ring, sizeof(region), 0U, pool_id, 1U, leases, 3U) == 0);
+    uint32_t lease_cursor = UINT32_MAX, lease_count = 0U;
+    CHECK(bvb_descriptor_lease_bank_cursor(
+              ring, sizeof(region), 0U, &lease_cursor, &lease_count) == 0);
+    CHECK(lease_cursor == 0U && lease_count == 3U);
+    const uint64_t first_layouts[] = {
+        leases[0].layout_id, leases[1].layout_id,
+    };
+    uint64_t claimed_ids[2] = {0};
+    uint64_t lease_epoch = 0U;
+    CHECK(bvb_descriptor_lease_claim(
+              ring, sizeof(region), pool_id, first_layouts, 2U,
+              claimed_ids, &lease_epoch) == 0);
+    CHECK(lease_epoch == 1U &&
+          claimed_ids[0] == leases[0].descriptor_set_id &&
+          claimed_ids[1] == leases[1].descriptor_set_id);
+    const uint64_t wrong_layout = UINT64_C(0x14000000000000ff);
+    CHECK(bvb_descriptor_lease_claim(
+              ring, sizeof(region), pool_id, &wrong_layout, 1U,
+              claimed_ids, NULL) == -ENOENT);
+    CHECK(bvb_descriptor_lease_bank_cursor(
+              ring, sizeof(region), 0U, &lease_cursor, &lease_count) == 0);
+    CHECK(lease_cursor == 2U && lease_count == 3U);
+    CHECK(bvb_descriptor_lease_claim(
+              ring, sizeof(region), pool_id, &leases[2].layout_id, 1U,
+              claimed_ids, NULL) == 0);
+    CHECK(claimed_ids[0] == leases[2].descriptor_set_id);
+    CHECK(bvb_descriptor_lease_bank_disable(
+              ring, sizeof(region), 0U) == 0);
+    CHECK(bvb_descriptor_lease_claim(
+              ring, sizeof(region), pool_id, &leases[2].layout_id, 1U,
+              claimed_ids, NULL) == -ENOENT);
     CHECK(bvb_descriptor_transaction_ring_fail_service(ring, -5) == 0);
     uint8_t byte = 0U;
     uint32_t length = 0U;
     CHECK(bvb_descriptor_transaction_ring_call(
               ring, sizeof(region), generation, 4097U, &byte, 1U,
               &byte, 1U, &length, 1U) == -5);
-    puts("PASS: descriptor transaction ring 4096 ordered calls and wrap");
+    puts("PASS: descriptor ring 4096 ordered calls and typed lease claims");
     return 0;
 }

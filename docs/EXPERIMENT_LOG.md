@@ -5145,3 +5145,34 @@ pool capacity, journal ordering, native error reporting, and strict fallback
 remain authoritative. Tablet identities and exact caveats are retained in
 `docs/evidence/e130-descriptor-ring-active-handoff-tablet.json`; canonical game
 evidence is sibling `steamclienttermux` commit `ceadc3b`.
+
+## E131 — bounded descriptor reset-epoch leases (2026-08-22)
+
+E130 still spends 103.6 ms per present waiting for about 529 descriptor-ring
+transactions. The required `deja "BVB descriptor set lease queue pool layout
+reset epoch batch preallocation E131"` query returned no indexed
+implementation. E131 reuses E121's authoritative pool reset, E127's journal
+ordering, E128's typed shared region, and E130's real-result boundary.
+
+Ring ABI version 3 expands the sealed-size mapping to 64 KiB while retaining
+the original request/completion slots at the 8-KiB boundary. Four fixed banks
+hold at most 512 `{layout ID, descriptor-set ID}` records each. The Bionic
+worker records only successful real allocation call shapes. A successful pool
+reset retires all old child IDs, repeats those call boundaries through real
+`vkAllocateDescriptorSets`, and publishes the new epoch only after every call
+succeeds. The client validates the exact pool/layout sequence and registers a
+typed proxy locally: a lease hit performs neither a socket exchange nor a ring
+request/completion wait.
+
+The focused unit contract publishes three sets, claims two, rejects a wrong
+layout without advancing the cursor, claims the final set, and invalidates the
+bank. The cross-process fake-native contract learns one real allocation,
+resets and preallocates it, then proves the identical client allocation gains
+one lease hit with zero socket and zero ring calls. Refill failure publishes
+nothing; reset and destruction invalidate banks; strict descriptor mode is
+unchanged. The focused contracts passed 5/5 and the complete host suite passed
+93/93. A partial-epoch layout mismatch can leave unused prefetched sets
+allocated until the next reset, so this remains an opt-in optimization and its
+real workload stability must be measured. Exact host boundaries are in
+`docs/evidence/e131-descriptor-reset-epoch-leases-host.json`; no tablet, game,
+or FPS claim is made yet.

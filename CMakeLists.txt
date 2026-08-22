@@ -1489,4 +1489,17 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/descriptor_transaction_ring.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/descriptor_transaction_ring.c"
   )
+  add_test(
+    NAME e131-descriptor-reset-epoch-leases-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e131_descriptor_leases_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e131-descriptor-reset-epoch-leases-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/descriptor_transaction_ring.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/descriptor_transaction_ring.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/descriptor_transaction_ring.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
+  )
 endif()

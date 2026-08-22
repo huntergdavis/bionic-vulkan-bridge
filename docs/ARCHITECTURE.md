@@ -575,3 +575,24 @@ queue keyed by descriptor pool, layout, and reset epoch. A client may consume
 only an already-published typed lease locally; Bionic remains authoritative for
 batch refill, native allocation failure, finite pool capacity, reset/destroy
 invalidation, and the strict synchronous fallback.
+
+E131 implements that bounded reset-epoch lease boundary. Ring ABI version 3
+retains E130's sixteen request/completion slots at the original 8-KiB boundary
+and adds four fixed banks of at most 512 typed `{layout, descriptor-set}`
+records in a sealed-size 64-KiB shared mapping. The Bionic worker learns only
+successful native allocation call shapes. After a real pool reset has retired
+the previous typed children, it repeats those exact call boundaries and
+release-publishes a bank only if every real native allocation succeeds. The
+glibc client then verifies pool and layout order, claims IDs locally, and
+registers ordinary typed proxies without a socket exchange or ring wait.
+
+Reset disables the previous bank before native work, and pool destruction
+forgets its bank and learned plan. A refill failure is cleared with another
+authoritative native reset and publishes no IDs. A layout mismatch never
+returns a wrong lease: it uses E130's synchronous allocation and the worker
+disables the remaining prediction until a clean epoch is learned. If such a
+mismatch occurs after some leases were consumed, unused prefetched sets remain
+allocated until the next reset; shared descriptor mode is therefore still an
+opt-in optimization, while strict mode is the semantic A/B control. The host
+gate proves the first identical post-reset allocation has zero socket and zero
+ring calls; tablet hit rate and FPS remain unclaimed until measured.

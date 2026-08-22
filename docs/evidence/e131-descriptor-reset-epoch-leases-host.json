@@ -1,0 +1,56 @@
+{
+  "gate": "E131",
+  "date": "2026-08-22",
+  "source_base_commit": "a861c0b3275597af7fe7bc507e3b3237d78e7a07",
+  "trigger": {
+    "e130_descriptor_transactions_per_present": 528.721875,
+    "e130_descriptor_ring_blocked_ms_per_present": 103.630465,
+    "e130_native_allocation_worker_percent": 69.017
+  },
+  "reuse": {
+    "deja_query": "BVB descriptor set lease queue pool layout reset epoch batch preallocation E131",
+    "deja_result": "no indexed implementation",
+    "local_contracts": [
+      "E121 authoritative descriptor-pool reset and child retirement",
+      "E127 ordered descriptor-journal transaction",
+      "E128 typed shared request/completion region",
+      "E130 active handoff and synchronous native-result boundary"
+    ]
+  },
+  "implementation": {
+    "ring_version": 3,
+    "shared_region_bytes": 65536,
+    "lease_bank_count": 4,
+    "sets_per_bank": 512,
+    "maximum_published_sets": 2048,
+    "learning": "The Bionic worker records only successful real allocation call shapes for up to 512 sets per tracked pool.",
+    "refill": "After a successful native pool reset, Bionic repeats the learned call boundaries against the reset native pool and publishes the typed IDs only after every call succeeds.",
+    "claim": "The glibc client validates pool and layout IDs against the immutable reset-epoch bank, advances one bounded cursor under its global Vulkan lock, and registers the returned typed proxies locally.",
+    "steady_state_socket_exchanges_per_lease_hit": 0,
+    "steady_state_ring_calls_per_lease_hit": 0,
+    "native_allocation_result_fabricated": false,
+    "strict_mode_changed": false
+  },
+  "correctness": {
+    "reset": "The service disables the old bank before reset; native reset retires all old typed set IDs before any new epoch is published.",
+    "destroy": "Successful descriptor-pool destruction disables its bank and forgets its learned plan.",
+    "journal_order": "A lease hit is a completed allocation whose native work occurred at reset. Pending descriptor writes remain ordered in the existing journal and are drained before the next real bridge operation.",
+    "native_failure": "A refill allocation failure is cleared with a second authoritative native reset; no lease is published and later calls use the real synchronous path.",
+    "mismatch": "A layout mismatch never returns the wrong lease and falls back to E130. The worker disables the remaining bank and learns again after the next reset.",
+    "bounded_caveat": "If a layout mismatch occurs after some leases were consumed, unused prefetched native sets remain allocated until the next pool reset. The optimization is opt-in through shared descriptor mode; strict mode remains the semantic control."
+  },
+  "validation": {
+    "ordered_ring_calls": 4096,
+    "lease_unit_sequence": "publish three; claim two; reject mismatch without cursor movement; claim final; disable",
+    "cross_process": "one real allocation learns; real reset preallocates; the next identical allocation returns a typed proxy with zero socket exchanges and zero ring calls",
+    "focused_contracts": "5/5 passed",
+    "full_host_suite": "93/93 passed"
+  },
+  "claims": {
+    "host_architecture_complete": true,
+    "tablet_deployed": false,
+    "tomb_raider_run": false,
+    "fps_claim": false
+  },
+  "next_gate": "Build and run the exact E131 pair on the tablet. Measure lease hit rate, remaining ring transactions, reset refill stalls, frame blocking, and the game-authored benchmark before claiming a speedup."
+}

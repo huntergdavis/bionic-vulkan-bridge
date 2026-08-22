@@ -207,6 +207,8 @@ struct bvb_global_client_state {
     bool frame_profile_enabled;
     bool connection_poisoned;
     uint64_t exchange_count;
+    uint64_t descriptor_ring_call_count;
+    uint64_t descriptor_lease_hit_count;
     uint64_t frame_profile_acquire_total_ns;
     uint64_t frame_profile_acquire_max_ns;
     uint64_t frame_profile_present_total_ns;
@@ -221,6 +223,9 @@ struct bvb_global_client_state {
     uint64_t frame_profile_descriptor_ring_calls;
     uint64_t frame_profile_descriptor_ring_total_ns;
     uint64_t frame_profile_descriptor_ring_max_ns;
+    uint64_t frame_profile_descriptor_lease_hits;
+    uint64_t frame_profile_descriptor_lease_sets;
+    uint64_t frame_profile_descriptor_lease_misses;
     uint16_t last_opcode;
 };
 
@@ -506,6 +511,9 @@ static void frame_profile_reset_rpc_window_locked(void) {
     bvb_global_client.frame_profile_descriptor_ring_calls = 0U;
     bvb_global_client.frame_profile_descriptor_ring_total_ns = 0U;
     bvb_global_client.frame_profile_descriptor_ring_max_ns = 0U;
+    bvb_global_client.frame_profile_descriptor_lease_hits = 0U;
+    bvb_global_client.frame_profile_descriptor_lease_sets = 0U;
+    bvb_global_client.frame_profile_descriptor_lease_misses = 0U;
 }
 
 static void frame_profile_emit_rpc_summary_locked(void) {
@@ -581,6 +589,25 @@ static void frame_profile_emit_rpc_summary_locked(void) {
         const ssize_t ring_ignored = write(
             STDERR_FILENO, ring_line, ring_length);
         (void)ring_ignored;
+    }
+    char lease_line[256];
+    const int lease_written = snprintf(
+        lease_line, sizeof(lease_line),
+        "BVB_E131_DESCRIPTOR_LEASE_PROFILE present_calls=%u hits=%llu "
+        "sets=%llu misses=%llu\n",
+        bvb_global_client.frame_profile_rpc_present_calls,
+        (unsigned long long)
+            bvb_global_client.frame_profile_descriptor_lease_hits,
+        (unsigned long long)
+            bvb_global_client.frame_profile_descriptor_lease_sets,
+        (unsigned long long)
+            bvb_global_client.frame_profile_descriptor_lease_misses);
+    if (lease_written > 0) {
+        const size_t lease_length = (size_t)lease_written < sizeof(lease_line)
+            ? (size_t)lease_written : sizeof(lease_line) - 1U;
+        const ssize_t lease_ignored = write(
+            STDERR_FILENO, lease_line, lease_length);
+        (void)lease_ignored;
     }
 }
 
@@ -1570,6 +1597,26 @@ BVB_GLOBAL_EXPORT uint64_t bvb_global_dispatch_exchange_count(void) {
     uint64_t count = UINT64_MAX;
     if (pthread_mutex_lock(&bvb_global_client.mutex) == 0) {
         count = bvb_global_client.exchange_count;
+        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    }
+    return count;
+}
+
+BVB_GLOBAL_EXPORT uint64_t bvb_global_dispatch_descriptor_ring_call_count(
+    void) {
+    uint64_t count = UINT64_MAX;
+    if (pthread_mutex_lock(&bvb_global_client.mutex) == 0) {
+        count = bvb_global_client.descriptor_ring_call_count;
+        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    }
+    return count;
+}
+
+BVB_GLOBAL_EXPORT uint64_t bvb_global_dispatch_descriptor_lease_hit_count(
+    void) {
+    uint64_t count = UINT64_MAX;
+    if (pthread_mutex_lock(&bvb_global_client.mutex) == 0) {
+        count = bvb_global_client.descriptor_lease_hit_count;
         (void)pthread_mutex_unlock(&bvb_global_client.mutex);
     }
     return count;
@@ -5420,12 +5467,42 @@ static VkResult VKAPI_CALL bvb_bridge_vkAllocateDescriptorSets(
         memcpy(request.payload, payload, payload_length);
     }
     struct bvb_protocol_packet response = {0};
+    struct bvb_vulkan_descriptor_set_allocate_response allocated = {0};
     uint8_t ring_response[BVB_DESCRIPTOR_TRANSACTION_RING_RESPONSE_BYTES];
     uint32_t ring_response_length = 0U;
+    bool descriptor_lease_claimed = false;
     if (result == 0 && descriptor_transaction) {
         result = setup_descriptor_transaction_ring_locked();
     }
     if (result == 0 && descriptor_transaction) {
+        uint64_t lease_epoch = 0U;
+        const int lease_result = bvb_descriptor_lease_claim(
+            bvb_global_client.descriptor_transaction_ring,
+            BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES, pool_id,
+            decoded.set_layout_ids, decoded.descriptor_set_count,
+            allocated.descriptor_set_ids, &lease_epoch);
+        if (lease_result == 0) {
+            allocated.vulkan_result = VK_SUCCESS;
+            allocated.descriptor_set_count = decoded.descriptor_set_count;
+            descriptor_lease_claimed = true;
+            ++bvb_global_client.descriptor_lease_hit_count;
+            if (bvb_global_client.frame_profile_enabled &&
+                bvb_global_client.frame_profile_rpc_window_started) {
+                ++bvb_global_client.frame_profile_descriptor_lease_hits;
+                bvb_global_client.frame_profile_descriptor_lease_sets +=
+                    decoded.descriptor_set_count;
+            }
+        } else if (lease_result == -ENOENT) {
+            if (bvb_global_client.frame_profile_enabled &&
+                bvb_global_client.frame_profile_rpc_window_started) {
+                ++bvb_global_client.frame_profile_descriptor_lease_misses;
+            }
+        } else {
+            result = lease_result;
+        }
+    }
+    if (result == 0 && descriptor_transaction && !descriptor_lease_claimed) {
+        ++bvb_global_client.descriptor_ring_call_count;
         const uint64_t started_ns = bvb_global_client.frame_profile_enabled
             ? frame_profile_monotonic_ns() : 0U;
         result = bvb_descriptor_transaction_ring_call(
@@ -5443,17 +5520,16 @@ static VkResult VKAPI_CALL bvb_bridge_vkAllocateDescriptorSets(
             memcpy(response.payload, ring_response, ring_response_length);
             response.header.payload_length = ring_response_length;
         }
-    } else if (result == 0) {
+    } else if (result == 0 && !descriptor_transaction) {
         result = exchange_locked(&request, &response);
         if (result == 0 && response.header.status != 0)
             result = response.header.status;
     }
-    struct bvb_vulkan_descriptor_set_allocate_response allocated = {0};
-    if (result == 0) {
+    if (result == 0 && !descriptor_lease_claimed) {
         result = bvb_protocol_decode_vulkan_descriptor_set_allocate_response(
             response.payload, response.header.payload_length, &allocated);
     }
-    if (descriptor_transaction) {
+    if (descriptor_transaction && !descriptor_lease_claimed) {
         if (result == 0) {
             bvb_global_client.descriptor_journal_length = 0U;
             bvb_global_client.descriptor_journal_record_count = 0U;

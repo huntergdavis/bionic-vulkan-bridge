@@ -1649,9 +1649,23 @@ int main(void) {
     CHECK(reset_descriptor_pool(device, core_pool, 0U) == VK_SUCCESS);
     CHECK(bvb_descriptor_set_proxy_id(core_set_before_reset) == 0U);
     VkDescriptorSet core_set_after_reset = VK_NULL_HANDLE;
+    const uint64_t exchanges_before_descriptor_lease =
+        bvb_global_dispatch_exchange_count();
+    const uint64_t ring_calls_before_descriptor_lease =
+        bvb_global_dispatch_descriptor_ring_call_count();
+    const uint64_t lease_hits_before_descriptor_lease =
+        bvb_global_dispatch_descriptor_lease_hit_count();
     CHECK(allocate_descriptor_sets(
               device, &core_allocate_info,
               &core_set_after_reset) == VK_SUCCESS);
+    if (shared_descriptor_journal) {
+        CHECK(bvb_global_dispatch_exchange_count() -
+                  exchanges_before_descriptor_lease == 0U);
+        CHECK(bvb_global_dispatch_descriptor_ring_call_count() ==
+              ring_calls_before_descriptor_lease);
+        CHECK(bvb_global_dispatch_descriptor_lease_hit_count() ==
+              lease_hits_before_descriptor_lease + 1U);
+    }
     const uint64_t core_set_after_id =
         bvb_descriptor_set_proxy_id(core_set_after_reset);
     CHECK(bvb_handle_type(core_set_after_id) == BVB_OBJECT_DESCRIPTOR_SET);
