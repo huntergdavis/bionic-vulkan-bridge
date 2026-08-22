@@ -3,7 +3,7 @@
   "gate": "E100",
   "date": "2026-08-21",
   "source_base_commit": "0b13af8",
-  "status": "host_pass_tablet_pending",
+  "status": "tablet_boundary_measured_nonnull_image_view_correction_host_pass",
   "objective": "advance the exact E099 Tomb Raider descriptor-update boundary and the immediately following DXVK descriptor-set bind as one coherent batch",
   "trigger": {
     "actual_invocation": "vkUpdateDescriptorSetWithTemplate",
@@ -46,6 +46,22 @@
     "shared_cross_process": "pass",
     "full_host_suite": "60/60 passed"
   },
+  "tablet_run": {
+    "run_id": "20260822T013912Z-23759",
+    "installed_icd_sha256": "c737781f4e7903e2e139f9e8e11fe93e148693af8f745935b833022b74183354",
+    "installed_service_sha256": "1259863c2f856fe5d0747bc7dafc6431ebcfb6add8b183cd846e46c640ea32c6",
+    "wine_log_bytes": 103833,
+    "wine_log_sha256": "8946a94dbaf15fcf9915a16cc60a7b98da8717a4f474c0a8f958fdff605f8a21",
+    "frame_helper": {"result": "pass", "image_count": 3, "per_frame_java_calls": 0, "per_frame_binder_calls": 0},
+    "screenshot_sha256": "28b7305067678da2bc88ffcb75bf49b49141cf49c27c59d79df332dcee89e9f8",
+    "visible_content": "bridge triangle, not Tomb Raider",
+    "descriptor_update_result_before_correction": -22,
+    "root_cause": "service image-view ancestry lookup incorrectly passed a null native-handle output to the strict handle-table API",
+    "next_actual_command_rejection": "vkCmdBeginRendering",
+    "next_command_sequence": 8,
+    "steam_and_x_preserved": true
+  },
+  "corrective_regression": "a second template update now carries the live virtual-swapchain image view through client translation and service native reconstruction before template teardown",
   "recall": "The required deja query 'BVB vkUpdateDescriptorSetWithTemplate DXVK Tomb Raider E100 descriptor template data' returned no indexed implementation.",
   "reuse": [
     "E096 create-time template metadata and measured 24-byte layout",
@@ -53,5 +69,5 @@
     "E075/E075a/E076 immutable shared command streams and transactional replay",
     "pinned DXVK a6764047 exact update-then-bind control flow"
   ],
-  "claims": {"host_descriptor_update": true, "host_descriptor_bind": true, "tablet_runtime": false, "tomb_raider_frame": false, "benchmark": false, "fps": false}
+  "claims": {"host_descriptor_update": true, "host_descriptor_bind": true, "tablet_runtime": true, "tablet_descriptor_update_after_correction": false, "tomb_raider_frame": false, "benchmark": false, "fps": false}
 }

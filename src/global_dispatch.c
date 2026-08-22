@@ -5019,10 +5019,7 @@ static void VKAPI_CALL bvb_bridge_vkUpdateDescriptorSetWithTemplate(
             if (object == NULL) {
                 result = -EINVAL;
             } else if (type == BVB_OBJECT_IMAGE_VIEW) {
-                struct bvb_resource_proxy *image = resource_proxy_locked(
-                    object->parent_id, BVB_OBJECT_IMAGE);
-                if (image == NULL ||
-                    image->parent_id != device_state->wire_id)
+                if (object->parent_id != device_state->wire_id)
                     result = -EINVAL;
             } else if (object->parent_id != device_state->wire_id) {
                 result = -EINVAL;

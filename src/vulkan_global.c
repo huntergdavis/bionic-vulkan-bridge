@@ -2987,11 +2987,11 @@ static int descriptor_template_resolve_image_view(
     int result = bvb_handle_table_lookup(
         &context->objects, image_view_id, BVB_OBJECT_IMAGE_VIEW,
         &image_id, &view_bits);
-    uint64_t image_device_id = 0U;
+    uint64_t image_device_id = 0U, image_bits = 0U;
     if (result == 0) {
         result = bvb_handle_table_lookup(
             &context->objects, image_id, BVB_OBJECT_IMAGE,
-            &image_device_id, NULL);
+            &image_device_id, &image_bits);
     }
     if (result != 0 || image_device_id != expected_device_id)
         return result != 0 ? result : -EPROTO;

@@ -1404,9 +1404,6 @@ int main(void) {
         CHECK(per_swapchain_result == VK_SUCCESS);
     }
     CHECK(bvb_sleep_milliseconds(present_hold_ms));
-    destroy_image_view(device, virtual_image_view, NULL);
-    CHECK(bvb_image_view_proxy_id(virtual_image_view) == 0U);
-    destroy_swapchain(device, virtual_swapchain, NULL);
     if (render_semaphore != VK_NULL_HANDLE)
         destroy_semaphore(device, render_semaphore, NULL);
     destroy_semaphore(device, acquire_semaphore, NULL);
@@ -1574,11 +1571,21 @@ int main(void) {
     memcpy(dxvk_template_data + 72U, &null_image, sizeof(null_image));
     update_descriptor_set_with_template(
         device, dxvk_template_set, dxvk_template, dxvk_template_data);
+    const VkDescriptorImageInfo virtual_descriptor = {
+        .imageView = virtual_image_view,
+        .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+    };
+    memcpy(dxvk_template_data + 72U, &virtual_descriptor,
+           sizeof(virtual_descriptor));
+    update_descriptor_set_with_template(
+        device, dxvk_template_set, dxvk_template, dxvk_template_data);
     destroy_descriptor_pool(device, dxvk_template_pool, NULL);
     /* Pinned DXVK destroys the layout before its update template. */
     destroy_descriptor_set_layout(device, dxvk_template_layout, NULL);
     destroy_descriptor_update_template(device, dxvk_template, NULL);
-
+    destroy_image_view(device, virtual_image_view, NULL);
+    CHECK(bvb_image_view_proxy_id(virtual_image_view) == 0U);
+    destroy_swapchain(device, virtual_swapchain, NULL);
     core_bindings[0].descriptorType =
         VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
     core_layout = (VkDescriptorSetLayout)(uintptr_t)1U;

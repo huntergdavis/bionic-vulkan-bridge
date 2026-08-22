@@ -3979,3 +3979,15 @@ E100 reuses E096's create-time template metadata and measured layout, E056's
 typed descriptor ownership, E075/E075a/E076's transactional command stream,
 and pinned DXVK's exact update-then-bind sequence. No tablet frame, benchmark,
 or FPS result is claimed before the bounded runtime rerun.
+
+The first E100 tablet run `20260822T013912Z-23759` reached a non-null sampled
+image descriptor and returned `-EINVAL` before native update. The focused
+regression identified the exact service bug: its image-view ancestry lookup
+passed a null native-handle output to the strict handle-table API. That lookup
+is corrected, and the cross-process test now performs a second template update
+using the live virtual-swapchain image view before teardown. The same run's
+actual first command rejection was `vkCmdBeginRendering` on command-buffer
+sequence 8. The authenticated helper passed, Steam/X survived unchanged, and
+the screenshot remained the bridge triangle. E101 therefore batches the full
+pinned swapchain-blit render-command family rather than implementing only the
+first name.
