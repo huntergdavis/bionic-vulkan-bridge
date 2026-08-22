@@ -4836,5 +4836,21 @@ the only exact hit was this new E123 diagnostic. E124 reuses E075/E075a's
 immutable stream transaction, E080's typed ownership cache plus authoritative
 service validation, E105/E111's compact transfer family, E112's measured
 headroom design, and E123's live rejection. The full host suite passes 84/84.
-Tablet validation and a new benchmark run remain pending; no tablet completion
-or FPS claim is made yet.
+The exact source archive then passed 82/82 Termux contracts and the glibc
+dispatch self-test. Its transactional install retained rollback
+`install-pre-1Z3XFWvz` and preserved the existing Steam and X11 process start
+times.
+
+The new `-nolauncher -benchmark` run cleared E123's frozen-frame boundary,
+visibly advanced through multiple Lara Croft camera positions and the coastal
+scene, and completed at native 2800x1752 Low. The Activity presented through
+sequence 1655 with no consumer failure or per-frame Java/Binder work. The game
+wrote its own result file, then the game, service, helper, and Activity exited
+cleanly while Steam and X11 remained alive.
+
+The game-authored result is 0.8 FPS minimum, 3.6 maximum, and 2.0 average.
+That completes E124's correctness goal and establishes the first full BVB
+benchmark baseline; it is not a performance-improvement claim. Canonical
+screenshot, result text, artifact identities, and log hashes are retained in
+the sibling `steamclienttermux` repository at commit `85e55d6`. The next gate
+must profile this complete workload and target its measured dominant cost.

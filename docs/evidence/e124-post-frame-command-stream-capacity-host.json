@@ -32,15 +32,34 @@
     "ten_thousand_record_bytes": 1760032,
     "record_fits_two_megabyte_slot": true,
     "host_suite": "84/84 passed",
-    "tablet_suite": "pending",
-    "tablet_runtime": "pending"
+    "tablet_suite": "82/82 passed",
+    "tablet_runtime": "complete"
+  },
+  "tablet_runtime": {
+    "source_commit": "2588c515885963ae8016dd39008da615f1b05825",
+    "source_archive_sha256": "9dcf1ca199c0febdc2e0729c188a900a6fe2d2f0c099812a7baff5b5a7b24cca",
+    "installed_glibc_icd_sha256": "5dda66191a6e3166c9a64cbe654fed8b92268c404794bb1fdc508fb7876e148d",
+    "installed_service_sha256": "200095035166d9be938c9b068916cab8ab7a6381954c79dfcbd25d1b03adbb32",
+    "rollback_directory": "install-pre-1Z3XFWvz",
+    "resolution": "2800x1752",
+    "graphics_profile": "Low",
+    "last_activity_sequence": 1655,
+    "consumer_failure_seen": false,
+    "benchmark_result_sha256": "cf8ab2d440bca9d21ad3187a4fb1636ef4f6b213a45174308f2393bcdd81de86",
+    "minimum_fps": 0.8,
+    "maximum_fps": 3.6,
+    "average_fps": 2.0,
+    "probe_status": 0,
+    "clean_teardown": true,
+    "canonical_evidence": "steamclienttermux docs/evidence/tombraider-bvb-e124-complete-benchmark-20260822.json at commit 85e55d6"
   },
   "reuse": "The required deja query found no reusable vkCmdCopyImage2 capacity implementation. E124 reuses E075/E075a's sealed immutable stream, E080's cached typed ownership with service-authoritative validation, E105/E111's compact transfer codec, E112's measured slot-headroom response, and E123's exact live ENOSPC diagnostic.",
   "claims": {
     "host_capacity_ready": true,
-    "tablet_deployed": false,
-    "copy_image_capacity_boundary_cleared": false,
-    "benchmark_complete": false,
-    "fps_claim": false
+    "tablet_deployed": true,
+    "copy_image_capacity_boundary_cleared": true,
+    "benchmark_complete": true,
+    "fps_claim": true,
+    "performance_improvement_claim": false
   }
 }
