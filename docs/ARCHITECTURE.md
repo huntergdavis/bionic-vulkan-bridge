@@ -366,3 +366,11 @@ maps the blob, validates every offset/count/sType/pNext and pipeline-layout
 lineage, patches only service-local pointers, and invokes Turnip once. No
 glibc pointer, per-frame Binder call, or unbounded pipeline array crosses the
 bridge.
+
+E104 advances that graph to schema 3 for the exact rasterization extension
+state used by pinned DXVK. A terminal
+`VkPipelineRasterizationDepthClipStateCreateInfoEXT` is copied into the same
+sealed blob, covered by an ABI-size header field, validated on the private
+service snapshot, and reconstructed as a Bionic-local pNext chain. Other
+rasterization extension state remains fail-closed, and the pipeline still
+costs one setup transaction rather than one transaction per nested struct.

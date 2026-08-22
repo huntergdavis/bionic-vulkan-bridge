@@ -2044,8 +2044,15 @@ int main(void) {
         .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP,
         .primitiveRestartEnable = VK_TRUE,
     };
+    const VkPipelineRasterizationDepthClipStateCreateInfoEXT
+        general_depth_clip = {
+            .sType =
+                VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_DEPTH_CLIP_STATE_CREATE_INFO_EXT,
+            .depthClipEnable = VK_TRUE,
+        };
     const VkPipelineRasterizationStateCreateInfo general_raster = {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .pNext = &general_depth_clip,
         .depthClampEnable = VK_TRUE,
         .polygonMode = VK_POLYGON_MODE_FILL,
         .cullMode = VK_CULL_MODE_NONE,

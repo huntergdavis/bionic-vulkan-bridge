@@ -31,7 +31,7 @@ def main() -> int:
     require(protocol, "BVB_VULKAN_FORMAT_PROPERTIES_3_SIZE = 24", "64-bit response")
 
     wire = wire_path.read_text(encoding="utf-8")
-    require(wire, "BVB_VULKAN_GENERAL_GRAPHICS_PIPELINE_BLOB_VERSION = 2", "schema")
+    require(wire, "BVB_VULKAN_GENERAL_GRAPHICS_PIPELINE_E103_BLOB_VERSION = 2", "E103 schema")
     require(wire, "BVB_VULKAN_GENERAL_GRAPHICS_PIPELINE_BLOB_MAX_SIZE = 256U * 1024U", "cap")
 
     client = client_path.read_text(encoding="utf-8")

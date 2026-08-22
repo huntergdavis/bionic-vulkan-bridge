@@ -3903,7 +3903,10 @@ static bool general_graphics_blob_header_matches(
         bvb_wire_get_u32(mapping + 68U) ==
             sizeof(VkPipelineTessellationStateCreateInfo) &&
         bvb_wire_get_u32(mapping + 72U) == sizeof(VkViewport) &&
-        bvb_wire_get_u32(mapping + 76U) == sizeof(VkRect2D);
+        bvb_wire_get_u32(mapping + 76U) == sizeof(VkRect2D) &&
+        bvb_wire_get_u32(mapping + 80U) ==
+            sizeof(VkPipelineRasterizationDepthClipStateCreateInfoEXT) &&
+        bvb_wire_get_u32(mapping + 84U) == 0U;
 }
 
 int bvb_vulkan_global_context_create_general_graphics_pipeline(
@@ -4143,9 +4146,31 @@ int bvb_vulkan_global_context_create_general_graphics_pipeline(
             viewport->pScissors = scissors;
         }
     }
-    BVB_RESOLVE_STATE(
-        pRasterizationState, VkPipelineRasterizationStateCreateInfo,
-        VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO, true);
+    VkPipelineRasterizationStateCreateInfo *rasterization = NULL;
+    if (result == 0)
+        result = general_graphics_blob_resolve(
+            mapping, request->blob_bytes, info->pRasterizationState, 1U,
+            sizeof(*rasterization), 8U, (void **)&rasterization);
+    if (result == 0 &&
+        (rasterization->sType !=
+             VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO ||
+         rasterization->flags != 0U))
+        result = -EPROTO;
+    VkPipelineRasterizationDepthClipStateCreateInfoEXT *depth_clip = NULL;
+    if (result == 0 && rasterization->pNext != NULL)
+        result = general_graphics_blob_resolve(
+            mapping, request->blob_bytes, rasterization->pNext, 1U,
+            sizeof(*depth_clip), 8U, (void **)&depth_clip);
+    if (result == 0 && depth_clip != NULL &&
+        (depth_clip->sType !=
+             VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_DEPTH_CLIP_STATE_CREATE_INFO_EXT ||
+         depth_clip->pNext != NULL || depth_clip->flags != 0U ||
+         depth_clip->depthClipEnable > VK_TRUE))
+        result = -EPROTO;
+    if (result == 0) {
+        rasterization->pNext = depth_clip;
+        info->pRasterizationState = rasterization;
+    }
     BVB_RESOLVE_STATE(
         pMultisampleState, VkPipelineMultisampleStateCreateInfo,
         VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO, true);

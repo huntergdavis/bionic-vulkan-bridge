@@ -4109,3 +4109,26 @@ E044's native format-capability boundary, E064/E101 embedded shader and typed
 pipeline ownership, E075a immutable snapshot validation, and E101/E102's exact
 tablet diagnostics. No game pixel, benchmark, or FPS claim is made before the
 next screenshot-checked tablet run.
+
+## E104 — DXVK depth-clip pipeline state (2026-08-21)
+
+The exact E103 tablet candidate passed 61/61 tests and removed the prior 29
+render-target-view and 30 shader-resource-view capability rejections. Its live
+screenshot remained the byte-identical bridge triangle, while the first game
+pipeline still returned `VK_ERROR_FEATURE_NOT_PRESENT`.
+
+Pinned DXVK source at `src/dxvk/dxvk_graphics.cpp:583-584` identifies the
+missing nested state: when depth clip is not dynamic, DXVK chains
+`VkPipelineRasterizationDepthClipStateCreateInfoEXT` into the rasterization
+state. E103 correctly rejected all state pNext chains. E104 advances the
+general graphics blob to schema 3 with an 88-byte ABI header and carries this
+one exact terminal struct in the same sealed memfd. The client and Bionic
+service validate its sType, terminal pNext, flags, and boolean before native
+creation; the fake Turnip contract requires the reconstructed chain.
+
+Compact evidence is
+`docs/evidence/e104-depth-clip-pipeline-state-host.json`. The required `deja`
+query returned no indexed implementation. E104 reuses E103's immutable
+relative-offset pipeline graph, E075a's private service snapshot rule, and the
+pinned DXVK construction. The full host suite passed 64/64. No game pixel,
+benchmark, or FPS claim is made until the next screenshot-checked tablet run.

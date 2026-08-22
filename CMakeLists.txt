@@ -1147,4 +1147,15 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
   )
+  add_test(
+    NAME e104-depth-clip-pipeline-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e104_depth_clip_pipeline_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e104-depth-clip-pipeline-state-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/vulkan_pipeline_wire.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
+  )
 endif()

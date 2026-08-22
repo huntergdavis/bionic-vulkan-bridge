@@ -1692,6 +1692,8 @@ static bool fake_general_graphics_pipeline_is_exact(
     const VkShaderModuleCreateInfo *fragment_module = fragment->pNext;
     const VkPipelineVertexInputStateCreateInfo *vertex_input =
         info->pVertexInputState;
+    const VkPipelineRasterizationDepthClipStateCreateInfoEXT *depth_clip =
+        info->pRasterizationState->pNext;
     const VkPipelineColorBlendStateCreateInfo *blend = info->pColorBlendState;
     const VkPipelineDynamicStateCreateInfo *dynamic = info->pDynamicState;
     return info->flags == 0U && rendering->pNext == NULL &&
@@ -1729,6 +1731,11 @@ static bool fake_general_graphics_pipeline_is_exact(
         info->pViewportState->viewportCount == 0U &&
         info->pViewportState->scissorCount == 0U &&
         info->pRasterizationState->depthClampEnable == VK_TRUE &&
+        depth_clip != NULL &&
+        depth_clip->sType ==
+            VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_DEPTH_CLIP_STATE_CREATE_INFO_EXT &&
+        depth_clip->pNext == NULL && depth_clip->flags == 0U &&
+        depth_clip->depthClipEnable == VK_TRUE &&
         info->pRasterizationState->lineWidth == 1.0F &&
         info->pMultisampleState->rasterizationSamples ==
             VK_SAMPLE_COUNT_1_BIT &&

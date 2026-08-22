@@ -5435,6 +5435,14 @@ static void diagnose_graphics_pipeline_call(
                 (unsigned)info->pRasterizationState->frontFace,
                 info->pRasterizationState->depthBiasEnable,
                 (double)info->pRasterizationState->lineWidth);
+    if (info->pRasterizationState != NULL &&
+        info->pRasterizationState->pNext != NULL) {
+        const VkBaseInStructure *raster_next =
+            info->pRasterizationState->pNext;
+        fprintf(stderr,
+                "BVB_ICD_GRAPHICS_RASTER_PNEXT stype=%u next=%u\n",
+                (unsigned)raster_next->sType, raster_next->pNext != NULL);
+    }
     if (info->pMultisampleState != NULL)
         fprintf(stderr,
                 "BVB_ICD_GRAPHICS_MS samples=%u shading=%u min=%a mask0=%#x "
@@ -5842,6 +5850,8 @@ static VkResult create_general_graphics_pipeline(
     const VkPipelineViewportStateCreateInfo *viewport = info->pViewportState;
     const VkPipelineRasterizationStateCreateInfo *raster =
         info->pRasterizationState;
+    const VkPipelineRasterizationDepthClipStateCreateInfoEXT *depth_clip =
+        raster == NULL ? NULL : raster->pNext;
     const VkPipelineMultisampleStateCreateInfo *multisample =
         info->pMultisampleState;
     const VkPipelineDepthStencilStateCreateInfo *depth =
@@ -5874,7 +5884,12 @@ static VkResult create_general_graphics_pipeline(
         (viewport->scissorCount != 0U && viewport->pScissors == NULL) ||
         raster->sType !=
             VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO ||
-        raster->pNext != NULL || raster->flags != 0U ||
+        raster->flags != 0U ||
+        (depth_clip != NULL &&
+         (depth_clip->sType !=
+              VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_DEPTH_CLIP_STATE_CREATE_INFO_EXT ||
+          depth_clip->pNext != NULL || depth_clip->flags != 0U ||
+          depth_clip->depthClipEnable > VK_TRUE)) ||
         multisample->sType !=
             VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO ||
         multisample->pNext != NULL || multisample->flags != 0U ||
@@ -6078,9 +6093,31 @@ static VkResult create_general_graphics_pipeline(
             wire->pScissors = general_graphics_blob_offset(scissors);
         }
     }
-    if (result == 0) BVB_COPY_STATE(
-        pRasterizationState, raster,
-        VkPipelineRasterizationStateCreateInfo);
+    if (result == 0) {
+        BVB_COPY_STATE(pRasterizationState, raster,
+                       VkPipelineRasterizationStateCreateInfo);
+        if (result == 0) {
+            VkPipelineRasterizationStateCreateInfo *wire =
+                (VkPipelineRasterizationStateCreateInfo *)(blob +
+                    (uintptr_t)wire_root->pRasterizationState);
+            wire->pNext = NULL;
+            if (depth_clip != NULL) {
+                const uint32_t depth_clip_offset = BVB_APPEND_OBJECT(
+                    depth_clip,
+                    VkPipelineRasterizationDepthClipStateCreateInfoEXT);
+                if (depth_clip_offset == 0U) result = -E2BIG;
+                else {
+                    VkPipelineRasterizationDepthClipStateCreateInfoEXT
+                        *wire_depth_clip =
+                            (VkPipelineRasterizationDepthClipStateCreateInfoEXT *)(
+                                blob + depth_clip_offset);
+                    wire_depth_clip->pNext = NULL;
+                    wire->pNext = general_graphics_blob_offset(
+                        depth_clip_offset);
+                }
+            }
+        }
+    }
     if (result == 0) {
         BVB_COPY_STATE(pMultisampleState, multisample,
                        VkPipelineMultisampleStateCreateInfo);
@@ -6163,6 +6200,10 @@ static VkResult create_general_graphics_pipeline(
         bvb_wire_put_u32(blob + 68U, sizeof(VkPipelineTessellationStateCreateInfo));
         bvb_wire_put_u32(blob + 72U, sizeof(VkViewport));
         bvb_wire_put_u32(blob + 76U, sizeof(VkRect2D));
+        bvb_wire_put_u32(
+            blob + 80U,
+            sizeof(VkPipelineRasterizationDepthClipStateCreateInfoEXT));
+        bvb_wire_put_u32(blob + 84U, 0U);
     }
     int blob_fd = result == 0
         ? create_sealed_graphics_blob_fd(blob, builder.size) : result;
