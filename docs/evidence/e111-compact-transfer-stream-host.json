@@ -1,0 +1,49 @@
+{
+  "gate": "E111",
+  "date": "2026-08-21",
+  "source_base_commit": "a9923ebc24f036565b0d1c4fe4badc8fa89cfe1b",
+  "trigger": {
+    "run_id": "20260822T062443Z-32616",
+    "e110_clear_family": "passed through native replay",
+    "first_rejection_entry": "vkCmdCopyBufferToImage2",
+    "first_rejection_reason": "ownership_or_transfer_append_rejected",
+    "first_rejection_result": -28,
+    "diagnosis": "ENOSPC from fixed 2080-byte transfer records in a bounded shared command slot",
+    "visible_game_frame": false,
+    "screenshot_sha256": "28b7305067678da2bc88ffcb75bf49b49141cf49c27c59d79df332dcee89e9f8"
+  },
+  "implementation": {
+    "family_entry_count": 6,
+    "command_record_ids": "14-19 unchanged",
+    "maximum_regions_per_command": 16,
+    "header_bytes": 32,
+    "bytes_per_region": 128,
+    "one_region_payload_before_bytes": 2080,
+    "one_region_payload_after_bytes": 160,
+    "one_region_reduction_percent": 92.3076923,
+    "maximum_payload_bytes": 2080,
+    "wire_formula": "32 + 128 * actual_region_count",
+    "pointer_free": true,
+    "strict_and_shared_wire_identical": true
+  },
+  "validation": {
+    "all_six_transfer_families_round_trip": "passed",
+    "payload_count_length_consistency": "passed",
+    "one_region_payload_exactly_160_bytes": "passed",
+    "three_hundred_one_region_records_in_64k": "passed",
+    "strict_recording_rpcs": 43,
+    "shared_recording_rpcs": 0,
+    "dispatch_policy": {
+      "executable": 151,
+      "required_unimplemented": 289,
+      "probed_null": 302
+    },
+    "host_suite": "71/71 passed",
+    "tablet_runtime": {
+      "status": "pending exact-archive deployment",
+      "visible_game_frame": false,
+      "benchmark_or_fps": false
+    }
+  },
+  "reuse": "The required deja query found no indexed E111 implementation. E111 reuses E075/E075a immutable shared-stream validation, E080 authoritative typed ownership, E105's six-command transfer family, and E110's live -ENOSPC boundary."
+}

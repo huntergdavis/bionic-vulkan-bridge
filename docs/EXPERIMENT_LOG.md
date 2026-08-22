@@ -4359,3 +4359,27 @@ prove a true 2800x1752 full-screen Activity, but pixels remain the bridge
 gradient triangle rather than Tomb Raider. Cleanup removed only exact run
 children and the Activity, while preserving Steam PID 14565/start 121864440
 and X11 PID 13643/start 121863492. No game frame or FPS is claimed.
+
+## E111 — compact transfer command streams (2026-08-21)
+
+E110's live `vkCmdCopyBufferToImage2` rejection carried result `-28`, proving
+the failure was `ENOSPC`, not missing ownership or a missing Vulkan entry. The
+E105 transfer encoder reserved its maximum 16 regions for every command:
+2,080 payload bytes even for DXVK's common one-region texture upload. In a
+bounded shared command-buffer slot, enough uploads therefore poisoned a valid
+recording before native replay.
+
+E111 changes all six transfer opcodes in one gate. Their IDs and 16-region
+maximum stay unchanged, but payload length is now `32 + 128 * actual regions`.
+A one-region record is 160 bytes, 92.3% smaller; the 16-region maximum remains
+2,080 bytes. Validation checks header count against exact record length before
+walking regions, and decoding zero-initializes the bounded host structure. A
+capacity contract fits and validates 300 one-region copies in 64 KiB, where
+the old fixed encoding would require over 600 KiB. Strict/shared semantics and
+the authoritative Bionic typed-object validation are unchanged.
+
+The required `deja "BVB Tomb Raider vkCmdCopyBufferToImage2
+ownership_or_transfer_append_rejected E111 transfer shape"` query returned no
+indexed implementation. E111 reuses E075/E075a, E080, E105, and E110. Compact
+evidence is `docs/evidence/e111-compact-transfer-stream-host.json`; tablet
+visibility and FPS remain pending exact-archive deployment and screenshot.

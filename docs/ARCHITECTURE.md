@@ -407,6 +407,15 @@ wire. Shared clients append locally with zero recording RPC, while strict
 clients send one immediate record. The Bionic service rechecks typed image
 ancestry and reconstructs every native range, attachment, rectangle, and
 clear value before calling Turnip.
+
+E111 removes fixed-capacity waste from all six E105 transfer records without
+changing their typed IDs or maximum region count. Transfer payloads are now
+exactly `32 + 128 * actual_region_count` bytes. The common one-region DXVK
+upload falls from 2,080 to 160 bytes, while the validator derives and checks
+the exact length from the canonical count before decoding. This preserves the
+same Bionic ownership/reconstruction boundary and zero-RPC shared recording,
+but prevents valid upload-heavy command buffers from exhausting their 64-KiB
+recording slot on unused region entries.
 One fixed 600-byte, pointer-free record carries up to eight color attachments,
 optional depth and stencil attachments, resolve image views, clear-value bits,
 render flags/area/multiview, and terminal attachment-feedback-loop metadata.

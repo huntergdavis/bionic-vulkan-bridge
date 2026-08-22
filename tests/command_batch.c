@@ -666,6 +666,7 @@ static int test_vulkan_transfer_family(void) {
         struct bvb_command_record record;
         CHECK(bvb_command_batch_iterator_init(&iterator, bytes, length) == 0);
         CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+        CHECK(record.payload_length == 160U);
         struct bvb_vulkan_transfer_command decoded;
         CHECK(bvb_command_decode_vulkan_transfer(&record, &decoded) == 0);
         CHECK(record.opcode == opcode);
@@ -688,10 +689,43 @@ static int test_vulkan_transfer_family(void) {
         CHECK(bvb_command_batch_validate(corrupted, length, &info) ==
               -EPROTO);
         memcpy(corrupted, bytes, length);
-        bvb_wire_put_u32(corrupted + payload + 32U + 128U + 124U, 1U);
+        bvb_wire_put_u32(
+            corrupted + BVB_COMMAND_BATCH_HEADER_SIZE + 4U,
+            record.payload_length + 128U);
         CHECK(bvb_command_batch_validate(corrupted, length, &info) ==
               -EPROTO);
     }
+    return 0;
+}
+
+static int test_compact_transfer_capacity(void) {
+    uint8_t bytes[64U * 1024U];
+    const uint64_t command_buffer =
+        bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 36U);
+    struct bvb_command_batch_builder builder;
+    CHECK(bvb_command_batch_begin(&builder, bytes, sizeof(bytes),
+                                  command_buffer, 1U) == 0);
+    const struct bvb_vulkan_transfer_command command = {
+        .source_id = bvb_handle_id(BVB_OBJECT_BUFFER, 37U),
+        .destination_id = bvb_handle_id(BVB_OBJECT_BUFFER, 38U),
+        .region_count = 1U,
+        .regions = {{
+            .source_buffer_offset = 64U,
+            .destination_buffer_offset = 128U,
+            .size = 256U,
+        }},
+    };
+    for (uint32_t index = 0U; index < 300U; ++index)
+        CHECK(bvb_command_batch_append_vulkan_transfer(
+                  &builder, BVB_COMMAND_VULKAN_COPY_BUFFER_2,
+                  &command) == 0);
+    size_t length = 0U;
+    CHECK(bvb_command_batch_finish(&builder, &length) == 0);
+    CHECK(length == BVB_COMMAND_BATCH_HEADER_SIZE +
+                        300U * (BVB_COMMAND_RECORD_HEADER_SIZE + 160U));
+    struct bvb_command_batch_info info;
+    CHECK(bvb_command_batch_validate(bytes, length, &info) == 0);
+    CHECK(info.command_count == 300U);
     return 0;
 }
 
@@ -1019,6 +1053,7 @@ int main(void) {
     CHECK(test_batch() == 0);
     CHECK(test_transfer_batch() == 0);
     CHECK(test_vulkan_transfer_family() == 0);
+    CHECK(test_compact_transfer_capacity() == 0);
     CHECK(test_vulkan_command_stream() == 0);
     puts("PASS: proxy handles and triangle command batch");
     return 0;

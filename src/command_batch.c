@@ -42,7 +42,7 @@ enum {
         BVB_COMMAND_VULKAN_MAX_PUSH_CONSTANT_BYTES,
     BVB_VULKAN_TRANSFER_HEADER_SIZE = 32,
     BVB_VULKAN_TRANSFER_REGION_SIZE = 128,
-    BVB_VULKAN_TRANSFER_SIZE = BVB_VULKAN_TRANSFER_HEADER_SIZE +
+    BVB_VULKAN_TRANSFER_MAX_SIZE = BVB_VULKAN_TRANSFER_HEADER_SIZE +
         BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS *
             BVB_VULKAN_TRANSFER_REGION_SIZE,
     BVB_VULKAN_BIND_VERTEX_BUFFERS_SIZE = 16 +
@@ -68,6 +68,25 @@ _Static_assert(sizeof(float) == sizeof(uint32_t),
 
 static int expected_payload_size(uint16_t opcode, uint32_t *payload_size);
 static int validate_payload(uint16_t opcode, const uint8_t *payload);
+static int transfer_opcode_is_valid(uint16_t opcode);
+
+static uint32_t transfer_payload_size(uint32_t region_count) {
+    return BVB_VULKAN_TRANSFER_HEADER_SIZE +
+        region_count * BVB_VULKAN_TRANSFER_REGION_SIZE;
+}
+
+static int payload_length_is_valid(uint16_t opcode, const uint8_t *payload,
+                                   uint32_t payload_length) {
+    uint32_t expected = 0U;
+    if (expected_payload_size(opcode, &expected) != 0) return 0;
+    if (!transfer_opcode_is_valid(opcode)) return payload_length == expected;
+    if (payload == NULL || payload_length < BVB_VULKAN_TRANSFER_HEADER_SIZE)
+        return 0;
+    const uint32_t count = bvb_wire_get_u32(payload + 28);
+    return count != 0U &&
+        count <= BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS &&
+        payload_length == transfer_payload_size(count);
+}
 
 static void put_float(uint8_t *output, float value) {
     uint32_t bits;
@@ -705,7 +724,7 @@ int bvb_command_batch_append_vulkan_transfer(
          (!destination_buffer && command->destination_layout == 0U)) ||
         (opcode == BVB_COMMAND_VULKAN_BLIT_IMAGE_2 &&
          command->filter > 1U)) return -EINVAL;
-    uint8_t payload[BVB_VULKAN_TRANSFER_SIZE];
+    uint8_t payload[BVB_VULKAN_TRANSFER_MAX_SIZE];
     memset(payload, 0, sizeof(payload));
     bvb_wire_put_u64(payload, command->source_id);
     bvb_wire_put_u64(payload + 8, command->destination_id);
@@ -754,7 +773,8 @@ int bvb_command_batch_append_vulkan_transfer(
         bvb_wire_put_u32(wire + 116, region->extent.height);
         bvb_wire_put_u32(wire + 120, region->extent.depth);
     }
-    return append_record(builder, opcode, payload, sizeof(payload));
+    return append_record(builder, opcode, payload,
+                         transfer_payload_size(command->region_count));
 }
 
 int bvb_command_batch_append_vulkan_bind_vertex_buffers(
@@ -973,10 +993,9 @@ int bvb_command_batch_append_vulkan_clear_attachments(
 int bvb_command_batch_append_record(
     struct bvb_command_batch_builder *builder,
     const struct bvb_command_record *record) {
-    uint32_t expected = 0U;
     if (builder == NULL || record == NULL ||
-        expected_payload_size(record->opcode, &expected) != 0 ||
-        expected != record->payload_length ||
+        !payload_length_is_valid(record->opcode, record->payload,
+                                 record->payload_length) ||
         validate_payload(record->opcode, record->payload) != 0) {
         return -EINVAL;
     }
@@ -1059,7 +1078,7 @@ static int expected_payload_size(uint16_t opcode, uint32_t *payload_size) {
         case BVB_COMMAND_VULKAN_COPY_IMAGE_2:
         case BVB_COMMAND_VULKAN_BLIT_IMAGE_2:
         case BVB_COMMAND_VULKAN_RESOLVE_IMAGE_2:
-            *payload_size = BVB_VULKAN_TRANSFER_SIZE;
+            *payload_size = BVB_VULKAN_TRANSFER_MAX_SIZE;
             return 0;
         case BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS:
         case BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS_2:
@@ -1373,17 +1392,10 @@ static int validate_payload(uint16_t opcode, const uint8_t *payload) {
                 count == 0U ||
                 count > BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS)
                 return -EPROTO;
-            for (uint32_t index = 0U;
-                 index < BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS; ++index) {
+            for (uint32_t index = 0U; index < count; ++index) {
                 const uint8_t *wire = payload +
                     BVB_VULKAN_TRANSFER_HEADER_SIZE +
                     index * BVB_VULKAN_TRANSFER_REGION_SIZE;
-                if (index >= count) {
-                    if (!bytes_are_zero(wire,
-                                        BVB_VULKAN_TRANSFER_REGION_SIZE))
-                        return -EPROTO;
-                    continue;
-                }
                 if ((opcode == BVB_COMMAND_VULKAN_COPY_BUFFER_2 &&
                      bvb_wire_get_u64(wire + 16) == 0U) ||
                     (opcode != BVB_COMMAND_VULKAN_COPY_BUFFER_2 &&
@@ -1723,15 +1735,15 @@ int bvb_command_batch_validate(const uint8_t *bytes, size_t length,
         uint16_t opcode = bvb_wire_get_u16(bytes + offset);
         uint16_t flags = bvb_wire_get_u16(bytes + offset + 2);
         uint32_t payload_length = bvb_wire_get_u32(bytes + offset + 4);
-        uint32_t expected_length;
-        if (flags != 0U || expected_payload_size(opcode, &expected_length) != 0 ||
-            payload_length != expected_length ||
+        uint32_t maximum_length;
+        if (flags != 0U || expected_payload_size(opcode, &maximum_length) != 0 ||
             payload_length > length - offset - BVB_COMMAND_RECORD_HEADER_SIZE) {
             return -EPROTO;
         }
         const uint8_t *payload =
             bytes + offset + BVB_COMMAND_RECORD_HEADER_SIZE;
-        if (validate_payload(opcode, payload) != 0) {
+        if (!payload_length_is_valid(opcode, payload, payload_length) ||
+            validate_payload(opcode, payload) != 0) {
             return -EPROTO;
         }
         offset += BVB_COMMAND_RECORD_HEADER_SIZE + payload_length;
@@ -2226,7 +2238,8 @@ int bvb_command_decode_vulkan_transfer(
     struct bvb_vulkan_transfer_command *command) {
     if (record == NULL || command == NULL ||
         !transfer_opcode_is_valid(record->opcode) ||
-        record->payload_length != BVB_VULKAN_TRANSFER_SIZE)
+        !payload_length_is_valid(record->opcode, record->payload,
+                                 record->payload_length))
         return -EINVAL;
     memset(command, 0, sizeof(*command));
     command->source_id = bvb_wire_get_u64(record->payload);
