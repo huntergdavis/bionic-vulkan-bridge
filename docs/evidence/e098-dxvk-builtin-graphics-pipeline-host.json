@@ -3,7 +3,7 @@
   "gate": "E098",
   "date": "2026-08-21",
   "source_base_commit": "2a91432c9f4777b5e2a3c1dfdd23d369940dd18c",
-  "status": "host_pass_tablet_runtime_pending",
+  "status": "tablet_pipeline_pass_next_gate_e099",
   "trigger": {
     "device": "Samsung Galaxy Tab S8+",
     "extent": "2800x1752",
@@ -47,16 +47,35 @@
     "destroy_required": true
   },
   "observed_runtime_logs": {
-    "master": {"bytes": 1153, "sha256": "52ed1e7f5f74e29a4fdae1d82627e5ddbb8c9bb96cd7b3c3930e9e25552437cf"},
-    "wine": {"bytes": 3098712, "sha256": "b57ec7e0a93ae9461477b519fc6e6632e4b2f25905900ed6d87967748953d785"},
-    "service": {"bytes": 871, "sha256": "f6e289e5a909424a3ed1996effade82d0ac3724a98cfbfcd314fe7b50f4c4427"},
-    "frame_helper": {"bytes": 178, "sha256": "e22d934315295cb2c5735088f04424faed11d5b6b84a6a5ad49449fbfd62a934", "native_import": "pass"}
+    "master": {"bytes": 1880, "sha256": "cf7760f5c6cd63ab873c5604134c73f6103da262e29cb470111e19e1d281f049"},
+    "wine": {"bytes": 103758, "sha256": "76fd2586c3ecb373824d5aa4bfe66ba4f40df1161e15aef9cc92e04edc2a61bd"},
+    "service": {"bytes": 863, "sha256": "319fed16ec81f6c0b159aca7373517ee584dd8f70a9e755e2f9a581ea40dc4c1"},
+    "frame_helper": {"bytes": 178, "sha256": "e22d934315295cb2c5735088f04424faed11d5b6b84a6a5ad49449fbfd62a934", "native_import": "pass", "image_count": 3, "per_frame_java_calls": 0, "per_frame_binder_calls": 0},
+    "activity_screenshot": {"bytes": 144622, "sha256": "28b7305067678da2bc88ffcb75bf49b49141cf49c27c59d79df332dcee89e9f8", "visible_content": "bridge triangle, not a Tomb Raider frame"}
+  },
+  "tablet_result": {
+    "run_id": "20260821T235302Z-31988",
+    "installed_icd_sha256": "bfcc65a64912e07127c833fc6f1c555f927f45f09be0ea5196561203d3101426",
+    "installed_service_sha256": "db4ec56c20fa46fbe2a1949a5ebb535fcdc985ad007619e178a86b317fb759f3",
+    "pipeline_rejection_absent": true,
+    "next_actual_rejection": "vkMapMemory2KHR",
+    "next_canonical_entry": "vkMapMemory2",
+    "next_result": -8,
+    "service_teardown_status": 139,
+    "service_teardown_cause": "private Turnip was dlclosed before pthread_key_clean_all invoked Mesa TLS destructors",
+    "same_crash_observed_in_e097": true
+  },
+  "loader_lifetime_correction": {
+    "native_objects": "connection scoped",
+    "vulkan_loader_mapping": "process scoped",
+    "regression": "fake loader installs a pthread TLS destructor and detached service worker must exit cleanly",
+    "tablet_retest_pending": true
   },
   "validation": {
     "focused_contracts": "2/2",
-    "full_host_suite": "58/58",
-    "global_dispatch_test_sha256": "c0db0a85b0e61ed51a95f9f7405797110bb9c76769cbe323a920b6f348b0a175",
-    "bridge_service_sha256": "8ed75d2f8051f9198daf0376dd39e55adcc2f51f0e0191969de3644ab89f855f",
+    "full_host_suite": "59/59",
+    "global_dispatch_test_sha256": "e950fc2d49c68b41a1551f2ad2697bd4db51310f6ca127e95cf5a3b0671abd98",
+    "bridge_service_sha256": "c6210f6b985a24fd2814c609d1c08506e4fb56d1c3d004b2c9cc5bfdfa07585a",
     "host_icd_sha256": "9f172a2cbb53daf1929af5ea7403320f5b6729ee75f9baa79916078a68166376"
   },
   "reuse": [
@@ -68,7 +87,7 @@
   "recall": "deja query 'BVB vkCreateGraphicsPipelines VK_ERROR_FEATURE_NOT_PRESENT built-in graphics pipeline DXVK E098' returned no indexed match",
   "claims": {
     "host_pipeline_create": true,
-    "tablet_pipeline_create": false,
+    "tablet_pipeline_create": true,
     "tomb_raider_frame": false,
     "benchmark": false,
     "fps": false

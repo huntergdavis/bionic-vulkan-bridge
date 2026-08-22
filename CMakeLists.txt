@@ -738,6 +738,16 @@ if(BUILD_TESTING)
       "$<TARGET_FILE:bvb-fake-vulkan>"
   )
   add_test(
+    NAME vulkan-loader-tls-lifetime-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+      "$<TARGET_FILE:bvb-bridge-service>"
+      "$<TARGET_FILE:bvb-global-dispatch-test>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+      "loader-tls-lifetime"
+  )
+  add_test(
     NAME first-real-rejection-command-poison-contract
     COMMAND
       "${Python3_EXECUTABLE}"

@@ -607,9 +607,16 @@ void bvb_vulkan_global_context_destroy(
             }
         }
     }
-    if (context->loader != NULL) {
-        (void)dlclose(context->loader);
-    }
+    /*
+     * Keep the Vulkan implementation resident until process exit. Mesa can
+     * install pthread TLS destructors while servicing this connection. The
+     * connection worker exits after this context is destroyed, so dlclose()
+     * here would unmap those destructor callbacks before libc invokes them
+     * from pthread_key_clean_all(). Device and instance objects above are
+     * still destroyed at connection scope; only the loader mapping has
+     * process lifetime.
+     */
+    context->loader = NULL;
 #ifdef __ANDROID__
     if (context->android_library != NULL) {
         (void)dlclose(context->android_library);

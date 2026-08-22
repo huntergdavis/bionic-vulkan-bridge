@@ -3857,7 +3857,7 @@ retained screenshot remains the bridge triangle.
 
 ## E098 — DXVK built-in swapchain graphics pipeline (2026-08-21)
 
-Status: host implementation complete; tablet runtime pending. An opt-in trace of
+Status: tablet runtime passed E098 and advanced to E099. An opt-in trace of
 the exact E097 successor call captured DXVK's built-in swapchain-blit pipeline,
 not merely a resolver name: one dynamic-rendering RGBA8 pipeline, embedded
 1,252-byte vertex and 15,656-byte fragment SPIR-V modules, eight fragment
@@ -3882,7 +3882,26 @@ native destruction. Compact evidence is
 graphics pipeline DXVK E098"` query returned no indexed implementation. E098
 reuses E064's Bionic-local embedded-module reconstruction, E075/E077's sealed
 memfd discipline, E097's real boundary, and E079a's actual-invocation proof.
-No tablet pipeline result, game frame, benchmark, or FPS is claimed yet.
+The bounded tablet run `20260821T235302Z-31988` proved that raw Turnip accepted
+the E098 pipeline: the earlier built-in-pipeline failure disappeared, and the
+next actually invoked rejection was `vkMapMemory2KHR` (canonical
+`vkMapMemory2`). The authenticated frame helper passed with three images and
+zero per-frame Java/Binder calls. The retained 144,622-byte Activity screenshot
+is still the bridge triangle, not a Tomb Raider pixel, so no game-frame,
+benchmark, or FPS claim is made.
+
+That run also reproduced a service teardown SIGSEGV already present in E097.
+Android's tombstone ends in `pthread_key_clean_all` after the connection worker
+destroyed its Vulkan context. The context had called `dlclose` on private
+Turnip before the worker exited, leaving Mesa-installed pthread TLS destructor
+callbacks pointing into unmapped code. Native Vulkan objects remain
+connection-scoped, but the Vulkan implementation mapping is now deliberately
+process-scoped. A fake loader installs a real pthread TLS destructor and the
+detached worker must exit cleanly, making the regression executable rather
+than a source-only assertion. The required `deja "BVB private Turnip dlclose
+pthread_key_clean_all SIGSEGV worker teardown Mesa TLS"` query returned no
+indexed implementation; this correction reuses the retained E097/E098 Android
+tombstone pattern and normal Vulkan object teardown.
 
 The first Android contract run exposed a platform-specific sealed-memfd detail
 before deployment: this kernel rejects even read-only `MAP_SHARED` mappings

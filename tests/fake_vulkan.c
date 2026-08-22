@@ -23,6 +23,7 @@ enum {
 
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -81,6 +82,27 @@ static uint32_t fake_memory_invalidate_count;
 static uint32_t fake_animation_step;
 static uint32_t fake_animation_submit_count;
 static int fake_animation_violation;
+
+static pthread_key_t fake_loader_tls_key;
+static pthread_once_t fake_loader_tls_once = PTHREAD_ONCE_INIT;
+static int fake_loader_tls_status;
+
+static void fake_loader_tls_destructor(void *value) {
+    (void)value;
+}
+
+static void fake_loader_tls_initialize(void) {
+    fake_loader_tls_status = pthread_key_create(
+        &fake_loader_tls_key, fake_loader_tls_destructor);
+}
+
+static bool fake_install_loader_tls_destructor(void) {
+    if (getenv("BVB_FAKE_INSTALL_TLS_DESTRUCTOR") == NULL) return true;
+    if (pthread_once(&fake_loader_tls_once, fake_loader_tls_initialize) != 0 ||
+        fake_loader_tls_status != 0)
+        return false;
+    return pthread_setspecific(fake_loader_tls_key, (void *)(uintptr_t)1U) == 0;
+}
 
 static bool fake_animation_enabled(void) {
     return getenv("BVB_FAKE_REQUIRE_ANIMATED_WSI") != NULL;
@@ -265,6 +287,8 @@ static VkResult VKAPI_CALL fake_create_instance(
     const VkAllocationCallbacks *allocator,
     VkInstance *instance) {
     (void)allocator;
+    if (!fake_install_loader_tls_destructor())
+        return VK_ERROR_INITIALIZATION_FAILED;
     bool has_surface = false;
     bool has_android_surface = false;
     if (create_info != NULL) {

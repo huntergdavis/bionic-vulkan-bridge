@@ -25,7 +25,7 @@ def main() -> int:
             "shared-command-stream-non-success|strict-mapped-memory|"
             "shared-mapped-memory|shared-noncoherent-memory|"
             "shared-memory-unmap-lost-ack|first-rejection-command|"
-            "first-rejection-wsi]"
+            "first-rejection-wsi|loader-tls-lifetime]"
         )
     service, client, loader = map(
         lambda value: str(pathlib.Path(value).resolve()), sys.argv[1:4]
@@ -39,6 +39,7 @@ def main() -> int:
         "strict-mapped-memory", "shared-mapped-memory",
         "shared-noncoherent-memory", "shared-memory-unmap-lost-ack",
         "first-rejection-command", "first-rejection-wsi",
+        "loader-tls-lifetime",
     ):
         raise SystemExit(f"unsupported validation mode: {validation_mode}")
     with tempfile.TemporaryDirectory(prefix="bvb-e034-") as temporary:
@@ -75,6 +76,8 @@ def main() -> int:
             server_environment["BVB_FAKE_NONCOHERENT_MEMORY"] = "1"
         if validation_mode == "strict-mapped-memory":
             server_environment["BVB_FAKE_KEEP_MEMORY_MAPPED"] = "1"
+        if validation_mode == "loader-tls-lifetime":
+            server_environment["BVB_FAKE_INSTALL_TLS_DESTRUCTOR"] = "1"
         server = subprocess.Popen(
             [
                 service,
@@ -409,6 +412,7 @@ def main() -> int:
             assert completed.stdout.startswith("PASS: global Vulkan discovery")
             expected_client_mode = (
                 "shared-command-stream" if shared_command_stream
+                else "strict-fake" if validation_mode == "loader-tls-lifetime"
                 else validation_mode
             )
             assert f"validation_mode={expected_client_mode}" in completed.stdout
