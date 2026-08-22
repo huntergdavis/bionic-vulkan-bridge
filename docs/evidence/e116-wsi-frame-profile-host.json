@@ -1,7 +1,7 @@
 {
   "gate": "E116",
   "date": "2026-08-22",
-  "source_base_commit": "7e82625f7259a1a3cd0fcb1b79ee88095d53a904",
+  "source_base_commit": "7e82625d01fd232a1c942c75ce8e2ff543c0276f",
   "trigger": {
     "target": "Tomb Raider 2013 at 2800x1752",
     "quiet_first_20_elapsed_seconds": 71.116,
