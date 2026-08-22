@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "gate": "E101",
+  "result": "host_contract_pass",
+  "source_base_commit": "038032e",
+  "objective": "execute the complete first DXVK swapchain-blit render command family through real game command buffers instead of advancing one resolver name per deployment",
+  "measured_predecessor": {
+    "run": "20260822T013912Z-23759",
+    "first_rejection": "vkCmdBeginRendering",
+    "command_sequence": 8,
+    "visible_game_pixel": false
+  },
+  "pinned_dxvk": {
+    "commit": "a6764047e587178283fcde4073ae6e1410af594f",
+    "source": "src/dxvk/dxvk_swapchain_blitter.cpp",
+    "bundle": [
+      "vkCmdBeginRendering",
+      "vkCmdSetViewportWithCount",
+      "vkCmdSetScissorWithCount",
+      "vkCmdBindPipeline",
+      "vkCmdBindDescriptorSets",
+      "vkCmdPushConstants",
+      "vkCmdDraw",
+      "vkCmdEndRendering"
+    ]
+  },
+  "transport": {
+    "strict_opcode": 114,
+    "strict_shape": "one canonical command-batch record per request",
+    "shared_records": "existing 1-6 plus general push-constants record 13",
+    "shared_recording_socket_round_trips": 0,
+    "strict_test_recording_round_trips": 13,
+    "pointer_crossing": false,
+    "maximum_push_constant_bytes": 256
+  },
+  "validation": {
+    "client": "exact bounded dynamic-rendering, one-viewport, one-scissor, graphics-pipeline, push-constant, and draw shapes",
+    "service": "typed command-buffer/device plus image-view/image/device, pipeline/device, and pipeline-layout/device ancestry",
+    "shared": "whole immutable stream is validated before any native replay and begin/end rendering balance is required",
+    "fake_native": "exact begin, pipeline, viewport, scissor, descriptor, push, draw, end topology",
+    "host_suite": "61/61 passed"
+  },
+  "dispatch_policy": {
+    "total": 742,
+    "executable": 99,
+    "required_unimplemented": 341,
+    "probed_null": 302
+  },
+  "reuse": "The required deja queries returned no indexed implementation. E101 reuses E056 typed descriptor ancestry, E075/E075a immutable transactional command streams, E076 general command records and zero-recording-RTT path, E096 template metadata, and the pinned DXVK swapchain blitter sequence.",
+  "claims": {
+    "host_contract": true,
+    "tablet_deployed": false,
+    "tomb_raider_rendered": false,
+    "visible_game_pixel": false,
+    "fps": null
+  }
+}

@@ -8,6 +8,10 @@ vkCmdClearColorImage
 vkCmdBindDescriptorSets
 vkCmdFillBuffer
 vkCmdPipelineBarrier2
+vkCmdSetScissorWithCount
+vkCmdSetScissorWithCountEXT
+vkCmdSetViewportWithCount
+vkCmdSetViewportWithCountEXT
 vkCreateBuffer
 vkCreateCommandPool
 vkCreateDescriptorPool

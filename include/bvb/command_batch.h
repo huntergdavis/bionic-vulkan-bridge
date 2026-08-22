@@ -26,6 +26,7 @@ enum {
     BVB_COMMAND_VULKAN_IMAGE_BARRIER_2 = 10,
     BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE_GENERAL = 11,
     BVB_COMMAND_VULKAN_BIND_DESCRIPTOR_SETS = 12,
+    BVB_COMMAND_VULKAN_PUSH_CONSTANTS = 13,
     BVB_COMMAND_VULKAN_BEGIN = 20,
     BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE = 21,
     BVB_COMMAND_VULKAN_INIT_IMAGE_BARRIER = 22,
@@ -34,6 +35,7 @@ enum {
     BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES = 4,
     BVB_COMMAND_VULKAN_MAX_BOUND_DESCRIPTOR_SETS = 8,
     BVB_COMMAND_VULKAN_MAX_DYNAMIC_OFFSETS = 32,
+    BVB_COMMAND_VULKAN_MAX_PUSH_CONSTANT_BYTES = 256,
 };
 
 struct bvb_begin_rendering_command {
@@ -154,6 +156,14 @@ struct bvb_vulkan_bind_descriptor_sets_command {
     uint32_t dynamic_offsets[BVB_COMMAND_VULKAN_MAX_DYNAMIC_OFFSETS];
 };
 
+struct bvb_vulkan_push_constants_command {
+    uint64_t pipeline_layout_id;
+    uint32_t stage_flags;
+    uint32_t offset;
+    uint32_t size;
+    uint8_t data[BVB_COMMAND_VULKAN_MAX_PUSH_CONSTANT_BYTES];
+};
+
 struct bvb_command_batch_builder {
     uint8_t *bytes;
     size_t capacity;
@@ -245,6 +255,12 @@ int bvb_command_batch_append_vulkan_clear_color_image_general(
 int bvb_command_batch_append_vulkan_bind_descriptor_sets(
     struct bvb_command_batch_builder *builder,
     const struct bvb_vulkan_bind_descriptor_sets_command *command);
+int bvb_command_batch_append_vulkan_push_constants(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_push_constants_command *command);
+int bvb_command_batch_append_record(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_command_record *record);
 int bvb_command_batch_finish(struct bvb_command_batch_builder *builder,
                              size_t *output_length);
 
@@ -308,5 +324,8 @@ int bvb_command_decode_vulkan_clear_color_image_general(
 int bvb_command_decode_vulkan_bind_descriptor_sets(
     const struct bvb_command_record *record,
     struct bvb_vulkan_bind_descriptor_sets_command *command);
+int bvb_command_decode_vulkan_push_constants(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_push_constants_command *command);
 
 #endif

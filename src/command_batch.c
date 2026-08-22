@@ -27,10 +27,15 @@ enum {
     BVB_VULKAN_BIND_DESCRIPTOR_SETS_SIZE = 24 +
         BVB_COMMAND_VULKAN_MAX_BOUND_DESCRIPTOR_SETS * sizeof(uint64_t) +
         BVB_COMMAND_VULKAN_MAX_DYNAMIC_OFFSETS * sizeof(uint32_t),
+    BVB_VULKAN_PUSH_CONSTANTS_SIZE = 24 +
+        BVB_COMMAND_VULKAN_MAX_PUSH_CONSTANT_BYTES,
 };
 
 _Static_assert(sizeof(float) == sizeof(uint32_t),
                "command batches require 32-bit float");
+
+static int expected_payload_size(uint16_t opcode, uint32_t *payload_size);
+static int validate_payload(uint16_t opcode, const uint8_t *payload);
 
 static void put_float(uint8_t *output, float value) {
     uint32_t bits;
@@ -464,6 +469,42 @@ int bvb_command_batch_append_vulkan_bind_descriptor_sets(
                          payload, sizeof(payload));
 }
 
+int bvb_command_batch_append_vulkan_push_constants(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_push_constants_command *command) {
+    if (command == NULL || command->stage_flags == 0U ||
+        command->size == 0U ||
+        command->size > BVB_COMMAND_VULKAN_MAX_PUSH_CONSTANT_BYTES ||
+        (command->offset & 3U) != 0U || (command->size & 3U) != 0U ||
+        command->offset > BVB_COMMAND_VULKAN_MAX_PUSH_CONSTANT_BYTES -
+                              command->size ||
+        bvb_handle_expect(command->pipeline_layout_id,
+                          BVB_OBJECT_PIPELINE_LAYOUT) != 0) return -EINVAL;
+    uint8_t payload[BVB_VULKAN_PUSH_CONSTANTS_SIZE];
+    memset(payload, 0, sizeof(payload));
+    bvb_wire_put_u64(payload, command->pipeline_layout_id);
+    bvb_wire_put_u32(payload + 8, command->stage_flags);
+    bvb_wire_put_u32(payload + 12, command->offset);
+    bvb_wire_put_u32(payload + 16, command->size);
+    memcpy(payload + 24, command->data, command->size);
+    return append_record(builder, BVB_COMMAND_VULKAN_PUSH_CONSTANTS,
+                         payload, sizeof(payload));
+}
+
+int bvb_command_batch_append_record(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_command_record *record) {
+    uint32_t expected = 0U;
+    if (builder == NULL || record == NULL ||
+        expected_payload_size(record->opcode, &expected) != 0 ||
+        expected != record->payload_length ||
+        validate_payload(record->opcode, record->payload) != 0) {
+        return -EINVAL;
+    }
+    return append_record(builder, record->opcode, record->payload,
+                         record->payload_length);
+}
+
 int bvb_command_batch_append_vulkan_end(
     struct bvb_command_batch_builder *builder) {
     return append_record(builder, BVB_COMMAND_VULKAN_END, NULL, 0U);
@@ -529,6 +570,9 @@ static int expected_payload_size(uint16_t opcode, uint32_t *payload_size) {
             return 0;
         case BVB_COMMAND_VULKAN_BIND_DESCRIPTOR_SETS:
             *payload_size = BVB_VULKAN_BIND_DESCRIPTOR_SETS_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_PUSH_CONSTANTS:
+            *payload_size = BVB_VULKAN_PUSH_CONSTANTS_SIZE;
             return 0;
         case BVB_COMMAND_VULKAN_BEGIN:
             *payload_size = BVB_VULKAN_BEGIN_SIZE;
@@ -700,6 +744,24 @@ static int validate_payload(uint16_t opcode, const uint8_t *payload) {
                  index < BVB_COMMAND_VULKAN_MAX_DYNAMIC_OFFSETS; ++index) {
                 if (bvb_wire_get_u32(offsets + index * sizeof(uint32_t)) != 0U)
                     return -EPROTO;
+            }
+            return 0;
+        }
+        case BVB_COMMAND_VULKAN_PUSH_CONSTANTS: {
+            const uint32_t size = bvb_wire_get_u32(payload + 16);
+            if (bvb_handle_expect(bvb_wire_get_u64(payload),
+                                  BVB_OBJECT_PIPELINE_LAYOUT) != 0 ||
+                bvb_wire_get_u32(payload + 8) == 0U || size == 0U ||
+                size > BVB_COMMAND_VULKAN_MAX_PUSH_CONSTANT_BYTES ||
+                (bvb_wire_get_u32(payload + 12) & 3U) != 0U ||
+                (size & 3U) != 0U ||
+                bvb_wire_get_u32(payload + 12) >
+                    BVB_COMMAND_VULKAN_MAX_PUSH_CONSTANT_BYTES - size ||
+                bvb_wire_get_u32(payload + 20) != 0U) return -EPROTO;
+            for (uint32_t index = size;
+                 index < BVB_COMMAND_VULKAN_MAX_PUSH_CONSTANT_BYTES;
+                 ++index) {
+                if (payload[24U + index] != 0U) return -EPROTO;
             }
             return 0;
         }
@@ -1206,5 +1268,23 @@ int bvb_command_decode_vulkan_bind_descriptor_sets(
         command->dynamic_offsets[index] = bvb_wire_get_u32(
             offsets + index * sizeof(uint32_t));
     }
+    return 0;
+}
+
+int bvb_command_decode_vulkan_push_constants(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_push_constants_command *command) {
+    if (record == NULL || command == NULL ||
+        record->opcode != BVB_COMMAND_VULKAN_PUSH_CONSTANTS ||
+        record->payload_length != BVB_VULKAN_PUSH_CONSTANTS_SIZE) {
+        return -EINVAL;
+    }
+    *command = (struct bvb_vulkan_push_constants_command){
+        .pipeline_layout_id = bvb_wire_get_u64(record->payload),
+        .stage_flags = bvb_wire_get_u32(record->payload + 8),
+        .offset = bvb_wire_get_u32(record->payload + 12),
+        .size = bvb_wire_get_u32(record->payload + 16),
+    };
+    memcpy(command->data, record->payload + 24, command->size);
     return 0;
 }

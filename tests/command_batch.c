@@ -338,12 +338,22 @@ static int test_vulkan_command_stream(void) {
                                          descriptor_set_two},
                   .dynamic_offsets = {64U, 128U},
               }) == 0);
+    const struct bvb_vulkan_push_constants_command push_constants = {
+        .pipeline_layout_id = pipeline_layout,
+        .stage_flags = 16U,
+        .offset = 4U,
+        .size = 16U,
+        .data = {1U, 2U, 3U, 4U, 5U, 6U, 7U, 8U,
+                 9U, 10U, 11U, 12U, 13U, 14U, 15U, 16U},
+    };
+    CHECK(bvb_command_batch_append_vulkan_push_constants(
+              &builder, &push_constants) == 0);
     CHECK(bvb_command_batch_append_vulkan_end(&builder) == 0);
     size_t length = 0U;
     CHECK(bvb_command_batch_finish(&builder, &length) == 0);
     struct bvb_command_batch_info info;
     CHECK(bvb_command_batch_validate(bytes, length, &info) == 0);
-    CHECK(info.command_count == 8U);
+    CHECK(info.command_count == 9U);
     CHECK(info.command_buffer_id == command_buffer);
     CHECK(info.sequence == 17U);
 
@@ -399,6 +409,14 @@ static int test_vulkan_command_stream(void) {
     CHECK(bind_descriptor_sets.pipeline_layout_id == pipeline_layout);
     CHECK(bind_descriptor_sets.descriptor_set_ids[1] == descriptor_set_two);
     CHECK(bind_descriptor_sets.dynamic_offsets[1] == 128U);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    struct bvb_vulkan_push_constants_command decoded_push;
+    CHECK(bvb_command_decode_vulkan_push_constants(
+              &record, &decoded_push) == 0);
+    CHECK(decoded_push.pipeline_layout_id == pipeline_layout);
+    CHECK(decoded_push.stage_flags == 16U);
+    CHECK(decoded_push.offset == 4U && decoded_push.size == 16U);
+    CHECK(memcmp(decoded_push.data, push_constants.data, 16U) == 0);
     CHECK(bvb_command_batch_next(&iterator, &record) == 0);
     CHECK(record.opcode == BVB_COMMAND_VULKAN_END);
     CHECK(bvb_command_batch_next(&iterator, &record) == 1);

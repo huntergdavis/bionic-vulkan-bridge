@@ -5410,6 +5410,256 @@ static int command_stream_descriptor_set_matches_device(
                        : pool_device_id == expected_device_id ? 0 : -EPROTO;
 }
 
+static int command_stream_image_view_matches_device(
+    const struct bvb_vulkan_global_context *context, uint64_t image_view_id,
+    uint64_t expected_device_id) {
+    VkImageView image_view = VK_NULL_HANDLE;
+    return descriptor_template_resolve_image_view(
+        context, image_view_id, expected_device_id, &image_view);
+}
+
+static int validate_render_command_record(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_command_record *record, uint64_t expected_device_id,
+    bool *rendering) {
+    if (record == NULL || rendering == NULL) return -EINVAL;
+    if (record->opcode == BVB_COMMAND_BEGIN_RENDERING) {
+        struct bvb_begin_rendering_command command;
+        int result = bvb_command_decode_begin_rendering(record, &command);
+        if (result == 0 && *rendering) result = -EPROTO;
+        if (result == 0 &&
+            command.image_layout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL &&
+            command.image_layout != VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL)
+            result = -EPROTO;
+        if (result == 0)
+            result = command_stream_image_view_matches_device(
+                context, command.color_image_view_id, expected_device_id);
+        if (result == 0) *rendering = true;
+        return result;
+    }
+    if (record->opcode == BVB_COMMAND_END_RENDERING) {
+        if (record->payload_length != 0U || !*rendering) return -EPROTO;
+        *rendering = false;
+        return 0;
+    }
+    if (record->opcode == BVB_COMMAND_BIND_GRAPHICS_PIPELINE) {
+        struct bvb_bind_graphics_pipeline_command command;
+        int result = bvb_command_decode_bind_graphics_pipeline(
+            record, &command);
+        return result != 0 ? result : command_stream_child_matches_device(
+            context, command.pipeline_id, BVB_OBJECT_PIPELINE,
+            expected_device_id);
+    }
+    if (record->opcode == BVB_COMMAND_VULKAN_PUSH_CONSTANTS) {
+        struct bvb_vulkan_push_constants_command command;
+        int result = bvb_command_decode_vulkan_push_constants(
+            record, &command);
+        return result != 0 ? result : command_stream_child_matches_device(
+            context, command.pipeline_layout_id,
+            BVB_OBJECT_PIPELINE_LAYOUT, expected_device_id);
+    }
+    if (record->opcode == BVB_COMMAND_SET_VIEWPORT) {
+        struct bvb_set_viewport_command command;
+        return bvb_command_decode_set_viewport(record, &command);
+    }
+    if (record->opcode == BVB_COMMAND_SET_SCISSOR) {
+        struct bvb_set_scissor_command command;
+        return bvb_command_decode_set_scissor(record, &command);
+    }
+    if (record->opcode == BVB_COMMAND_DRAW) {
+        struct bvb_draw_command command;
+        if (!*rendering) return -EPROTO;
+        return bvb_command_decode_draw(record, &command);
+    }
+    return -EPROTO;
+}
+
+static int replay_render_command_record(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t command_buffer_id, const struct bvb_command_record *record) {
+    uint64_t device_id = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    int result = resolve_command_buffer(
+        context, command_buffer_id, &device_id, &device,
+        &command_pool, &command_buffer);
+    if (result != 0) return result;
+    if (record->opcode == BVB_COMMAND_BEGIN_RENDERING) {
+        struct bvb_begin_rendering_command command;
+        VkImageView image_view = VK_NULL_HANDLE;
+        result = bvb_command_decode_begin_rendering(record, &command);
+        if (result == 0)
+            result = descriptor_template_resolve_image_view(
+                context, command.color_image_view_id, device_id, &image_view);
+        PFN_vkCmdBeginRendering begin = result == 0
+            ? (PFN_vkCmdBeginRendering)context->get_device_proc_addr(
+                  device, "vkCmdBeginRendering") : NULL;
+        if (result == 0 && begin == NULL)
+            begin = (PFN_vkCmdBeginRendering)context->get_device_proc_addr(
+                device, "vkCmdBeginRenderingKHR");
+        if (result != 0 || begin == NULL) return result != 0 ? result : -ENOSYS;
+        const VkRenderingAttachmentInfo color = {
+            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView = image_view,
+            .imageLayout = (VkImageLayout)command.image_layout,
+            .resolveMode = VK_RESOLVE_MODE_NONE,
+            .loadOp = (VkAttachmentLoadOp)command.load_op,
+            .storeOp = (VkAttachmentStoreOp)command.store_op,
+            .clearValue = {.color.float32 = {
+                command.clear_color[0], command.clear_color[1],
+                command.clear_color[2], command.clear_color[3]}},
+        };
+        const VkRenderingInfo rendering = {
+            .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+            .renderArea = {.offset = {0, 0},
+                           .extent = {command.width, command.height}},
+            .layerCount = command.layer_count,
+            .colorAttachmentCount = 1U,
+            .pColorAttachments = &color,
+        };
+        begin(command_buffer, &rendering);
+        return 0;
+    }
+    if (record->opcode == BVB_COMMAND_END_RENDERING) {
+        PFN_vkCmdEndRendering end =
+            (PFN_vkCmdEndRendering)context->get_device_proc_addr(
+                device, "vkCmdEndRendering");
+        if (end == NULL)
+            end = (PFN_vkCmdEndRendering)context->get_device_proc_addr(
+                device, "vkCmdEndRenderingKHR");
+        if (end == NULL) return -ENOSYS;
+        end(command_buffer);
+        return 0;
+    }
+    if (record->opcode == BVB_COMMAND_BIND_GRAPHICS_PIPELINE) {
+        struct bvb_bind_graphics_pipeline_command command;
+        uint64_t pipeline_device_id = 0U, pipeline_bits = 0U;
+        VkDevice pipeline_device = VK_NULL_HANDLE;
+        result = bvb_command_decode_bind_graphics_pipeline(record, &command);
+        if (result == 0)
+            result = resolve_device_child(
+                context, command.pipeline_id, BVB_OBJECT_PIPELINE,
+                &pipeline_device_id, &pipeline_device, &pipeline_bits);
+        if (result == 0 &&
+            (pipeline_device_id != device_id || pipeline_device != device))
+            result = -EPROTO;
+        PFN_vkCmdBindPipeline bind = result == 0
+            ? (PFN_vkCmdBindPipeline)context->get_device_proc_addr(
+                  device, "vkCmdBindPipeline") : NULL;
+        if (result != 0 || bind == NULL) return result != 0 ? result : -ENOSYS;
+        bind(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+             pipeline_from_bits(pipeline_bits));
+        return 0;
+    }
+    if (record->opcode == BVB_COMMAND_VULKAN_PUSH_CONSTANTS) {
+        struct bvb_vulkan_push_constants_command command;
+        uint64_t layout_device_id = 0U, layout_bits = 0U;
+        VkDevice layout_device = VK_NULL_HANDLE;
+        result = bvb_command_decode_vulkan_push_constants(record, &command);
+        if (result == 0)
+            result = resolve_device_child(
+                context, command.pipeline_layout_id,
+                BVB_OBJECT_PIPELINE_LAYOUT, &layout_device_id,
+                &layout_device, &layout_bits);
+        if (result == 0 &&
+            (layout_device_id != device_id || layout_device != device))
+            result = -EPROTO;
+        PFN_vkCmdPushConstants push = result == 0
+            ? (PFN_vkCmdPushConstants)context->get_device_proc_addr(
+                  device, "vkCmdPushConstants") : NULL;
+        if (result != 0 || push == NULL) return result != 0 ? result : -ENOSYS;
+        push(command_buffer, pipeline_layout_from_bits(layout_bits),
+             (VkShaderStageFlags)command.stage_flags, command.offset,
+             command.size, command.data);
+        return 0;
+    }
+    if (record->opcode == BVB_COMMAND_SET_VIEWPORT) {
+        struct bvb_set_viewport_command command;
+        result = bvb_command_decode_set_viewport(record, &command);
+        PFN_vkCmdSetViewportWithCount set = result == 0
+            ? (PFN_vkCmdSetViewportWithCount)context->get_device_proc_addr(
+                  device, "vkCmdSetViewportWithCount") : NULL;
+        if (set == NULL && result == 0)
+            set = (PFN_vkCmdSetViewportWithCount)
+                context->get_device_proc_addr(device,
+                                              "vkCmdSetViewportWithCountEXT");
+        if (result != 0 || set == NULL) return result != 0 ? result : -ENOSYS;
+        const VkViewport viewport = {
+            .x = command.x, .y = command.y,
+            .width = command.width, .height = command.height,
+            .minDepth = command.minimum_depth,
+            .maxDepth = command.maximum_depth,
+        };
+        set(command_buffer, 1U, &viewport);
+        return 0;
+    }
+    if (record->opcode == BVB_COMMAND_SET_SCISSOR) {
+        struct bvb_set_scissor_command command;
+        result = bvb_command_decode_set_scissor(record, &command);
+        PFN_vkCmdSetScissorWithCount set = result == 0
+            ? (PFN_vkCmdSetScissorWithCount)context->get_device_proc_addr(
+                  device, "vkCmdSetScissorWithCount") : NULL;
+        if (set == NULL && result == 0)
+            set = (PFN_vkCmdSetScissorWithCount)
+                context->get_device_proc_addr(device,
+                                              "vkCmdSetScissorWithCountEXT");
+        if (result != 0 || set == NULL) return result != 0 ? result : -ENOSYS;
+        const VkRect2D scissor = {
+            .offset = {command.x, command.y},
+            .extent = {command.width, command.height},
+        };
+        set(command_buffer, 1U, &scissor);
+        return 0;
+    }
+    if (record->opcode == BVB_COMMAND_DRAW) {
+        struct bvb_draw_command command;
+        result = bvb_command_decode_draw(record, &command);
+        PFN_vkCmdDraw draw = result == 0
+            ? (PFN_vkCmdDraw)context->get_device_proc_addr(
+                  device, "vkCmdDraw") : NULL;
+        if (result != 0 || draw == NULL) return result != 0 ? result : -ENOSYS;
+        draw(command_buffer, command.vertex_count, command.instance_count,
+             command.first_vertex, command.first_instance);
+        return 0;
+    }
+    return -EPROTO;
+}
+
+int bvb_vulkan_global_context_execute_immediate_record(
+    const struct bvb_vulkan_global_context *context,
+    const uint8_t *batch, size_t batch_length,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    struct bvb_command_batch_info info;
+    int result = context == NULL || batch == NULL ? -EINVAL :
+        bvb_command_batch_validate(batch, batch_length, &info);
+    if (result == 0 && info.command_count != 1U) result = -EPROTO;
+    uint64_t device_id = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    VkCommandPool pool = VK_NULL_HANDLE;
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    if (result == 0)
+        result = resolve_command_buffer(context, info.command_buffer_id,
+            &device_id, &device, &pool, &command_buffer);
+    struct bvb_command_batch_iterator iterator;
+    if (result == 0)
+        result = bvb_command_batch_iterator_init(&iterator, batch, batch_length);
+    struct bvb_command_record record;
+    if (result == 0) result = bvb_command_batch_next(&iterator, &record);
+    bool rendering = record.opcode != BVB_COMMAND_BEGIN_RENDERING;
+    if (result == 0)
+        result = validate_render_command_record(
+            context, &record, device_id, &rendering);
+    if (result == 0)
+        result = replay_render_command_record(
+            context, info.command_buffer_id, &record);
+    if (result != 0)
+        set_error(error, error_size,
+                  "immediate render command rejected: %d", result);
+    return result;
+}
+
 static int command_stream_image_barrier_range_supported(
     const struct bvb_vulkan_image_subresource_range *range) {
     const VkImageAspectFlags supported_aspects =
@@ -5494,6 +5744,7 @@ int bvb_vulkan_global_context_validate_command_stream(
                            &iterator, batch, batch_length)
                      : -EPROTO;
     }
+    bool rendering = false;
     for (uint32_t index = 0U; result == 0 && index < info.command_count;
          ++index) {
         struct bvb_command_record record;
@@ -5601,10 +5852,18 @@ int bvb_vulkan_global_context_validate_command_stream(
                     context, bind.descriptor_set_ids[set],
                     expected_device_id);
             }
+        } else if (record.opcode >= BVB_COMMAND_BEGIN_RENDERING &&
+                   record.opcode <= BVB_COMMAND_END_RENDERING) {
+            result = validate_render_command_record(
+                context, &record, expected_device_id, &rendering);
+        } else if (record.opcode == BVB_COMMAND_VULKAN_PUSH_CONSTANTS) {
+            result = validate_render_command_record(
+                context, &record, expected_device_id, &rendering);
         } else {
             result = -EPROTO;
         }
     }
+    if (result == 0 && rendering) result = -EPROTO;
     if (result == 0 && bvb_command_batch_next(
                            &iterator,
                            &(struct bvb_command_record){0}) != 1) {
@@ -5739,6 +5998,11 @@ int bvb_vulkan_global_context_replay_command_stream(
                 result =
                     bvb_vulkan_global_context_command_buffer_bind_descriptor_sets(
                         context, &mutable_request, error, error_size);
+        } else if ((record.opcode >= BVB_COMMAND_BEGIN_RENDERING &&
+                    record.opcode <= BVB_COMMAND_END_RENDERING) ||
+                   record.opcode == BVB_COMMAND_VULKAN_PUSH_CONSTANTS) {
+            result = replay_render_command_record(
+                context, info.command_buffer_id, &record);
         } else if (record.opcode == BVB_COMMAND_VULKAN_END) {
             int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
             result = bvb_vulkan_global_context_end_command_buffer(

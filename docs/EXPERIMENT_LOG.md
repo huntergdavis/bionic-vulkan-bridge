@@ -3991,3 +3991,34 @@ sequence 8. The authenticated helper passed, Steam/X survived unchanged, and
 the screenshot remained the bridge triangle. E101 therefore batches the full
 pinned swapchain-blit render-command family rather than implementing only the
 first name.
+
+## E101 — DXVK first render-command bundle (2026-08-21)
+
+Status: host implementation complete; tablet runtime pending. Instead of
+deploying once for each void command, E101 implements the complete pinned
+swapchain-blit draw family: dynamic-rendering begin/end, graphics-pipeline and
+descriptor binding, viewport/scissor-with-count, bounded push constants, and
+non-indexed draw. The immediately surrounding image barriers were already
+executable before E100.
+
+Strict mode uses one generic opcode 114 carrying exactly one canonical command
+record. Shared mode appends those same pointer-free records locally and retains
+zero command-recording socket round trips; Submit2 snapshots, validates, and
+replays the whole stream. Record 13 adds at most 256 bytes of push constants.
+The Bionic side verifies command-buffer ownership plus image-view/image/device,
+pipeline/device, pipeline-layout/device, and descriptor ancestry before native
+Turnip calls. Core/KHR rendering and core/EXT viewport/scissor aliases share
+the same implementations.
+
+The cross-process fake proves the exact begin, pipeline, viewport, scissor,
+descriptor, push, draw, and end topology. The strict A/B test now records 13
+RPCs while the shared path remains zero; this is transport evidence, not an FPS
+claim. The generated policy is 99 executable, 341 required-unimplemented, and
+302 probed-null names. Compact evidence is
+`docs/evidence/e101-dxvk-render-command-bundle-host.json`.
+
+The required `deja` searches returned no indexed implementation. E101 reuses
+E056 typed descriptor ancestry, E075/E075a immutable transactional streams,
+E076's general records and zero-recording-RTT path, E096 template metadata, and
+the exact pinned DXVK `a6764047` swapchain-blitter sequence. No tablet game
+pixel, benchmark, or FPS claim is made until the bounded deployment run.

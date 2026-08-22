@@ -906,6 +906,13 @@ int main(void) {
     PFN_vkUpdateDescriptorSetWithTemplate
         update_descriptor_set_with_template = NULL;
     PFN_vkCmdBindDescriptorSets cmd_bind_descriptor_sets = NULL;
+    PFN_vkCmdBeginRendering cmd_begin_rendering = NULL;
+    PFN_vkCmdEndRendering cmd_end_rendering = NULL;
+    PFN_vkCmdBindPipeline cmd_bind_pipeline = NULL;
+    PFN_vkCmdPushConstants cmd_push_constants = NULL;
+    PFN_vkCmdSetViewportWithCount cmd_set_viewport_with_count = NULL;
+    PFN_vkCmdSetScissorWithCount cmd_set_scissor_with_count = NULL;
+    PFN_vkCmdDraw cmd_draw = NULL;
     PFN_vkCreatePipelineLayout create_pipeline_layout = NULL;
     PFN_vkDestroyPipelineLayout destroy_pipeline_layout = NULL;
     PFN_vkCreateGraphicsPipelines create_graphics_pipelines = NULL;
@@ -1103,12 +1110,24 @@ int main(void) {
                               "vkUpdateDescriptorSetWithTemplateKHR") ==
           erased);
     RESOLVE_DESCRIPTOR(vkCmdBindDescriptorSets, cmd_bind_descriptor_sets);
+    RESOLVE_DESCRIPTOR(vkCmdBeginRendering, cmd_begin_rendering);
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdBeginRenderingKHR") == erased);
+    RESOLVE_DESCRIPTOR(vkCmdEndRendering, cmd_end_rendering);
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdEndRenderingKHR") == erased);
+    RESOLVE_DESCRIPTOR(vkCmdBindPipeline, cmd_bind_pipeline);
+    RESOLVE_DESCRIPTOR(vkCmdPushConstants, cmd_push_constants);
+    RESOLVE_DESCRIPTOR(vkCmdSetViewportWithCount, cmd_set_viewport_with_count);
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdSetViewportWithCountEXT") ==
+          erased);
+    RESOLVE_DESCRIPTOR(vkCmdSetScissorWithCount, cmd_set_scissor_with_count);
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdSetScissorWithCountEXT") ==
+          erased);
+    RESOLVE_DESCRIPTOR(vkCmdDraw, cmd_draw);
     RESOLVE_DESCRIPTOR(vkCreatePipelineLayout, create_pipeline_layout);
     RESOLVE_DESCRIPTOR(vkDestroyPipelineLayout, destroy_pipeline_layout);
     RESOLVE_DESCRIPTOR(vkCreateGraphicsPipelines, create_graphics_pipelines);
     RESOLVE_DESCRIPTOR(vkDestroyPipeline, destroy_pipeline);
 #undef RESOLVE_DESCRIPTOR
-    CHECK(vkGetDeviceProcAddr(device, "vkCmdDraw") != NULL);
     PFN_vkCreateSwapchainKHR create_swapchain = NULL;
     PFN_vkDestroySwapchainKHR destroy_swapchain = NULL;
     PFN_vkGetSwapchainImagesKHR get_swapchain_images = NULL;
@@ -1963,7 +1982,6 @@ int main(void) {
     memcpy(&builtin_pipeline_id, &builtin_pipeline, sizeof(builtin_pipeline));
     CHECK(bvb_handle_type(builtin_pipeline_id) == BVB_OBJECT_PIPELINE);
     CHECK(builtin_pipeline_id != graphics_pipeline_id);
-    destroy_pipeline(device, builtin_pipeline, NULL);
 
     const VkCommandPoolCreateInfo pool_create_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -2631,9 +2649,42 @@ int main(void) {
         bvb_global_dispatch_exchange_count();
     CHECK(exchanges_before_recording != UINT64_MAX);
     CHECK(begin_command_buffer(command_buffer, &begin_info) == VK_SUCCESS);
+    const VkRenderingAttachmentInfo render_attachment = {
+        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .imageView = image_view,
+        .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+        .resolveMode = VK_RESOLVE_MODE_NONE,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    };
+    const VkRenderingInfo render_info = {
+        .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
+        .renderArea = {.offset = {0, 0}, .extent = {64U, 64U}},
+        .layerCount = 1U,
+        .colorAttachmentCount = 1U,
+        .pColorAttachments = &render_attachment,
+    };
+    cmd_begin_rendering(command_buffer, &render_info);
+    cmd_bind_pipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                      builtin_pipeline);
+    const VkViewport render_viewport = {
+        .x = 0.0F, .y = 0.0F, .width = 64.0F, .height = 64.0F,
+        .minDepth = 0.0F, .maxDepth = 1.0F,
+    };
+    cmd_set_viewport_with_count(command_buffer, 1U, &render_viewport);
+    const VkRect2D render_scissor = {
+        .offset = {0, 0}, .extent = {64U, 64U},
+    };
+    cmd_set_scissor_with_count(command_buffer, 1U, &render_scissor);
     cmd_bind_descriptor_sets(
         command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,
         0U, 1U, &descriptor_set, 0U, NULL);
+    const uint32_t render_constants[4] = {1U, 2U, 3U, 4U};
+    cmd_push_constants(command_buffer, pipeline_layout,
+                       VK_SHADER_STAGE_FRAGMENT_BIT, 0U,
+                       sizeof(render_constants), render_constants);
+    cmd_draw(command_buffer, 3U, 1U, 0U, 0U);
+    cmd_end_rendering(command_buffer);
     cmd_fill_buffer(command_buffer, buffer, 0U, 4096U, UINT32_C(0xa5c3f00d));
     const VkImageSubresourceRange init_image_range = {
         .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -2685,14 +2736,14 @@ int main(void) {
     CHECK(end_command_buffer(command_buffer) == VK_SUCCESS);
     if (shared_command_stream) {
         CHECK(bvb_command_buffer_ownership_registry_reads(command_buffer) ==
-              4U);
+              6U);
     }
     const uint64_t exchanges_after_recording =
         bvb_global_dispatch_exchange_count();
     CHECK(exchanges_after_recording >= exchanges_before_recording);
     const uint64_t recording_rtts =
         exchanges_after_recording - exchanges_before_recording;
-    CHECK(recording_rtts == (shared_command_stream ? 0U : 6U));
+    CHECK(recording_rtts == (shared_command_stream ? 0U : 13U));
     if (shared_mapped_memory) mapped[0] = UINT8_C(0x7b);
     const uint64_t exchanges_before_submit =
         bvb_global_dispatch_exchange_count();
@@ -3035,6 +3086,7 @@ int main(void) {
                                  VK_NULL_HANDLE) == VK_SUCCESS);
         }
     }
+    destroy_pipeline(device, builtin_pipeline, NULL);
     destroy_pipeline_layout(device, pipeline_layout, NULL);
     destroy_descriptor_set_layout(device, empty_layout, NULL);
     destroy_sampler(device, sampler, NULL);

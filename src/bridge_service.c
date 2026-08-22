@@ -2259,6 +2259,29 @@ static int answer_vulkan_command_buffer_bind_descriptor_sets(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_command_buffer_immediate_record(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length < BVB_COMMAND_BATCH_HEADER_SIZE ||
+        request->header.payload_length > BVB_PROTOCOL_MAX_PAYLOAD) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    char diagnostic[512] = {0};
+    const int result = bvb_vulkan_global_context_execute_immediate_record(
+        context, request->payload, request->header.payload_length,
+        diagnostic, sizeof(diagnostic));
+    if (result != 0) {
+        fprintf(stderr, "bvb: immediate command record failed: %s\n",
+                diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_memory_verify_fill(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context) {
@@ -3484,6 +3507,10 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_COMMAND_BUFFER_BIND_DESCRIPTOR_SETS) {
             result = answer_vulkan_command_buffer_bind_descriptor_sets(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMMEDIATE_RECORD) {
+            result = answer_vulkan_command_buffer_immediate_record(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_MEMORY_VERIFY_FILL) {

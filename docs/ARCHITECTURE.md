@@ -336,3 +336,13 @@ the service verifies its own metadata and reconstructs native Vulkan records in
 Bionic-owned storage. Descriptor-set binding is a strict RPC or local shared
 command record, preserving zero recording socket round trips in shared mode
 and authoritative whole-stream validation at Submit2.
+
+E101 routes the first complete DXVK swapchain-blit render bundle through the
+same global command-buffer model. Strict mode sends one canonical record with
+generic opcode 114; shared mode appends records locally and retains Submit2 as
+the first socket boundary. Dynamic-rendering attachments, graphics pipelines,
+pipeline layouts, image views, and descriptor sets are resolved to Bionic-owned
+native handles only after typed same-device ancestry validation. General push
+constants are capped at 256 bytes. This deliberately covers a coherent draw
+bundle rather than one resolver name, while preserving fail-closed shapes and
+the no-application-pointer ABI.

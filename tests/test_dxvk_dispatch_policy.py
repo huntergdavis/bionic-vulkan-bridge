@@ -58,11 +58,11 @@ def main() -> int:
         assert summary == {
             "command_count": 742,
             "resolved_name_count": 440,
-            "executable_name_count": 95,
+            "executable_name_count": 99,
             "support_counts": {
                 "probed_null": 302,
-                "required_unimplemented": 345,
-                "executable": 95,
+                "required_unimplemented": 341,
+                "executable": 99,
             },
             "dispatch_scope_counts": {
                 "global": 4,

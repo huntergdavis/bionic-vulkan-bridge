@@ -865,6 +865,7 @@ static int shared_object_owned_by_device_cached_locked(
     enum bvb_object_type type) {
     if (command_state == NULL ||
         (type != BVB_OBJECT_BUFFER && type != BVB_OBJECT_IMAGE &&
+         type != BVB_OBJECT_IMAGE_VIEW && type != BVB_OBJECT_PIPELINE &&
          type != BVB_OBJECT_PIPELINE_LAYOUT &&
          type != BVB_OBJECT_DESCRIPTOR_SET) ||
         bvb_handle_expect(wire_id, type) != 0) {
@@ -7243,6 +7244,357 @@ static struct bvb_vulkan_image_subresource_range command_image_range(
     };
 }
 
+static int submit_single_render_record(
+    struct bvb_command_buffer_proxy *command_state,
+    const uint8_t *batch, size_t batch_length,
+    const char *entry, const char *shape) {
+    if (command_state == NULL || batch == NULL ||
+        batch_length < BVB_COMMAND_BATCH_HEADER_SIZE ||
+        batch_length > BVB_PROTOCOL_MAX_PAYLOAD) return -EINVAL;
+    if (command_stream_is_enabled()) {
+        if (pthread_mutex_lock(&command_state->stream_mutex) != 0)
+            return -EDEADLK;
+        struct bvb_command_batch_iterator iterator;
+        struct bvb_command_record record;
+        int result = command_state->stream_recording &&
+                             !command_state->stream_error
+                         ? bvb_command_batch_iterator_init(
+                               &iterator, batch, batch_length)
+                         : -EINVAL;
+        if (result == 0) result = bvb_command_batch_next(&iterator, &record);
+        if (result == 0)
+            result = bvb_command_batch_append_record(
+                &command_state->stream_builder, &record);
+        if (result == 0 &&
+            bvb_command_batch_next(
+                &iterator, &(struct bvb_command_record){0}) != 1)
+            result = -EPROTO;
+        if (result != 0) {
+            store_command_diagnostic_locked(
+                command_state, entry,
+                "shared_render_record_append_rejected", shape, result);
+            command_state->stream_error = true;
+            command_state->stream_sealed = false;
+        }
+        (void)pthread_mutex_unlock(&command_state->stream_mutex);
+        return result;
+    }
+    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) return -EDEADLK;
+    int result = connect_locked();
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMMEDIATE_RECORD,
+        .request_id = next_request_id_locked(),
+        .payload_length = (uint32_t)batch_length,
+    };
+    if (result == 0) memcpy(request.payload, batch, batch_length);
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) result = exchange_locked(&request, &response);
+    if (result == 0 &&
+        (response.header.status != 0 || response.header.payload_length != 0U))
+        result = response.header.status != 0
+                     ? response.header.status : -EPROTO;
+    if (result != 0)
+        store_command_diagnostic_locked(
+            command_state, entry, "strict_render_record_rejected",
+            shape, result);
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return result;
+}
+
+static int begin_single_render_record(
+    struct bvb_command_buffer_proxy *command_state,
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD],
+    struct bvb_command_batch_builder *builder) {
+    return command_state == NULL ? -EINVAL : bvb_command_batch_begin(
+        builder, bytes, BVB_PROTOCOL_MAX_PAYLOAD,
+        command_state->wire_id, 1U);
+}
+
+static int finish_single_render_record(
+    struct bvb_command_buffer_proxy *command_state,
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD],
+    struct bvb_command_batch_builder *builder,
+    const char *entry, const char *shape) {
+    size_t length = 0U;
+    int result = bvb_command_batch_finish(builder, &length);
+    return result != 0 ? result : submit_single_render_record(
+        command_state, bytes, length, entry, shape);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdBeginRendering(
+    VkCommandBuffer command_buffer, const VkRenderingInfo *rendering_info) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    const char *shape = "VkRenderingInfo_ptr";
+    if (state == NULL || rendering_info == NULL ||
+        rendering_info->sType != VK_STRUCTURE_TYPE_RENDERING_INFO ||
+        rendering_info->pNext != NULL || rendering_info->flags != 0U ||
+        rendering_info->renderArea.offset.x != 0 ||
+        rendering_info->renderArea.offset.y != 0 ||
+        rendering_info->renderArea.extent.width == 0U ||
+        rendering_info->renderArea.extent.height == 0U ||
+        rendering_info->layerCount == 0U ||
+        rendering_info->viewMask != 0U ||
+        rendering_info->colorAttachmentCount != 1U ||
+        rendering_info->pColorAttachments == NULL ||
+        rendering_info->pDepthAttachment != NULL ||
+        rendering_info->pStencilAttachment != NULL) {
+        poison_shared_command_stream(state, "vkCmdBeginRendering",
+                                     "unsupported_rendering_shape",
+                                     shape, -ENOTSUP);
+        return;
+    }
+    const VkRenderingAttachmentInfo *attachment =
+        rendering_info->pColorAttachments;
+    if (attachment->sType !=
+            VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO ||
+        attachment->pNext != NULL || attachment->imageView == VK_NULL_HANDLE ||
+        attachment->resolveMode != VK_RESOLVE_MODE_NONE ||
+        attachment->resolveImageView != VK_NULL_HANDLE) {
+        poison_shared_command_stream(state, "vkCmdBeginRendering",
+                                     "unsupported_color_attachment",
+                                     shape, -ENOTSUP);
+        return;
+    }
+    const uint64_t image_view_id = non_dispatchable_wire_id(
+        &attachment->imageView, sizeof(attachment->imageView));
+    if (command_stream_is_enabled()) {
+        if (pthread_mutex_lock(&state->stream_mutex) != 0) return;
+        const int owned = shared_object_owned_by_device_cached_locked(
+            state, image_view_id, BVB_OBJECT_IMAGE_VIEW);
+        if (owned < 0) return;
+        (void)pthread_mutex_unlock(&state->stream_mutex);
+        if (owned <= 0) {
+            poison_shared_command_stream(state, "vkCmdBeginRendering",
+                                         "image_view_ownership_rejected",
+                                         shape, -EINVAL);
+            return;
+        }
+    }
+    struct bvb_begin_rendering_command command = {
+        .color_image_view_id = image_view_id,
+        .width = rendering_info->renderArea.extent.width,
+        .height = rendering_info->renderArea.extent.height,
+        .image_layout = attachment->imageLayout,
+        .load_op = attachment->loadOp,
+        .store_op = attachment->storeOp,
+        .layer_count = rendering_info->layerCount,
+    };
+    memcpy(command.clear_color, attachment->clearValue.color.float32,
+           sizeof(command.clear_color));
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    int result = begin_single_render_record(state, bytes, &builder);
+    if (result == 0)
+        result = bvb_command_batch_append_begin_rendering(&builder, &command);
+    if (result == 0)
+        result = finish_single_render_record(
+            state, bytes, &builder, "vkCmdBeginRendering", shape);
+    if (result != 0)
+        poison_shared_command_stream(state, "vkCmdBeginRendering",
+                                     "render_record_rejected", shape, result);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdEndRendering(
+    VkCommandBuffer command_buffer) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    int result = begin_single_render_record(state, bytes, &builder);
+    if (result == 0)
+        result = bvb_command_batch_append_end_rendering(&builder);
+    if (result == 0)
+        result = finish_single_render_record(
+            state, bytes, &builder, "vkCmdEndRendering", "");
+    if (result != 0)
+        poison_shared_command_stream(state, "vkCmdEndRendering",
+                                     "render_record_rejected", "", result);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdBindPipeline(
+    VkCommandBuffer command_buffer, VkPipelineBindPoint bind_point,
+    VkPipeline pipeline) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    const char *shape = "VkPipelineBindPoint_value,VkPipeline_value";
+    if (state == NULL || bind_point != VK_PIPELINE_BIND_POINT_GRAPHICS ||
+        pipeline == VK_NULL_HANDLE) {
+        poison_shared_command_stream(state, "vkCmdBindPipeline",
+                                     "unsupported_pipeline_bind", shape,
+                                     -ENOTSUP);
+        return;
+    }
+    const uint64_t pipeline_id = non_dispatchable_wire_id(
+        &pipeline, sizeof(pipeline));
+    if (command_stream_is_enabled()) {
+        if (pthread_mutex_lock(&state->stream_mutex) != 0) return;
+        const int owned = shared_object_owned_by_device_cached_locked(
+            state, pipeline_id, BVB_OBJECT_PIPELINE);
+        if (owned < 0) return;
+        (void)pthread_mutex_unlock(&state->stream_mutex);
+        if (owned <= 0) {
+            poison_shared_command_stream(state, "vkCmdBindPipeline",
+                                         "pipeline_ownership_rejected",
+                                         shape, -EINVAL);
+            return;
+        }
+    }
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    int result = begin_single_render_record(state, bytes, &builder);
+    if (result == 0)
+        result = bvb_command_batch_append_bind_graphics_pipeline(
+            &builder, &(const struct bvb_bind_graphics_pipeline_command){
+                .pipeline_id = pipeline_id});
+    if (result == 0)
+        result = finish_single_render_record(
+            state, bytes, &builder, "vkCmdBindPipeline", shape);
+    if (result != 0)
+        poison_shared_command_stream(state, "vkCmdBindPipeline",
+                                     "render_record_rejected", shape, result);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdPushConstants(
+    VkCommandBuffer command_buffer, VkPipelineLayout layout,
+    VkShaderStageFlags stage_flags, uint32_t offset, uint32_t size,
+    const void *values) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    const char *shape =
+        "VkPipelineLayout_value,VkShaderStageFlags_value,uint32_t_value,uint32_t_value,void_ptr";
+    if (state == NULL || layout == VK_NULL_HANDLE || stage_flags == 0U ||
+        values == NULL || size == 0U ||
+        size > BVB_COMMAND_VULKAN_MAX_PUSH_CONSTANT_BYTES ||
+        (offset & 3U) != 0U || (size & 3U) != 0U ||
+        offset > BVB_COMMAND_VULKAN_MAX_PUSH_CONSTANT_BYTES - size) {
+        poison_shared_command_stream(state, "vkCmdPushConstants",
+                                     "unsupported_push_constants",
+                                     shape, -ENOTSUP);
+        return;
+    }
+    struct bvb_vulkan_push_constants_command command = {
+        .pipeline_layout_id = non_dispatchable_wire_id(&layout, sizeof(layout)),
+        .stage_flags = stage_flags, .offset = offset, .size = size,
+    };
+    memcpy(command.data, values, size);
+    if (command_stream_is_enabled()) {
+        if (pthread_mutex_lock(&state->stream_mutex) != 0) return;
+        const int owned = shared_object_owned_by_device_cached_locked(
+            state, command.pipeline_layout_id,
+            BVB_OBJECT_PIPELINE_LAYOUT);
+        if (owned < 0) return;
+        (void)pthread_mutex_unlock(&state->stream_mutex);
+        if (owned <= 0) {
+            poison_shared_command_stream(state, "vkCmdPushConstants",
+                                         "layout_ownership_rejected",
+                                         shape, -EINVAL);
+            return;
+        }
+    }
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    int result = begin_single_render_record(state, bytes, &builder);
+    if (result == 0)
+        result = bvb_command_batch_append_vulkan_push_constants(
+            &builder, &command);
+    if (result == 0)
+        result = finish_single_render_record(
+            state, bytes, &builder, "vkCmdPushConstants", shape);
+    if (result != 0)
+        poison_shared_command_stream(state, "vkCmdPushConstants",
+                                     "render_record_rejected", shape, result);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetViewportWithCount(
+    VkCommandBuffer command_buffer, uint32_t viewport_count,
+    const VkViewport *viewports) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    const char *shape = "uint32_t_value,VkViewport_ptr";
+    if (state == NULL || viewport_count != 1U || viewports == NULL) {
+        poison_shared_command_stream(state, "vkCmdSetViewportWithCount",
+                                     "unsupported_viewport_count",
+                                     shape, -ENOTSUP);
+        return;
+    }
+    const struct bvb_set_viewport_command command = {
+        .x = viewports[0].x, .y = viewports[0].y,
+        .width = viewports[0].width, .height = viewports[0].height,
+        .minimum_depth = viewports[0].minDepth,
+        .maximum_depth = viewports[0].maxDepth,
+    };
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    int result = begin_single_render_record(state, bytes, &builder);
+    if (result == 0)
+        result = bvb_command_batch_append_set_viewport(&builder, &command);
+    if (result == 0)
+        result = finish_single_render_record(
+            state, bytes, &builder, "vkCmdSetViewportWithCount", shape);
+    if (result != 0)
+        poison_shared_command_stream(state, "vkCmdSetViewportWithCount",
+                                     "render_record_rejected", shape, result);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetScissorWithCount(
+    VkCommandBuffer command_buffer, uint32_t scissor_count,
+    const VkRect2D *scissors) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    const char *shape = "uint32_t_value,VkRect2D_ptr";
+    if (state == NULL || scissor_count != 1U || scissors == NULL) {
+        poison_shared_command_stream(state, "vkCmdSetScissorWithCount",
+                                     "unsupported_scissor_count",
+                                     shape, -ENOTSUP);
+        return;
+    }
+    const struct bvb_set_scissor_command command = {
+        .x = scissors[0].offset.x, .y = scissors[0].offset.y,
+        .width = scissors[0].extent.width,
+        .height = scissors[0].extent.height,
+    };
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    int result = begin_single_render_record(state, bytes, &builder);
+    if (result == 0)
+        result = bvb_command_batch_append_set_scissor(&builder, &command);
+    if (result == 0)
+        result = finish_single_render_record(
+            state, bytes, &builder, "vkCmdSetScissorWithCount", shape);
+    if (result != 0)
+        poison_shared_command_stream(state, "vkCmdSetScissorWithCount",
+                                     "render_record_rejected", shape, result);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdDraw(
+    VkCommandBuffer command_buffer, uint32_t vertex_count,
+    uint32_t instance_count, uint32_t first_vertex,
+    uint32_t first_instance) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    const char *shape =
+        "uint32_t_value,uint32_t_value,uint32_t_value,uint32_t_value";
+    const struct bvb_draw_command command = {
+        .vertex_count = vertex_count, .instance_count = instance_count,
+        .first_vertex = first_vertex, .first_instance = first_instance,
+    };
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    int result = begin_single_render_record(state, bytes, &builder);
+    if (result == 0)
+        result = bvb_command_batch_append_draw(&builder, &command);
+    if (result == 0)
+        result = finish_single_render_record(
+            state, bytes, &builder, "vkCmdDraw", shape);
+    if (result != 0)
+        poison_shared_command_stream(state, "vkCmdDraw",
+                                     "render_record_rejected", shape, result);
+}
+
 static void VKAPI_CALL bvb_bridge_vkCmdBindDescriptorSets(
     VkCommandBuffer command_buffer, VkPipelineBindPoint pipeline_bind_point,
     VkPipelineLayout layout, uint32_t first_set,
@@ -9040,6 +9392,21 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     BVB_DEVICE_MATCH("vkCmdFillBuffer", bvb_bridge_vkCmdFillBuffer)
     BVB_DEVICE_MATCH("vkCmdBindDescriptorSets",
                      bvb_bridge_vkCmdBindDescriptorSets)
+    BVB_DEVICE_MATCH("vkCmdBeginRendering", bvb_bridge_vkCmdBeginRendering)
+    BVB_DEVICE_MATCH("vkCmdBeginRenderingKHR", bvb_bridge_vkCmdBeginRendering)
+    BVB_DEVICE_MATCH("vkCmdEndRendering", bvb_bridge_vkCmdEndRendering)
+    BVB_DEVICE_MATCH("vkCmdEndRenderingKHR", bvb_bridge_vkCmdEndRendering)
+    BVB_DEVICE_MATCH("vkCmdBindPipeline", bvb_bridge_vkCmdBindPipeline)
+    BVB_DEVICE_MATCH("vkCmdPushConstants", bvb_bridge_vkCmdPushConstants)
+    BVB_DEVICE_MATCH("vkCmdSetViewportWithCount",
+                     bvb_bridge_vkCmdSetViewportWithCount)
+    BVB_DEVICE_MATCH("vkCmdSetViewportWithCountEXT",
+                     bvb_bridge_vkCmdSetViewportWithCount)
+    BVB_DEVICE_MATCH("vkCmdSetScissorWithCount",
+                     bvb_bridge_vkCmdSetScissorWithCount)
+    BVB_DEVICE_MATCH("vkCmdSetScissorWithCountEXT",
+                     bvb_bridge_vkCmdSetScissorWithCount)
+    BVB_DEVICE_MATCH("vkCmdDraw", bvb_bridge_vkCmdDraw)
     BVB_DEVICE_MATCH("vkCreateFence", bvb_bridge_vkCreateFence)
     BVB_DEVICE_MATCH("vkDestroyFence", bvb_bridge_vkDestroyFence)
     BVB_DEVICE_MATCH("vkGetFenceStatus", bvb_bridge_vkGetFenceStatus)

@@ -297,6 +297,10 @@ int bvb_vulkan_global_context_command_buffer_bind_descriptor_sets(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_bind_descriptor_sets_request *request,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_execute_immediate_record(
+    const struct bvb_vulkan_global_context *context,
+    const uint8_t *batch, size_t batch_length,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_validate_queue_submit_2(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_queue_submit_2_request *request,

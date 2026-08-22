@@ -75,6 +75,8 @@ static uint32_t fake_descriptor_step;
 static uint32_t fake_descriptor_template_step;
 static int fake_descriptor_template_swapchain_update_seen;
 static int fake_descriptor_bind_seen;
+static uint32_t fake_render_bundle_step;
+static int fake_render_bundle_violation;
 static uint32_t fake_init_image_step;
 static VkCommandBuffer fake_init_image_command = VK_NULL_HANDLE;
 static int fake_init_image_violation;
@@ -1425,6 +1427,95 @@ static void VKAPI_CALL fake_cmd_bind_descriptor_sets(
         descriptor_sets[0] != fake_descriptor_set ||
         dynamic_offset_count != 0U || dynamic_offsets != NULL) return;
     fake_descriptor_bind_seen = 1;
+    if (fake_render_bundle_step == 4U)
+        fake_render_bundle_step = 5U;
+}
+
+static void VKAPI_CALL fake_cmd_begin_rendering(
+    VkCommandBuffer command_buffer, const VkRenderingInfo *info) {
+    const VkRenderingAttachmentInfo *color = info == NULL
+        ? NULL : info->pColorAttachments;
+    if (fake_render_bundle_step == 0U && command_buffer != VK_NULL_HANDLE &&
+        info != NULL && info->sType == VK_STRUCTURE_TYPE_RENDERING_INFO &&
+        info->pNext == NULL && info->flags == 0U &&
+        info->renderArea.offset.x == 0 && info->renderArea.offset.y == 0 &&
+        info->renderArea.extent.width == 64U &&
+        info->renderArea.extent.height == 64U && info->layerCount == 1U &&
+        info->viewMask == 0U && info->colorAttachmentCount == 1U &&
+        color != NULL &&
+        color->sType == VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO &&
+        color->pNext == NULL && color->imageView != VK_NULL_HANDLE &&
+        color->imageLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL &&
+        color->resolveMode == VK_RESOLVE_MODE_NONE &&
+        color->resolveImageView == VK_NULL_HANDLE &&
+        color->loadOp == VK_ATTACHMENT_LOAD_OP_DONT_CARE &&
+        color->storeOp == VK_ATTACHMENT_STORE_OP_STORE) {
+        fake_render_bundle_step = 1U;
+    } else {
+        fake_render_bundle_violation = 1;
+    }
+}
+
+static void VKAPI_CALL fake_cmd_set_viewport_with_count(
+    VkCommandBuffer command_buffer, uint32_t count,
+    const VkViewport *viewports) {
+    if (fake_render_bundle_step == 2U && command_buffer != VK_NULL_HANDLE &&
+        count == 1U && viewports != NULL && viewports[0].x == 0.0F &&
+        viewports[0].y == 0.0F && viewports[0].width == 64.0F &&
+        viewports[0].height == 64.0F && viewports[0].minDepth == 0.0F &&
+        viewports[0].maxDepth == 1.0F) fake_render_bundle_step = 3U;
+    else fake_render_bundle_violation = 1;
+}
+
+static void VKAPI_CALL fake_cmd_set_scissor_with_count(
+    VkCommandBuffer command_buffer, uint32_t count,
+    const VkRect2D *scissors) {
+    if (fake_render_bundle_step == 3U && command_buffer != VK_NULL_HANDLE &&
+        count == 1U && scissors != NULL &&
+        scissors[0].offset.x == 0 && scissors[0].offset.y == 0 &&
+        scissors[0].extent.width == 64U &&
+        scissors[0].extent.height == 64U) fake_render_bundle_step = 4U;
+    else fake_render_bundle_violation = 1;
+}
+
+static void VKAPI_CALL fake_cmd_bind_pipeline(
+    VkCommandBuffer command_buffer, VkPipelineBindPoint bind_point,
+    VkPipeline pipeline) {
+    if (fake_render_bundle_step == 1U && command_buffer != VK_NULL_HANDLE &&
+        bind_point == VK_PIPELINE_BIND_POINT_GRAPHICS &&
+        pipeline == fake_builtin_graphics_pipeline)
+        fake_render_bundle_step = 2U;
+    else fake_render_bundle_violation = 1;
+}
+
+static void VKAPI_CALL fake_cmd_push_constants(
+    VkCommandBuffer command_buffer, VkPipelineLayout layout,
+    VkShaderStageFlags stage_flags, uint32_t offset, uint32_t size,
+    const void *values) {
+    const uint32_t expected[4] = {1U, 2U, 3U, 4U};
+    if (fake_render_bundle_step == 5U && command_buffer != VK_NULL_HANDLE &&
+        layout == fake_pipeline_layout &&
+        stage_flags == VK_SHADER_STAGE_FRAGMENT_BIT && offset == 0U &&
+        size == sizeof(expected) && values != NULL &&
+        memcmp(values, expected, sizeof(expected)) == 0)
+        fake_render_bundle_step = 6U;
+    else fake_render_bundle_violation = 1;
+}
+
+static void VKAPI_CALL fake_cmd_draw(
+    VkCommandBuffer command_buffer, uint32_t vertex_count,
+    uint32_t instance_count, uint32_t first_vertex,
+    uint32_t first_instance) {
+    if (fake_render_bundle_step == 6U && command_buffer != VK_NULL_HANDLE &&
+        vertex_count == 3U && instance_count == 1U && first_vertex == 0U &&
+        first_instance == 0U) fake_render_bundle_step = 7U;
+    else fake_render_bundle_violation = 1;
+}
+
+static void VKAPI_CALL fake_cmd_end_rendering(VkCommandBuffer command_buffer) {
+    if (fake_render_bundle_step == 7U && command_buffer != VK_NULL_HANDLE)
+        fake_render_bundle_step = 8U;
+    else fake_render_bundle_violation = 1;
 }
 
 static VkResult VKAPI_CALL fake_create_pipeline_layout(
@@ -2548,6 +2639,8 @@ static VkResult VKAPI_CALL fake_begin_command_buffer(
     VkCommandBuffer command_buffer,
     const VkCommandBufferBeginInfo *begin_info) {
     (void)begin_info;
+    fake_render_bundle_step = 0U;
+    fake_render_bundle_violation = 0;
     if (getenv("BVB_FAKE_REQUIRE_INIT_IMAGE_COMMANDS") != NULL &&
         command_buffer == fake_init_image_command) {
         fake_init_image_step = 1U;
@@ -2558,6 +2651,11 @@ static VkResult VKAPI_CALL fake_begin_command_buffer(
 
 static VkResult VKAPI_CALL fake_end_command_buffer(
     VkCommandBuffer command_buffer) {
+    if (fake_render_bundle_step != 0U) {
+        if (fake_render_bundle_step != 8U || fake_render_bundle_violation != 0)
+            return VK_ERROR_INITIALIZATION_FAILED;
+        fake_render_bundle_step = 0U;
+    }
     if (fake_animation_enabled() && fake_animation_step != 0U) {
         if (fake_animation_step != 3U || fake_animation_violation != 0 ||
             fake_animation_frame_count >= 4U)
@@ -3262,6 +3360,21 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
                      fake_update_descriptor_set_with_template)
     BVB_DEVICE_MATCH("vkCmdBindDescriptorSets",
                      fake_cmd_bind_descriptor_sets)
+    BVB_DEVICE_MATCH("vkCmdBeginRendering", fake_cmd_begin_rendering)
+    BVB_DEVICE_MATCH("vkCmdBeginRenderingKHR", fake_cmd_begin_rendering)
+    BVB_DEVICE_MATCH("vkCmdEndRendering", fake_cmd_end_rendering)
+    BVB_DEVICE_MATCH("vkCmdEndRenderingKHR", fake_cmd_end_rendering)
+    BVB_DEVICE_MATCH("vkCmdBindPipeline", fake_cmd_bind_pipeline)
+    BVB_DEVICE_MATCH("vkCmdPushConstants", fake_cmd_push_constants)
+    BVB_DEVICE_MATCH("vkCmdSetViewportWithCount",
+                     fake_cmd_set_viewport_with_count)
+    BVB_DEVICE_MATCH("vkCmdSetViewportWithCountEXT",
+                     fake_cmd_set_viewport_with_count)
+    BVB_DEVICE_MATCH("vkCmdSetScissorWithCount",
+                     fake_cmd_set_scissor_with_count)
+    BVB_DEVICE_MATCH("vkCmdSetScissorWithCountEXT",
+                     fake_cmd_set_scissor_with_count)
+    BVB_DEVICE_MATCH("vkCmdDraw", fake_cmd_draw)
     BVB_DEVICE_MATCH("vkCreatePipelineLayout", fake_create_pipeline_layout)
     BVB_DEVICE_MATCH("vkDestroyPipelineLayout", fake_destroy_pipeline_layout)
     BVB_DEVICE_MATCH("vkCreateGraphicsPipelines", fake_create_graphics_pipelines)
