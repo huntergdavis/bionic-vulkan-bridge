@@ -3228,8 +3228,11 @@ static int answer_shared_batch_setup(
         request->header.payload_length != BVB_SHARED_BATCH_SETUP_SIZE) {
         status = -EPROTO;
     } else {
-        status = bvb_protocol_decode_shared_batch_setup(request->payload,
-                                                        &setup);
+        status = command_stream
+            ? bvb_protocol_decode_vulkan_command_stream_setup(
+                  request->payload, &setup)
+            : bvb_protocol_decode_shared_batch_setup(
+                  request->payload, &setup);
     }
     if (status == 0 && command_stream &&
         setup.region_bytes != BVB_COMMAND_STREAM_REGION_BYTES) {

@@ -879,6 +879,43 @@ static int test_expanded_stream_slot_capacity(void) {
     return 0;
 }
 
+static int test_e124_large_stream_slot_capacity(void) {
+    const size_t capacity = BVB_COMMAND_STREAM_SLOT_BYTES;
+    uint8_t *bytes = malloc(capacity);
+    CHECK(bytes != NULL);
+    const uint64_t command_buffer =
+        bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 43U);
+    const struct bvb_vulkan_transfer_command command = {
+        .source_id = bvb_handle_id(BVB_OBJECT_IMAGE, 44U),
+        .destination_id = bvb_handle_id(BVB_OBJECT_IMAGE, 45U),
+        .source_layout = 7U,
+        .destination_layout = 7U,
+        .region_count = 1U,
+        .regions = {{
+            .source_layers = {.aspect_mask = 1U, .layer_count = 1U},
+            .destination_layers = {.aspect_mask = 1U, .layer_count = 1U},
+            .extent = {.width = 1U, .height = 1U, .depth = 1U},
+        }},
+    };
+    struct bvb_command_batch_builder builder;
+    CHECK(bvb_command_batch_begin(&builder, bytes, capacity,
+                                  command_buffer, 1U) == 0);
+    for (uint32_t index = 0U; index < 10000U; ++index)
+        CHECK(bvb_command_batch_append_vulkan_transfer(
+                  &builder, BVB_COMMAND_VULKAN_COPY_IMAGE_2,
+                  &command) == 0);
+    size_t length = 0U;
+    CHECK(bvb_command_batch_finish(&builder, &length) == 0);
+    CHECK(length == BVB_COMMAND_BATCH_HEADER_SIZE +
+                        10000U * (BVB_COMMAND_RECORD_HEADER_SIZE + 160U));
+    CHECK(length < BVB_COMMAND_STREAM_SLOT_BYTES);
+    struct bvb_command_batch_info info;
+    CHECK(bvb_command_batch_validate(bytes, length, &info) == 0);
+    CHECK(info.command_count == 10000U);
+    free(bytes);
+    return 0;
+}
+
 static int test_large_image_barrier_batch(void) {
     const uint32_t image_count = 1024U;
     const size_t capacity = 256U * 1024U;
@@ -1252,6 +1289,7 @@ int main(void) {
     CHECK(test_vulkan_query_family() == 0);
     CHECK(test_compact_transfer_capacity() == 0);
     CHECK(test_expanded_stream_slot_capacity() == 0);
+    CHECK(test_e124_large_stream_slot_capacity() == 0);
     CHECK(test_large_image_barrier_batch() == 0);
     CHECK(test_vulkan_command_stream() == 0);
     puts("PASS: proxy handles and triangle command batch");

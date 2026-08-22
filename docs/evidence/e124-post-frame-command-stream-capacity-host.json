@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "gate": "E124",
+  "date": "2026-08-22",
+  "source_base_commit": "f8591bb2a74ac348eebb9d6521a1871095ce1540",
+  "trigger": {
+    "game": "Tomb Raider (2013)",
+    "launch": "-nolauncher -benchmark",
+    "entry": "vkCmdCopyImage2",
+    "reason": "ownership_or_transfer_append_rejected",
+    "result": -28,
+    "command_buffer_sequence": 2710,
+    "activity_present_sequence": 682,
+    "visible_frame_sha256": "923e23444730ca7948cd5464cd07311fd42799ce0899418d7fade6f409b1de5b",
+    "interpretation": "The transfer family and typed ownership path were executable; ENOSPC proves the fixed 256 KiB recording slot filled before this otherwise-valid copy-image record could be appended."
+  },
+  "implementation": {
+    "wire_opcode_changed": false,
+    "command_codec_changed": false,
+    "setup_codec": "The existing 16-byte setup wire now has a command-stream-specific encoder/decoder so the 16 MiB generic shared-batch safety cap remains unchanged.",
+    "slot_count": 64,
+    "slot_bytes_before": 262144,
+    "slot_bytes": 2097152,
+    "slot_headroom_multiplier": 8,
+    "region_bytes": 134217728,
+    "simultaneous_recordings": 64,
+    "memory_behavior": "The one-time sealed memfd and mappings reserve 128 MiB of address space; pages are physically committed only as command streams are written. Submit snapshots and replays only the actual stream length.",
+    "diagnostic": "A future ENOSPC now records command_stream_slot_exhausted instead of conflating capacity with typed ownership."
+  },
+  "validation": {
+    "ten_thousand_copy_image_records": true,
+    "ten_thousand_record_bytes": 1760032,
+    "record_fits_two_megabyte_slot": true,
+    "host_suite": "84/84 passed",
+    "tablet_suite": "pending",
+    "tablet_runtime": "pending"
+  },
+  "reuse": "The required deja query found no reusable vkCmdCopyImage2 capacity implementation. E124 reuses E075/E075a's sealed immutable stream, E080's cached typed ownership with service-authoritative validation, E105/E111's compact transfer codec, E112's measured slot-headroom response, and E123's exact live ENOSPC diagnostic.",
+  "claims": {
+    "host_capacity_ready": true,
+    "tablet_deployed": false,
+    "copy_image_capacity_boundary_cleared": false,
+    "benchmark_complete": false,
+    "fps_claim": false
+  }
+}

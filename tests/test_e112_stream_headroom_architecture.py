@@ -30,7 +30,7 @@ def main() -> int:
     codec = codec_path.read_text(encoding="utf-8")
     test = test_path.read_text(encoding="utf-8")
     require(protocol, "BVB_COMMAND_STREAM_SLOT_COUNT = 64", "slot count")
-    require(protocol, "BVB_COMMAND_STREAM_SLOT_BYTES = 256 * 1024", "slot bytes")
+    require(protocol, "BVB_COMMAND_STREAM_REGION_BYTES =", "region formula")
     require(codec, "barrier_payload_size", "compact barrier formula")
     require(codec, "base += command->memory_count", "packed memory array")
     require(codec, "base += command->buffer_count", "packed buffer array")

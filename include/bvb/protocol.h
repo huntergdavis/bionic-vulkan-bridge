@@ -280,7 +280,7 @@ enum {
     BVB_SHARED_BATCH_MIN_BYTES = 4096,
     BVB_SHARED_BATCH_MAX_BYTES = 16 * 1024 * 1024,
     BVB_COMMAND_STREAM_SLOT_COUNT = 64,
-    BVB_COMMAND_STREAM_SLOT_BYTES = 256 * 1024,
+    BVB_COMMAND_STREAM_SLOT_BYTES = 2 * 1024 * 1024,
     BVB_COMMAND_STREAM_REGION_BYTES =
         BVB_COMMAND_STREAM_SLOT_COUNT * BVB_COMMAND_STREAM_SLOT_BYTES,
     BVB_VULKAN_SUBMIT_2_COMMAND_SHARED_STREAM = 1U << 0,
@@ -1125,6 +1125,12 @@ int bvb_protocol_encode_shared_batch_setup(
     uint8_t output[BVB_SHARED_BATCH_SETUP_SIZE],
     const struct bvb_shared_batch_setup *setup);
 int bvb_protocol_decode_shared_batch_setup(
+    const uint8_t input[BVB_SHARED_BATCH_SETUP_SIZE],
+    struct bvb_shared_batch_setup *setup);
+int bvb_protocol_encode_vulkan_command_stream_setup(
+    uint8_t output[BVB_SHARED_BATCH_SETUP_SIZE],
+    const struct bvb_shared_batch_setup *setup);
+int bvb_protocol_decode_vulkan_command_stream_setup(
     const uint8_t input[BVB_SHARED_BATCH_SETUP_SIZE],
     struct bvb_shared_batch_setup *setup);
 int bvb_protocol_encode_shared_batch_execute(

@@ -4144,6 +4144,35 @@ int bvb_protocol_decode_shared_batch_setup(
     return 0;
 }
 
+int bvb_protocol_encode_vulkan_command_stream_setup(
+    uint8_t output[BVB_SHARED_BATCH_SETUP_SIZE],
+    const struct bvb_shared_batch_setup *setup) {
+    if (output == NULL || setup == NULL || setup->generation == 0U ||
+        setup->region_bytes != BVB_COMMAND_STREAM_REGION_BYTES) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u32(output, setup->region_bytes);
+    bvb_wire_put_u32(output + 4, 0U);
+    bvb_wire_put_u64(output + 8, setup->generation);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_command_stream_setup(
+    const uint8_t input[BVB_SHARED_BATCH_SETUP_SIZE],
+    struct bvb_shared_batch_setup *setup) {
+    if (input == NULL || setup == NULL) return -EINVAL;
+    const struct bvb_shared_batch_setup decoded = {
+        .region_bytes = bvb_wire_get_u32(input),
+        .generation = bvb_wire_get_u64(input + 8),
+    };
+    if (bvb_wire_get_u32(input + 4) != 0U || decoded.generation == 0U ||
+        decoded.region_bytes != BVB_COMMAND_STREAM_REGION_BYTES) {
+        return -EPROTO;
+    }
+    *setup = decoded;
+    return 0;
+}
+
 int bvb_protocol_encode_shared_batch_execute(
     uint8_t output[BVB_SHARED_BATCH_EXECUTE_SIZE],
     const struct bvb_shared_batch_execute *execute) {

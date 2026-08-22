@@ -34,7 +34,7 @@ def main() -> int:
     require(header, "BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS = 64", "memory bound")
     require(header, "BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS = 256", "buffer bound")
     require(header, "BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS = 2048", "image bound")
-    require(protocol, "BVB_COMMAND_STREAM_SLOT_BYTES = 256 * 1024", "slot size")
+    require(protocol, "BVB_COMMAND_STREAM_SLOT_BYTES", "slot size")
     require(codec, "maximum synchronization2 record must fit one stream slot", "fit assertion")
     require(codec, "barrier_payload_size", "count-sized barrier codec")
     require(test, "test_large_image_barrier_batch", "large batch test")

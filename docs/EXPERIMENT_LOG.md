@@ -4807,3 +4807,34 @@ exact `deja` query found no prior implementation for this freeze; the broader
 recall supplied only the earlier topology and non-causal online-service
 findings. Tablet deployment and a bounded rerun remain required before naming
 the next Vulkan entry or claiming animation, completion, or FPS.
+
+## E124 — post-frame command-stream headroom (2026-08-22)
+
+The exact E123 tablet run reached Tomb Raider's own loading screen, then a
+native-resolution Lara Croft benchmark scene, and presented 682 Activity
+frames. The image then stopped changing. E123 preserved the first active-game
+failure: `vkCmdCopyImage2` poisoned command-buffer sequence 2710 with result
+`-28` (`ENOSPC`). The entry, typed image ownership, compact transfer codec, and
+native replay family were already implemented; the fixed 256 KiB shared
+recording slot was full before the otherwise-valid record could be appended.
+
+E124 keeps 64 simultaneous recording slots and expands each to 2 MiB. The
+one-time sealed mapping therefore reserves 128 MiB, but pages are physically
+committed only as command bytes are written, and the Bionic service snapshots
+only each actual submitted length. A codec regression writes, validates, and
+decodes a 1,760,032-byte stream containing 10,000 one-region
+`vkCmdCopyImage2` records. This provides eight times E123's per-command-buffer
+headroom without adding recording RPCs or changing any Vulkan command wire.
+Future `ENOSPC` failures are now labeled `command_stream_slot_exhausted`,
+separately from typed-ownership rejection. The unchanged 16-byte setup wire
+uses a command-stream-specific encoder/decoder that accepts only this exact
+128 MiB region; generic shared batches retain their independent 16 MiB cap.
+
+The required `deja "vkCmdCopyImage2 ownership_or_transfer_append_rejected BVB
+command poison image copy DXVK"` query returned no reusable implementation;
+the only exact hit was this new E123 diagnostic. E124 reuses E075/E075a's
+immutable stream transaction, E080's typed ownership cache plus authoritative
+service validation, E105/E111's compact transfer family, E112's measured
+headroom design, and E123's live rejection. The full host suite passes 84/84.
+Tablet validation and a new benchmark run remain pending; no tablet completion
+or FPS claim is made yet.

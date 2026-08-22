@@ -1820,6 +1820,23 @@ int main(void) {
           -EPROTO);
     shared_setup_wire[4] = 0U;
 
+    const struct bvb_shared_batch_setup command_stream_setup = {
+        .region_bytes = BVB_COMMAND_STREAM_REGION_BYTES,
+        .generation = UINT64_C(0x8877665544332211),
+    };
+    CHECK(bvb_protocol_encode_vulkan_command_stream_setup(
+              shared_setup_wire, &command_stream_setup) == 0);
+    CHECK(bvb_wire_get_u32(shared_setup_wire) ==
+          BVB_COMMAND_STREAM_REGION_BYTES);
+    CHECK(bvb_protocol_decode_vulkan_command_stream_setup(
+              shared_setup_wire, &shared_setup_decoded) == 0);
+    CHECK(shared_setup_decoded.region_bytes ==
+          BVB_COMMAND_STREAM_REGION_BYTES);
+    bvb_wire_put_u32(shared_setup_wire,
+                     BVB_COMMAND_STREAM_REGION_BYTES - 4096U);
+    CHECK(bvb_protocol_decode_vulkan_command_stream_setup(
+              shared_setup_wire, &shared_setup_decoded) == -EPROTO);
+
     const struct bvb_shared_batch_execute shared_execute = {
         .generation = UINT64_C(0x1122334455667788),
         .offset = 64U,

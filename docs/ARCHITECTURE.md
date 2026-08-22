@@ -500,3 +500,13 @@ treated as DXVK's expected request to rotate pools, a success clears it, and a
 second consecutive retryable result is recorded. All unrelated negative
 results remain immediately eligible. The strict/default function pointer,
 wire, and Vulkan implementation paths are unchanged.
+
+E124 expands each shared command-buffer recording slot from 256 KiB to 2 MiB
+after a real post-frame `vkCmdCopyImage2` append returned `ENOSPC`. The 64-slot
+layout and zero-recording-RPC path remain unchanged. This reserves a 128 MiB
+sparse memfd/address range but commits pages only as commands are written; the
+service still snapshots, validates, and replays only the submitted byte length.
+The compact transfer wire and typed ownership rules are unchanged. Capacity
+errors now have a distinct `command_stream_slot_exhausted` diagnostic. A
+command-stream-specific setup codec accepts only the exact 128 MiB region,
+leaving the generic shared-batch 16 MiB safety ceiling unchanged.

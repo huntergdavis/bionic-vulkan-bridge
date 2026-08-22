@@ -613,7 +613,8 @@ static int setup_command_stream_locked(void) {
         .region_bytes = BVB_COMMAND_STREAM_REGION_BYTES,
         .generation = generation,
     };
-    result = bvb_protocol_encode_shared_batch_setup(request.payload, &setup);
+    result = bvb_protocol_encode_vulkan_command_stream_setup(
+        request.payload, &setup);
     struct bvb_protocol_packet response = {0};
     if (result == 0) {
         result = exchange_pass_fd_locked(&request, &response, memory_fd);
@@ -9502,9 +9503,11 @@ static void submit_transfer_command(
             result = -EINVAL;
         }
         if (result != 0) {
+            const char *reason = result == -ENOSPC
+                ? "command_stream_slot_exhausted"
+                : "ownership_or_transfer_append_rejected";
             store_command_diagnostic_locked(
-                state, entry, "ownership_or_transfer_append_rejected",
-                shape, result);
+                state, entry, reason, shape, result);
             state->stream_error = true;
             state->stream_sealed = false;
         }
