@@ -4036,7 +4036,7 @@ start ticks.
 
 ## E102 — low 32-bit Vulkan mapped addresses (2026-08-21)
 
-Status: host implementation complete; post-fix tablet runtime pending. Tomb
+Status: host and tablet mapping proof complete; game-frame work continues. Tomb
 Raider is a 32-bit process, but the BVB ICD is 64-bit AArch64. E034/E077 used
 ordinary `malloc`/`mmap`, which returned pointers above 4 GiB; Wine correctly
 refused to narrow those pointers and surfaced an apparent OOM.
@@ -4057,3 +4057,22 @@ memory limit"` query returned no indexed implementation. E102 reuses E034's
 shadow lifecycle, E077's mapping split and sealed memfd transport, and E099's
 MapMemory2 alias path. No game pixel, benchmark, or FPS result is claimed
 before deployment and the next bounded screenshot-checked run.
+
+The exact E102 tablet candidate passed 60/60 contracts and installed with
+rollback snapshot `install-pre-6qUEsLMW`. Run
+`20260822T024434Z-13437` then mapped four allocations of 4, 8, 16, and 16 MiB
+at `0x68000000`, `0x69000000`, `0x6a000000`, and `0x6b000000`. Every mapping
+reported `low32=1`; Wine emitted zero pointer-narrowing diagnostics and DXVK
+emitted zero mapped-memory OOMs. This closes the E102 failure rather than
+merely moving it.
+
+The same run exposed the next two exact families. A complete two-stage
+monolithic dynamic-rendering pipeline returned
+`VK_ERROR_FEATURE_NOT_PRESENT`, because the bridge only carried DXVK's earlier
+fixed built-in and fragment-library shapes. DXVK also saw zeroed
+`VkFormatProperties3` feature flags, producing 29 render-target-view and 30
+shader-resource-view capability rejections. The authenticated three-image
+frame helper still passed with no per-frame Java/Binder work. Automatic and
+live screenshots were byte-identical bridge triangles, so no game pixel is
+claimed. Steam and X retained PID/start-tick identities
+`14565/121864440` and `13643/121863492` after bounded cleanup.
