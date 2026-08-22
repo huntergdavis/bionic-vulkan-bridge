@@ -555,3 +555,16 @@ request decode, immutable journal snapshot validation, native update replay,
 real `vkAllocateDescriptorSets`, response work, and completion publication.
 One bounded line is written after 4,096 completed transactions and once for a
 final partial sample. Default service behavior and stderr remain unchanged.
+
+E130 replaces the ring's immediate sleep/wake handoff with a bounded active
+handoff while preserving the same synchronous native result. Ring ABI version
+2 gives request and completion waiters explicit idle, spinning, and sleeping
+states. Each side polls the release/acquire sequence for at most 250
+microseconds; a producer skips `futex_wake` only while its peer is idle or
+actively spinning. Before sleeping, a waiter publishes the sleeping state and
+rechecks the sequence, so the producer either observes that state and wakes it
+or the recheck observes the already-published work. Slow and timeout paths use
+the original process-shared futex, and peer failure still wakes both sequences
+unconditionally. No allocation result is deferred, no descriptor payload is
+changed, and strict mode is untouched. The bounded CPU-for-latency trade must
+be measured on the tablet before any speed claim.

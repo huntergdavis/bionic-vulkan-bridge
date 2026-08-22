@@ -5086,3 +5086,32 @@ descriptor leases tied to authoritative pool reset epochs. Complete phase
 totals, artifact identities, and claim boundaries are in
 `docs/evidence/e129-descriptor-worker-phase-profile-tablet.json`; canonical
 game evidence is in sibling `steamclienttermux` commit `874757d`.
+
+## E130 — bounded descriptor-ring active handoff (2026-08-22)
+
+E129 shows that the Bionic worker itself averages only 78.2 microseconds of a
+roughly 269.4-microsecond client ring call. The required `deja "descriptor
+transaction ring adaptive spin futex wake scheduling latency Android BVB"`
+query returned no indexed implementation. E130 therefore reuses E128's
+process-shared sequence ring and E129's exact boundary instead of deferring
+Vulkan results or guessing at descriptor-pool reuse.
+
+Ring ABI version 2 adds explicit idle, spinning, and sleeping states for both
+request and completion waiters. Each side actively checks its sequence for at
+most 250 microseconds. The producer performs `futex_wake` only when the peer
+has published the sleeping state; the waiter rechecks the sequence after that
+publication, closing the sleep transition race. Transactions that do not
+finish inside the bounded window use the original futex timeout path, and peer
+failure still wakes both sequences unconditionally. Strict descriptor mode,
+the canonical transaction payload, real native allocation, and synchronous
+error semantics are unchanged.
+
+The focused ring completed 4,096 calls and 256 wraps per run, including forced
+five-millisecond request and completion delays that exercise both sleep/wake
+fallbacks. Ten consecutive focused runs and the ThreadSanitizer build passed.
+The complete host suite passed 92/92. This is host architecture evidence only:
+the 250-microsecond active wait may reduce scheduler latency or may increase
+contention inside Android's restricted Termux cgroup. No tablet latency or FPS
+gain is claimed before the exact client/service pair completes the same
+profiled Tomb Raider benchmark. Exact boundaries are in
+`docs/evidence/e130-descriptor-ring-active-handoff-host.json`.

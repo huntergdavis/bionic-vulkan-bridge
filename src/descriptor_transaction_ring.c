@@ -18,6 +18,11 @@
 #define SYS_futex __NR_futex
 #endif
 
+enum {
+    BVB_DESCRIPTOR_TRANSACTION_SPIN_NS = 250000,
+    BVB_DESCRIPTOR_TRANSACTION_SPIN_CLOCK_INTERVAL = 64,
+};
+
 static uint32_t load_u32(const uint32_t *word) {
     return __atomic_load_n(word, __ATOMIC_ACQUIRE);
 }
@@ -72,6 +77,16 @@ static int futex_wait_until(uint32_t *word, uint32_t expected,
     return -errno;
 }
 
+static void cpu_relax(void) {
+#if defined(__aarch64__) || defined(__arm__)
+    __asm__ volatile("yield" ::: "memory");
+#elif defined(__x86_64__) || defined(__i386__)
+    __asm__ volatile("pause" ::: "memory");
+#else
+    __atomic_signal_fence(__ATOMIC_SEQ_CST);
+#endif
+}
+
 static struct bvb_descriptor_transaction_slot *slot_at(
     struct bvb_descriptor_transaction_ring *ring, uint32_t index) {
     return (struct bvb_descriptor_transaction_slot *)
@@ -86,6 +101,59 @@ static int peer_status(const struct bvb_descriptor_transaction_ring *ring) {
     return service < 0 ? service : 0;
 }
 
+static int wait_for_sequence(
+    struct bvb_descriptor_transaction_ring *ring, uint32_t *word,
+    uint32_t *wait_state, uint32_t expected, int64_t deadline_ns) {
+    int result = peer_status(ring);
+    if (result != 0) return result;
+    if (load_u32(word) >= expected) return 0;
+
+    const int64_t started_ns = monotonic_ns();
+    if (started_ns < 0) return -EIO;
+    int64_t spin_deadline_ns =
+        started_ns + BVB_DESCRIPTOR_TRANSACTION_SPIN_NS;
+    if (spin_deadline_ns < started_ns || spin_deadline_ns > deadline_ns)
+        spin_deadline_ns = deadline_ns;
+    store_u32(wait_state, BVB_DESCRIPTOR_TRANSACTION_WAIT_SPINNING);
+    uint32_t iterations = 0U;
+    for (;;) {
+        result = peer_status(ring);
+        if (result != 0 || load_u32(word) >= expected) {
+            store_u32(wait_state, BVB_DESCRIPTOR_TRANSACTION_WAIT_IDLE);
+            return result;
+        }
+        cpu_relax();
+        ++iterations;
+        if (iterations % BVB_DESCRIPTOR_TRANSACTION_SPIN_CLOCK_INTERVAL ==
+            0U) {
+            const int64_t now_ns = monotonic_ns();
+            if (now_ns < 0) {
+                store_u32(
+                    wait_state, BVB_DESCRIPTOR_TRANSACTION_WAIT_IDLE);
+                return -EIO;
+            }
+            if (now_ns >= spin_deadline_ns) break;
+        }
+    }
+
+    store_u32(wait_state, BVB_DESCRIPTOR_TRANSACTION_WAIT_SLEEPING);
+    for (;;) {
+        result = peer_status(ring);
+        if (result != 0) break;
+        const uint32_t observed = load_u32(word);
+        if (observed >= expected) break;
+        result = futex_wait_until(word, observed, deadline_ns);
+        if (result != 0) break;
+    }
+    store_u32(wait_state, BVB_DESCRIPTOR_TRANSACTION_WAIT_IDLE);
+    return result;
+}
+
+static int wake_if_sleeping(uint32_t *word, const uint32_t *wait_state) {
+    return load_u32(wait_state) == BVB_DESCRIPTOR_TRANSACTION_WAIT_SLEEPING
+        ? futex_wake(word) : 0;
+}
+
 static int validate_header(
     const struct bvb_descriptor_transaction_ring *ring, size_t length,
     uint64_t generation) {
@@ -98,6 +166,10 @@ static int validate_header(
         ring->slot_count == 0U ||
         ring->slot_count > BVB_DESCRIPTOR_TRANSACTION_RING_SLOT_COUNT ||
         ring->flags != 0U || ring->generation == 0U ||
+        load_u32(&ring->request_wait_state) >
+            BVB_DESCRIPTOR_TRANSACTION_WAIT_SLEEPING ||
+        load_u32(&ring->completion_wait_state) >
+            BVB_DESCRIPTOR_TRANSACTION_WAIT_SLEEPING ||
         (generation != 0U && ring->generation != generation)) {
         return -EINVAL;
     }
@@ -173,21 +245,17 @@ int bvb_descriptor_transaction_ring_call(
     slot->sequence = sequence;
     store_u32(&slot->state, BVB_DESCRIPTOR_TRANSACTION_SLOT_REQUESTED);
     store_u32(&ring->request_sequence, sequence);
-    result = futex_wake(&ring->request_sequence);
+    result = wake_if_sleeping(
+        &ring->request_sequence, &ring->request_wait_state);
     if (result != 0) return result;
 
     int64_t deadline_ns = 0;
     result = deadline_from_timeout(timeout_ms, &deadline_ns);
     if (result != 0) return result;
-    for (;;) {
-        result = peer_status(ring);
-        if (result != 0) return result;
-        const uint32_t completed = load_u32(&ring->completion_sequence);
-        if (completed >= sequence) break;
-        result = futex_wait_until(
-            &ring->completion_sequence, completed, deadline_ns);
-        if (result != 0) return result;
-    }
+    result = wait_for_sequence(
+        ring, &ring->completion_sequence, &ring->completion_wait_state,
+        sequence, deadline_ns);
+    if (result != 0) return result;
     if (slot->sequence != sequence ||
         load_u32(&slot->state) !=
             BVB_DESCRIPTOR_TRANSACTION_SLOT_COMPLETED ||
@@ -219,15 +287,10 @@ int bvb_descriptor_transaction_ring_wait_request(
     int64_t deadline_ns = 0;
     result = deadline_from_timeout(timeout_ms, &deadline_ns);
     if (result != 0) return result;
-    for (;;) {
-        result = peer_status(ring);
-        if (result != 0) return result;
-        const uint32_t requested = load_u32(&ring->request_sequence);
-        if (requested >= expected) break;
-        result = futex_wait_until(&ring->request_sequence, requested,
-                                  deadline_ns);
-        if (result != 0) return result;
-    }
+    result = wait_for_sequence(
+        ring, &ring->request_sequence, &ring->request_wait_state,
+        expected, deadline_ns);
+    if (result != 0) return result;
     const uint32_t index = (expected - 1U) % ring->slot_count;
     struct bvb_descriptor_transaction_slot *slot = slot_at(ring, index);
     if (slot->sequence != expected ||
@@ -270,7 +333,8 @@ int bvb_descriptor_transaction_ring_complete(
     }
     store_u32(&slot->state, BVB_DESCRIPTOR_TRANSACTION_SLOT_COMPLETED);
     store_u32(&ring->completion_sequence, sequence);
-    return futex_wake(&ring->completion_sequence);
+    return wake_if_sleeping(
+        &ring->completion_sequence, &ring->completion_wait_state);
 }
 
 static int fail_peer(struct bvb_descriptor_transaction_ring *ring,

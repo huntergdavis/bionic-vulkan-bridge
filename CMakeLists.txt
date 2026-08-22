@@ -1479,4 +1479,14 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
   )
+  add_test(
+    NAME e130-descriptor-ring-active-handoff-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e130_descriptor_ring_active_handoff_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e130-descriptor-ring-active-handoff-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/descriptor_transaction_ring.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/descriptor_transaction_ring.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/descriptor_transaction_ring.c"
+  )
 endif()

@@ -6,7 +6,7 @@
 
 enum {
     BVB_DESCRIPTOR_TRANSACTION_RING_MAGIC = 0x31524442U,
-    BVB_DESCRIPTOR_TRANSACTION_RING_VERSION = 1,
+    BVB_DESCRIPTOR_TRANSACTION_RING_VERSION = 2,
     BVB_DESCRIPTOR_TRANSACTION_RING_CONTROL_BYTES = 128,
     BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES = 8192,
     BVB_DESCRIPTOR_TRANSACTION_RING_SLOT_COUNT = 16,
@@ -16,6 +16,9 @@ enum {
     BVB_DESCRIPTOR_TRANSACTION_SLOT_AVAILABLE = 0,
     BVB_DESCRIPTOR_TRANSACTION_SLOT_REQUESTED = 1,
     BVB_DESCRIPTOR_TRANSACTION_SLOT_COMPLETED = 2,
+    BVB_DESCRIPTOR_TRANSACTION_WAIT_IDLE = 0,
+    BVB_DESCRIPTOR_TRANSACTION_WAIT_SPINNING = 1,
+    BVB_DESCRIPTOR_TRANSACTION_WAIT_SLEEPING = 2,
 };
 
 /*
@@ -36,7 +39,9 @@ struct bvb_descriptor_transaction_ring {
     int32_t client_status;
     int32_t service_status;
     uint32_t next_slot;
-    uint32_t reserved[21];
+    uint32_t request_wait_state;
+    uint32_t completion_wait_state;
+    uint32_t reserved[19];
 };
 
 struct bvb_descriptor_transaction_slot {

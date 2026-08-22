@@ -1,0 +1,52 @@
+{
+  "gate": "E130",
+  "date": "2026-08-22",
+  "source_base_commit": "f1f339c",
+  "trigger": {
+    "e129_client_ring_mean_microseconds": 269.396,
+    "e129_worker_mean_microseconds": 78.235,
+    "approximate_outside_worker_microseconds": 191.161,
+    "approximate_outside_worker_percent": 70.959,
+    "context_mutex_wait_microseconds": 0.632
+  },
+  "implementation": {
+    "ring_version": 2,
+    "spin_budget_nanoseconds_per_waiter": 250000,
+    "wait_states": [
+      "IDLE",
+      "SPINNING",
+      "SLEEPING"
+    ],
+    "request_and_completion_paths": true,
+    "fast_path_futex_syscall": false,
+    "slow_path_futex_fallback": true,
+    "strict_descriptor_path_changed": false,
+    "descriptor_payload_changed": false,
+    "native_allocation_result_deferred": false
+  },
+  "correctness": {
+    "waiter_publishes_state_before_sleep": true,
+    "waiter_rechecks_sequence_after_sleep_state": true,
+    "waker_skips_syscall_only_for_idle_or_spinning_peer": true,
+    "sequence_publication_remains_release_acquire": true,
+    "slow_path_forced_delay_ms_per_side": 5,
+    "final_wait_states_idle": true,
+    "peer_failure_wakes_unconditionally": true
+  },
+  "validation": {
+    "ordered_calls_per_run": 4096,
+    "ring_wraps_per_run": 256,
+    "focused_consecutive_runs": "10/10 passed",
+    "thread_sanitizer": "1/1 passed",
+    "full_host_suite": "92/92 passed"
+  },
+  "claims": {
+    "tablet_deployed": false,
+    "tomb_raider_run": false,
+    "ring_latency_improvement": null,
+    "fps_improvement": null
+  },
+  "risk": "Each side may actively wait for at most 250 microseconds before sleeping. This can trade scheduler latency for CPU contention inside Android's restricted Termux cgroup, so hardware timing and FPS must be measured before adoption is claimed.",
+  "next_gate": "Build and deploy the exact ring-v2 client/service pair, repeat the complete profiled Tomb Raider benchmark, and compare E129 client ring, worker completion, socket, thermal, and game-authored FPS values. Continue to descriptor leases only if the active handoff leaves native allocation dominant.",
+  "reuse": "The required deja query returned no indexed active-handoff implementation. E130 reuses E128's process-shared sequence ring, E129's measured client/worker boundary, and the existing permanent peer-failure wake semantics."
+}

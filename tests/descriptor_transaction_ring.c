@@ -1,9 +1,15 @@
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <bvb/descriptor_transaction_ring.h>
 
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #define CHECK(condition)                                                       \
     do {                                                                       \
@@ -17,8 +23,16 @@
 struct worker_args {
     struct bvb_descriptor_transaction_ring *ring;
     uint64_t generation;
+    bool delay_first_completion;
     int status;
 };
+
+static void delay_five_ms(void) {
+    const struct timespec delay = {
+        .tv_nsec = 5000000L,
+    };
+    (void)nanosleep(&delay, NULL);
+}
 
 static void *worker_main(void *opaque) {
     struct worker_args *args = opaque;
@@ -40,6 +54,8 @@ static void *worker_main(void *opaque) {
         for (uint32_t index = 0U; index < sizeof(response); ++index) {
             response[index] = (uint8_t)(request[index] ^ UINT8_C(0xa5));
         }
+        if (expected == 1U && args->delay_first_completion)
+            delay_five_ms();
         result = bvb_descriptor_transaction_ring_complete(
             args->ring, BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES,
             args->generation, slot, sequence, 0, response,
@@ -67,9 +83,11 @@ int main(void) {
     struct worker_args args = {
         .ring = ring,
         .generation = generation,
+        .delay_first_completion = true,
     };
     pthread_t worker;
     CHECK(pthread_create(&worker, NULL, worker_main, &args) == 0);
+    delay_five_ms();
     for (uint32_t sequence = 1U; sequence <= 4096U; ++sequence) {
         uint8_t request[8];
         for (uint32_t index = 0U; index < sizeof(request); ++index) {
@@ -91,6 +109,9 @@ int main(void) {
     CHECK(args.status == 0);
     CHECK(ring->request_sequence == 4096U);
     CHECK(ring->completion_sequence == 4096U);
+    CHECK(ring->request_wait_state == BVB_DESCRIPTOR_TRANSACTION_WAIT_IDLE);
+    CHECK(ring->completion_wait_state ==
+          BVB_DESCRIPTOR_TRANSACTION_WAIT_IDLE);
     CHECK(bvb_descriptor_transaction_ring_fail_service(ring, -5) == 0);
     uint8_t byte = 0U;
     uint32_t length = 0U;
