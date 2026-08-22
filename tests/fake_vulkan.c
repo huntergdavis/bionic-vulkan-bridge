@@ -1305,8 +1305,12 @@ static VkResult VKAPI_CALL fake_allocate_descriptor_sets(
             VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO &&
         allocate_info->pNext == NULL &&
         allocate_info->descriptorPool == fake_core_descriptor_pool &&
-        allocate_info->descriptorSetCount ==
-            (getenv("BVB_FAKE_REQUIRE_DESCRIPTOR_JOURNAL") != NULL ? 16U : 1U) &&
+        (getenv("BVB_FAKE_REQUIRE_DESCRIPTOR_JOURNAL") == NULL
+             ? allocate_info->descriptorSetCount == 1U
+             : (allocate_info->descriptorSetCount == 2U ||
+                allocate_info->descriptorSetCount == 4U ||
+                allocate_info->descriptorSetCount == 8U ||
+                allocate_info->descriptorSetCount == 16U)) &&
         allocate_info->pSetLayouts != NULL &&
         allocate_info->pSetLayouts[0] == fake_core_descriptor_layout) {
         for (uint32_t index = 0U;

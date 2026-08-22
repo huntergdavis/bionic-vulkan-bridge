@@ -1644,14 +1644,14 @@ int main(void) {
     const uint64_t core_set_before_id =
         bvb_descriptor_set_proxy_id(core_set_before_reset);
     CHECK(bvb_handle_type(core_set_before_id) == BVB_OBJECT_DESCRIPTOR_SET);
-    VkDescriptorSet live_signature_sets[16] = {0};
+    VkDescriptorSet live_signature_sets[13] = {0};
     VkDescriptorSet second_signature_sets[2] = {0};
     if (shared_descriptor_journal) {
         const uint64_t ring_calls_after_live_batch =
             bvb_global_dispatch_descriptor_ring_call_count();
         const uint64_t lease_hits_after_live_batch =
             bvb_global_dispatch_descriptor_lease_hit_count();
-        for (uint32_t index = 0U; index < 15U; ++index) {
+        for (uint32_t index = 0U; index < 13U; ++index) {
             CHECK(allocate_descriptor_sets(
                       device, &core_allocate_info,
                       &live_signature_sets[index]) == VK_SUCCESS);
@@ -1660,9 +1660,9 @@ int main(void) {
                   BVB_OBJECT_DESCRIPTOR_SET);
         }
         CHECK(bvb_global_dispatch_descriptor_ring_call_count() ==
-              ring_calls_after_live_batch);
+              ring_calls_after_live_batch + 2U);
         CHECK(bvb_global_dispatch_descriptor_lease_hit_count() ==
-              lease_hits_after_live_batch + 15U);
+              lease_hits_after_live_batch + 11U);
 
         const VkDescriptorSetAllocateInfo second_allocate_info = {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -1683,7 +1683,7 @@ int main(void) {
         CHECK(bvb_global_dispatch_descriptor_ring_call_count() ==
               ring_calls_before_second_signature + 1U);
         CHECK(bvb_global_dispatch_descriptor_lease_hit_count() ==
-              lease_hits_after_live_batch + 16U);
+              lease_hits_after_live_batch + 12U);
     }
     CHECK(reset_descriptor_pool(
               ownership_device, core_pool, 0U) ==
@@ -1693,7 +1693,7 @@ int main(void) {
     CHECK(reset_descriptor_pool(device, core_pool, 0U) == VK_SUCCESS);
     CHECK(bvb_descriptor_set_proxy_id(core_set_before_reset) == 0U);
     if (shared_descriptor_journal) {
-        for (uint32_t index = 0U; index < 15U; ++index)
+        for (uint32_t index = 0U; index < 13U; ++index)
             CHECK(bvb_descriptor_set_proxy_id(
                       live_signature_sets[index]) == 0U);
         CHECK(bvb_descriptor_set_proxy_id(second_signature_sets[0]) == 0U);
@@ -1713,7 +1713,17 @@ int main(void) {
         CHECK(bvb_global_dispatch_exchange_count() -
                   exchanges_before_descriptor_lease == 0U);
         CHECK(bvb_global_dispatch_descriptor_ring_call_count() ==
-              ring_calls_before_descriptor_lease);
+              ring_calls_before_descriptor_lease + 1U);
+        CHECK(bvb_global_dispatch_descriptor_lease_hit_count() ==
+              lease_hits_before_descriptor_lease);
+    }
+    VkDescriptorSet core_set_after_reset_lease = VK_NULL_HANDLE;
+    CHECK(allocate_descriptor_sets(
+              device, &core_allocate_info,
+              &core_set_after_reset_lease) == VK_SUCCESS);
+    if (shared_descriptor_journal) {
+        CHECK(bvb_global_dispatch_descriptor_ring_call_count() ==
+              ring_calls_before_descriptor_lease + 1U);
         CHECK(bvb_global_dispatch_descriptor_lease_hit_count() ==
               lease_hits_before_descriptor_lease + 1U);
     }

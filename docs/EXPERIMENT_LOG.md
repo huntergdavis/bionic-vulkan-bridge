@@ -5260,3 +5260,36 @@ signature is hot. Reset must invalidate the banks and restore cold state, not
 prefill them. Exact identities and the visual/fatal boundary are retained in
 `docs/evidence/e132-tombraider-pool-exhaustion-tablet.json`; canonical logs and
 screenshots remain in sibling `steamclienttermux` commit `017045b`.
+
+## E133 — adaptive descriptor signature growth (2026-08-22)
+
+E132's tablet run failed before a swapchain because a previously unseen
+signature immediately consumed up to fifteen unused speculative sets. The
+required `deja "E133 adaptive descriptor lease prefetch cold signature pool
+exhaustion hot signature growth"` query returned no indexed implementation.
+E133 reuses E121's authoritative pool lifecycle, E127's journal order, E128's
+shared ring, E131's typed local claims, and E132's exact live signatures and
+atomic native fallback.
+
+Each new signature now starts with exactly two repetitions: the requested
+shape plus one speculative extra. If the client claims that extra, the next
+live miss observes a fully drained bank and doubles the plan from 2 to 4, then
+8 and at most 16. A live miss while extras remain—such as a pending-journal
+transaction—does not grow the plan. Capacity errors still halve through whole
+signature groups and finally perform the exact authoritative request. The
+profile adds `batch_growths` so real demand adaptation is observable.
+
+A successful pool reset now disables every matching bank and restores its
+two-repetition cold state without performing any speculative native
+allocation. The first post-reset request must therefore cross the real ring;
+only its one published extra can become a local hit. Destruction continues to
+forget every matching plan, and strict mode is unchanged.
+
+The cross-process fake proves batch 2 plus one hit, batch 4 plus three hits,
+and batch 8 plus seven hits; a second signature independently starts at two.
+The first post-reset request is a ring miss and the second is a hit. A two-set
+DXVK-shaped pool preserves ordered-journal behavior, while a one-set pool
+rejects the cold batch and succeeds through exact fallback. Focused contracts
+passed 4/4 and the full host suite passed 95/95. This is host proof only: no
+tablet deployment, visible frame, FPS, or speedup is claimed. Exact boundaries
+are in `docs/evidence/e133-adaptive-descriptor-signature-growth-host.json`.

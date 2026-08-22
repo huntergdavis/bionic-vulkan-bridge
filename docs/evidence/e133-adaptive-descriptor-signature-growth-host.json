@@ -1,0 +1,63 @@
+{
+  "gate": "E133",
+  "date": "2026-08-22",
+  "source_base_commit": "c0ed2640ff7690a21bee8e0a22ab80b5417dfe92",
+  "trigger": {
+    "e132_runtime_result": "VK_ERROR_OUT_OF_POOL_MEMORY before game swapchain",
+    "e132_cold_repetitions": 16,
+    "diagnosis": "Maximum speculative batches consumed finite real pool capacity for signatures that had not proved reuse."
+  },
+  "reuse": {
+    "deja_query": "E133 adaptive descriptor lease prefetch cold signature pool exhaustion hot signature growth",
+    "deja_result": "no indexed implementation",
+    "local_contracts": [
+      "E121 authoritative descriptor-pool lifecycle",
+      "E127 descriptor-journal ordering",
+      "E128 shared transaction ring",
+      "E131 typed local lease claims",
+      "E132 exact live pool/layout signatures and atomic capacity fallback"
+    ]
+  },
+  "implementation": {
+    "cold_repetitions": 2,
+    "cold_speculative_extras_per_one_set_signature": 1,
+    "growth_sequence": [2, 4, 8, 16],
+    "growth_evidence": "A later live miss grows a signature only when its published bank cursor equals its count, proving every prior extra was claimed.",
+    "maximum_native_batch_sets": 16,
+    "reset_prefill_sets": 0,
+    "reset_repetitions": 2,
+    "pending_journal_can_claim_lease": false,
+    "capacity_fallback": "OUT_OF_POOL_MEMORY or FRAGMENTED_POOL halves whole-signature repetitions; if no useful extra fits, exact allocation remains authoritative and batching is disabled until reset.",
+    "strict_mode_changed": false
+  },
+  "correctness": {
+    "native_authority": "Every returned or published descriptor-set ID comes from a successful real native allocation.",
+    "cold_capacity_bound": "An unseen one-set signature consumes at most one unused speculative set instead of fifteen.",
+    "reset": "Successful reset disables every pool bank and restores cold state without performing any speculative native allocation.",
+    "destroy": "Pool destruction disables and forgets every signature plan.",
+    "journal": "Pending journal bytes force the ordered real transaction and cannot consume a local lease out of order."
+  },
+  "validation": {
+    "adaptive_signature": "The fake-native cross-process path proves batch 2 followed by one hit, batch 4 followed by three hits, then batch 8 followed by seven hits.",
+    "coexisting_signature": "A second live signature independently starts at batch 2 and then hits locally.",
+    "reset": "The first post-reset request is a live ring miss and batch 2; only the following request is a local hit.",
+    "small_pool": "A two-set DXVK-shaped pool accepts the cold batch; a pending journal then forces exact allocation. A one-set pool rejects batch 2 and succeeds through exact fallback.",
+    "profile": "Worker output includes batch_growths in addition to attempts, successes, extras, and fallbacks.",
+    "focused_contracts": "4/4 passed",
+    "full_host_suite": "95/95 passed",
+    "artifact_sha256": {
+      "bridge_service_source": "ce159695389ecc3057381ffaff79494e7e8d2363f642e5070e361b7e4af5f86a",
+      "global_dispatch_contract": "a01c0e5ae0a1c24f09ac2703f31750c5fe6e07f78885e59494a5be9f86731e2b",
+      "fake_vulkan": "58bfa72ad0eb03fc8ce69784eea3a7b1abd69c89c21fefdab2c8e44076289cb5",
+      "global_dispatch_driver": "63314789a4b59e68365afeaeca12c2a963ed52fcf05534ba8b37ad170ebc3fa4"
+    }
+  },
+  "claims": {
+    "host_architecture_complete": true,
+    "tablet_deployed": false,
+    "tomb_raider_run": false,
+    "game_frame_presented": false,
+    "fps_claim": false
+  },
+  "next_gate": "Build and deploy the exact tablet pair transactionally, then rerun the native-resolution Tomb Raider visible-frame and game-authored benchmark gate with screenshot inspection."
+}

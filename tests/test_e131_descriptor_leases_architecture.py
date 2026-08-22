@@ -45,12 +45,12 @@ def main() -> int:
     require(client, "descriptor_ring_call_count", "zero-ring counter")
     require(client, "BVB_E131_DESCRIPTOR_LEASE_PROFILE", "runtime hit profile")
     require(service, "descriptor_lease_allocate_live_batch(", "successful-call successor")
-    require(service, "descriptor_lease_after_pool_reset(", "reset refill")
+    require(service, "candidate->batch_repetitions = 2U", "reset cold state")
     require(service, "descriptor_lease_forget_pool(", "destroy invalidation")
     require(service, "bvb_vulkan_global_context_allocate_descriptor_sets(", "real native allocation")
     require(ring_test, "wrong_layout", "mismatch cursor proof")
     require(global_test, "ring_calls_before_descriptor_lease", "zero ring call proof")
-    require(global_test, "lease_hits_before_descriptor_lease + 1U", "typed hit proof")
+    require(global_test, "ring_calls_before_descriptor_lease + 1U", "cold reset miss proof")
     print("PASS: E131 bounded descriptor reset-epoch leases")
     return 0
 
