@@ -38,6 +38,10 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#ifndef MAP_FIXED_NOREPLACE
+#define MAP_FIXED_NOREPLACE 0x100000
+#endif
+
 static const uint64_t BVB_INSTANCE_PROXY_MAGIC =
     UINT64_C(0x425642494e535430);
 static const uint64_t BVB_PHYSICAL_DEVICE_PROXY_MAGIC =
@@ -205,6 +209,54 @@ static struct bvb_global_client_state bvb_global_client = {
 };
 static pthread_rwlock_t bvb_object_registry_lock =
     PTHREAD_RWLOCK_INITIALIZER;
+
+enum {
+    BVB_CLIENT_LOW_MAP_START = UINT32_C(0x10000000),
+    BVB_CLIENT_LOW_MAP_STRIDE = UINT32_C(0x01000000),
+};
+
+/*
+ * Wine's 32-bit Vulkan thunk must represent the pointer returned by
+ * vkMapMemory even though this ICD is a 64-bit AArch64 library. A normal
+ * allocation on AArch64 usually lands above 4 GiB. Preserve that mapping as
+ * a 64-bit fallback, but first search the low address space with
+ * MAP_FIXED_NOREPLACE so no Wine or application mapping can be overwritten.
+ */
+static void *map_client_visible_memory(
+    int fd, size_t length, int protection, int flags) {
+    if (length == 0U) {
+        errno = EINVAL;
+        return MAP_FAILED;
+    }
+    void *normal = mmap(NULL, length, protection, flags, fd, 0);
+    if (normal == MAP_FAILED) return MAP_FAILED;
+    const uintptr_t normal_address = (uintptr_t)normal;
+    if (normal_address <= UINT32_MAX &&
+        length - 1U <= UINT32_MAX - normal_address) {
+        return normal;
+    }
+
+    const uint64_t low_limit = UINT64_C(1) << 32;
+    if ((uint64_t)length < low_limit) {
+        const uint64_t last = low_limit - (uint64_t)length;
+        for (uint64_t candidate = BVB_CLIENT_LOW_MAP_START;
+             candidate <= last;
+             candidate += BVB_CLIENT_LOW_MAP_STRIDE) {
+            void *low = mmap(
+                (void *)(uintptr_t)candidate, length, protection,
+                flags | MAP_FIXED_NOREPLACE, fd, 0);
+            if (low != MAP_FAILED) {
+                (void)munmap(normal, length);
+                return low;
+            }
+            if (errno != EEXIST && errno != EINVAL && errno != ENOMEM &&
+                errno != EACCES) {
+                break;
+            }
+        }
+    }
+    return normal;
+}
 
 static bool command_stream_is_enabled(void) {
     return atomic_load_explicit(&bvb_global_client.command_stream_enabled,
@@ -1218,10 +1270,7 @@ static void remove_command_pools_for_device_locked(uint64_t parent_id) {
 
 static void release_mapped_shadow_locked(struct bvb_resource_proxy *proxy) {
     if (proxy == NULL || proxy->mapped_bytes == NULL) return;
-    if (proxy->mapped_shared)
-        (void)munmap(proxy->mapped_bytes, (size_t)proxy->mapped_size);
-    else
-        free(proxy->mapped_bytes);
+    (void)munmap(proxy->mapped_bytes, (size_t)proxy->mapped_size);
     proxy->mapped_bytes = NULL;
     proxy->mapped_offset = 0U;
     proxy->mapped_size = 0U;
@@ -6826,8 +6875,8 @@ static VkResult setup_memory_mirror_locked(
         result = -errno;
         goto done;
     }
-    shared = mmap(NULL, (size_t)length, PROT_READ | PROT_WRITE,
-                  MAP_SHARED, memory_fd, 0);
+    shared = map_client_visible_memory(
+        memory_fd, (size_t)length, PROT_READ | PROT_WRITE, MAP_SHARED);
     if (shared == MAP_FAILED) {
         result = -errno;
         goto done;
@@ -7001,6 +7050,8 @@ static VkResult VKAPI_CALL bvb_bridge_vkMapMemory(
             ? state->allocation_size - offset
             : size;
     VkResult result = VK_ERROR_MEMORY_MAP_FAILED;
+    bool used_shared_mirror = false;
+    uint8_t *returned_shadow = NULL;
     if (state != NULL && state->parent_id == device_state->wire_id &&
         state->mapped_bytes == NULL && effective_size != 0U &&
         offset <= state->allocation_size &&
@@ -7011,15 +7062,19 @@ static VkResult VKAPI_CALL bvb_bridge_vkMapMemory(
         const bool use_shared_mirror =
             bvb_global_client.memory_mirror_enabled &&
             memory_is_upload_only_locked(state->wire_id);
+        used_shared_mirror = use_shared_mirror;
         if (use_shared_mirror) {
             result = setup_memory_mirror_locked(
                 device_state, state, offset, effective_size,
                 &shadow, &generation);
         } else {
-            shadow = malloc((size_t)effective_size);
-            result = shadow == NULL
+            shadow = map_client_visible_memory(
+                -1, (size_t)effective_size, PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS);
+            result = shadow == MAP_FAILED
                 ? VK_ERROR_OUT_OF_HOST_MEMORY
                 : memory_read_locked(state, offset, shadow, effective_size);
+            if (shadow == MAP_FAILED) shadow = NULL;
         }
         if (result == VK_SUCCESS) {
             state->mapped_offset = offset;
@@ -7029,12 +7084,24 @@ static VkResult VKAPI_CALL bvb_bridge_vkMapMemory(
             state->mapped_shared =
                 use_shared_mirror;
             *data = shadow;
+            returned_shadow = shadow;
         } else if (shadow != NULL) {
-            if (use_shared_mirror)
-                (void)munmap(shadow, (size_t)effective_size);
-            else
-                free(shadow);
+            (void)munmap(shadow, (size_t)effective_size);
         }
+    }
+    if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        const bool low32 = returned_shadow != NULL &&
+            (uintptr_t)returned_shadow <= UINT32_MAX &&
+            effective_size - 1U <=
+                UINT32_MAX - (uintptr_t)returned_shadow;
+        fprintf(stderr,
+                "BVB_ICD_MEMORY_MAP memory=%#llx offset=%llu size=%llu "
+                "shared=%u result=%d address=%p low32=%u\n",
+                (unsigned long long)memory_id,
+                (unsigned long long)offset,
+                (unsigned long long)effective_size,
+                used_shared_mirror, (int)result, (void *)returned_shadow,
+                low32);
     }
     (void)pthread_mutex_unlock(&bvb_global_client.mutex);
     return result;

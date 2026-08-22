@@ -2225,6 +2225,7 @@ int main(void) {
     CHECK(bind_buffer_memory(device, buffer, device_memory, 0U) == VK_SUCCESS);
     VkBuffer upload_buffer = VK_NULL_HANDLE;
     VkDeviceMemory upload_memory = VK_NULL_HANDLE;
+    VkDeviceSize upload_memory_size = 0U;
     if (shared_mapped_memory) {
         const VkBufferCreateInfo upload_buffer_info = {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -2237,6 +2238,7 @@ int main(void) {
         VkMemoryRequirements upload_requirements = {0};
         get_buffer_memory_requirements(
             device, upload_buffer, &upload_requirements);
+        upload_memory_size = upload_requirements.size;
         const VkMemoryAllocateInfo upload_allocate_info = {
             .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
             .allocationSize = upload_requirements.size,
@@ -2468,6 +2470,8 @@ int main(void) {
     CHECK(rejected_view == VK_NULL_HANDLE);
     const VkDeviceMemory mapped_memory =
         shared_mapped_memory ? upload_memory : device_memory;
+    const VkDeviceSize mapped_size =
+        shared_mapped_memory ? upload_memory_size : requirements.size;
     uint8_t *mapped = NULL;
     const uint64_t exchanges_before_map =
         bvb_global_dispatch_exchange_count();
@@ -2487,6 +2491,8 @@ int main(void) {
     map_info.pNext = NULL;
     CHECK(map_memory_2(device, &map_info, (void **)&mapped) == VK_SUCCESS);
     CHECK(mapped != NULL);
+    CHECK((uintptr_t)mapped <= UINT32_MAX);
+    CHECK(mapped_size - 1U <= UINT32_MAX - (uintptr_t)mapped);
     if (noncoherent_mapped_memory) CHECK(mapped[0] == UINT8_C(0x00));
     const uint64_t map_rtts =
         bvb_global_dispatch_exchange_count() - exchanges_before_map;
@@ -2502,6 +2508,7 @@ int main(void) {
         CHECK(map_memory(device, device_memory, 0U, VK_WHOLE_SIZE, 0U,
                          &ineligible_mapping) == VK_SUCCESS);
         CHECK(ineligible_mapping != NULL);
+        CHECK((uintptr_t)ineligible_mapping <= UINT32_MAX);
         ineligible_map_rtts = bvb_global_dispatch_exchange_count() -
                               before_ineligible_map;
         ineligible_map_opcode = bvb_global_dispatch_last_opcode();

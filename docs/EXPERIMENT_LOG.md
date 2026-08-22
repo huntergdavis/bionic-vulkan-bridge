@@ -4022,3 +4022,38 @@ E056 typed descriptor ancestry, E075/E075a immutable transactional streams,
 E076's general records and zero-recording-RTT path, E096 template metadata, and
 the exact pinned DXVK `a6764047` swapchain-blitter sequence. No tablet game
 pixel, benchmark, or FPS claim is made until the bounded deployment run.
+
+The first E101 tablet run reached the complete two-stage fullscreen pipeline,
+but DXVK then reported twelve failed 4 MiB maps as
+`VK_ERROR_OUT_OF_HOST_MEMORY`. A second run with DXVK logging proved this was
+not physical pressure: `/proc/meminfo` still exposed 2,344,364 KiB available,
+while Wine emitted fourteen exact `vkMapMemory2KHR returned mapping ... does
+not fit 32-bit pointer` diagnostics. The first returned address was
+`0x7742e0f010`. Frame setup still passed with three images and zero per-frame
+Java/Binder calls, and automatic plus live screenshot checks both showed the
+same full-screen bridge triangle. Steam and X retained their original PIDs and
+start ticks.
+
+## E102 — low 32-bit Vulkan mapped addresses (2026-08-21)
+
+Status: host implementation complete; post-fix tablet runtime pending. Tomb
+Raider is a 32-bit process, but the BVB ICD is 64-bit AArch64. E034/E077 used
+ordinary `malloc`/`mmap`, which returned pointers above 4 GiB; Wine correctly
+refused to narrow those pointers and surfaced an apparent OOM.
+
+E102 uses one low-first mapper for both strict anonymous shadows and shared
+memfd mirrors. It retains a normal mapping as the 64-bit fallback, scans from
+`0x10000000` below the 4 GiB boundary, and requests each candidate with
+`MAP_FIXED_NOREPLACE`. An existing Wine/game mapping can therefore never be
+replaced. Both client paths now have the same `munmap` lifetime. This changes
+no opcode and adds no transport round trip. Diagnostics record size, result,
+strict/shared selection, returned address, and the exact low-32-bit predicate.
+
+The strict and shared host contracts now assert that the entire returned range
+fits below 4 GiB. Compact evidence is
+`docs/evidence/e102-low-32bit-mapped-address-host.json`. The required
+`deja "BVB E077 vkMapMemory VK_ERROR_OUT_OF_HOST_MEMORY 4194304 shared mapped
+memory limit"` query returned no indexed implementation. E102 reuses E034's
+shadow lifecycle, E077's mapping split and sealed memfd transport, and E099's
+MapMemory2 alias path. No game pixel, benchmark, or FPS result is claimed
+before deployment and the next bounded screenshot-checked run.

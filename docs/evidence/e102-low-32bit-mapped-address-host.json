@@ -1,0 +1,47 @@
+{
+  "gate": "E102",
+  "date": "2026-08-21",
+  "source_base_commit": "0266e22f181ef6ff560f4d629d60fede52dddd49",
+  "trigger": {
+    "run_id": "20260822T022445Z-5396",
+    "game": "Tomb Raider 2013 32-bit",
+    "requested_map_bytes": 4194304,
+    "map_failures": 12,
+    "high_pointer_diagnostics": 14,
+    "first_high_pointer": "0x7742e0f010",
+    "wine_message": "vkMapMemory2KHR returned mapping ... does not fit 32-bit pointer",
+    "physical_oom": false,
+    "mem_available_before_run_kib": 2344364
+  },
+  "implementation": {
+    "strict_shadow": "low-first anonymous mmap",
+    "shared_mirror": "low-first memfd mmap",
+    "low_range_start": "0x10000000",
+    "low_range_limit_exclusive": "0x100000000",
+    "search_stride_bytes": 16777216,
+    "collision_policy": "MAP_FIXED_NOREPLACE",
+    "overwrite_existing_mapping": false,
+    "fallback": "retain the original unrestricted mapping for a 64-bit caller when no safe low hole exists",
+    "cleanup": "munmap for both strict and shared client mappings",
+    "new_opcode": false,
+    "additional_round_trips": 0
+  },
+  "runtime_evidence_before_fix": {
+    "direct_log_bytes": 3110476,
+    "direct_log_sha256": "9761fffb7a5bfbe9c8b9fe4e495b0bb9391b6727b0356bca930036cde85bb9a3",
+    "dxvk_d3d11_log_bytes": 32313,
+    "dxvk_d3d11_log_sha256": "589c8200dc9840a6d42f62ac9d20a1317502d07f3e451c7e752942cfa85d65ac",
+    "frame_result_sha256": "e22d934315295cb2c5735088f04424faed11d5b6b84a6a5ad49449fbfd62a934",
+    "screenshot_sha256": "28b7305067678da2bc88ffcb75bf49b49141cf49c27c59d79df332dcee89e9f8",
+    "screenshot_classification": "full-screen bridge RGB triangle; no game pixel"
+  },
+  "validation": {
+    "host_suite": "62/62 passed",
+    "strict_low_address_contract": "passed",
+    "shared_low_address_contract": "passed",
+    "tablet_post_fix": "pending",
+    "visible_game_frame": false,
+    "benchmark_or_fps": false
+  },
+  "reuse": "The required deja query found no indexed implementation. E102 reuses E034's client shadow lifecycle, E077's strict/shared mapping split and sealed memfd transport, and E099's MapMemory2 alias path."
+}

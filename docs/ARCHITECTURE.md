@@ -346,3 +346,12 @@ native handles only after typed same-device ancestry validation. General push
 constants are capped at 256 bytes. This deliberately covers a coherent draw
 bundle rather than one resolver name, while preserving fail-closed shapes and
 the no-application-pointer ABI.
+
+E102 makes Vulkan mappings representable by 32-bit Windows applications even
+though the client ICD is a 64-bit AArch64 library. Both strict anonymous
+shadows and eligible shared memfd mirrors try a bounded address below 4 GiB.
+Each candidate uses `MAP_FIXED_NOREPLACE`, so the bridge can never overwrite a
+Wine or application mapping. If no safe low hole exists, the original normal
+mapping is retained for a possible 64-bit caller; Wine's 32-bit thunk can then
+fail truthfully. No pointer crosses the glibc/Bionic wire, and the native
+Bionic mapping remains unconstrained.
