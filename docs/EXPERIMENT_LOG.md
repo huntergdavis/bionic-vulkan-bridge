@@ -4543,3 +4543,20 @@ bounded local triangle buffers to 4096 bytes, still far below the global
 triangle_batch 512 Android Activity current command records"` query returned
 no indexed implementation; the fix reuses the existing bounded triangle
 builder and changes no wire format or game-frame transport.
+
+The corrected exact archive `3cdbb418...f804f` passed 73/73 Termux
+contracts. Its signer-matched APK SHA-256 `1c671812...dbf2e` installed
+byte-for-byte through paired ADB while Steam PID 14565/start 121864440 and
+X11 PID 13643/start 121863492 remained unchanged. The launcher first observed
+Samsung's `1514x1138` freeform surface, resized the exact task, then accepted
+the authenticated `2800x1752` renderer event before releasing Tomb Raider.
+
+Run `20260822T082714Z-7351` logged RGBX window format 2 and inherited Vulkan
+composite alpha (`supported=selected=0x8`), imported all three game images,
+and presented sequences 1 through 33 across slots 0,1,2. Retained screenshot
+`docs/evidence/e115-tombraider-opaque-game-frame.png`, SHA-256
+`2825ea15...ef45`, shows an opaque full-display dark/blurred Tomb Raider
+transition frame: the Android desktop bleed and alternating transparent rows
+from E114 are absent. A later sample had the same hash even though presentation
+sequences advanced, so this is an opacity correction—not a correctness,
+progress, benchmark, or FPS claim. Exact-PID cleanup preserved Steam and X11.
