@@ -4686,6 +4686,22 @@ ranges still copy only host-diverged bytes, so unchanged GPU output cannot be
 overwritten. No wire or selector changes.
 
 The historical strict/shared/coherent/noncoherent/uncertain-unmap contracts and
-the new architecture contract pass within the complete 79/79 host suite.
-Tablet A/B validation remains pending. No speedup, benchmark, FPS, or resolution
-of the repeatable present-46 stop is claimed at this checkpoint.
+the new architecture contract pass within the complete 79/79 host suite. The
+exact `e342783` archive then passed all 77/77 Termux contracts plus the glibc
+dispatch self-test and installed transactionally with rollback
+`install-pre-iH5GvzkE`.
+
+The matched E118/E119 runs again produced the same 46 native-resolution
+presents and byte-identical visible Nixxes/Eidos frame. RPC blocking fell from
+0.329 to 0.118 seconds per present (2.789x); relative to E117 it is now 24.575x
+lower. Opcode 105 fell 74.848% and opcode 85 fell 84.606%, confirming that the
+shared baseline scan—not the different command-stream payload—was their common
+cost. The post-first-two mean presentation interval fell from 0.406 to 0.202
+seconds (2.010x), and the median fell from 0.313 to 0.089 seconds (3.517x, or
+11.236 presented frames/s at the median).
+
+This is transport timing, not the game-authored benchmark or a final FPS claim.
+The game still stops advancing at exact present 46, so that repeatable
+correctness/lifecycle boundary now takes priority over another speculative
+throughput optimization. Exact-PID cleanup again preserved Steam, X, and the
+private Turnip hash.
