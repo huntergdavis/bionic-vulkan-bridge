@@ -27,6 +27,12 @@ enum {
     BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE_GENERAL = 11,
     BVB_COMMAND_VULKAN_BIND_DESCRIPTOR_SETS = 12,
     BVB_COMMAND_VULKAN_PUSH_CONSTANTS = 13,
+    BVB_COMMAND_VULKAN_COPY_BUFFER_2 = 14,
+    BVB_COMMAND_VULKAN_COPY_BUFFER_TO_IMAGE_2 = 15,
+    BVB_COMMAND_VULKAN_COPY_IMAGE_TO_BUFFER_2 = 16,
+    BVB_COMMAND_VULKAN_COPY_IMAGE_2 = 17,
+    BVB_COMMAND_VULKAN_BLIT_IMAGE_2 = 18,
+    BVB_COMMAND_VULKAN_RESOLVE_IMAGE_2 = 19,
     BVB_COMMAND_VULKAN_BEGIN = 20,
     BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE = 21,
     BVB_COMMAND_VULKAN_INIT_IMAGE_BARRIER = 22,
@@ -36,6 +42,7 @@ enum {
     BVB_COMMAND_VULKAN_MAX_BOUND_DESCRIPTOR_SETS = 8,
     BVB_COMMAND_VULKAN_MAX_DYNAMIC_OFFSETS = 32,
     BVB_COMMAND_VULKAN_MAX_PUSH_CONSTANT_BYTES = 256,
+    BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS = 16,
 };
 
 struct bvb_begin_rendering_command {
@@ -164,6 +171,49 @@ struct bvb_vulkan_push_constants_command {
     uint8_t data[BVB_COMMAND_VULKAN_MAX_PUSH_CONSTANT_BYTES];
 };
 
+struct bvb_vulkan_image_subresource_layers {
+    uint32_t aspect_mask;
+    uint32_t mip_level;
+    uint32_t base_array_layer;
+    uint32_t layer_count;
+};
+
+struct bvb_vulkan_offset_3d {
+    int32_t x;
+    int32_t y;
+    int32_t z;
+};
+
+struct bvb_vulkan_extent_3d {
+    uint32_t width;
+    uint32_t height;
+    uint32_t depth;
+};
+
+struct bvb_vulkan_transfer_region {
+    uint64_t source_buffer_offset;
+    uint64_t destination_buffer_offset;
+    uint64_t size;
+    uint32_t buffer_row_length;
+    uint32_t buffer_image_height;
+    struct bvb_vulkan_image_subresource_layers source_layers;
+    struct bvb_vulkan_image_subresource_layers destination_layers;
+    struct bvb_vulkan_offset_3d source_offsets[2];
+    struct bvb_vulkan_offset_3d destination_offsets[2];
+    struct bvb_vulkan_extent_3d extent;
+};
+
+struct bvb_vulkan_transfer_command {
+    uint64_t source_id;
+    uint64_t destination_id;
+    uint32_t source_layout;
+    uint32_t destination_layout;
+    uint32_t filter;
+    uint32_t region_count;
+    struct bvb_vulkan_transfer_region
+        regions[BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS];
+};
+
 struct bvb_command_batch_builder {
     uint8_t *bytes;
     size_t capacity;
@@ -258,6 +308,9 @@ int bvb_command_batch_append_vulkan_bind_descriptor_sets(
 int bvb_command_batch_append_vulkan_push_constants(
     struct bvb_command_batch_builder *builder,
     const struct bvb_vulkan_push_constants_command *command);
+int bvb_command_batch_append_vulkan_transfer(
+    struct bvb_command_batch_builder *builder, uint16_t opcode,
+    const struct bvb_vulkan_transfer_command *command);
 int bvb_command_batch_append_record(
     struct bvb_command_batch_builder *builder,
     const struct bvb_command_record *record);
@@ -327,5 +380,8 @@ int bvb_command_decode_vulkan_bind_descriptor_sets(
 int bvb_command_decode_vulkan_push_constants(
     const struct bvb_command_record *record,
     struct bvb_vulkan_push_constants_command *command);
+int bvb_command_decode_vulkan_transfer(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_transfer_command *command);
 
 #endif

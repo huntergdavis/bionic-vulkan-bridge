@@ -1,0 +1,41 @@
+{
+  "gate": "E105",
+  "date": "2026-08-21",
+  "source_base_commit": "367507f08e3add5cdb99e45ca0f1f367b6ecfd53",
+  "trigger": {
+    "run_id": "20260822T033247Z-3716",
+    "graphics_pipeline_creation_after_e104": "passed",
+    "format_render_target_rejections": 0,
+    "format_shader_resource_rejections": 0,
+    "first_rejection_entry": "vkCmdCopyBufferToImage2",
+    "first_rejection_reason": "diagnostic_stub_invoked",
+    "visible_game_frame": false,
+    "screenshot_sha256": "28b7305067678da2bc88ffcb75bf49b49141cf49c27c59d79df332dcee89e9f8"
+  },
+  "implementation": {
+    "family_entry_count": 6,
+    "entries": [
+      "vkCmdCopyBuffer2",
+      "vkCmdCopyBufferToImage2",
+      "vkCmdCopyImageToBuffer2",
+      "vkCmdCopyImage2",
+      "vkCmdBlitImage2",
+      "vkCmdResolveImage2"
+    ],
+    "command_record_ids": "14-19",
+    "maximum_regions_per_command": 16,
+    "maximum_encoded_payload_bytes": 2080,
+    "strict_transport": "one immediate-record RPC per command",
+    "shared_transport": "local append with zero recording RPC",
+    "native_boundary": "typed same-device handle validation followed by Bionic-owned Vulkan structure reconstruction"
+  },
+  "validation": {
+    "canonical_codec_and_corruption_contract": "passed",
+    "strict_and_shared_source_architecture": "passed",
+    "host_suite": "65/65 passed",
+    "tablet_runtime": "pending",
+    "visible_game_frame": false,
+    "benchmark_or_fps": false
+  },
+  "reuse": "The required deja query found no indexed implementation. E105 reuses E075/E075a immutable shared command streams, E076 bounded pointer-free command records, E101 immediate-record fallback and typed ancestry, and the E104 tablet first-rejection record."
+}

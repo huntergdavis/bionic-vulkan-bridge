@@ -5895,6 +5895,64 @@ static int command_stream_image_view_matches_device(
         context, image_view_id, expected_device_id, &image_view);
 }
 
+static int command_stream_transfer_opcode(uint16_t opcode) {
+    return opcode >= BVB_COMMAND_VULKAN_COPY_BUFFER_2 &&
+           opcode <= BVB_COMMAND_VULKAN_RESOLVE_IMAGE_2;
+}
+
+static enum bvb_object_type command_stream_transfer_source_type(
+    uint16_t opcode) {
+    return opcode == BVB_COMMAND_VULKAN_COPY_BUFFER_2 ||
+                   opcode == BVB_COMMAND_VULKAN_COPY_BUFFER_TO_IMAGE_2
+               ? BVB_OBJECT_BUFFER : BVB_OBJECT_IMAGE;
+}
+
+static enum bvb_object_type command_stream_transfer_destination_type(
+    uint16_t opcode) {
+    return opcode == BVB_COMMAND_VULKAN_COPY_BUFFER_2 ||
+                   opcode == BVB_COMMAND_VULKAN_COPY_IMAGE_TO_BUFFER_2
+               ? BVB_OBJECT_BUFFER : BVB_OBJECT_IMAGE;
+}
+
+static VkImageSubresourceLayers command_stream_transfer_layers(
+    const struct bvb_vulkan_image_subresource_layers *layers) {
+    return (VkImageSubresourceLayers){
+        .aspectMask = (VkImageAspectFlags)layers->aspect_mask,
+        .mipLevel = layers->mip_level,
+        .baseArrayLayer = layers->base_array_layer,
+        .layerCount = layers->layer_count,
+    };
+}
+
+static VkOffset3D command_stream_transfer_offset(
+    const struct bvb_vulkan_offset_3d *offset) {
+    return (VkOffset3D){.x = offset->x, .y = offset->y, .z = offset->z};
+}
+
+static VkExtent3D command_stream_transfer_extent(
+    const struct bvb_vulkan_extent_3d *extent) {
+    return (VkExtent3D){.width = extent->width, .height = extent->height,
+                        .depth = extent->depth};
+}
+
+static int validate_transfer_command_record(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_command_record *record, uint64_t expected_device_id) {
+    struct bvb_vulkan_transfer_command command;
+    int result = bvb_command_decode_vulkan_transfer(record, &command);
+    if (result == 0)
+        result = command_stream_child_matches_device(
+            context, command.source_id,
+            command_stream_transfer_source_type(record->opcode),
+            expected_device_id);
+    if (result == 0)
+        result = command_stream_child_matches_device(
+            context, command.destination_id,
+            command_stream_transfer_destination_type(record->opcode),
+            expected_device_id);
+    return result;
+}
+
 static int validate_render_command_record(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_command_record *record, uint64_t expected_device_id,
@@ -5935,6 +5993,9 @@ static int validate_render_command_record(
             context, command.pipeline_layout_id,
             BVB_OBJECT_PIPELINE_LAYOUT, expected_device_id);
     }
+    if (command_stream_transfer_opcode(record->opcode))
+        return validate_transfer_command_record(
+            context, record, expected_device_id);
     if (record->opcode == BVB_COMMAND_SET_VIEWPORT) {
         struct bvb_set_viewport_command command;
         return bvb_command_decode_set_viewport(record, &command);
@@ -6098,6 +6159,215 @@ static int replay_render_command_record(
         if (result != 0 || draw == NULL) return result != 0 ? result : -ENOSYS;
         draw(command_buffer, command.vertex_count, command.instance_count,
              command.first_vertex, command.first_instance);
+        return 0;
+    }
+    if (command_stream_transfer_opcode(record->opcode)) {
+        struct bvb_vulkan_transfer_command command;
+        uint64_t source_device_id = 0U, source_bits = 0U;
+        uint64_t destination_device_id = 0U, destination_bits = 0U;
+        VkDevice source_device = VK_NULL_HANDLE;
+        VkDevice destination_device = VK_NULL_HANDLE;
+        result = bvb_command_decode_vulkan_transfer(record, &command);
+        if (result == 0)
+            result = resolve_device_child(
+                context, command.source_id,
+                command_stream_transfer_source_type(record->opcode),
+                &source_device_id, &source_device, &source_bits);
+        if (result == 0)
+            result = resolve_device_child(
+                context, command.destination_id,
+                command_stream_transfer_destination_type(record->opcode),
+                &destination_device_id, &destination_device,
+                &destination_bits);
+        if (result == 0 &&
+            (source_device_id != device_id ||
+             destination_device_id != device_id || source_device != device ||
+             destination_device != device)) result = -EPROTO;
+        if (result != 0) return result;
+        if (record->opcode == BVB_COMMAND_VULKAN_COPY_BUFFER_2) {
+            VkBufferCopy2 regions[BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS];
+            for (uint32_t index = 0U; index < command.region_count; ++index) {
+                regions[index] = (VkBufferCopy2){
+                    .sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2,
+                    .srcOffset = command.regions[index].source_buffer_offset,
+                    .dstOffset =
+                        command.regions[index].destination_buffer_offset,
+                    .size = command.regions[index].size,
+                };
+            }
+            PFN_vkCmdCopyBuffer2 call =
+                (PFN_vkCmdCopyBuffer2)context->get_device_proc_addr(
+                    device, "vkCmdCopyBuffer2");
+            if (call == NULL) return -ENOSYS;
+            call(command_buffer, &(const VkCopyBufferInfo2){
+                .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+                .srcBuffer = buffer_from_bits(source_bits),
+                .dstBuffer = buffer_from_bits(destination_bits),
+                .regionCount = command.region_count, .pRegions = regions});
+            return 0;
+        }
+        if (record->opcode ==
+            BVB_COMMAND_VULKAN_COPY_BUFFER_TO_IMAGE_2) {
+            VkBufferImageCopy2
+                regions[BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS];
+            for (uint32_t index = 0U; index < command.region_count; ++index) {
+                const struct bvb_vulkan_transfer_region *wire =
+                    &command.regions[index];
+                regions[index] = (VkBufferImageCopy2){
+                    .sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
+                    .bufferOffset = wire->source_buffer_offset,
+                    .bufferRowLength = wire->buffer_row_length,
+                    .bufferImageHeight = wire->buffer_image_height,
+                    .imageSubresource = command_stream_transfer_layers(
+                        &wire->destination_layers),
+                    .imageOffset = command_stream_transfer_offset(
+                        &wire->destination_offsets[0]),
+                    .imageExtent = command_stream_transfer_extent(
+                        &wire->extent),
+                };
+            }
+            PFN_vkCmdCopyBufferToImage2 call =
+                (PFN_vkCmdCopyBufferToImage2)
+                    context->get_device_proc_addr(
+                        device, "vkCmdCopyBufferToImage2");
+            if (call == NULL) return -ENOSYS;
+            call(command_buffer, &(const VkCopyBufferToImageInfo2){
+                .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2,
+                .srcBuffer = buffer_from_bits(source_bits),
+                .dstImage = image_from_bits(destination_bits),
+                .dstImageLayout = (VkImageLayout)command.destination_layout,
+                .regionCount = command.region_count, .pRegions = regions});
+            return 0;
+        }
+        if (record->opcode ==
+            BVB_COMMAND_VULKAN_COPY_IMAGE_TO_BUFFER_2) {
+            VkBufferImageCopy2
+                regions[BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS];
+            for (uint32_t index = 0U; index < command.region_count; ++index) {
+                const struct bvb_vulkan_transfer_region *wire =
+                    &command.regions[index];
+                regions[index] = (VkBufferImageCopy2){
+                    .sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
+                    .bufferOffset = wire->destination_buffer_offset,
+                    .bufferRowLength = wire->buffer_row_length,
+                    .bufferImageHeight = wire->buffer_image_height,
+                    .imageSubresource = command_stream_transfer_layers(
+                        &wire->source_layers),
+                    .imageOffset = command_stream_transfer_offset(
+                        &wire->source_offsets[0]),
+                    .imageExtent = command_stream_transfer_extent(
+                        &wire->extent),
+                };
+            }
+            PFN_vkCmdCopyImageToBuffer2 call =
+                (PFN_vkCmdCopyImageToBuffer2)
+                    context->get_device_proc_addr(
+                        device, "vkCmdCopyImageToBuffer2");
+            if (call == NULL) return -ENOSYS;
+            call(command_buffer, &(const VkCopyImageToBufferInfo2){
+                .sType = VK_STRUCTURE_TYPE_COPY_IMAGE_TO_BUFFER_INFO_2,
+                .srcImage = image_from_bits(source_bits),
+                .srcImageLayout = (VkImageLayout)command.source_layout,
+                .dstBuffer = buffer_from_bits(destination_bits),
+                .regionCount = command.region_count, .pRegions = regions});
+            return 0;
+        }
+        if (record->opcode == BVB_COMMAND_VULKAN_COPY_IMAGE_2) {
+            VkImageCopy2 regions[BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS];
+            for (uint32_t index = 0U; index < command.region_count; ++index) {
+                const struct bvb_vulkan_transfer_region *wire =
+                    &command.regions[index];
+                regions[index] = (VkImageCopy2){
+                    .sType = VK_STRUCTURE_TYPE_IMAGE_COPY_2,
+                    .srcSubresource = command_stream_transfer_layers(
+                        &wire->source_layers),
+                    .srcOffset = command_stream_transfer_offset(
+                        &wire->source_offsets[0]),
+                    .dstSubresource = command_stream_transfer_layers(
+                        &wire->destination_layers),
+                    .dstOffset = command_stream_transfer_offset(
+                        &wire->destination_offsets[0]),
+                    .extent = command_stream_transfer_extent(&wire->extent),
+                };
+            }
+            PFN_vkCmdCopyImage2 call =
+                (PFN_vkCmdCopyImage2)context->get_device_proc_addr(
+                    device, "vkCmdCopyImage2");
+            if (call == NULL) return -ENOSYS;
+            call(command_buffer, &(const VkCopyImageInfo2){
+                .sType = VK_STRUCTURE_TYPE_COPY_IMAGE_INFO_2,
+                .srcImage = image_from_bits(source_bits),
+                .srcImageLayout = (VkImageLayout)command.source_layout,
+                .dstImage = image_from_bits(destination_bits),
+                .dstImageLayout = (VkImageLayout)command.destination_layout,
+                .regionCount = command.region_count, .pRegions = regions});
+            return 0;
+        }
+        if (record->opcode == BVB_COMMAND_VULKAN_BLIT_IMAGE_2) {
+            VkImageBlit2 regions[BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS];
+            for (uint32_t index = 0U; index < command.region_count; ++index) {
+                const struct bvb_vulkan_transfer_region *wire =
+                    &command.regions[index];
+                regions[index] = (VkImageBlit2){
+                    .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
+                    .srcSubresource = command_stream_transfer_layers(
+                        &wire->source_layers),
+                    .srcOffsets = {
+                        command_stream_transfer_offset(
+                            &wire->source_offsets[0]),
+                        command_stream_transfer_offset(
+                            &wire->source_offsets[1])},
+                    .dstSubresource = command_stream_transfer_layers(
+                        &wire->destination_layers),
+                    .dstOffsets = {
+                        command_stream_transfer_offset(
+                            &wire->destination_offsets[0]),
+                        command_stream_transfer_offset(
+                            &wire->destination_offsets[1])},
+                };
+            }
+            PFN_vkCmdBlitImage2 call =
+                (PFN_vkCmdBlitImage2)context->get_device_proc_addr(
+                    device, "vkCmdBlitImage2");
+            if (call == NULL) return -ENOSYS;
+            call(command_buffer, &(const VkBlitImageInfo2){
+                .sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
+                .srcImage = image_from_bits(source_bits),
+                .srcImageLayout = (VkImageLayout)command.source_layout,
+                .dstImage = image_from_bits(destination_bits),
+                .dstImageLayout = (VkImageLayout)command.destination_layout,
+                .regionCount = command.region_count, .pRegions = regions,
+                .filter = (VkFilter)command.filter});
+            return 0;
+        }
+        VkImageResolve2 regions[BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS];
+        for (uint32_t index = 0U; index < command.region_count; ++index) {
+            const struct bvb_vulkan_transfer_region *wire =
+                &command.regions[index];
+            regions[index] = (VkImageResolve2){
+                .sType = VK_STRUCTURE_TYPE_IMAGE_RESOLVE_2,
+                .srcSubresource = command_stream_transfer_layers(
+                    &wire->source_layers),
+                .srcOffset = command_stream_transfer_offset(
+                    &wire->source_offsets[0]),
+                .dstSubresource = command_stream_transfer_layers(
+                    &wire->destination_layers),
+                .dstOffset = command_stream_transfer_offset(
+                    &wire->destination_offsets[0]),
+                .extent = command_stream_transfer_extent(&wire->extent),
+            };
+        }
+        PFN_vkCmdResolveImage2 call =
+            (PFN_vkCmdResolveImage2)context->get_device_proc_addr(
+                device, "vkCmdResolveImage2");
+        if (call == NULL) return -ENOSYS;
+        call(command_buffer, &(const VkResolveImageInfo2){
+            .sType = VK_STRUCTURE_TYPE_RESOLVE_IMAGE_INFO_2,
+            .srcImage = image_from_bits(source_bits),
+            .srcImageLayout = (VkImageLayout)command.source_layout,
+            .dstImage = image_from_bits(destination_bits),
+            .dstImageLayout = (VkImageLayout)command.destination_layout,
+            .regionCount = command.region_count, .pRegions = regions});
         return 0;
     }
     return -EPROTO;
@@ -6336,6 +6606,9 @@ int bvb_vulkan_global_context_validate_command_stream(
         } else if (record.opcode == BVB_COMMAND_VULKAN_PUSH_CONSTANTS) {
             result = validate_render_command_record(
                 context, &record, expected_device_id, &rendering);
+        } else if (command_stream_transfer_opcode(record.opcode)) {
+            result = validate_render_command_record(
+                context, &record, expected_device_id, &rendering);
         } else {
             result = -EPROTO;
         }
@@ -6477,7 +6750,8 @@ int bvb_vulkan_global_context_replay_command_stream(
                         context, &mutable_request, error, error_size);
         } else if ((record.opcode >= BVB_COMMAND_BEGIN_RENDERING &&
                     record.opcode <= BVB_COMMAND_END_RENDERING) ||
-                   record.opcode == BVB_COMMAND_VULKAN_PUSH_CONSTANTS) {
+                   record.opcode == BVB_COMMAND_VULKAN_PUSH_CONSTANTS ||
+                   command_stream_transfer_opcode(record.opcode)) {
             result = replay_render_command_record(
                 context, info.command_buffer_id, &record);
         } else if (record.opcode == BVB_COMMAND_VULKAN_END) {

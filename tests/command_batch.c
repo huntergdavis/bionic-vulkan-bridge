@@ -248,6 +248,102 @@ static int test_transfer_batch(void) {
     return 0;
 }
 
+static int test_vulkan_transfer_family(void) {
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    const uint64_t command_buffer =
+        bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 31U);
+    const uint64_t source_buffer = bvb_handle_id(BVB_OBJECT_BUFFER, 32U);
+    const uint64_t destination_buffer =
+        bvb_handle_id(BVB_OBJECT_BUFFER, 33U);
+    const uint64_t source_image = bvb_handle_id(BVB_OBJECT_IMAGE, 34U);
+    const uint64_t destination_image =
+        bvb_handle_id(BVB_OBJECT_IMAGE, 35U);
+    const uint16_t opcodes[] = {
+        BVB_COMMAND_VULKAN_COPY_BUFFER_2,
+        BVB_COMMAND_VULKAN_COPY_BUFFER_TO_IMAGE_2,
+        BVB_COMMAND_VULKAN_COPY_IMAGE_TO_BUFFER_2,
+        BVB_COMMAND_VULKAN_COPY_IMAGE_2,
+        BVB_COMMAND_VULKAN_BLIT_IMAGE_2,
+        BVB_COMMAND_VULKAN_RESOLVE_IMAGE_2,
+    };
+    for (size_t opcode_index = 0U;
+         opcode_index < sizeof(opcodes) / sizeof(opcodes[0]);
+         ++opcode_index) {
+        const uint16_t opcode = opcodes[opcode_index];
+        const bool source_is_buffer =
+            opcode == BVB_COMMAND_VULKAN_COPY_BUFFER_2 ||
+            opcode == BVB_COMMAND_VULKAN_COPY_BUFFER_TO_IMAGE_2;
+        const bool destination_is_buffer =
+            opcode == BVB_COMMAND_VULKAN_COPY_BUFFER_2 ||
+            opcode == BVB_COMMAND_VULKAN_COPY_IMAGE_TO_BUFFER_2;
+        struct bvb_vulkan_transfer_command command = {
+            .source_id = source_is_buffer ? source_buffer : source_image,
+            .destination_id = destination_is_buffer ? destination_buffer :
+                                                        destination_image,
+            .source_layout = source_is_buffer ? 0U : 6U,
+            .destination_layout = destination_is_buffer ? 0U : 7U,
+            .filter = opcode == BVB_COMMAND_VULKAN_BLIT_IMAGE_2 ? 1U : 0U,
+            .region_count = 1U,
+            .regions = {{
+                .source_buffer_offset = 64U,
+                .destination_buffer_offset = 128U,
+                .size = 256U,
+                .buffer_row_length = 32U,
+                .buffer_image_height = 16U,
+                .source_layers = {.aspect_mask = 1U, .mip_level = 2U,
+                                  .base_array_layer = 3U, .layer_count = 1U},
+                .destination_layers = {
+                    .aspect_mask = 1U, .mip_level = 4U,
+                    .base_array_layer = 5U, .layer_count = 1U},
+                .source_offsets = {{1, 2, 3}, {11, 12, 13}},
+                .destination_offsets = {{4, 5, 6}, {14, 15, 16}},
+                .extent = {64U, 32U, 1U},
+            }},
+        };
+        struct bvb_command_batch_builder builder;
+        CHECK(bvb_command_batch_begin(
+                  &builder, bytes, sizeof(bytes), command_buffer,
+                  opcode_index + 1U) == 0);
+        CHECK(bvb_command_batch_append_vulkan_transfer(
+                  &builder, opcode, &command) == 0);
+        size_t length = 0U;
+        CHECK(bvb_command_batch_finish(&builder, &length) == 0);
+        CHECK(length < BVB_PROTOCOL_MAX_PAYLOAD);
+        struct bvb_command_batch_info info;
+        CHECK(bvb_command_batch_validate(bytes, length, &info) == 0);
+        struct bvb_command_batch_iterator iterator;
+        struct bvb_command_record record;
+        CHECK(bvb_command_batch_iterator_init(&iterator, bytes, length) == 0);
+        CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+        struct bvb_vulkan_transfer_command decoded;
+        CHECK(bvb_command_decode_vulkan_transfer(&record, &decoded) == 0);
+        CHECK(record.opcode == opcode);
+        CHECK(decoded.source_id == command.source_id);
+        CHECK(decoded.destination_id == command.destination_id);
+        CHECK(decoded.region_count == 1U);
+        CHECK(decoded.regions[0].source_buffer_offset == 64U);
+        CHECK(decoded.regions[0].destination_buffer_offset == 128U);
+        CHECK(decoded.regions[0].source_offsets[1].z == 13);
+        CHECK(decoded.regions[0].destination_offsets[1].x == 14);
+        CHECK(decoded.regions[0].extent.width == 64U);
+        CHECK(bvb_command_batch_next(&iterator, &record) == 1);
+
+        uint8_t corrupted[BVB_PROTOCOL_MAX_PAYLOAD];
+        memcpy(corrupted, bytes, length);
+        const size_t payload = BVB_COMMAND_BATCH_HEADER_SIZE +
+            BVB_COMMAND_RECORD_HEADER_SIZE;
+        bvb_wire_put_u32(corrupted + payload + 28,
+                         BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS + 1U);
+        CHECK(bvb_command_batch_validate(corrupted, length, &info) ==
+              -EPROTO);
+        memcpy(corrupted, bytes, length);
+        bvb_wire_put_u32(corrupted + payload + 32U + 128U + 124U, 1U);
+        CHECK(bvb_command_batch_validate(corrupted, length, &info) ==
+              -EPROTO);
+    }
+    return 0;
+}
+
 static int test_vulkan_command_stream(void) {
     uint8_t bytes[2048];
     const uint64_t command_buffer =
@@ -524,6 +620,7 @@ int main(void) {
     CHECK(test_handles() == 0);
     CHECK(test_batch() == 0);
     CHECK(test_transfer_batch() == 0);
+    CHECK(test_vulkan_transfer_family() == 0);
     CHECK(test_vulkan_command_stream() == 0);
     puts("PASS: proxy handles and triangle command batch");
     return 0;

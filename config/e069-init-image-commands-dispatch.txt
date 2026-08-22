@@ -6,8 +6,14 @@ vkBindBufferMemory
 vkBindImageMemory
 vkCmdClearColorImage
 vkCmdBindDescriptorSets
+vkCmdBlitImage2
+vkCmdCopyBuffer2
+vkCmdCopyBufferToImage2
+vkCmdCopyImage2
+vkCmdCopyImageToBuffer2
 vkCmdFillBuffer
 vkCmdPipelineBarrier2
+vkCmdResolveImage2
 vkCmdSetScissorWithCount
 vkCmdSetScissorWithCountEXT
 vkCmdSetViewportWithCount

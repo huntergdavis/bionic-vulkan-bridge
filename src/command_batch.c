@@ -29,6 +29,11 @@ enum {
         BVB_COMMAND_VULKAN_MAX_DYNAMIC_OFFSETS * sizeof(uint32_t),
     BVB_VULKAN_PUSH_CONSTANTS_SIZE = 24 +
         BVB_COMMAND_VULKAN_MAX_PUSH_CONSTANT_BYTES,
+    BVB_VULKAN_TRANSFER_HEADER_SIZE = 32,
+    BVB_VULKAN_TRANSFER_REGION_SIZE = 128,
+    BVB_VULKAN_TRANSFER_SIZE = BVB_VULKAN_TRANSFER_HEADER_SIZE +
+        BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS *
+            BVB_VULKAN_TRANSFER_REGION_SIZE,
 };
 
 _Static_assert(sizeof(float) == sizeof(uint32_t),
@@ -87,6 +92,42 @@ static int image_range_wire_is_zero(const uint8_t *input) {
         if (bvb_wire_get_u32(input + offset) != 0U) return 0;
     }
     return 1;
+}
+
+static int transfer_opcode_is_valid(uint16_t opcode) {
+    return opcode >= BVB_COMMAND_VULKAN_COPY_BUFFER_2 &&
+           opcode <= BVB_COMMAND_VULKAN_RESOLVE_IMAGE_2;
+}
+
+static int bytes_are_zero(const uint8_t *bytes, size_t size) {
+    for (size_t index = 0U; index < size; ++index)
+        if (bytes[index] != 0U) return 0;
+    return 1;
+}
+
+static int transfer_layers_are_valid(
+    const struct bvb_vulkan_image_subresource_layers *layers) {
+    return layers != NULL && layers->aspect_mask != 0U &&
+           layers->layer_count != 0U;
+}
+
+static void encode_transfer_layers(
+    uint8_t output[16],
+    const struct bvb_vulkan_image_subresource_layers *layers) {
+    bvb_wire_put_u32(output, layers->aspect_mask);
+    bvb_wire_put_u32(output + 4, layers->mip_level);
+    bvb_wire_put_u32(output + 8, layers->base_array_layer);
+    bvb_wire_put_u32(output + 12, layers->layer_count);
+}
+
+static struct bvb_vulkan_image_subresource_layers decode_transfer_layers(
+    const uint8_t input[16]) {
+    return (struct bvb_vulkan_image_subresource_layers){
+        .aspect_mask = bvb_wire_get_u32(input),
+        .mip_level = bvb_wire_get_u32(input + 4),
+        .base_array_layer = bvb_wire_get_u32(input + 8),
+        .layer_count = bvb_wire_get_u32(input + 12),
+    };
 }
 
 static struct bvb_vulkan_image_subresource_range decode_image_range(
@@ -491,6 +532,81 @@ int bvb_command_batch_append_vulkan_push_constants(
                          payload, sizeof(payload));
 }
 
+int bvb_command_batch_append_vulkan_transfer(
+    struct bvb_command_batch_builder *builder, uint16_t opcode,
+    const struct bvb_vulkan_transfer_command *command) {
+    if (!transfer_opcode_is_valid(opcode) || command == NULL ||
+        command->region_count == 0U ||
+        command->region_count > BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS)
+        return -EINVAL;
+    const bool source_buffer =
+        opcode == BVB_COMMAND_VULKAN_COPY_BUFFER_2 ||
+        opcode == BVB_COMMAND_VULKAN_COPY_BUFFER_TO_IMAGE_2;
+    const bool destination_buffer =
+        opcode == BVB_COMMAND_VULKAN_COPY_BUFFER_2 ||
+        opcode == BVB_COMMAND_VULKAN_COPY_IMAGE_TO_BUFFER_2;
+    if (bvb_handle_expect(command->source_id,
+                          source_buffer ? BVB_OBJECT_BUFFER :
+                                          BVB_OBJECT_IMAGE) != 0 ||
+        bvb_handle_expect(command->destination_id,
+                          destination_buffer ? BVB_OBJECT_BUFFER :
+                                               BVB_OBJECT_IMAGE) != 0 ||
+        ((!source_buffer && command->source_layout == 0U) ||
+         (!destination_buffer && command->destination_layout == 0U)) ||
+        (opcode == BVB_COMMAND_VULKAN_BLIT_IMAGE_2 &&
+         command->filter > 1U)) return -EINVAL;
+    uint8_t payload[BVB_VULKAN_TRANSFER_SIZE];
+    memset(payload, 0, sizeof(payload));
+    bvb_wire_put_u64(payload, command->source_id);
+    bvb_wire_put_u64(payload + 8, command->destination_id);
+    bvb_wire_put_u32(payload + 16, command->source_layout);
+    bvb_wire_put_u32(payload + 20, command->destination_layout);
+    bvb_wire_put_u32(payload + 24, command->filter);
+    bvb_wire_put_u32(payload + 28, command->region_count);
+    for (uint32_t index = 0U; index < command->region_count; ++index) {
+        const struct bvb_vulkan_transfer_region *region =
+            &command->regions[index];
+        const bool buffer_copy =
+            opcode == BVB_COMMAND_VULKAN_COPY_BUFFER_2;
+        if ((buffer_copy && region->size == 0U) ||
+            (!buffer_copy &&
+             (region->extent.width == 0U || region->extent.height == 0U ||
+              region->extent.depth == 0U)) ||
+            (!source_buffer &&
+             !transfer_layers_are_valid(&region->source_layers)) ||
+            (!destination_buffer &&
+             !transfer_layers_are_valid(&region->destination_layers)))
+            return -EINVAL;
+        uint8_t *wire = payload + BVB_VULKAN_TRANSFER_HEADER_SIZE +
+            index * BVB_VULKAN_TRANSFER_REGION_SIZE;
+        bvb_wire_put_u64(wire, region->source_buffer_offset);
+        bvb_wire_put_u64(wire + 8, region->destination_buffer_offset);
+        bvb_wire_put_u64(wire + 16, region->size);
+        bvb_wire_put_u32(wire + 24, region->buffer_row_length);
+        bvb_wire_put_u32(wire + 28, region->buffer_image_height);
+        encode_transfer_layers(wire + 32, &region->source_layers);
+        encode_transfer_layers(wire + 48, &region->destination_layers);
+        for (uint32_t offset = 0U; offset < 2U; ++offset) {
+            bvb_wire_put_u32(wire + 64U + offset * 12U,
+                             (uint32_t)region->source_offsets[offset].x);
+            bvb_wire_put_u32(wire + 68U + offset * 12U,
+                             (uint32_t)region->source_offsets[offset].y);
+            bvb_wire_put_u32(wire + 72U + offset * 12U,
+                             (uint32_t)region->source_offsets[offset].z);
+            bvb_wire_put_u32(wire + 88U + offset * 12U,
+                             (uint32_t)region->destination_offsets[offset].x);
+            bvb_wire_put_u32(wire + 92U + offset * 12U,
+                             (uint32_t)region->destination_offsets[offset].y);
+            bvb_wire_put_u32(wire + 96U + offset * 12U,
+                             (uint32_t)region->destination_offsets[offset].z);
+        }
+        bvb_wire_put_u32(wire + 112, region->extent.width);
+        bvb_wire_put_u32(wire + 116, region->extent.height);
+        bvb_wire_put_u32(wire + 120, region->extent.depth);
+    }
+    return append_record(builder, opcode, payload, sizeof(payload));
+}
+
 int bvb_command_batch_append_record(
     struct bvb_command_batch_builder *builder,
     const struct bvb_command_record *record) {
@@ -573,6 +689,14 @@ static int expected_payload_size(uint16_t opcode, uint32_t *payload_size) {
             return 0;
         case BVB_COMMAND_VULKAN_PUSH_CONSTANTS:
             *payload_size = BVB_VULKAN_PUSH_CONSTANTS_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_COPY_BUFFER_2:
+        case BVB_COMMAND_VULKAN_COPY_BUFFER_TO_IMAGE_2:
+        case BVB_COMMAND_VULKAN_COPY_IMAGE_TO_BUFFER_2:
+        case BVB_COMMAND_VULKAN_COPY_IMAGE_2:
+        case BVB_COMMAND_VULKAN_BLIT_IMAGE_2:
+        case BVB_COMMAND_VULKAN_RESOLVE_IMAGE_2:
+            *payload_size = BVB_VULKAN_TRANSFER_SIZE;
             return 0;
         case BVB_COMMAND_VULKAN_BEGIN:
             *payload_size = BVB_VULKAN_BEGIN_SIZE;
@@ -762,6 +886,63 @@ static int validate_payload(uint16_t opcode, const uint8_t *payload) {
                  index < BVB_COMMAND_VULKAN_MAX_PUSH_CONSTANT_BYTES;
                  ++index) {
                 if (payload[24U + index] != 0U) return -EPROTO;
+            }
+            return 0;
+        }
+        case BVB_COMMAND_VULKAN_COPY_BUFFER_2:
+        case BVB_COMMAND_VULKAN_COPY_BUFFER_TO_IMAGE_2:
+        case BVB_COMMAND_VULKAN_COPY_IMAGE_TO_BUFFER_2:
+        case BVB_COMMAND_VULKAN_COPY_IMAGE_2:
+        case BVB_COMMAND_VULKAN_BLIT_IMAGE_2:
+        case BVB_COMMAND_VULKAN_RESOLVE_IMAGE_2: {
+            const uint32_t count = bvb_wire_get_u32(payload + 28);
+            const bool source_buffer =
+                opcode == BVB_COMMAND_VULKAN_COPY_BUFFER_2 ||
+                opcode == BVB_COMMAND_VULKAN_COPY_BUFFER_TO_IMAGE_2;
+            const bool destination_buffer =
+                opcode == BVB_COMMAND_VULKAN_COPY_BUFFER_2 ||
+                opcode == BVB_COMMAND_VULKAN_COPY_IMAGE_TO_BUFFER_2;
+            if (bvb_handle_expect(bvb_wire_get_u64(payload),
+                                  source_buffer ? BVB_OBJECT_BUFFER :
+                                                  BVB_OBJECT_IMAGE) != 0 ||
+                bvb_handle_expect(bvb_wire_get_u64(payload + 8),
+                                  destination_buffer ? BVB_OBJECT_BUFFER :
+                                                       BVB_OBJECT_IMAGE) != 0 ||
+                (!source_buffer && bvb_wire_get_u32(payload + 16) == 0U) ||
+                (!destination_buffer &&
+                 bvb_wire_get_u32(payload + 20) == 0U) ||
+                (opcode == BVB_COMMAND_VULKAN_BLIT_IMAGE_2 &&
+                 bvb_wire_get_u32(payload + 24) > 1U) ||
+                (opcode != BVB_COMMAND_VULKAN_BLIT_IMAGE_2 &&
+                 bvb_wire_get_u32(payload + 24) != 0U) ||
+                count == 0U ||
+                count > BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS)
+                return -EPROTO;
+            for (uint32_t index = 0U;
+                 index < BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS; ++index) {
+                const uint8_t *wire = payload +
+                    BVB_VULKAN_TRANSFER_HEADER_SIZE +
+                    index * BVB_VULKAN_TRANSFER_REGION_SIZE;
+                if (index >= count) {
+                    if (!bytes_are_zero(wire,
+                                        BVB_VULKAN_TRANSFER_REGION_SIZE))
+                        return -EPROTO;
+                    continue;
+                }
+                if ((opcode == BVB_COMMAND_VULKAN_COPY_BUFFER_2 &&
+                     bvb_wire_get_u64(wire + 16) == 0U) ||
+                    (opcode != BVB_COMMAND_VULKAN_COPY_BUFFER_2 &&
+                     (bvb_wire_get_u32(wire + 112) == 0U ||
+                      bvb_wire_get_u32(wire + 116) == 0U ||
+                      bvb_wire_get_u32(wire + 120) == 0U)) ||
+                    (!source_buffer &&
+                     (bvb_wire_get_u32(wire + 32) == 0U ||
+                      bvb_wire_get_u32(wire + 44) == 0U)) ||
+                    (!destination_buffer &&
+                     (bvb_wire_get_u32(wire + 48) == 0U ||
+                      bvb_wire_get_u32(wire + 60) == 0U)) ||
+                    bvb_wire_get_u32(wire + 124) != 0U)
+                    return -EPROTO;
             }
             return 0;
         }
@@ -1286,5 +1467,57 @@ int bvb_command_decode_vulkan_push_constants(
         .size = bvb_wire_get_u32(record->payload + 16),
     };
     memcpy(command->data, record->payload + 24, command->size);
+    return 0;
+}
+
+int bvb_command_decode_vulkan_transfer(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_transfer_command *command) {
+    if (record == NULL || command == NULL ||
+        !transfer_opcode_is_valid(record->opcode) ||
+        record->payload_length != BVB_VULKAN_TRANSFER_SIZE)
+        return -EINVAL;
+    memset(command, 0, sizeof(*command));
+    command->source_id = bvb_wire_get_u64(record->payload);
+    command->destination_id = bvb_wire_get_u64(record->payload + 8);
+    command->source_layout = bvb_wire_get_u32(record->payload + 16);
+    command->destination_layout = bvb_wire_get_u32(record->payload + 20);
+    command->filter = bvb_wire_get_u32(record->payload + 24);
+    command->region_count = bvb_wire_get_u32(record->payload + 28);
+    for (uint32_t index = 0U; index < command->region_count; ++index) {
+        const uint8_t *wire = record->payload +
+            BVB_VULKAN_TRANSFER_HEADER_SIZE +
+            index * BVB_VULKAN_TRANSFER_REGION_SIZE;
+        struct bvb_vulkan_transfer_region *region =
+            &command->regions[index];
+        region->source_buffer_offset = bvb_wire_get_u64(wire);
+        region->destination_buffer_offset = bvb_wire_get_u64(wire + 8);
+        region->size = bvb_wire_get_u64(wire + 16);
+        region->buffer_row_length = bvb_wire_get_u32(wire + 24);
+        region->buffer_image_height = bvb_wire_get_u32(wire + 28);
+        region->source_layers = decode_transfer_layers(wire + 32);
+        region->destination_layers = decode_transfer_layers(wire + 48);
+        for (uint32_t offset = 0U; offset < 2U; ++offset) {
+            region->source_offsets[offset] = (struct bvb_vulkan_offset_3d){
+                .x = (int32_t)bvb_wire_get_u32(wire + 64U + offset * 12U),
+                .y = (int32_t)bvb_wire_get_u32(wire + 68U + offset * 12U),
+                .z = (int32_t)bvb_wire_get_u32(wire + 72U + offset * 12U),
+            };
+            region->destination_offsets[offset] =
+                (struct bvb_vulkan_offset_3d){
+                    .x = (int32_t)bvb_wire_get_u32(
+                        wire + 88U + offset * 12U),
+                    .y = (int32_t)bvb_wire_get_u32(
+                        wire + 92U + offset * 12U),
+                    .z = (int32_t)bvb_wire_get_u32(
+                        wire + 96U + offset * 12U),
+                };
+        }
+        region->extent = (struct bvb_vulkan_extent_3d){
+            .width = bvb_wire_get_u32(wire + 112),
+            .height = bvb_wire_get_u32(wire + 116),
+            .depth = bvb_wire_get_u32(wire + 120),
+        };
+    }
     return 0;
 }

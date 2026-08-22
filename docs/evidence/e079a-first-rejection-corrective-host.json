@@ -28,11 +28,11 @@
     "resolved_name_source": "E011 Tomb Raider dispatch manifest",
     "active_executable_source": "generated triangle dispatch plus the current cumulative active configuration through E101",
     "generator_sha256": "11b2d58e16de8a773ab052f0029f07aaf19ad0550fe6d0b9a949ec2646eb5258",
-    "generated_include_sha256": "6db244929d24148b7f15952313b53cd86a19aee92b337f740a1fe0af4d1f1d8e",
+    "generated_include_sha256": "1d05f54f7180a16ae30954185aadb31a53cac56240592c2c598ef0c9a317abf6",
     "vk_xml_sha256": "80e7394d0e787d6ec78b67aa324add6f96129fdd042ba640cc336a5481a208ee",
     "e011_manifest_sha256": "6a78ddd1f1b34773e4123d3612233fab2270ed0ff418d01204ad41af1cab8afc",
     "triangle_dispatch_sha256": "20185caa17fbe85cea88699ba43b3a98d2b162de67cd748e69349620b8b7bd3e",
-    "active_config_sha256": "0792289a4f4b494d5f810f9964307438dc132db81b112e97ffcafd6f49e74677"
+    "active_config_sha256": "89bf5ef67d578e80db2633f70bca8ab91b17c81cbb96810f69e9d5adafb1e00b"
   },
   "policy_unchanged": {
     "executable": 99,

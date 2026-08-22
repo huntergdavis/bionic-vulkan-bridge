@@ -4132,3 +4132,38 @@ query returned no indexed implementation. E104 reuses E103's immutable
 relative-offset pipeline graph, E075a's private service snapshot rule, and the
 pinned DXVK construction. The full host suite passed 64/64. No game pixel,
 benchmark, or FPS claim is made until the next screenshot-checked tablet run.
+
+The exact E104 tablet candidate passed 62/62 contracts. Run
+`20260822T033247Z-3716` then created both game graphics pipelines: the previous
+pipeline `VK_ERROR_FEATURE_NOT_PRESENT` disappeared, and the format rejection
+counts remained zero. The screenshot was still the byte-identical bridge
+triangle, so this is a pipeline milestone rather than a visible game frame.
+The sole first-rejection diagnostic moved into command recording at sequence
+11: `vkCmdCopyBufferToImage2` was invoked through its required-unimplemented
+stub, poisoned the command buffer, and caused DXVK's command-list finalization
+to fail.
+
+## E105 — bounded Vulkan transfer-command family (2026-08-21)
+
+E105 implements that exact boundary as the complete Vulkan 1.3 transfer family
+rather than advancing one entry at a time: copy buffer, both buffer/image
+directions, copy image, blit image, and resolve image. Core entry points are
+promoted; the KHR aliases remain null because E011 observed DXVK probing them
+null. Six fixed command IDs 14–19 share one canonical little-endian record with
+typed source/destination IDs and at most 16 pointer-free regions. The largest
+payload is 2,080 bytes, below the 4 KiB protocol ceiling.
+
+Strict mode uses the existing one-record immediate RPC. Shared mode validates
+ownership through the E080 cache, appends locally with zero recording RPC, and
+relies on E075a's immutable service snapshot. The Bionic service revalidates
+typed same-device ancestry and reconstructs only local Vulkan structures before
+calling the native core entry. Codec tests cover all six opcodes and reject
+over-count and nonzero inactive records. Compact evidence is
+`docs/evidence/e105-transfer-command-family-host.json`.
+
+The required `deja "BVB vkCmdCopyBufferToImage2 CopyBuffer2 CopyImage2
+BlitImage2 ResolveImage2 command stream wire"` query returned no indexed
+implementation. E105 reuses E075/E075a's command-stream transaction, E076's
+bounded records, E101's strict immediate fallback, and E104's exact tablet
+diagnostic. The full host suite passed 65/65. No game pixel, benchmark, or FPS claim is made before deployment
+and the next screenshot-checked run.
