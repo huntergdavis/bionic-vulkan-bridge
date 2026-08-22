@@ -40,8 +40,42 @@
     "cross_process_native_update_replay": "passed",
     "legacy_wrapper_source_contract": "passed",
     "host_suite": "74/74 passed",
-    "tablet_runtime": "pending exact archive deployment",
-    "visible_game_frame": false,
+    "tablet_runtime": {
+      "status": "passed E114 and produced the first visible Tomb Raider frames",
+      "source_commit": "51c81519b0b7f606a72fc74b5aca345a4885475a",
+      "source_archive_sha256": "1bdd9213878b484203ae6aeb93a70e4af48aea98ec78145bf1910461ccc9cf61",
+      "tablet_suite": "72/72 passed",
+      "glibc_icd_selftest": "passed",
+      "installed_icd_sha256": "62379dfb29b184b0744dc921771547d1c66a9de80fac8c182da76d6b0fd9513d",
+      "installed_service_sha256": "0193cbde04c8d6aa91876f2bb5e751e48fbe43b41250f56241973b8faee112b8",
+      "rollback": "install-pre-OKW5vehv",
+      "run_id": "20260822T074558Z-13098",
+      "prior_update_buffer_rejection_cleared": true,
+      "activity_import_generation": 16167922662260080641,
+      "presented_sequence_observed_through": 66,
+      "presented_slot_cycle": "0,1,2 repeated",
+      "first_game_pixels": "Square Enix, Crystal Dynamics, Nixxes, and AMD intro frame",
+      "game_frame_screenshot": "docs/evidence/e114-tombraider-first-game-frame.png",
+      "game_frame_screenshot_sha256": "bd1f9ea6f53c273b46722333f93b492429a5f02474f951b239642607d72233f2",
+      "visual_defects": [
+        "horizontal scanline corruption",
+        "game alpha/compositing exposes the Android background",
+        "Samsung task remains freeform despite full-display bounds"
+      ],
+      "first_diagnostic_after_e114": {
+        "entry": "vkCreateDevice",
+        "reason": "negative_vkresult",
+        "result": -3,
+        "consumer": "Mesa Zink OpenGL setup",
+        "next_game_command_known": false,
+        "note": "this recoverable earlier category occupied the one-record diagnostic before any later command poison"
+      },
+      "bounded_stop": "probe pid 13098 start_ticks 125788681 received TERM after evidence capture and ran exact cleanup",
+      "protected_steam": "pid 14565 start_ticks 121864440 unchanged",
+      "protected_x11": "pid 13643 start_ticks 121863492 unchanged",
+      "cleanup": "launcher, game, helper, service, Activity, socket, and gates removed"
+    },
+    "visible_game_frame": true,
     "benchmark_or_fps": false
   },
   "reuse": "The required deja query found no indexed E114 implementation. E114 reuses E075/E075a local shared recording and immutable replay, E080 typed ownership caching, and the E105/E111 compact synchronization2 transfer codec. The six legacy transfer APIs are converted into their existing pointer-free *2 wire representation instead of creating six duplicate protocols."

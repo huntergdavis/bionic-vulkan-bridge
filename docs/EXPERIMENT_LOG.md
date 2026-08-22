@@ -4492,3 +4492,24 @@ blit resolve E114 command stream"` query returned no indexed implementation.
 E114 reuses E075/E075a, E080, E105, and E111. Compact evidence is
 `docs/evidence/e114-upload-copy-command-family-host.json`; tablet pixels and
 FPS remain pending exact-archive deployment and automatic screenshot review.
+
+The exact E114 archive passed 72/72 Termux contracts and the optimized glibc
+ICD self-test. Transactional install retained rollback
+`install-pre-OKW5vehv` and installed ICD/service SHA-256 identities
+`62379dfb...513d` and `0193cbde...12b8`. Bounded run
+`20260822T074558Z-13098` cleared `vkCmdUpdateBuffer` and crossed the project's
+first real-game-pixel boundary: the Activity visibly presented Tomb Raider's
+Square Enix, Crystal Dynamics, Nixxes, and AMD intro frame. The retained
+screenshot is `docs/evidence/e114-tombraider-first-game-frame.png`, SHA-256
+`bd1f9ea6...33f2`.
+
+This is not yet a correctness or performance pass. The frame has severe
+horizontal scanline corruption, its alpha/compositing exposes the Android
+background, and Samsung still labels the full-display task as freeform. The
+Activity nevertheless imported three game images and logged monotonically
+presented sequences through 66 while cycling slots 0,1,2. The one-record
+diagnostic was consumed earlier by a recoverable Mesa Zink `vkCreateDevice`
+failure (`VK_ERROR_INITIALIZATION_FAILED`), so the next game command remains
+unknown rather than guessed. The run was stopped through its exact probe PID;
+cleanup removed only run-owned children and preserved Steam PID 14565/start
+121864440 and X11 PID 13643/start 121863492.
