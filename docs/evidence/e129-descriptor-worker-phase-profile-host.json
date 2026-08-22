@@ -1,0 +1,52 @@
+{
+  "gate": "E129",
+  "date": "2026-08-22",
+  "source_base_commit": "00ccace",
+  "trigger": {
+    "e128_average_fps": 2.0,
+    "e128_descriptor_ring_calls_per_present": 531.065625,
+    "e128_descriptor_ring_ms_per_present": 139.00381068854168,
+    "e128_mean_microseconds_per_transaction": 261.74507282135176,
+    "unknown_boundary": "The E128 client total combines worker scheduling, journal processing, real native allocation, response work, and futex completion."
+  },
+  "implementation": {
+    "selector": "BVB_FRAME_PROFILE=1",
+    "default_enabled": false,
+    "sample_calls": 4096,
+    "emission": "one bounded write after each 4096 completed transactions and one final partial sample at worker exit",
+    "phases": [
+      "context_wait_ns",
+      "decode_ns",
+      "snapshot_ns",
+      "replay_ns",
+      "allocate_ns",
+      "response_ns",
+      "completion_ns"
+    ],
+    "maxima": [
+      "total_max_ns",
+      "allocate_max_ns"
+    ],
+    "per_transaction_logging": false,
+    "wire_or_dispatch_change": false
+  },
+  "validation": {
+    "default_service_stderr_unchanged": true,
+    "profiled_cross_process_service": true,
+    "profile_record_count": 1,
+    "profile_calls_minimum": 2,
+    "total_ns_positive": true,
+    "allocate_ns_positive": true,
+    "total_covers_phase_sum": true,
+    "focused_contract": "1/1 passed",
+    "full_host_suite": "91/91 passed"
+  },
+  "claims": {
+    "tablet_deployed": false,
+    "tomb_raider_run": false,
+    "native_allocation_share": null,
+    "performance_improvement": null
+  },
+  "next_gate": "Run the same complete native-resolution benchmark and aggregate every E129 record. If native allocation dominates, implement reset-epoch set reuse; if context scheduling dominates, remove the dedicated worker handoff first.",
+  "reuse": "The required deja query returned no indexed implementation. E129 reuses E116/E117's bounded summary discipline, E128's exact worker boundary, and the existing final-process BVB_FRAME_PROFILE selector."
+}

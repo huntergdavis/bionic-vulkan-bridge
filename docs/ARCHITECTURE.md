@@ -547,3 +547,11 @@ and descriptor-pool ordering. The client still blocks until its exact result is
 available, but steady-state allocation makes no socket exchange. Timeout,
 stale sequence, malformed data, or ambiguous completion poisons the connection;
 strict mode and legacy opcode 123 remain intact.
+
+E129 makes the E128 worker boundary measurable without adding per-call logging
+or changing the wire. When the existing `BVB_FRAME_PROFILE=1` selector reaches
+the Bionic service, one worker-local accumulator separates context-mutex wait,
+request decode, immutable journal snapshot validation, native update replay,
+real `vkAllocateDescriptorSets`, response work, and completion publication.
+One bounded line is written after 4,096 completed transactions and once for a
+final partial sample. Default service behavior and stderr remain unchanged.

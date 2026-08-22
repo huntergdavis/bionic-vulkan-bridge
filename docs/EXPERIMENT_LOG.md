@@ -5039,3 +5039,23 @@ hundreds of native allocations through descriptor-pool reset-epoch reuse.
 Compact tablet evidence is retained in
 `docs/evidence/e128-descriptor-completion-ring-tablet.json`; canonical game
 evidence is in sibling `steamclienttermux` commit `e2d72a2`.
+
+## E129 — descriptor worker phase profile (2026-08-22)
+
+E128 proves that replacing the descriptor socket call with a futex ring is not
+enough: mean transaction latency increased from 190.7 to 261.7 microseconds,
+but its client timer cannot distinguish scheduling from native driver work.
+The required `deja` query returned no indexed phase-profiler implementation.
+E129 reuses E116/E117's bounded summary approach and the existing
+`BVB_FRAME_PROFILE` selector rather than adding a persistent diagnostic mode.
+
+The Bionic worker now accumulates context-mutex wait, decode, immutable journal
+snapshot/validation, native update replay, real descriptor allocation,
+response, and futex completion time. It emits one bounded record after 4,096
+transactions and one final partial record at worker exit. Default service
+stderr and all wire/dispatch behavior remain unchanged. The cross-process fake
+proves an opted-in record with positive total and native-allocation time whose
+total covers all named phases. The complete host suite passed 91/91. This is
+host instrumentation only; tablet phase shares, game result, and any reuse
+optimization remain unclaimed pending deployment. Exact boundaries are in
+`docs/evidence/e129-descriptor-worker-phase-profile-host.json`.

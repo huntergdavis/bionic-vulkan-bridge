@@ -81,6 +81,8 @@ def main() -> int:
             server_environment["BVB_FAKE_REQUIRE_MEMORY_MIRROR"] = "1"
         if validation_mode == "shared-noncoherent-memory":
             server_environment["BVB_FAKE_NONCOHERENT_MEMORY"] = "1"
+        if validation_mode == "shared-descriptor-journal":
+            server_environment["BVB_FRAME_PROFILE"] = "1"
         if validation_mode == "strict-mapped-memory":
             server_environment["BVB_FAKE_KEEP_MEMORY_MAPPED"] = "1"
         if validation_mode == "loader-tls-lifetime":
@@ -617,6 +619,30 @@ def main() -> int:
             if validation_mode == "loader-tls-lifetime":
                 assert server_stderr == "" or server_stderr.endswith(
                     "failed: Connection reset by peer\n"
+                )
+            elif validation_mode == "shared-descriptor-journal":
+                profile_lines = server_stderr.splitlines()
+                assert len(profile_lines) == 1, server_stderr
+                assert profile_lines[0].startswith(
+                    "BVB_E129_DESCRIPTOR_WORKER_PROFILE "
+                ), server_stderr
+                profile = {
+                    key: int(value)
+                    for key, value in (
+                        field.split("=", 1)
+                        for field in profile_lines[0].split()[1:]
+                    )
+                }
+                assert profile["calls"] >= 2
+                assert profile["total_ns"] > 0
+                assert profile["allocate_ns"] > 0
+                assert profile["total_ns"] >= sum(
+                    profile[key]
+                    for key in (
+                        "context_wait_ns", "decode_ns", "snapshot_ns",
+                        "replay_ns", "allocate_ns", "response_ns",
+                        "completion_ns",
+                    )
                 )
             else:
                 assert server_stderr == expected_server_stderr

@@ -1470,4 +1470,13 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-triangle-dispatch-glibc-termux.sh"
   )
+  add_test(
+    NAME e129-descriptor-worker-profile-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e129_descriptor_worker_profile_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e129-descriptor-worker-phase-profile-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+  )
 endif()

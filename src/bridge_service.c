@@ -62,7 +62,19 @@ struct descriptor_transaction_worker {
     pthread_mutex_t *context_mutex;
     pthread_t thread;
     atomic_bool stop;
+    bool profile_enabled;
     bool started;
+    uint64_t profile_calls;
+    uint64_t profile_total_ns;
+    uint64_t profile_context_wait_ns;
+    uint64_t profile_decode_ns;
+    uint64_t profile_snapshot_ns;
+    uint64_t profile_replay_ns;
+    uint64_t profile_allocate_ns;
+    uint64_t profile_response_ns;
+    uint64_t profile_completion_ns;
+    uint64_t profile_total_max_ns;
+    uint64_t profile_allocate_max_ns;
 };
 
 struct connection_worker {
@@ -163,6 +175,11 @@ static uint64_t monotonic_ns(void) {
     }
     return (uint64_t)now.tv_sec * UINT64_C(1000000000) +
            (uint64_t)now.tv_nsec;
+}
+
+static uint64_t elapsed_ns(uint64_t started_ns, uint64_t finished_ns) {
+    return started_ns != 0U && finished_ns >= started_ns
+        ? finished_ns - started_ns : 0U;
 }
 
 static int activity_listen(uint16_t requested_port, uint16_t *actual_port) {
@@ -2231,6 +2248,69 @@ static int answer_vulkan_descriptor_transaction_allocate(
     return bvb_transport_send(client_fd, &response);
 }
 
+static void descriptor_worker_profile_emit(
+    struct descriptor_transaction_worker *worker) {
+    if (!worker->profile_enabled || worker->profile_calls == 0U) return;
+    char line[640];
+    const int written = snprintf(
+        line, sizeof(line),
+        "BVB_E129_DESCRIPTOR_WORKER_PROFILE calls=%llu total_ns=%llu "
+        "context_wait_ns=%llu decode_ns=%llu snapshot_ns=%llu "
+        "replay_ns=%llu allocate_ns=%llu response_ns=%llu "
+        "completion_ns=%llu total_max_ns=%llu allocate_max_ns=%llu\n",
+        (unsigned long long)worker->profile_calls,
+        (unsigned long long)worker->profile_total_ns,
+        (unsigned long long)worker->profile_context_wait_ns,
+        (unsigned long long)worker->profile_decode_ns,
+        (unsigned long long)worker->profile_snapshot_ns,
+        (unsigned long long)worker->profile_replay_ns,
+        (unsigned long long)worker->profile_allocate_ns,
+        (unsigned long long)worker->profile_response_ns,
+        (unsigned long long)worker->profile_completion_ns,
+        (unsigned long long)worker->profile_total_max_ns,
+        (unsigned long long)worker->profile_allocate_max_ns);
+    if (written > 0) {
+        const size_t length = (size_t)written < sizeof(line)
+            ? (size_t)written : sizeof(line) - 1U;
+        const ssize_t ignored = write(STDERR_FILENO, line, length);
+        (void)ignored;
+    }
+    worker->profile_calls = 0U;
+    worker->profile_total_ns = 0U;
+    worker->profile_context_wait_ns = 0U;
+    worker->profile_decode_ns = 0U;
+    worker->profile_snapshot_ns = 0U;
+    worker->profile_replay_ns = 0U;
+    worker->profile_allocate_ns = 0U;
+    worker->profile_response_ns = 0U;
+    worker->profile_completion_ns = 0U;
+    worker->profile_total_max_ns = 0U;
+    worker->profile_allocate_max_ns = 0U;
+}
+
+static void descriptor_worker_profile_record(
+    struct descriptor_transaction_worker *worker, uint64_t total_ns,
+    uint64_t context_wait_ns, uint64_t decode_ns, uint64_t snapshot_ns,
+    uint64_t replay_ns, uint64_t allocate_ns, uint64_t response_ns,
+    uint64_t completion_ns) {
+    if (!worker->profile_enabled) return;
+    ++worker->profile_calls;
+    worker->profile_total_ns += total_ns;
+    worker->profile_context_wait_ns += context_wait_ns;
+    worker->profile_decode_ns += decode_ns;
+    worker->profile_snapshot_ns += snapshot_ns;
+    worker->profile_replay_ns += replay_ns;
+    worker->profile_allocate_ns += allocate_ns;
+    worker->profile_response_ns += response_ns;
+    worker->profile_completion_ns += completion_ns;
+    if (total_ns > worker->profile_total_max_ns)
+        worker->profile_total_max_ns = total_ns;
+    if (allocate_ns > worker->profile_allocate_max_ns)
+        worker->profile_allocate_max_ns = allocate_ns;
+    if (worker->profile_calls == 4096U)
+        descriptor_worker_profile_emit(worker);
+}
+
 static void *descriptor_transaction_worker_main(void *opaque) {
     struct descriptor_transaction_worker *worker = opaque;
     uint32_t after_sequence = 0U;
@@ -2246,16 +2326,29 @@ static void *descriptor_transaction_worker_main(void *opaque) {
         if (result == -ETIMEDOUT) continue;
         if (result != 0) break;
 
+        const uint64_t transaction_started_ns = monotonic_ns();
+        uint64_t context_wait_ns = 0U;
+        uint64_t decode_ns = 0U;
+        uint64_t snapshot_ns = 0U;
+        uint64_t replay_ns = 0U;
+        uint64_t allocate_ns = 0U;
+        uint64_t response_ns = 0U;
+        uint64_t completion_ns = 0U;
         uint8_t response[BVB_DESCRIPTOR_TRANSACTION_RING_RESPONSE_BYTES];
         uint8_t encoded_response[BVB_PROTOCOL_MAX_PAYLOAD];
         uint32_t response_length = 0U;
         char diagnostic[512] = {0};
         bool context_locked = false;
+        const uint64_t context_wait_started_ns = monotonic_ns();
         if (pthread_mutex_lock(worker->context_mutex) != 0) {
             result = -EDEADLK;
         } else {
             context_locked = true;
         }
+        const uint64_t context_wait_finished_ns = monotonic_ns();
+        context_wait_ns = elapsed_ns(context_wait_started_ns,
+                                     context_wait_finished_ns);
+        const uint64_t decode_started_ns = context_wait_finished_ns;
         struct bvb_vulkan_descriptor_transaction_allocate_request transaction;
         if (result == 0) {
             result =
@@ -2277,6 +2370,9 @@ static void *descriptor_transaction_worker_main(void *opaque) {
             transaction.journal_length > worker->journal_region->length) {
             result = -ERANGE;
         }
+        const uint64_t decode_finished_ns = monotonic_ns();
+        decode_ns = elapsed_ns(decode_started_ns, decode_finished_ns);
+        const uint64_t snapshot_started_ns = decode_finished_ns;
         uint8_t *snapshot = NULL;
         if (result == 0 && transaction.journal_length != 0U) {
             snapshot = malloc(transaction.journal_length);
@@ -2290,6 +2386,9 @@ static void *descriptor_transaction_worker_main(void *opaque) {
                 snapshot, transaction.journal_length,
                 transaction.journal_record_count);
         }
+        const uint64_t snapshot_finished_ns = monotonic_ns();
+        snapshot_ns = elapsed_ns(snapshot_started_ns, snapshot_finished_ns);
+        const uint64_t replay_started_ns = snapshot_finished_ns;
         if (result == 0 && transaction.journal_length != 0U) {
             result = replay_descriptor_journal_snapshot(
                 worker->context, snapshot, transaction.journal_length,
@@ -2297,12 +2396,18 @@ static void *descriptor_transaction_worker_main(void *opaque) {
                 sizeof(diagnostic));
         }
         free(snapshot);
+        const uint64_t replay_finished_ns = monotonic_ns();
+        replay_ns = elapsed_ns(replay_started_ns, replay_finished_ns);
+        const uint64_t allocate_started_ns = replay_finished_ns;
         struct bvb_vulkan_descriptor_set_allocate_response allocated = {0};
         if (result == 0) {
             result = bvb_vulkan_global_context_allocate_descriptor_sets(
                 worker->context, &transaction.allocation, &allocated,
                 diagnostic, sizeof(diagnostic));
         }
+        const uint64_t allocate_finished_ns = monotonic_ns();
+        allocate_ns = elapsed_ns(allocate_started_ns, allocate_finished_ns);
+        const uint64_t response_started_ns = allocate_finished_ns;
         if (result == 0) {
             result = bvb_protocol_encode_vulkan_descriptor_set_allocate_response(
                 encoded_response, &allocated, &response_length);
@@ -2324,20 +2429,32 @@ static void *descriptor_transaction_worker_main(void *opaque) {
                 result = -EDEADLK;
             }
         }
+        const uint64_t response_finished_ns = monotonic_ns();
+        response_ns = elapsed_ns(response_started_ns, response_finished_ns);
         if (result != 0) {
             fprintf(stderr,
                     "bvb: descriptor ring transaction failed: %s\n",
                     diagnostic[0] == '\0' ? strerror(-result) : diagnostic);
             response_length = 0U;
         }
+        const uint64_t completion_started_ns = monotonic_ns();
         const int completion_result =
             bvb_descriptor_transaction_ring_complete(
                 worker->ring, worker->ring_length,
                 worker->ring_generation, slot_index, ring_sequence,
                 result, response, response_length);
+        const uint64_t completion_finished_ns = monotonic_ns();
+        completion_ns = elapsed_ns(completion_started_ns,
+                                   completion_finished_ns);
+        descriptor_worker_profile_record(
+            worker, elapsed_ns(transaction_started_ns,
+                               completion_finished_ns),
+            context_wait_ns, decode_ns, snapshot_ns, replay_ns,
+            allocate_ns, response_ns, completion_ns);
         after_sequence = ring_sequence;
         if (completion_result != 0) break;
     }
+    descriptor_worker_profile_emit(worker);
     return NULL;
 }
 
@@ -2392,6 +2509,7 @@ static int answer_descriptor_transaction_ring_setup(
             mapping, setup.region_bytes, setup.generation);
     }
     if (status == 0) {
+        const char *profile_value = getenv("BVB_FRAME_PROFILE");
         *worker = (struct descriptor_transaction_worker){
             .ring = mapping,
             .ring_length = setup.region_bytes,
@@ -2399,6 +2517,8 @@ static int answer_descriptor_transaction_ring_setup(
             .journal_region = journal_region,
             .context = context,
             .context_mutex = context_mutex,
+            .profile_enabled = profile_value != NULL &&
+                strcmp(profile_value, "1") == 0,
         };
         atomic_init(&worker->stop, false);
         const int thread_status = pthread_create(
