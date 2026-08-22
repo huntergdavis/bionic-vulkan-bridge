@@ -7066,9 +7066,13 @@ static VkResult VKAPI_CALL bvb_bridge_vkAllocateMemory(
     return VK_SUCCESS;
 }
 
+static void VKAPI_CALL bvb_bridge_vkUnmapMemory(
+    VkDevice device, VkDeviceMemory memory);
+
 static void VKAPI_CALL bvb_bridge_vkFreeMemory(
     VkDevice device, VkDeviceMemory memory,
     const VkAllocationCallbacks *allocator) {
+    bvb_bridge_vkUnmapMemory(device, memory);
     destroy_resource(
         device, non_dispatchable_wire_id(&memory, sizeof(memory)),
         BVB_OBJECT_DEVICE_MEMORY, BVB_OPCODE_VULKAN_MEMORY_FREE, allocator);

@@ -230,6 +230,8 @@ int main(void) {
         shared_mapped_memory || bvb_keep_mapped_memory_enabled();
     const bool noncoherent_mapped_memory =
         bvb_noncoherent_mapped_memory_enabled();
+    const bool free_mapped_memory =
+        getenv("BVB_TEST_FREE_MAPPED_MEMORY") != NULL;
     uint32_t wsi_width = 2800U;
     uint32_t wsi_height = 1752U;
     uint32_t present_hold_ms = 0U;
@@ -2813,6 +2815,9 @@ int main(void) {
     }
     uint64_t unmap_rtts = 0U;
     uint16_t unmap_opcode = 0U;
+    uint64_t mapped_free_rtts = 0U;
+    uint16_t mapped_free_opcode = 0U;
+    bool mapped_free_released = false;
     if (!keep_mapped_memory) {
         const uint64_t exchanges_before_unmap =
             bvb_global_dispatch_exchange_count();
@@ -3312,7 +3317,7 @@ int main(void) {
         concurrent_commands = 512U;
     }
     if (noncoherent_mapped_memory) mapped[0] = UINT8_C(0x44);
-    if (keep_mapped_memory) {
+    if (keep_mapped_memory && !free_mapped_memory) {
         const uint64_t exchanges_before_unmap =
             bvb_global_dispatch_exchange_count();
         unmap_memory(device, mapped_memory);
@@ -3494,8 +3499,21 @@ int main(void) {
     destroy_command_pool(device, command_pool, NULL);
     if (upload_buffer != VK_NULL_HANDLE)
         destroy_buffer(device, upload_buffer, NULL);
-    if (upload_memory != VK_NULL_HANDLE)
+    if (upload_memory != VK_NULL_HANDLE) {
+        const uint64_t exchanges_before_mapped_free =
+            bvb_global_dispatch_exchange_count();
         free_memory(device, upload_memory, NULL);
+        if (free_mapped_memory) {
+            mapped_free_rtts = bvb_global_dispatch_exchange_count() -
+                               exchanges_before_mapped_free;
+            mapped_free_opcode = bvb_global_dispatch_last_opcode();
+            mapped_free_released =
+                bvb_memory_proxy_id(upload_memory) == 0U;
+            CHECK(mapped_free_rtts == 2U);
+            CHECK(mapped_free_opcode == BVB_OPCODE_VULKAN_MEMORY_FREE);
+            CHECK(mapped_free_released);
+        }
+    }
     destroy_buffer(device, buffer, NULL);
     free_memory(device, device_memory, NULL);
     destroy_fence(device, fence, NULL);
@@ -3689,11 +3707,14 @@ int main(void) {
            "memory_opcodes=%u,%u,%u,%u,%u "
            "ineligible_memory_rtts=%llu,%llu "
            "ineligible_memory_opcodes=%u,%u "
+           "mapped_free_rtts=%llu mapped_free_opcode=%u "
+           "mapped_free_released=%u "
            "fill_words=1024 mismatches=%u fence=%llu fence_before=1 "
            "fenced_submit=0 fence_after=0 fence_wait=0 fence_reset=0 "
            "fence_after_reset=1\n",
            hardware_mode ? "hardware"
                          : shared_command_stream ? "shared-command-stream"
+                         : free_mapped_memory ? "shared-mapped-free-memory"
                          : noncoherent_mapped_memory
                                ? "shared-noncoherent-memory"
                          : shared_mapped_memory ? "shared-mapped-memory"
@@ -3749,6 +3770,8 @@ int main(void) {
            (unsigned long long)ineligible_map_rtts,
            (unsigned long long)ineligible_unmap_rtts,
            ineligible_map_opcode, ineligible_unmap_opcode,
+           (unsigned long long)mapped_free_rtts, mapped_free_opcode,
+           mapped_free_released ? 1U : 0U,
            mismatched_words,
            (unsigned long long)fence_id);
     if (animated_wsi) {

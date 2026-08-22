@@ -466,3 +466,11 @@ thousands of scalar branches, while a host change still copies only the exact
 changed bytes. Unchanged mirror bytes therefore cannot overwrite GPU-produced
 native bytes. The wire, selectors, mapping lifetime, and explicit-invalidate
 readback boundary are unchanged.
+
+E120 makes the bridge's device-memory lifetime match Vulkan when an application
+frees an allocation that is still mapped. The glibc client first runs the
+existing E077 unmap path, releasing an active mirror on the Bionic service, and
+only then sends the typed memory-free request. An uncertain unmap acknowledgement
+still releases the local mapping and permanently poisons that connection, so a
+free cannot continue against ambiguous remote state. This changes no wire field
+or selector and preserves explicit unmap behavior for ordinary callers.

@@ -1,0 +1,30 @@
+{
+  "gate": "E120",
+  "date": "2026-08-22",
+  "source_base_commit": "14e79ee",
+  "trigger": {
+    "repeatable_runtime_boundary": "E117, E118, and E119 each stopped at exactly 46 Activity presents on the same visible Nixxes/Eidos frame",
+    "service_rejection": "device memory cannot be freed while mirror is mapped",
+    "hypothesis": "the application frees a still-mapped Vulkan allocation; the bridge rejects the void free instead of applying Vulkan's implicit-unmap lifetime rule"
+  },
+  "implementation": {
+    "free_implicitly_unmaps": true,
+    "ordering": "vkFreeMemory invokes the existing client vkUnmapMemory path before the typed memory-free request",
+    "uncertain_unmap": "the existing E077 path releases the local mapping and permanently poisons the connection if the unmap acknowledgement is uncertain, so free cannot proceed on stale connection state",
+    "wire_change": "none",
+    "selector_change": "none"
+  },
+  "validation": {
+    "focused_contracts": "passed: normal shared mapping, mapped free, and lost unmap acknowledgement",
+    "mapped_free_exchange_sequence": "two RPCs; opcode 109 unmap followed by opcode 38 memory free",
+    "client_proxy_released": true,
+    "host_suite": "81/81 passed",
+    "tablet_run": "pending"
+  },
+  "claims": {
+    "present_46_boundary_fixed": null,
+    "visible_frame_advanced": null,
+    "benchmark_fps": null
+  },
+  "reuse": "The required deja query returned no indexed implementation. E120 reuses E077's mapped-memory unmap, local-release, and uncertain-ack poison semantics; E119's exact 46-present stop and retained service rejection select this bounded lifecycle gate."
+}

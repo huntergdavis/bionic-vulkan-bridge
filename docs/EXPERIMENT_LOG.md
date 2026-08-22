@@ -4705,3 +4705,27 @@ The game still stops advancing at exact present 46, so that repeatable
 correctness/lifecycle boundary now takes priority over another speculative
 throughput optimization. Exact-PID cleanup again preserved Steam, X, and the
 private Turnip hash.
+
+## E120 — implicit unmap before device-memory free (2026-08-22)
+
+E117, E118, and E119 each stopped at exactly 46 Activity presents on the same
+visible Nixxes/Eidos frame. Their Bionic service logs also ended with the same
+typed-lifetime rejection: device memory could not be freed while its shared
+mirror remained mapped. Vulkan permits freeing mapped device memory and treats
+that operation as an implicit unmap, but the bridge had required a separate
+application `vkUnmapMemory` call and rejected the subsequent void free.
+
+The required `deja "Tomb Raider BVB present 46 stop Nixxes Eidos resource
+destroy memory mapped threadtools assertion"` query returned no indexed
+implementation. E120 reuses E077's exact unmap, local-release, and uncertain-ack
+connection-poison semantics, selected by E119's repeatable stop evidence. The
+client now invokes that path before sending the existing typed memory-free
+request. There is no wire or selector change.
+
+A dedicated cross-process host mode leaves an eligible shared mirror mapped,
+calls only `vkFreeMemory`, and proves exactly two exchanges: opcode 109 unmap,
+then opcode 38 free. The client proxy is removed only after the service accepts
+both operations. Focused normal, mapped-free, and lost-ack contracts pass. Full
+host validation then passed 81/81. Exact-archive tablet validation remains
+pending; E120 does not yet claim that the 46-present boundary is causal or
+fixed.

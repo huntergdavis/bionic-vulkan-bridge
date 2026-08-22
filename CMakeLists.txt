@@ -899,6 +899,16 @@ if(BUILD_TESTING)
       "shared-noncoherent-memory"
   )
   add_test(
+    NAME global-shared-mapped-free-memory-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+      "$<TARGET_FILE:bvb-bridge-service>"
+      "$<TARGET_FILE:bvb-global-dispatch-test>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+      "shared-mapped-free-memory"
+  )
+  add_test(
     NAME mapped-memory-selector-contract
     COMMAND
       "${Python3_EXECUTABLE}"
@@ -1324,5 +1334,15 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e119-hierarchical-mirror-scan-host.json"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
+  )
+  add_test(
+    NAME e120-free-unmaps-mirror-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e120_free_unmaps_mirror.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e120-free-unmaps-mirror-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
   )
 endif()

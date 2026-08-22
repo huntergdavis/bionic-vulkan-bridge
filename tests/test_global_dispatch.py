@@ -24,6 +24,7 @@ def main() -> int:
             "shared-command-stream-concurrency|"
             "shared-command-stream-non-success|strict-mapped-memory|"
             "shared-mapped-memory|shared-noncoherent-memory|"
+            "shared-mapped-free-memory|"
             "shared-memory-unmap-lost-ack|first-rejection-command|"
             "first-rejection-wsi|loader-tls-lifetime]"
         )
@@ -37,7 +38,8 @@ def main() -> int:
         "shared-command-stream-concurrency",
         "shared-command-stream-non-success",
         "strict-mapped-memory", "shared-mapped-memory",
-        "shared-noncoherent-memory", "shared-memory-unmap-lost-ack",
+        "shared-noncoherent-memory", "shared-mapped-free-memory",
+        "shared-memory-unmap-lost-ack",
         "first-rejection-command", "first-rejection-wsi",
         "loader-tls-lifetime",
     ):
@@ -69,6 +71,7 @@ def main() -> int:
             server_environment["BVB_FAKE_QUEUE_SUBMIT2_FAIL_AT"] = "3"
         if validation_mode in (
             "shared-mapped-memory", "shared-noncoherent-memory",
+            "shared-mapped-free-memory",
             "shared-memory-unmap-lost-ack",
         ):
             server_environment["BVB_FAKE_REQUIRE_MEMORY_MIRROR"] = "1"
@@ -170,6 +173,7 @@ def main() -> int:
 
             if validation_mode in (
                 "shared-mapped-memory", "shared-noncoherent-memory",
+                "shared-mapped-free-memory",
                 "shared-memory-unmap-lost-ack",
             ):
                 environment["BVB_MAPPED_MEMORY"] = "shared"
@@ -177,7 +181,8 @@ def main() -> int:
                 environment["BVB_MAPPED_MEMORY"] = "strict"
             if validation_mode in (
                 "strict-mapped-memory", "shared-mapped-memory",
-                "shared-noncoherent-memory", "shared-memory-unmap-lost-ack",
+                "shared-noncoherent-memory", "shared-mapped-free-memory",
+                "shared-memory-unmap-lost-ack",
             ):
                 environment["BVB_TEST_KEEP_MEMORY_MAPPED"] = "1"
             else:
@@ -190,6 +195,10 @@ def main() -> int:
                 environment["BVB_TEST_DROP_MEMORY_UNMAP_ACK"] = "1"
             else:
                 environment.pop("BVB_TEST_DROP_MEMORY_UNMAP_ACK", None)
+            if validation_mode == "shared-mapped-free-memory":
+                environment["BVB_TEST_FREE_MAPPED_MEMORY"] = "1"
+            else:
+                environment.pop("BVB_TEST_FREE_MAPPED_MEMORY", None)
 
             sink_result = {}
 
@@ -328,7 +337,10 @@ def main() -> int:
             if completed.returncode != 0:
                 _, service_stderr = server.communicate(timeout=5.0)
                 raise AssertionError(
-                    f"{completed.stderr}service stderr: {service_stderr}"
+                    f"client returncode={completed.returncode}\n"
+                    f"client stdout: {completed.stdout}\n"
+                    f"client stderr: {completed.stderr}\n"
+                    f"service stderr: {service_stderr}"
                 )
             if sink_thread is not None:
                 if "error" in sink_result:
@@ -468,6 +480,8 @@ def main() -> int:
                 if validation_mode in (
                     "shared-mapped-memory", "shared-noncoherent-memory"
                 )
+                else "memory_rtts=1,1,1,0,1"
+                if validation_mode == "shared-mapped-free-memory"
                 else "memory_rtts=2,2,2,2,3"
                 if validation_mode == "strict-mapped-memory"
                 else "memory_rtts=2,2,2,2,1"
@@ -477,6 +491,8 @@ def main() -> int:
                 if validation_mode in (
                     "shared-mapped-memory", "shared-noncoherent-memory"
                 )
+                else "memory_opcodes=106,107,108,0,47"
+                if validation_mode == "shared-mapped-free-memory"
                 else "memory_opcodes=49,48,49,48,47"
                 if validation_mode == "strict-mapped-memory"
                 else "memory_opcodes=49,48,49,48,105"
@@ -491,11 +507,19 @@ def main() -> int:
                 "ineligible_memory_rtts=1,1 "
                 "ineligible_memory_opcodes=106,109"
                 if validation_mode in (
-                    "shared-mapped-memory", "shared-noncoherent-memory"
+                    "shared-mapped-memory", "shared-noncoherent-memory",
+                    "shared-mapped-free-memory",
                 )
                 else "ineligible_memory_rtts=0,0 "
                      "ineligible_memory_opcodes=0,0"
             ) in completed.stdout
+            assert (
+                "mapped_free_rtts=2 mapped_free_opcode=38 "
+                "mapped_free_released=1"
+                if validation_mode == "shared-mapped-free-memory"
+                else "mapped_free_rtts=0 mapped_free_opcode=0 "
+                     "mapped_free_released=0"
+            ) in completed.stdout, completed.stdout
             assert "fill_words=1024 mismatches=0" in completed.stdout
             assert "fence_before=1 fenced_submit=0 fence_after=0" in completed.stdout
             assert "fence_wait=0 fence_reset=0 fence_after_reset=1" in completed.stdout
