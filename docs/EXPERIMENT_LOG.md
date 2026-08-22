@@ -4383,3 +4383,14 @@ ownership_or_transfer_append_rejected E111 transfer shape"` query returned no
 indexed implementation. E111 reuses E075/E075a, E080, E105, and E110. Compact
 evidence is `docs/evidence/e111-compact-transfer-stream-host.json`; tablet
 visibility and FPS remain pending exact-archive deployment and screenshot.
+
+The exact E111 archive passed 69/69 Termux contracts and the optimized glibc
+self-test, then installed as ICD/service SHA-256 `c5955b3a...4009` and
+`739525b1...8c8e` with rollback `install-pre-Guq2TtlJ`. Bounded run
+`20260822T064041Z-9299` proved the compact encoding was active but still
+reached `-28` at the same `vkCmdCopyBufferToImage2`. The remaining capacity
+pressure therefore comes from earlier fixed-maximum records already filling
+the 64-KiB slot, not from the now-160-byte upload alone. The full-screen
+screenshot remained the bridge triangle (`28b73050...e9f8`); exact cleanup
+again preserved Steam/X start ticks. E111 remains a measured size/speed win,
+but it does not claim that the live capacity boundary moved.

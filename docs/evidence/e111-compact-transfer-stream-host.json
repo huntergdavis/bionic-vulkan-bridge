@@ -40,8 +40,20 @@
     },
     "host_suite": "71/71 passed",
     "tablet_runtime": {
-      "status": "pending exact-archive deployment",
+      "status": "compact_transfer_active_but_residual_stream_capacity_exhausted",
+      "run_id": "20260822T064041Z-9299",
+      "tablet_suite": "69/69 passed",
+      "glibc_icd_selftest": "passed",
+      "installed_icd_sha256": "c5955b3abb25bf7b641b51edb4cecc69388f075cf23e252938dc37aa20a24009",
+      "installed_service_sha256": "739525b1017d1915e96fa29892d86a193423e7c0b0bd5375aa642b5c28a18c8e",
+      "screenshot_sha256": "28b7305067678da2bc88ffcb75bf49b49141cf49c27c59d79df332dcee89e9f8",
+      "activity_fullscreen": true,
       "visible_game_frame": false,
+      "rejection_entry": "vkCmdCopyBufferToImage2",
+      "rejection_result": -28,
+      "interpretation": "earlier fixed-capacity records still exhaust the 64 KiB slot before this compact record can append",
+      "rollback_snapshot": "install-pre-Guq2TtlJ",
+      "steam_and_x_preserved": true,
       "benchmark_or_fps": false
     }
   },
