@@ -3910,3 +3910,27 @@ view for synchronous reconstruction, so it now uses `PROT_READ|MAP_PRIVATE`.
 The exact strict Android global contract then passes while retaining all four
 content/size seals. Active E097 and the authenticated Steam/X session were not
 modified during this correction.
+
+## E099 — DXVK MapMemory2 compatibility entry (2026-08-21)
+
+Status: host implementation complete; tablet runtime pending. E098's bounded
+real run emitted one actual-invocation diagnostic for `vkMapMemory2KHR`, whose
+registry canonical entry is `vkMapMemory2`. E099 exposes the core and KHR names
+as the same validated client implementation. It accepts only a
+`VkMemoryMapInfo` with the exact structure type and no extension chain, clears
+the caller output before validation, then passes memory, offset, size, and
+flags into the existing E034/E077 map implementation. Consequently strict
+socket-backed maps and eligible upload-only shared mirrors retain their tested
+semantics, and E099 adds no opcode or extra round trip.
+
+The global cross-process contract resolves both names to the same PFN, rejects
+an unsupported map-info chain with a null output, and performs the primary
+mapped-memory round trip through MapMemory2 before the existing flush,
+invalidate, submit, and unmap checks. The generated DXVK policy advances from
+90/350/302 to 92 executable / 348 required / 302 probed-null names. Compact
+evidence is `docs/evidence/e099-map-memory2-host.json`. The required
+`deja "BVB vkMapMemory2KHR DXVK Tomb Raider mapped memory transport E099"`
+query returned no indexed implementation. E099 reuses E034's legacy mapping
+semantics, E077's strict/shared eligibility and dirty-upload model, and E098's
+actual tablet rejection. No tablet E099 result, game frame, benchmark, or FPS
+is claimed yet.

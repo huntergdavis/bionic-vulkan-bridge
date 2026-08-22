@@ -6841,6 +6841,19 @@ static VkResult VKAPI_CALL bvb_bridge_vkMapMemory(
     return result;
 }
 
+static VkResult VKAPI_CALL bvb_bridge_vkMapMemory2(
+    VkDevice device, const VkMemoryMapInfo *map_info, void **data) {
+    if (data != NULL) *data = NULL;
+    if (map_info == NULL || data == NULL ||
+        map_info->sType != VK_STRUCTURE_TYPE_MEMORY_MAP_INFO ||
+        map_info->pNext != NULL) {
+        return VK_ERROR_MEMORY_MAP_FAILED;
+    }
+    return bvb_bridge_vkMapMemory(
+        device, map_info->memory, map_info->offset, map_info->size,
+        map_info->flags, data);
+}
+
 static void VKAPI_CALL bvb_bridge_vkUnmapMemory(
     VkDevice device, VkDeviceMemory memory) {
     struct bvb_device_proxy *device_state = device_proxy(device);
@@ -8684,6 +8697,8 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     BVB_DEVICE_MATCH("vkCreateImageView", bvb_bridge_vkCreateImageView)
     BVB_DEVICE_MATCH("vkDestroyImageView", bvb_bridge_vkDestroyImageView)
     BVB_DEVICE_MATCH("vkMapMemory", bvb_bridge_vkMapMemory)
+    BVB_DEVICE_MATCH("vkMapMemory2", bvb_bridge_vkMapMemory2)
+    BVB_DEVICE_MATCH("vkMapMemory2KHR", bvb_bridge_vkMapMemory2)
     BVB_DEVICE_MATCH("vkUnmapMemory", bvb_bridge_vkUnmapMemory)
     BVB_DEVICE_MATCH("vkFlushMappedMemoryRanges",
                      bvb_bridge_vkFlushMappedMemoryRanges)

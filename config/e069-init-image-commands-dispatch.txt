@@ -66,6 +66,8 @@ vkGetSemaphoreCounterValue
 vkGetSemaphoreCounterValueKHR
 vkInvalidateMappedMemoryRanges
 vkMapMemory
+vkMapMemory2
+vkMapMemory2KHR
 vkQueueSubmit
 vkQueueSubmit2
 vkQueueSubmit2KHR

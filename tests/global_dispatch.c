@@ -874,6 +874,7 @@ int main(void) {
     PFN_vkCreateImageView create_image_view = NULL;
     PFN_vkDestroyImageView destroy_image_view = NULL;
     PFN_vkMapMemory map_memory = NULL;
+    PFN_vkMapMemory2 map_memory_2 = NULL;
     PFN_vkUnmapMemory unmap_memory = NULL;
     PFN_vkFlushMappedMemoryRanges flush_mapped_memory_ranges = NULL;
     PFN_vkInvalidateMappedMemoryRanges invalidate_mapped_memory_ranges = NULL;
@@ -1013,6 +1014,10 @@ int main(void) {
     erased = vkGetDeviceProcAddr(device, "vkMapMemory");
     CHECK(erased != NULL);
     memcpy(&map_memory, &erased, sizeof(map_memory));
+    erased = vkGetDeviceProcAddr(device, "vkMapMemory2");
+    CHECK(erased != NULL);
+    memcpy(&map_memory_2, &erased, sizeof(map_memory_2));
+    CHECK(vkGetDeviceProcAddr(device, "vkMapMemory2KHR") == erased);
     erased = vkGetDeviceProcAddr(device, "vkUnmapMemory");
     CHECK(erased != NULL);
     memcpy(&unmap_memory, &erased, sizeof(unmap_memory));
@@ -2398,8 +2403,21 @@ int main(void) {
     uint8_t *mapped = NULL;
     const uint64_t exchanges_before_map =
         bvb_global_dispatch_exchange_count();
-    CHECK(map_memory(device, mapped_memory, 0U, VK_WHOLE_SIZE, 0U,
-                     (void **)&mapped) == VK_SUCCESS);
+    const VkBaseInStructure unsupported_map_tail = {
+        .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+    };
+    VkMemoryMapInfo map_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_MAP_INFO,
+        .pNext = &unsupported_map_tail,
+        .memory = mapped_memory,
+        .offset = 0U,
+        .size = VK_WHOLE_SIZE,
+    };
+    CHECK(map_memory_2(device, &map_info, (void **)&mapped) ==
+          VK_ERROR_MEMORY_MAP_FAILED);
+    CHECK(mapped == NULL);
+    map_info.pNext = NULL;
+    CHECK(map_memory_2(device, &map_info, (void **)&mapped) == VK_SUCCESS);
     CHECK(mapped != NULL);
     if (noncoherent_mapped_memory) CHECK(mapped[0] == UINT8_C(0x00));
     const uint64_t map_rtts =

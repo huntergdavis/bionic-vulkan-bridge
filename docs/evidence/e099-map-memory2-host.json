@@ -1,0 +1,49 @@
+{
+  "schema": 1,
+  "gate": "E099",
+  "date": "2026-08-21",
+  "source_base_commit": "dd799da9702b963b948eb401c0c652869164a20d",
+  "status": "host_pass_tablet_runtime_pending",
+  "trigger": {
+    "run_id": "20260821T235302Z-31988",
+    "entry": "vkMapMemory2KHR",
+    "canonical": "vkMapMemory2",
+    "result": -8,
+    "actual_invocation_proven": true,
+    "wine_log_bytes": 103758,
+    "wine_log_sha256": "76fd2586c3ecb373824d5aa4bfe66ba4f40df1161e15aef9cc92e04edc2a61bd"
+  },
+  "implementation": {
+    "entry_points": ["vkMapMemory2", "vkMapMemory2KHR"],
+    "same_function": true,
+    "accepted_structure": "VkMemoryMapInfo",
+    "accepted_pnext": null,
+    "output_cleared_before_validation": true,
+    "backend": "existing vkMapMemory strict/shared transport",
+    "new_opcode": false,
+    "additional_round_trips": 0
+  },
+  "validation": {
+    "global_contract": "core and KHR PFNs are identical; invalid pNext fails with null output; valid MapMemory2 completes the existing map lifecycle",
+    "mapped_modes": ["strict", "shared upload-only coherent", "shared upload-only noncoherent"],
+    "policy_counts": {"executable": 92, "required_unimplemented": 348, "probed_null": 302},
+    "focused_contracts": "6/6",
+    "full_host_suite": "60/60",
+    "client_source_sha256": "c75e212a247bab2f506ea2706d24ec329229dffe643d5e5bcba346f3f38772a9",
+    "global_contract_source_sha256": "f012d7da0ede3eed9380fbaee860d06cfa1e1a9e46787a966c7f0cdf06091374",
+    "host_icd_sha256": "a7160e77b649783ccae66a03a2b59094e8c544e4824ce10c64eb8b44992c417f"
+  },
+  "reuse": [
+    "E034 legacy mapped-memory semantics",
+    "E077 strict/shared upload-only mirror eligibility and dirty upload",
+    "E098 actual Tomb Raider invocation boundary"
+  ],
+  "recall": "deja query 'BVB vkMapMemory2KHR DXVK Tomb Raider mapped memory transport E099' returned no indexed match",
+  "claims": {
+    "host_map_memory2": true,
+    "tablet_map_memory2": false,
+    "tomb_raider_frame": false,
+    "benchmark": false,
+    "fps": false
+  }
+}

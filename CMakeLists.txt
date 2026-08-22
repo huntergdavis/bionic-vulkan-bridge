@@ -748,6 +748,16 @@ if(BUILD_TESTING)
       "loader-tls-lifetime"
   )
   add_test(
+    NAME map-memory2-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_map_memory2_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e099-map-memory2-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/config/e069-init-image-commands-dispatch.txt"
+  )
+  add_test(
     NAME first-real-rejection-command-poison-contract
     COMMAND
       "${Python3_EXECUTABLE}"
