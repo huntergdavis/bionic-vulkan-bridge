@@ -1,0 +1,105 @@
+{
+  "gate": "E129",
+  "date": "2026-08-22",
+  "source_commit": "d3eaa16",
+  "target": {
+    "device": "Samsung Galaxy Tab S8+ SM-X808U",
+    "game": "Tomb Raider (2013)",
+    "resolution": "2800x1752",
+    "quality": "Low",
+    "refresh_hz": 60
+  },
+  "validation": {
+    "host_contracts": "91/91 passed",
+    "initial_termux_contracts": "88/89 passed; unrelated WSI ring stress timed out once at frame 1418",
+    "isolated_wsi_ring_repeat": "5/5 passed in 0.57 seconds",
+    "e129_architecture_contract": "passed",
+    "probe_status": 0,
+    "profile_records": 129,
+    "worker_transactions": 527157,
+    "client_profile_windows": 51,
+    "profiled_presents": 1632,
+    "frame_setup_result": "pass",
+    "per_frame_java_calls": 0,
+    "per_frame_binder_calls": 0
+  },
+  "game_authored_result": {
+    "minimum_fps": 0.4,
+    "maximum_fps": 3.8,
+    "average_fps": 2.0,
+    "source_sha256": "42f5efc809746e089da2d53f56c1487835edfdae956558e62ed1f46e5136aec0",
+    "e128_average_fps": 2.0,
+    "average_fps_change_percent": 0.0
+  },
+  "worker_profile": {
+    "total_ms": 41241.938,
+    "mean_microseconds_per_transaction": 78.235,
+    "phase_coverage_percent": 99.505,
+    "context_wait_microseconds": 0.632,
+    "context_wait_percent": 0.808,
+    "decode_microseconds": 1.25,
+    "decode_percent": 1.597,
+    "snapshot_microseconds": 2.696,
+    "snapshot_percent": 3.445,
+    "journal_replay_microseconds": 8.788,
+    "journal_replay_percent": 11.233,
+    "native_allocation_microseconds": 38.867,
+    "native_allocation_percent": 49.68,
+    "response_microseconds": 0.621,
+    "response_percent": 0.793,
+    "completion_futex_microseconds": 24.995,
+    "completion_futex_percent": 31.949,
+    "maximum_transaction_microseconds": 13691.198,
+    "maximum_native_allocation_microseconds": 13623.073
+  },
+  "client_worker_comparison": {
+    "client_profiled_transactions": 520498,
+    "worker_profiled_transactions": 527157,
+    "count_windows_are_not_identical": true,
+    "client_ring_mean_microseconds": 269.396,
+    "worker_mean_microseconds": 78.235,
+    "approximate_outside_worker_microseconds": 191.161,
+    "approximate_outside_worker_percent": 70.959,
+    "boundary": "Worker timing begins after request wait/copy and ends after completion futex_wake. The approximate remainder includes client publication, both process wake/scheduling intervals, and client response consumption; it is not assigned to one syscall."
+  },
+  "comparable_final_30_windows": {
+    "presents": 960,
+    "socket_calls_per_present": 41.71145833333333,
+    "socket_blocked_ms_per_present": 129.82894416979167,
+    "descriptor_ring_calls_per_present": 529.30625,
+    "descriptor_ring_blocked_ms_per_present": 142.98055104,
+    "descriptor_journal_flush_ms_per_present": 2.078781171875,
+    "socket_plus_ring_ms_per_present": 272.8094952097917
+  },
+  "installed_artifacts": {
+    "glibc_icd_sha256": "3cc21d9028bb8ef6fd29976e7e9328096a8f98d85583f22163eaf09aff65512d",
+    "bionic_service_sha256": "e498b5b0d91efd7ffefc41ae347c7445072ff7ee036e1aa93e4bef6bc5ce72cd",
+    "manifest_sha256": "77f3395e3f657b6a7274c182afe994edacda2a4b38d49814ea84440520af33df",
+    "install_stamp_sha256": "a4721626ef2d3c355d6f7613c78a9040699deec054d376ee65438699bb2b5478",
+    "rollback_backup": "/data/data/com.termux/files/home/steam-arm64/bvb/backups/install-pre-J76StOtL"
+  },
+  "retained_hashes": {
+    "source_archive_sha256": "babafcf66d7f8cd3a07d2582946d4b6c3e7d4cf69bbd1596ffb8f8065335bc0f",
+    "termux_build_log_sha256": "50be0d69b8c9816a330e453e4828727f0c6c9ddd1d7b4305321b916e107d347c",
+    "direct_profile_log_sha256": "91cf5155412e77126c7c168b9311a9022ca80701784179cd35025efd197685d8",
+    "service_profile_log_sha256": "433059836d04a5da9dffbfc690d73d238906b7d74e76b446b144e1bc7a2dc434",
+    "probe_launcher_log_sha256": "07142bf32301af1b7ea1b16d761a276d04dd260fadbeedfeaf4e49610e94cda6",
+    "loading_frame_sha256": "45ca5b6e790d344a65a02b7b8d0bbabbf5616f56c56dd16b3ab36fa6670b1c4f",
+    "lara_frame_1_sha256": "09a237af6e6a1528be056132fb63cab55aad335519e6c0ae198bdddc4a4063f2",
+    "lara_frame_2_sha256": "6d1f1abf422fbcbb5a54f7c20f0cbb6b7ced1be6ec99f8964d5db641b8ff2b6e",
+    "lara_frame_3_sha256": "7c790c8030f02c63e037adc49558b65c414aab7fc080b2e7475ed55203b47951"
+  },
+  "post_run": {
+    "steam_pid": 15575,
+    "steam_start_ticks": 128118834,
+    "x11_pid": 13643,
+    "x11_start_ticks": 121863492,
+    "protected_processes_unchanged": true,
+    "battery_temperature_c": 25.3
+  },
+  "diagnosis": "The descriptor context mutex is not the bottleneck. Native allocation is the largest measured worker phase, but the synchronous two-process publication/wakeup boundary is larger than the entire worker body. Both repeated native allocation and per-set waiting must be removed together.",
+  "next_gate": "Use DXVK descriptor-pool reset epochs to preallocate or recycle bounded same-layout native sets and publish typed leases without one worker wake per allocation. Preserve authoritative reset invalidation, pool capacity, native failure semantics, and strict fallback.",
+  "claim_boundary": "One complete profiling run proves phase shares and a 2.0-FPS result. The client and worker counters cover slightly different boundaries, so the 191-microsecond outside-worker interval is approximate and not attributed to a specific futex or scheduler component.",
+  "canonical_game_evidence": "steamclienttermux commit 874757d",
+  "reuse": "The required deja query returned no indexed E129 implementation. E129 reused E116/E117 bounded summaries, E128's exact worker boundary, and the existing BVB_FRAME_PROFILE final-process selector."
+}

@@ -5059,3 +5059,30 @@ total covers all named phases. The complete host suite passed 91/91. This is
 host instrumentation only; tablet phase shares, game result, and any reuse
 optimization remain unclaimed pending deployment. Exact boundaries are in
 `docs/evidence/e129-descriptor-worker-phase-profile-host.json`.
+
+The exact service-only source then built successfully on the tablet. The first
+Termux suite passed 88/89 because the unrelated WSI ring stress timed out once
+at frame 1418; that test immediately passed five consecutive isolated runs in
+0.57 seconds, while the E129 contract itself passed. The unchanged E128 glibc
+ICD and new Bionic service were installed transactionally without restarting
+Steam or X11.
+
+The same 2800x1752 Low Tomb Raider benchmark rendered distinct fullscreen Lara
+frames, completed cleanly, and reported **0.4 minimum, 3.8 maximum, and 2.0
+average FPS**. Across 527,157 descriptor transactions, the worker averaged
+78.2 microseconds. Native `vkAllocateDescriptorSets` consumed 38.9
+microseconds (49.7%), completion publication/futex wake 25.0 microseconds
+(31.9%), journal replay 8.8 microseconds (11.2%), and context-mutex wait only
+0.6 microseconds (0.8%). The corresponding client ring averaged approximately
+269.4 microseconds per call. Its count window starts and ends at slightly
+different points, so subtraction is approximate, but about 191 microseconds
+per call lies outside the timed worker body in publication, cross-process
+wakeup/scheduling, and response consumption.
+
+E129 therefore rejects both the context mutex and native allocation alone as
+the full explanation. The next gate must eliminate repeated native allocation
+and the synchronous per-set wake together through bounded, same-layout
+descriptor leases tied to authoritative pool reset epochs. Complete phase
+totals, artifact identities, and claim boundaries are in
+`docs/evidence/e129-descriptor-worker-phase-profile-tablet.json`; canonical
+game evidence is in sibling `steamclienttermux` commit `874757d`.
