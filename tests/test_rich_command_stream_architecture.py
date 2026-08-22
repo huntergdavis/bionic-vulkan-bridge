@@ -51,9 +51,9 @@ def main() -> int:
     header = header_path.read_text()
     assert "BVB_COMMAND_VULKAN_IMAGE_BARRIER_2 = 10" in header
     assert "BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE_GENERAL = 11" in header
-    assert "BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS = 16" in header
-    assert "BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS = 16" in header
-    assert "BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS = 16" in header
+    assert "BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS" in header
+    assert "BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS" in header
+    assert "BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS" in header
     assert "BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES = 4" in header
 
     batch = batch_path.read_text()

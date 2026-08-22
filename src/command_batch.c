@@ -66,6 +66,10 @@ enum {
 
 _Static_assert(sizeof(float) == sizeof(uint32_t),
                "command batches require 32-bit float");
+_Static_assert(BVB_VULKAN_IMAGE_BARRIER_2_MAX_SIZE +
+                       BVB_COMMAND_RECORD_HEADER_SIZE <=
+                   BVB_COMMAND_STREAM_SLOT_BYTES,
+               "maximum synchronization2 record must fit one stream slot");
 
 static int expected_payload_size(uint16_t opcode, uint32_t *payload_size);
 static int validate_payload(uint16_t opcode, const uint8_t *payload);

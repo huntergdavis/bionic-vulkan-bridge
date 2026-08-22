@@ -4432,3 +4432,27 @@ Automatic full-screen screenshot SHA-256 `28b73050...e9f8` remains the known
 bridge gradient triangle, so no Tomb Raider frame or FPS is claimed. Exact
 cleanup removed the bounded run children and Activity while preserving Steam
 PID 14565/start 121864440 and X11 PID 13643/start 121863492.
+
+## E113 — large synchronization2 batches (2026-08-22)
+
+E112 removed the transfer/capacity failure and exposed a later top-level
+`vkCmdPipelineBarrier2` rejection. The pinned DXVK commit
+`a6764047e587178283fcde4073ae6e1410af594f` keeps pending image barriers in a
+dynamically sized vector and forwards the entire vector in one dependency
+call; BVB's historical 16-entry limit was therefore not a complete DXVK
+boundary.
+
+E113 raises the bounded compact record to 64 memory, 256 buffer, and 2,048
+image barriers. The largest possible payload is 182,288 bytes and is
+compile-time asserted to fit E112's 256-KiB slot. Wire size remains based on
+actual counts: a one-image dependency is still only 96 bytes. A host contract
+encodes, validates, and decodes 1,024 image barriers in one record. Top-level
+rejection diagnostics now include flags, all three counts, and pNext presence
+if the enlarged boundary is ever exceeded.
+
+The required `deja "BVB Tomb Raider E112 vkCmdPipelineBarrier2
+unsupported_dependency_shape general dependency barrier codec"` query
+returned no indexed implementation. E113 reuses E075/E075a, E080, E107,
+E111, and E112. Compact evidence is
+`docs/evidence/e113-large-synchronization2-batches-host.json`; tablet pixels
+and FPS remain pending exact-archive deployment and screenshot review.

@@ -1,0 +1,42 @@
+{
+  "gate": "E113",
+  "date": "2026-08-22",
+  "source_base_commit": "4a07b95e17394f59ae68ebed376bd82a5b760f7d",
+  "trigger": {
+    "run_id": "20260822T065846Z-20956",
+    "entry": "vkCmdPipelineBarrier2",
+    "reason": "unsupported_dependency_shape",
+    "command_sequence": 18,
+    "prior_transfer_enospc_cleared": true,
+    "visible_game_frame": false
+  },
+  "pinned_dxvk": {
+    "commit": "a6764047e587178283fcde4073ae6e1410af594f",
+    "source": "src/dxvk/dxvk_barrier.cpp:458-507",
+    "finding": "DxvkBarrierBatch stores image barriers in a dynamically sized vector and forwards the full vector in one VkDependencyInfo"
+  },
+  "implementation": {
+    "maximum_memory_barriers": 64,
+    "maximum_buffer_barriers": 256,
+    "maximum_image_barriers": 2048,
+    "maximum_payload_bytes": 182288,
+    "shared_slot_bytes": 262144,
+    "maximum_record_fits_slot": true,
+    "one_image_payload_bytes": 96,
+    "one_thousand_twenty_four_image_payload_bytes": 81936,
+    "pointer_free": true,
+    "count_sized": true,
+    "client_shape_diagnostic_includes_counts": true,
+    "service_revalidates_typed_same_device_resources": true
+  },
+  "validation": {
+    "large_batch_image_count": 1024,
+    "large_batch_encode_validate_decode": "passed",
+    "historical_barrier_contracts": "passed",
+    "host_suite": "73/73 passed",
+    "tablet_runtime": "pending exact-archive deployment",
+    "visible_game_frame": false,
+    "benchmark_or_fps": false
+  },
+  "reuse": "The required deja query found no indexed E113 implementation. E113 reuses E075/E075a shared recording, E080 typed ownership caching, E107 synchronization2 reconstruction, E111 variable-length validation, and E112's 256-KiB slot. The bound is informed by the pinned DXVK barrier vector rather than resolver order."
+}

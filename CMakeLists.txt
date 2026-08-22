@@ -1253,4 +1253,15 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/command_batch.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/command_batch.c"
   )
+  add_test(
+    NAME e113-large-synchronization2-batch-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e113_large_barrier_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e113-large-synchronization2-batches-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/command_batch.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/protocol.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/command_batch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/command_batch.c"
+  )
 endif()

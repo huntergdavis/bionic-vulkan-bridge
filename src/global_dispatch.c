@@ -9503,6 +9503,17 @@ static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
     VkCommandBuffer command_buffer, const VkDependencyInfo *dependency_info) {
     struct bvb_command_buffer_proxy *command_state =
         command_buffer_proxy(command_buffer);
+    char dependency_shape[160] = "VkDependencyInfo_ptr";
+    if (dependency_info != NULL) {
+        (void)snprintf(
+            dependency_shape, sizeof(dependency_shape),
+            "VkDependencyInfo_ptr;flags=0x%x;memory=%u;buffer=%u;image=%u;pnext=%u",
+            (unsigned)dependency_info->dependencyFlags,
+            dependency_info->memoryBarrierCount,
+            dependency_info->bufferMemoryBarrierCount,
+            dependency_info->imageMemoryBarrierCount,
+            dependency_info->pNext != NULL ? 1U : 0U);
+    }
     if (command_state == NULL || dependency_info == NULL ||
         dependency_info->sType != VK_STRUCTURE_TYPE_DEPENDENCY_INFO ||
         dependency_info->pNext != NULL ||
@@ -9521,7 +9532,7 @@ static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
          dependency_info->pImageMemoryBarriers == NULL)) {
         poison_shared_command_stream(
             command_state, "vkCmdPipelineBarrier2",
-            "unsupported_dependency_shape", "VkDependencyInfo_ptr",
+            "unsupported_dependency_shape", dependency_shape,
             -ENOTSUP);
         return;
     }
