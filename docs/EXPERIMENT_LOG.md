@@ -2764,31 +2764,6 @@ and either null output `pNext` or one terminal
 Malformed shapes deterministically return zero output without inventing a
 result.
 
-## E118 — buffer-only delta mirrors (2026-08-22)
-
-E117 found that opcode-48 memory writes consumed 89.533 of 92.795 measured RPC
-seconds: roughly 15,038 synchronous small writes and 2.798 seconds per present.
-Those allocations missed E077 because its first safe milestone accepted only
-GPU-read-only buffer usage. E118 expands the same opt-in shared mirror to any
-allocation bound exclusively to buffers, including transfer-destination,
-storage, and device-address usage. Bionic still owns the native mapping and a
-private baseline, and copies only host-diverged spans before submit. Images
-remain strict and cannot be bound into an active mirror.
-
-The required `deja "E118 eliminate opcode 48 MEMORY_WRITE synchronous 4KiB
-fanout mapped memory submit shared mirror Tomb Raider"` query returned no
-indexed implementation. E118 reuses E077's sealed setup-only memfd, typed
-ownership, explicit invalidate, and baseline reconciliation. No wire change is
-needed. General coherent device-to-host visibility is still not claimed; the
-tablet A/B must first prove opcode-48 removal and visible-frame correctness
-before any speedup or FPS claim.
-
-The focused coherent, noncoherent, uncertain-unmap, historical E077, and new
-E118 contracts pass, followed by the complete 78/78 host suite. The expanded
-GPU-writable buffer bind stays on opcodes 106/109 for map/unmap, produces no
-opcode-48 submit fan-out, and an image bind into that live mirror still fails
-closed. Exact-archive tablet validation remains pending.
-
 The existing buffer-create ceiling now matches pinned DXVK's bounded 256 MiB
 `MaxChunkSize`, and the accepted global-buffer usage mask is restricted to the
 source-audited allocator flags with mandatory transfer-src, transfer-dst, and
@@ -4653,3 +4628,41 @@ writes per frame. E118 should eliminate or batch that opcode-48 fan-out before
 adding unrelated Vulkan families. Exact-PID cleanup preserved the original
 Steam and X start times. This diagnosis is not yet a speedup or benchmark/FPS
 result.
+
+## E118 — buffer-only delta mirrors (2026-08-22)
+
+E117 found that opcode-48 memory writes consumed 89.533 of 92.795 measured RPC
+seconds: roughly 15,038 synchronous small writes and 2.798 seconds per present.
+Those allocations missed E077 because its first safe milestone accepted only
+GPU-read-only buffer usage. E118 expands the same opt-in shared mirror to any
+allocation bound exclusively to buffers, including transfer-destination,
+storage, and device-address usage. Bionic still owns the native mapping and a
+private baseline, and copies only host-diverged spans before submit. Images
+remain strict and cannot be bound into an active mirror.
+
+The required `deja "E118 eliminate opcode 48 MEMORY_WRITE synchronous 4KiB
+fanout mapped memory submit shared mirror Tomb Raider"` query returned no
+indexed implementation. E118 reuses E077's sealed setup-only memfd, typed
+ownership, explicit invalidate, and baseline reconciliation. No wire change is
+needed. General coherent device-to-host visibility is still not claimed.
+
+The focused coherent, noncoherent, uncertain-unmap, historical E077, and new
+E118 contracts pass, followed by the complete 78/78 host suite. The exact
+`e3a974c` archive then passed 76/76 Termux tests and the glibc dispatch
+self-test. Its transactional install retained rollback `install-pre-v7zk8ojY`
+and preserved the original Steam/X processes and private Turnip hash.
+
+The matched E117/E118 runs each reached 46 native-resolution Activity presents
+and the byte-identical visible Nixxes/Eidos frame. E118 reduced the 32-present
+RPC count from 491,762 to 4,827 (99.018%) and RPC blocking from 2.900 to 0.329
+seconds per present (8.81x). Opcode 48 disappeared from the eight ranked
+hotspots. Across all 45 measured frame intervals, the mean fell from 3.154 to
+0.618 seconds (5.10x); after the first two intervals it fell from 2.991 to
+0.406 seconds (7.37x), while the median fell from 2.927 to 0.313 seconds.
+
+This is a large real transport speedup, not Tomb Raider's game-authored
+benchmark or a final FPS claim. Both runs stopped advancing at present 46, so
+the next gate must preserve that exact boundary while attacking the newly
+exposed common submit path. Opcodes 105 and 85 now account for 81.840% of
+remaining RPC time and both run the same full coherent-mirror baseline scan
+before native `vkQueueSubmit2`.

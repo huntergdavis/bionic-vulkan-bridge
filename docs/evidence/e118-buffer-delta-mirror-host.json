@@ -29,15 +29,72 @@
   "validation": {
     "focused_contracts": "passed: coherent, noncoherent, uncertain-unmap, historical E077, and E118 architecture",
     "host_suite": "78/78 passed",
-    "tablet_build": "pending exact archive",
-    "tablet_ab": "pending"
+    "tablet_build": "exact e3a974c archive: 76/76 Termux suite and glibc dispatch self-test passed",
+    "tablet_ab": "passed: matched E117/E118 native-resolution runs each reached 46 Activity presents and the identical visible Nixxes/Eidos frame"
+  },
+  "tablet_artifacts": {
+    "source_commit": "e3a974c",
+    "source_archive_sha256": "e1ca6027443dd583c2ef11c7043ca474c449af6a56c986b80c9775aafadb6b50",
+    "termux_build_log_sha256": "13c0edea6e0d38b57e9f967c43b01c807f69b2e69dd4c075d6a225fc1d11b69f",
+    "glibc_build_log_sha256": "f7f1c4518bc7be0d1ea038eabd688059776613cc6a3df4116d10582617d7fb2f",
+    "install_log_sha256": "888c1e85dd11c3b561d79f61101bae152a6ffdd388659da4ecd15d6fd5988d74",
+    "installed_glibc_icd_sha256": "e55f6f52883f2279d7dc2062a5856e8556721e308427db58a36b45375519c66e",
+    "installed_service_sha256": "ad5a2de667a429d26f3bb84c5fdb8c55812de5ed9f8d1a16f1d142fb6827a121",
+    "installed_manifest_sha256": "77f3395e3f657b6a7274c182afe994edacda2a4b38d49814ea84440520af33df",
+    "installed_stamp_sha256": "813060382be4881d281286599e6c68acf563714e2513d9669193c297e056ce47",
+    "unchanged_private_turnip_sha256": "8ac6ef78c3c92998aa46c59fd0081edcba82756f5bad561d1b24a57684874a45",
+    "rollback_transaction": "install-pre-v7zk8ojY",
+    "rollback_transaction_sha256": "069e19055249781f45970b39e5a66acc10fa27cd20b26664fb938f2cc598b895"
+  },
+  "tablet_sample": {
+    "run_id": "e118-20260822T102414Z",
+    "resolution": "2800x1752",
+    "present_calls_in_rpc_window": 32,
+    "total_rpc_calls": 4827,
+    "total_rpc_ns": 10532567287,
+    "rpc_calls_per_present": 150.84375,
+    "rpc_seconds_per_present": 0.32914272771875,
+    "rpc_call_reduction_percent_vs_e117": 99.018,
+    "rpc_time_reduction_percent_vs_e117": 88.65,
+    "rpc_time_speedup_vs_e117": 8.81,
+    "memory_write_opcode_48_rank": "absent from the eight opcodes ranked by total time",
+    "ranked_opcodes": [
+      {"opcode": 105, "name": "VULKAN_QUEUE_SUBMIT_2_STREAM", "calls": 68, "total_ns": 5997251033, "max_ns": 120254687},
+      {"opcode": 85, "name": "VULKAN_QUEUE_SUBMIT_2", "calls": 31, "total_ns": 2622640989, "max_ns": 90226562},
+      {"opcode": 83, "name": "VULKAN_SEMAPHORE_WAIT", "calls": 68, "total_ns": 514510001, "max_ns": 20818958},
+      {"opcode": 106, "name": "VULKAN_MEMORY_MIRROR_SETUP", "calls": 2, "total_ns": 324912917, "max_ns": 219581406},
+      {"opcode": 56, "name": "VULKAN_IMAGE_FORMAT_PROPERTIES", "calls": 1240, "total_ns": 187092133, "max_ns": 2205937},
+      {"opcode": 101, "name": "VULKAN_SWAPCHAIN_PRESENT", "calls": 32, "total_ns": 168614063, "max_ns": 8784167},
+      {"opcode": 90, "name": "VULKAN_IMAGE_CREATE", "calls": 618, "total_ns": 114400688, "max_ns": 4990625},
+      {"opcode": 97, "name": "VULKAN_MEMORY_ALLOCATE_EXTENDED", "calls": 5, "total_ns": 112225052, "max_ns": 54224114}
+    ],
+    "activity_present_count": 46,
+    "activity_interval_mean_seconds": 0.6184444480472141,
+    "activity_interval_median_seconds": 0.312999963760376,
+    "activity_interval_mean_after_first_two_seconds": 0.40606976664343547,
+    "e117_activity_interval_mean_seconds": 3.153911108440823,
+    "e117_activity_interval_median_seconds": 2.927000045776367,
+    "e117_activity_interval_mean_after_first_two_seconds": 2.9914186000823975,
+    "same_46_present_comparison": "E118 reduced all-interval mean by 80.4 percent and post-first-two mean by 86.4 percent; this is frame-transport timing, not the game-authored benchmark",
+    "next_boundary": "opcodes 105 and 85 account for 81.84 percent of remaining RPC time; both invoke the same coherent-mirror delta scan before native QueueSubmit2"
   },
   "claims": {
     "buffer_upload_transport": true,
     "general_coherent_device_to_host_visibility": false,
     "explicit_invalidate_device_to_host": true,
-    "speedup": null,
+    "speedup": "8.81x lower RPC blocking time and 5.10x lower all-interval presentation time in the matched 46-present A/B",
     "benchmark_fps": null
+  },
+  "retained_evidence": {
+    "direct_log_sha256": "8ee585b757ba46928c8040b0a7239d3a36d03aff95286278c3dafa40d6c84e69",
+    "service_log_sha256": "505675ef7af000d20532f98808565b5bb2565973a0e4173af5e63aebcc8f245e",
+    "probe_log_sha256": "e660330098846fd2938aadc27e31efdb143e5ecea11747c59bc486e604310147",
+    "frame_result_sha256": "e22d934315295cb2c5735088f04424faed11d5b6b84a6a5ad49449fbfd62a934",
+    "activity_frame_log_sha256": "dc3d8d68d81dcf519b32f9822d1146960c0b026d0bd087f273f362fba031327c",
+    "comparison_activity_frame_log_sha256": "bf976a8000d0546d3ec380e95d75dfb72d1d0c3f25d1cc85f077a0cff9d209ad",
+    "screenshot": "docs/evidence/tombraider-bvb-e117-rpc-profile-frame.png",
+    "screenshot_sha256": "4e19854cdc2adb82fe9913e0326cbe99a04ed76436c55dafc0daf28ce60858ed",
+    "screenshot_note": "The independently captured E118 frame was byte-identical to the retained E117 Nixxes/Eidos frame, avoiding a duplicate repository image."
   },
   "reuse": "The required deja query returned no indexed E118 implementation. E118 reuses E077's sealed shared mirror, typed ownership, explicit invalidate, and baseline dirty reconciliation, selected by E117's measured opcode-48 bottleneck."
 }
