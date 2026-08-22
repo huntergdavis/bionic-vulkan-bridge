@@ -4782,3 +4782,28 @@ host reset, and destroy. Shared recording adds zero query-command RPCs; strict
 adds three. Protocol corruption and typed/range failures are fail-closed. The
 complete 83/83 host suite passes. Tablet deployment and the benchmark rerun are
 the next boundary, so no completed benchmark or FPS is claimed yet.
+
+## E123 — preserve the first post-frame rejection (2026-08-22)
+
+The exact E122 tablet build rendered a real game-authored Lara Croft benchmark
+scene at 2800x1752 and the Activity presented through sequence 721, but that
+frame then remained byte-identical and no benchmark result was written. The
+game process's sole E079a record had already been consumed by
+`vkAllocateDescriptorSets` returning `VK_ERROR_OUT_OF_POOL_MEMORY`.
+
+Pinned DXVK a6764047 proves that result is expected on the current descriptor
+pool: it immediately obtains another pool and retries, throwing only when the
+second allocation also fails. E123 therefore gives only this exact function a
+per-thread retry-aware diagnostic wrapper. The first pool-exhaustion result is
+suppressed; success clears the pending state; a second consecutive exhaustion
+wins with `negative_vkresult_after_retry`. Other negative results retain their
+existing first-winner behavior. Default dispatch, wire protocol, and executable
+policy are unchanged.
+
+The focused contract proves isolated failure/success, another first failure,
+then a fatal consecutive failure and exactly one bounded record. All four
+first-rejection contracts and the full 83/83 host suite pass. The required
+exact `deja` query found no prior implementation for this freeze; the broader
+recall supplied only the earlier topology and non-causal online-service
+findings. Tablet deployment and a bounded rerun remain required before naming
+the next Vulkan entry or claiming animation, completion, or FPS.

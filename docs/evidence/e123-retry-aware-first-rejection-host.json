@@ -1,0 +1,58 @@
+{
+  "schema": 1,
+  "gate": "E123",
+  "date": "2026-08-22",
+  "source_base_commit": "757508b42adb3c2754d5f0e3eee08075359351c3",
+  "trigger": {
+    "game": "Tomb Raider (2013)",
+    "launch": "-nolauncher -benchmark",
+    "last_activity_present_sequence": 721,
+    "visible_frame_sha256": "11c2116597eb6f98b22bcaa2018f22b2e46a1dbc48eff90a03bd59ff76e403ac",
+    "first_game_diagnostic_entry": "vkAllocateDescriptorSets",
+    "first_game_diagnostic_result": -1000069000,
+    "interpretation": "Pinned DXVK treats the first pool-exhaustion result as a pool-rotation request and immediately retries; consuming the process's only diagnostic winner there hid the post-frame boundary."
+  },
+  "design": {
+    "selector": "BVB_FIRST_REJECTION_DIAGNOSTIC=1",
+    "default_path_changed": false,
+    "wire_changed": false,
+    "dispatch_policy_changed": false,
+    "per_thread_state": true,
+    "retryable_results": [
+      "VK_ERROR_OUT_OF_POOL_MEMORY",
+      "VK_ERROR_FRAGMENTED_POOL"
+    ],
+    "rules": [
+      "The first retryable vkAllocateDescriptorSets failure on one thread is not allowed to win the diagnostic.",
+      "A successful retry clears that thread's pending state.",
+      "A second consecutive retryable failure is recorded as negative_vkresult_after_retry.",
+      "Every other negative Vulkan result remains eligible immediately."
+    ]
+  },
+  "pinned_dxvk": {
+    "commit": "a6764047e587178283fcde4073ae6e1410af594f",
+    "source": "src/dxvk/dxvk_descriptor_pool.cpp",
+    "behavior": "alloc starts with OUT_OF_POOL, retries after any non-success using getNextPool, and throws only if the retry also fails"
+  },
+  "verification": {
+    "focused_first_rejection_contracts": "4/4 passed",
+    "full_host_suite": "83/83 passed",
+    "strict_default_preserved": true,
+    "isolated_failure_then_success_emits": false,
+    "second_consecutive_retryable_failure_emits": true,
+    "second_failure_reason": "negative_vkresult_after_retry",
+    "single_bounded_record_preserved": true,
+    "source_sha256": "8c852f5571621df2905e7a21a340892fa7b1397ed6c45e66736ae64a8a1ff349",
+    "c_contract_sha256": "e6827d8be502e21d0f6537393cfbe272726e0c6304fa628469f0259379f39837",
+    "python_contract_sha256": "f3942b2caa4f3181051300338186db4cad17cbf66b478d5cb4c6e56a74fb4f5e"
+  },
+  "recall": "The required exact deja query found no prior indexed implementation for the E122 first-frame freeze. A broader Tomb Raider query recovered the earlier CPU-topology work and the fact that online-service retry logs were not causal in successful runs.",
+  "claims": {
+    "host_diagnostic_ready": true,
+    "tablet_deployed": false,
+    "next_real_entry_known": false,
+    "animation_after_sequence_721": false,
+    "benchmark_complete": false,
+    "fps_claim": false
+  }
+}

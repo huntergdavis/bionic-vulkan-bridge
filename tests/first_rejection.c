@@ -36,6 +36,19 @@ static VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL dummy_get_device_proc_addr(
     return NULL;
 }
 
+static VkResult descriptor_allocate_results[4];
+static size_t descriptor_allocate_result_index;
+
+static VKAPI_ATTR VkResult VKAPI_CALL dummy_allocate_descriptor_sets(
+    VkDevice device, const VkDescriptorSetAllocateInfo *allocate_info,
+    VkDescriptorSet *descriptor_sets) {
+    (void)device;
+    (void)allocate_info;
+    (void)descriptor_sets;
+    CHECK(descriptor_allocate_result_index < 4U);
+    return descriptor_allocate_results[descriptor_allocate_result_index++];
+}
+
 static int check_default(void) {
     CHECK(!bvb_first_rejection_enabled());
     CHECK(resolve_device("vkCmdDispatch") == NULL);
@@ -207,6 +220,53 @@ static int check_implemented_rejection(void) {
     return 0;
 }
 
+static int check_retryable_descriptor_rejection(void) {
+    CHECK(bvb_first_rejection_enabled());
+    descriptor_allocate_results[0] = VK_ERROR_OUT_OF_POOL_MEMORY;
+    descriptor_allocate_results[1] = VK_SUCCESS;
+    descriptor_allocate_results[2] = VK_ERROR_FRAGMENTED_POOL;
+    descriptor_allocate_results[3] = VK_ERROR_OUT_OF_POOL_MEMORY;
+    descriptor_allocate_result_index = 0U;
+
+    PFN_vkAllocateDescriptorSets typed = dummy_allocate_descriptor_sets;
+    PFN_vkVoidFunction raw = NULL;
+    _Static_assert(sizeof(typed) == sizeof(raw),
+                   "Vulkan function pointer width mismatch");
+    memcpy(&raw, &typed, sizeof(raw));
+    PFN_vkVoidFunction erased = bvb_first_rejection_wrap(
+        "vkAllocateDescriptorSets", BVB_DXVK_SCOPE_DEVICE, raw);
+    CHECK(erased != NULL);
+    PFN_vkAllocateDescriptorSets allocate = NULL;
+    memcpy(&allocate, &erased, sizeof(allocate));
+
+    CHECK(allocate(VK_NULL_HANDLE, NULL, NULL) ==
+          VK_ERROR_OUT_OF_POOL_MEMORY);
+    struct bvb_first_rejection_snapshot snapshot = {0};
+    CHECK(bvb_first_rejection_snapshot(&snapshot) == 0);
+    CHECK(!snapshot.emitted);
+    CHECK(allocate(VK_NULL_HANDLE, NULL, NULL) == VK_SUCCESS);
+    CHECK(bvb_first_rejection_snapshot(&snapshot) == 0);
+    CHECK(!snapshot.emitted);
+    CHECK(allocate(VK_NULL_HANDLE, NULL, NULL) == VK_ERROR_FRAGMENTED_POOL);
+    CHECK(bvb_first_rejection_snapshot(&snapshot) == 0);
+    CHECK(!snapshot.emitted);
+    CHECK(allocate(VK_NULL_HANDLE, NULL, NULL) ==
+          VK_ERROR_OUT_OF_POOL_MEMORY);
+
+    CHECK(bvb_first_rejection_snapshot(&snapshot) == 0);
+    CHECK(snapshot.enabled && snapshot.emitted);
+    CHECK(strcmp(snapshot.category, "implemented_rejection") == 0);
+    CHECK(strcmp(snapshot.entry, "vkAllocateDescriptorSets") == 0);
+    CHECK(strcmp(snapshot.reason, "negative_vkresult_after_retry") == 0);
+    CHECK(snapshot.result == VK_ERROR_OUT_OF_POOL_MEMORY);
+    CHECK(snapshot.argument_count == 3U);
+    CHECK(snapshot.pointer_mask == UINT64_C(6));
+    CHECK(snapshot.executable_invocations == 4U);
+    CHECK(snapshot.implemented_rejections == 1U);
+    puts("PASS: retryable descriptor exhaustion preserves the diagnostic");
+    return 0;
+}
+
 static int check_command_poison(void) {
     CHECK(bvb_first_rejection_enabled());
     uint8_t batch[512] = {0};
@@ -257,6 +317,8 @@ int main(int argument_count, char **arguments) {
     if (strcmp(arguments[1], "required") == 0) return check_required();
     if (strcmp(arguments[1], "implemented") == 0)
         return check_implemented_rejection();
+    if (strcmp(arguments[1], "descriptor-retry") == 0)
+        return check_retryable_descriptor_rejection();
     if (strcmp(arguments[1], "poison") == 0) return check_command_poison();
     if (strcmp(arguments[1], "race") == 0) return check_race();
     if (strcmp(arguments[1], "void-exit") == 0) return check_void_exit();

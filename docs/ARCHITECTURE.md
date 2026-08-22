@@ -492,3 +492,11 @@ uses only typed IDs. Bionic retains the authoritative pool type/count, checks
 every range and same-device relationship, reconstructs native calls, and
 destroys pools before their device. Shared recording adds no per-command socket
 round trip, while strict mode retains the immediate-record path.
+
+E123 keeps E079a's one-record failure diagnostic useful after real rendering.
+Only the diagnostic-mode `vkAllocateDescriptorSets` proxy tracks a per-thread
+pool-rotation attempt: one `OUT_OF_POOL_MEMORY` or `FRAGMENTED_POOL` result is
+treated as DXVK's expected request to rotate pools, a success clears it, and a
+second consecutive retryable result is recorded. All unrelated negative
+results remain immediately eligible. The strict/default function pointer,
+wire, and Vulkan implementation paths are unchanged.

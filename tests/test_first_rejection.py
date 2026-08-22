@@ -150,6 +150,32 @@ def main() -> int:
                 f"implemented record {key}: {fields.get(key)!r} != {value!r}"
             )
 
+    descriptor_retry = run(binary, "descriptor-retry", "1")
+    require_pass(
+        descriptor_retry,
+        "PASS: retryable descriptor exhaustion preserves the diagnostic",
+    )
+    fields = record(descriptor_retry)
+    expected = {
+        "category": "implemented_rejection",
+        "entry": "vkAllocateDescriptorSets",
+        "canonical": "vkAllocateDescriptorSets",
+        "scope": "device",
+        "reason": "negative_vkresult_after_retry",
+        "result": str(-1000069000),
+        "argc": "3",
+        "pointer_mask": "0x0000000000000006",
+        "executable_invocations": "4",
+        "implemented_rejections": "1",
+        "end_poison": "0",
+    }
+    for key, value in expected.items():
+        if fields.get(key) != value:
+            raise AssertionError(
+                f"descriptor retry record {key}: "
+                f"{fields.get(key)!r} != {value!r}"
+            )
+
     poison = run(binary, "poison", "1")
     require_pass(poison, "PASS: first void command rejection is reported at End")
     fields = record(poison)
@@ -194,7 +220,14 @@ def main() -> int:
     ) != "required_unimplemented":
         raise AssertionError(f"wrong non-command void record: {fields!r}")
 
-    for result in (required, implemented, poison, race, void_exit):
+    for result in (
+        required,
+        implemented,
+        descriptor_retry,
+        poison,
+        race,
+        void_exit,
+    ):
         require_bounded_record(result)
     require_single_stderr_write(binary)
 

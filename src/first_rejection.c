@@ -30,6 +30,8 @@ enum bvb_first_rejection_winner_state {
     BVB_FIRST_WINNER_EMITTED = 2,
 };
 static _Atomic unsigned bvb_first_winner_state;
+static _Atomic(PFN_vkAllocateDescriptorSets) bvb_descriptor_allocate_target;
+static _Thread_local bool bvb_descriptor_pool_retry_pending;
 static struct bvb_first_rejection_state bvb_first_state = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
 };
@@ -73,6 +75,50 @@ void bvb_first_rejection_note_executable_invocation(void) {
                              memory_order_relaxed) == BVB_FIRST_WINNER_OPEN)
         ++bvb_first_state.snapshot.executable_invocations;
     (void)pthread_mutex_unlock(&bvb_first_state.mutex);
+}
+
+static VKAPI_ATTR VkResult VKAPI_CALL
+bvb_first_proxy_allocate_descriptor_sets(
+    VkDevice device, const VkDescriptorSetAllocateInfo *allocate_info,
+    VkDescriptorSet *descriptor_sets) {
+    PFN_vkAllocateDescriptorSets target = atomic_load_explicit(
+        &bvb_descriptor_allocate_target, memory_order_acquire);
+    bvb_first_rejection_note_executable_invocation();
+    if (target == NULL) {
+        bvb_first_rejection_record(
+            "executable_target_missing", "vkAllocateDescriptorSets",
+            "vkAllocateDescriptorSets", "device",
+            "diagnostic_proxy_target_missing", VK_ERROR_INITIALIZATION_FAILED,
+            3U, UINT64_C(6),
+            "VkDevice_value,VkDescriptorSetAllocateInfo_ptr,"
+            "VkDescriptorSet_ptr",
+            0U, 0U, false);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+
+    const VkResult result = target(device, allocate_info, descriptor_sets);
+    if (result == VK_SUCCESS) {
+        bvb_descriptor_pool_retry_pending = false;
+        return result;
+    }
+    const bool pool_exhausted = result == VK_ERROR_OUT_OF_POOL_MEMORY ||
+                                result == VK_ERROR_FRAGMENTED_POOL;
+    if (pool_exhausted && !bvb_descriptor_pool_retry_pending) {
+        bvb_descriptor_pool_retry_pending = true;
+        return result;
+    }
+    bvb_descriptor_pool_retry_pending = false;
+    if (result < 0)
+        bvb_first_rejection_record(
+            "implemented_rejection", "vkAllocateDescriptorSets",
+            "vkAllocateDescriptorSets", "device",
+            pool_exhausted ? "negative_vkresult_after_retry"
+                           : "negative_vkresult",
+            result, 3U, UINT64_C(6),
+            "VkDevice_value,VkDescriptorSetAllocateInfo_ptr,"
+            "VkDescriptorSet_ptr",
+            0U, 0U, false);
+    return result;
 }
 
 static void emit_first_rejection(
@@ -212,6 +258,22 @@ PFN_vkVoidFunction bvb_first_rejection_wrap(
     PFN_vkVoidFunction raw) {
     if (raw == NULL || name == NULL || !bvb_first_rejection_enabled())
         return raw;
+    if (scope == BVB_DXVK_SCOPE_DEVICE &&
+        strcmp(name, "vkAllocateDescriptorSets") == 0) {
+        PFN_vkAllocateDescriptorSets typed = NULL;
+        PFN_vkAllocateDescriptorSets proxy =
+            bvb_first_proxy_allocate_descriptor_sets;
+        PFN_vkVoidFunction wrapped = NULL;
+        _Static_assert(sizeof(typed) == sizeof(raw),
+                       "descriptor allocate function pointer width mismatch");
+        _Static_assert(sizeof(wrapped) == sizeof(proxy),
+                       "descriptor proxy function pointer width mismatch");
+        memcpy(&typed, &raw, sizeof(typed));
+        atomic_store_explicit(&bvb_descriptor_allocate_target, typed,
+                              memory_order_release);
+        memcpy(&wrapped, &proxy, sizeof(wrapped));
+        return wrapped;
+    }
     return bvb_first_generated_wrap(name, scope, raw);
 }
 

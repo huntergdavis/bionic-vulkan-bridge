@@ -115,6 +115,10 @@ def main() -> int:
             "atomic pipe bound")
     require(first_source, "BVB_FIRST_REJECTION_FIXED_FIELDS_MAX",
             "worst-case record-content bound")
+    require(first_source, "bvb_first_proxy_allocate_descriptor_sets",
+            "retry-aware descriptor diagnostic")
+    require(first_source, "negative_vkresult_after_retry",
+            "consecutive descriptor failure diagnostic")
     for forbidden in ("fprintf(stderr", "flockfile(", "fflush("):
         if forbidden in first_source:
             raise AssertionError(f"forbidden output primitive in diagnostic: {forbidden}")
@@ -168,6 +172,8 @@ def main() -> int:
     first_test = first_test_path.read_text()
     require(first_test, "pthread_barrier_wait", "two-thread winner test")
     require(first_test, "vkGetDeviceQueue2", "non-command void exit test")
+    require(first_test, "check_retryable_descriptor_rejection",
+            "descriptor retry contract")
     first_test_driver = first_test_driver_path.read_text()
     require(first_test_driver, '"trace=write"', "one-write strace test")
     require(first_test_driver, 'void_exit.returncode != 86',
