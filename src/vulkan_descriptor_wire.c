@@ -335,6 +335,88 @@ int bvb_protocol_decode_vulkan_descriptor_set_allocate_response(
     return 0;
 }
 
+int bvb_protocol_encode_vulkan_descriptor_transaction_allocate_request(
+    uint8_t output[BVB_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE_MAX_SIZE],
+    const struct bvb_vulkan_descriptor_transaction_allocate_request *request,
+    uint32_t *output_length) {
+    if (output == NULL || request == NULL || output_length == NULL ||
+        request->journal_generation == 0U ||
+        request->journal_sequence == 0U ||
+        request->journal_length > BVB_DESCRIPTOR_JOURNAL_REGION_BYTES ||
+        request->journal_record_count > BVB_DESCRIPTOR_JOURNAL_MAX_RECORDS ||
+        ((request->journal_length == 0U) !=
+         (request->journal_record_count == 0U))) {
+        return -EINVAL;
+    }
+    uint8_t allocation_wire[BVB_PROTOCOL_MAX_PAYLOAD];
+    uint32_t allocation_length = 0U;
+    int result = bvb_protocol_encode_vulkan_descriptor_set_allocate_request(
+        allocation_wire, &request->allocation, &allocation_length);
+    if (result != 0 ||
+        allocation_length > BVB_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE_MAX_SIZE -
+                                BVB_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE_PREFIX_SIZE) {
+        return result != 0 ? result : -E2BIG;
+    }
+    bvb_wire_put_u64(output, request->journal_generation);
+    bvb_wire_put_u64(output + 8, request->journal_sequence);
+    bvb_wire_put_u32(output + 16, request->journal_length);
+    bvb_wire_put_u32(output + 20, request->journal_record_count);
+    bvb_wire_put_u32(output + 24, allocation_length);
+    bvb_wire_put_u32(output + 28, 0U);
+    memcpy(output + BVB_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE_PREFIX_SIZE,
+           allocation_wire, allocation_length);
+    *output_length =
+        BVB_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE_PREFIX_SIZE +
+        allocation_length;
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_descriptor_transaction_allocate_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_descriptor_transaction_allocate_request *request) {
+    if (input == NULL || request == NULL ||
+        input_length < BVB_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE_PREFIX_SIZE +
+                           BVB_VULKAN_DESCRIPTOR_SET_ALLOCATE_PREFIX_SIZE) {
+        return -EINVAL;
+    }
+    const uint32_t allocation_length = bvb_wire_get_u32(input + 24);
+    struct bvb_vulkan_descriptor_transaction_allocate_request decoded = {
+        .journal_generation = bvb_wire_get_u64(input),
+        .journal_sequence = bvb_wire_get_u64(input + 8),
+        .journal_length = bvb_wire_get_u32(input + 16),
+        .journal_record_count = bvb_wire_get_u32(input + 20),
+    };
+    if (decoded.journal_generation == 0U ||
+        decoded.journal_sequence == 0U ||
+        decoded.journal_length > BVB_DESCRIPTOR_JOURNAL_REGION_BYTES ||
+        decoded.journal_record_count > BVB_DESCRIPTOR_JOURNAL_MAX_RECORDS ||
+        ((decoded.journal_length == 0U) !=
+         (decoded.journal_record_count == 0U)) ||
+        bvb_wire_get_u32(input + 28) != 0U ||
+        allocation_length >
+            BVB_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE_MAX_SIZE -
+                BVB_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE_PREFIX_SIZE ||
+        input_length !=
+            BVB_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE_PREFIX_SIZE +
+                allocation_length) {
+        return -EPROTO;
+    }
+    int result = bvb_protocol_decode_vulkan_descriptor_set_allocate_request(
+        input + BVB_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE_PREFIX_SIZE,
+        allocation_length, &decoded.allocation);
+    if (result != 0) return result;
+    uint8_t canonical[BVB_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE_MAX_SIZE];
+    uint32_t canonical_length = 0U;
+    result = bvb_protocol_encode_vulkan_descriptor_transaction_allocate_request(
+        canonical, &decoded, &canonical_length);
+    if (result != 0 || canonical_length != input_length ||
+        memcmp(canonical, input, input_length) != 0) {
+        return -EPROTO;
+    }
+    *request = decoded;
+    return 0;
+}
+
 int bvb_protocol_encode_vulkan_sampler_create_request(
     uint8_t output[BVB_VULKAN_SAMPLER_CREATE_REQUEST_SIZE],
     const struct bvb_vulkan_sampler_create_request *request) {

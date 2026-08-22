@@ -521,3 +521,16 @@ reconstructs and replays native updates in order. A rejected or uncertain flush
 permanently poisons the connection and is never retried. Strict mode keeps the
 original immediate opcode-112 path for A/B comparison; descriptor allocation,
 which returns handles, remains synchronous and is the next measured target.
+
+E127 fuses the journal drain and the immediately following descriptor-set
+allocation into one ordered transaction. Opcode 123 carries the journal
+generation/sequence/range plus the existing canonical allocation request. The
+service snapshots and validates the complete journal before replaying any
+update, then performs the real native allocation and returns its real Vulkan
+result and typed set IDs in the same response. An empty journal is valid, so
+every shared-mode allocation has one deterministic transaction boundary.
+Malformed, stale, or uncertain transactions poison the client connection;
+native allocation failure remains a normal acknowledged Vulkan result. This
+removes the separate opcode-122 round trip at the measured allocation/update
+interleave without deferring allocation, inventing handles, or consuming pool
+capacity early. Strict opcode 68 and standalone journal drains remain intact.

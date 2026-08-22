@@ -49,7 +49,8 @@ def main() -> int:
     require(service, "F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL", "immutable capacity seals")
     require(global_test, "shared_descriptor_journal ? 4096U : 1U", "large journal proof")
     require(global_test, "exchanges_before_descriptor_updates", "exchange counter")
-    require(global_test, "exchanges_before_descriptor_flush == 2U", "flush plus wait")
+    require(global_test, "exchanges_before_descriptor_transaction", "ordered transaction")
+    require(global_test, "BVB_OPCODE_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE", "transaction opcode")
     require(global_runner, 'environment["BVB_DESCRIPTOR_JOURNAL"] = "shared"', "shared runner")
     print("PASS: E126 shared descriptor journal architecture")
     return 0

@@ -16,6 +16,11 @@ enum {
     BVB_VULKAN_DESCRIPTOR_SET_ALLOCATE_PREFIX_SIZE = 16,
     BVB_VULKAN_DESCRIPTOR_SET_ALLOCATE_RESPONSE_PREFIX_SIZE = 8,
     BVB_VULKAN_MAX_DESCRIPTOR_SETS_PER_ALLOCATE = 16,
+    BVB_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE_PREFIX_SIZE = 32,
+    BVB_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE_MAX_SIZE =
+        BVB_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE_PREFIX_SIZE +
+        BVB_VULKAN_DESCRIPTOR_SET_ALLOCATE_PREFIX_SIZE +
+        BVB_VULKAN_MAX_DESCRIPTOR_SETS_PER_ALLOCATE * sizeof(uint64_t),
     BVB_VULKAN_SAMPLER_CREATE_REQUEST_SIZE = 72,
     BVB_VULKAN_DESCRIPTOR_UPDATE_PREFIX_SIZE = 16,
     BVB_VULKAN_DESCRIPTOR_WRITE_SIZE = 32,
@@ -79,6 +84,14 @@ struct bvb_vulkan_descriptor_set_allocate_response {
     int32_t vulkan_result;
     uint32_t descriptor_set_count;
     uint64_t descriptor_set_ids[BVB_VULKAN_MAX_DESCRIPTOR_SETS_PER_ALLOCATE];
+};
+
+struct bvb_vulkan_descriptor_transaction_allocate_request {
+    uint64_t journal_generation;
+    uint64_t journal_sequence;
+    uint32_t journal_length;
+    uint32_t journal_record_count;
+    struct bvb_vulkan_descriptor_set_allocate_request allocation;
 };
 
 struct bvb_vulkan_sampler_create_request {
@@ -204,6 +217,13 @@ int bvb_protocol_encode_vulkan_descriptor_set_allocate_response(
 int bvb_protocol_decode_vulkan_descriptor_set_allocate_response(
     const uint8_t *input, uint32_t input_length,
     struct bvb_vulkan_descriptor_set_allocate_response *response);
+int bvb_protocol_encode_vulkan_descriptor_transaction_allocate_request(
+    uint8_t output[BVB_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE_MAX_SIZE],
+    const struct bvb_vulkan_descriptor_transaction_allocate_request *request,
+    uint32_t *output_length);
+int bvb_protocol_decode_vulkan_descriptor_transaction_allocate_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_descriptor_transaction_allocate_request *request);
 int bvb_protocol_encode_vulkan_sampler_create_request(
     uint8_t output[BVB_VULKAN_SAMPLER_CREATE_REQUEST_SIZE],
     const struct bvb_vulkan_sampler_create_request *request);

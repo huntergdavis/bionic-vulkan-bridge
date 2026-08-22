@@ -1722,13 +1722,16 @@ int main(void) {
     CHECK(bvb_handle_type(dxvk_template_id) ==
           BVB_OBJECT_DESCRIPTOR_UPDATE_TEMPLATE);
     const VkDescriptorPoolSize dxvk_template_pool_sizes[3] = {
-        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2U},
-        {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1U},
-        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1U},
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+         shared_descriptor_journal ? 4U : 2U},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER,
+         shared_descriptor_journal ? 2U : 1U},
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE,
+         shared_descriptor_journal ? 2U : 1U},
     };
     const VkDescriptorPoolCreateInfo dxvk_template_pool_info = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .maxSets = 1U,
+        .maxSets = shared_descriptor_journal ? 2U : 1U,
         .poolSizeCount = 3U,
         .pPoolSizes = dxvk_template_pool_sizes,
     };
@@ -1781,11 +1784,22 @@ int main(void) {
               exchanges_before_descriptor_updates ==
           (shared_descriptor_journal ? 0U : null_update_count + 1U));
     if (shared_descriptor_journal) {
-        const uint64_t exchanges_before_descriptor_flush =
+        const uint64_t exchanges_before_descriptor_transaction =
+            bvb_global_dispatch_exchange_count();
+        VkDescriptorSet transaction_set = VK_NULL_HANDLE;
+        CHECK(allocate_descriptor_sets(
+                  device, &dxvk_template_allocate_info,
+                  &transaction_set) == VK_SUCCESS);
+        CHECK(transaction_set != VK_NULL_HANDLE);
+        CHECK(bvb_global_dispatch_exchange_count() -
+                  exchanges_before_descriptor_transaction == 1U);
+        CHECK(bvb_global_dispatch_last_opcode() ==
+              BVB_OPCODE_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE);
+        const uint64_t exchanges_before_descriptor_wait =
             bvb_global_dispatch_exchange_count();
         CHECK(device_wait_idle(device) == VK_SUCCESS);
         CHECK(bvb_global_dispatch_exchange_count() -
-                  exchanges_before_descriptor_flush == 2U);
+                  exchanges_before_descriptor_wait == 1U);
     }
     const uint64_t exchanges_before_descriptor_destroy =
         bvb_global_dispatch_exchange_count();

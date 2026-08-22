@@ -2149,6 +2149,75 @@ static int answer_vulkan_descriptor_journal_flush(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_descriptor_transaction_allocate(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context,
+    struct shared_batch_region *region) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL || region == NULL ||
+        region->address == NULL || !region->descriptor_journal ||
+        region->command_stream) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_descriptor_transaction_allocate_request transaction;
+    int result =
+        bvb_protocol_decode_vulkan_descriptor_transaction_allocate_request(
+            request->payload, request->header.payload_length, &transaction);
+    if (result == 0 &&
+        transaction.journal_generation != region->generation) {
+        result = -ESTALE;
+    }
+    if (result == 0 &&
+        (region->last_sequence == UINT64_MAX ||
+         transaction.journal_sequence != region->last_sequence + 1U)) {
+        result = -ESTALE;
+    }
+    if (result == 0 && transaction.journal_length > region->length) {
+        result = -ERANGE;
+    }
+    uint8_t *snapshot = NULL;
+    if (result == 0 && transaction.journal_length != 0U) {
+        snapshot = malloc(transaction.journal_length);
+        if (snapshot == NULL) result = -ENOMEM;
+    }
+    if (result == 0 && transaction.journal_length != 0U) {
+        atomic_thread_fence(memory_order_acquire);
+        memcpy(snapshot, region->address, transaction.journal_length);
+        result = validate_descriptor_journal_snapshot(
+            snapshot, transaction.journal_length,
+            transaction.journal_record_count);
+    }
+    char diagnostic[512] = {0};
+    if (result == 0 && transaction.journal_length != 0U) {
+        result = replay_descriptor_journal_snapshot(
+            context, snapshot, transaction.journal_length,
+            transaction.journal_record_count, diagnostic,
+            sizeof(diagnostic));
+    }
+    free(snapshot);
+    struct bvb_vulkan_descriptor_set_allocate_response allocated = {0};
+    if (result == 0) {
+        result = bvb_vulkan_global_context_allocate_descriptor_sets(
+            context, &transaction.allocation, &allocated, diagnostic,
+            sizeof(diagnostic));
+    }
+    if (result == 0) {
+        result = bvb_protocol_encode_vulkan_descriptor_set_allocate_response(
+            response.payload, &allocated, &response.header.payload_length);
+    }
+    if (result == 0) {
+        region->last_sequence = transaction.journal_sequence;
+    } else {
+        fprintf(stderr,
+                "bvb: descriptor transaction allocate failed: %s\n",
+                diagnostic[0] == '\0' ? strerror(-result) : diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_buffer_requirements(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context) {
@@ -3767,6 +3836,11 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_FLUSH) {
             result = answer_vulkan_descriptor_journal_flush(
+                client_fd, &request, negotiated, global_context,
+                &descriptor_journal_region);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE) {
+            result = answer_vulkan_descriptor_transaction_allocate(
                 client_fd, &request, negotiated, global_context,
                 &descriptor_journal_region);
         } else if (request.header.opcode ==

@@ -107,7 +107,8 @@ int main(void) {
     CHECK(BVB_OPCODE_VULKAN_DESCRIPTOR_UPDATE_TEMPLATE == 112);
     CHECK(BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_SETUP == 121);
     CHECK(BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_FLUSH == 122);
-    CHECK(BVB_OPCODE_LAST == 122);
+    CHECK(BVB_OPCODE_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE == 123);
+    CHECK(BVB_OPCODE_LAST == 123);
     CHECK(BVB_OPCODE_VULKAN_COMMAND_BUFFER_BIND_DESCRIPTOR_SETS == 113);
     CHECK(BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMMEDIATE_RECORD == 114);
     CHECK(BVB_OPCODE_VULKAN_FORMAT_PROPERTIES_3 == 115);
@@ -116,7 +117,7 @@ int main(void) {
     CHECK(BVB_OPCODE_VULKAN_QUERY_POOL_DESTROY == 118);
     CHECK(BVB_OPCODE_VULKAN_QUERY_POOL_RESULTS == 119);
     CHECK(BVB_OPCODE_VULKAN_QUERY_POOL_RESET == 120);
-    CHECK(BVB_OPCODE_LAST == 122);
+    CHECK(BVB_OPCODE_LAST == 123);
     CHECK(decoded.opcode == BVB_OPCODE_LAST);
 
     const struct bvb_hello_request hello = {
@@ -2155,6 +2156,35 @@ int main(void) {
     CHECK(descriptor_allocate_decoded.descriptor_set_count == 2U);
     CHECK(descriptor_allocate_decoded.set_layout_ids[1] ==
           UINT64_C(0x1400000000000002));
+
+    const struct bvb_vulkan_descriptor_transaction_allocate_request
+        descriptor_transaction_request = {
+            .journal_generation = UINT64_C(0x8877665544332211),
+            .journal_sequence = 19U,
+            .journal_length = 4096U,
+            .journal_record_count = 17U,
+            .allocation = descriptor_allocate_request,
+        };
+    CHECK(
+        bvb_protocol_encode_vulkan_descriptor_transaction_allocate_request(
+            descriptor_wire, &descriptor_transaction_request,
+            &descriptor_wire_length) == 0);
+    struct bvb_vulkan_descriptor_transaction_allocate_request
+        descriptor_transaction_decoded;
+    CHECK(
+        bvb_protocol_decode_vulkan_descriptor_transaction_allocate_request(
+            descriptor_wire, descriptor_wire_length,
+            &descriptor_transaction_decoded) == 0);
+    CHECK(descriptor_transaction_decoded.journal_sequence == 19U);
+    CHECK(descriptor_transaction_decoded.journal_record_count == 17U);
+    CHECK(descriptor_transaction_decoded.allocation.descriptor_set_count ==
+          2U);
+    descriptor_wire[28] = 1U;
+    CHECK(
+        bvb_protocol_decode_vulkan_descriptor_transaction_allocate_request(
+            descriptor_wire, descriptor_wire_length,
+            &descriptor_transaction_decoded) == -EPROTO);
+    descriptor_wire[28] = 0U;
 
     const struct bvb_vulkan_descriptor_set_allocate_response
         descriptor_allocate_response = {

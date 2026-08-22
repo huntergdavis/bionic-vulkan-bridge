@@ -4943,3 +4943,34 @@ request/completion transport. Compact runtime identities and measurements are
 in `docs/evidence/e126-shared-descriptor-journal-tablet.json`; canonical game
 evidence remains in the sibling `steamclienttermux` repository at commit
 `c5d4506`.
+
+## E127 — ordered descriptor drain/allocation transaction (2026-08-22)
+
+E126's complete tablet profile removed immediate opcode 112 but did not improve
+the 2.0 FPS average. The benchmark scene still performed about 532 synchronous
+descriptor allocations and 351 journal drains per present, so an allocation
+arrived after only 1.5 recorded updates. The required `deja "BVB descriptor
+allocation lease cache pool epoch batch vkAllocateDescriptorSets DXVK
+performance"` query returned no indexed implementation. E127 reuses
+E075/E075a's immutable shared-memory transaction discipline, E126's canonical
+update records, and the existing opcode-68 allocation codec/lifecycle.
+
+Shared mode now uses opcode 123 for every descriptor-set allocation. Its
+pointer-free request carries the journal generation, monotonically increasing
+sequence, published byte range/record count, and the complete existing native
+allocation request. The service copies the peer-writable range once, validates
+the whole snapshot, replays every native update in order, and only then calls
+the real `vkAllocateDescriptorSets`. The same response returns the driver's
+actual `VkResult` plus service-owned typed set IDs. An empty journal is valid;
+allocation is never deferred and no proxy handle or pool capacity is invented.
+Any stale, malformed, or uncertain transaction poisons the client connection,
+while an acknowledged native allocation failure remains an ordinary Vulkan
+result. Strict opcode 68 and standalone opcode 122 remain intact.
+
+The cross-process fake proves 4,097 updates make zero exchanges, then one exact
+opcode-123 exchange performs all native updates before the second real native
+allocation; the immediately following device wait requires only its own one
+exchange. Canonical/corrupt protocol coverage, strict regression, selector,
+and both architecture contracts pass. The complete host suite passes 88/88.
+This is not yet a tablet or FPS result. Exact design and claim boundaries are
+in `docs/evidence/e127-descriptor-transaction-host.json`.

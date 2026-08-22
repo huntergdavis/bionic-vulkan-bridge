@@ -76,6 +76,7 @@ static uint32_t fake_core_descriptor_pool_step;
 static uint32_t fake_descriptor_template_step;
 static uint32_t fake_descriptor_template_null_updates;
 static int fake_descriptor_journal_wait_seen;
+static int fake_descriptor_transaction_allocate_seen;
 static uint32_t fake_query_step;
 static int fake_descriptor_template_swapchain_update_seen;
 static int fake_descriptor_bind_seen;
@@ -149,6 +150,8 @@ static const VkDescriptorPool fake_dxvk_descriptor_pool =
     (VkDescriptorPool)(uintptr_t)UINT64_C(0xac00);
 static const VkDescriptorSet fake_dxvk_descriptor_set =
     (VkDescriptorSet)(uintptr_t)UINT64_C(0xad00);
+static const VkDescriptorSet fake_dxvk_descriptor_set_2 =
+    (VkDescriptorSet)(uintptr_t)UINT64_C(0xad01);
 static const VkQueryPool fake_query_pool =
     (VkQueryPool)(uintptr_t)UINT64_C(0xae00);
 static const uint32_t fake_dxvk_dummy_frag[] = {
@@ -1106,6 +1109,7 @@ static void VKAPI_CALL fake_destroy_device(
     fake_descriptor_template_step = 0U;
     fake_descriptor_template_null_updates = 0U;
     fake_descriptor_journal_wait_seen = 0;
+    fake_descriptor_transaction_allocate_seen = 0;
     fake_query_step = 0U;
     fake_descriptor_template_swapchain_update_seen = 0;
     fake_descriptor_bind_seen = 0;
@@ -1235,19 +1239,25 @@ static VkResult VKAPI_CALL fake_create_descriptor_pool(
         VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
     };
+    const bool require_journal =
+        getenv("BVB_FAKE_REQUIRE_DESCRIPTOR_JOURNAL") != NULL;
     if (fake_descriptor_template_step == 2U && allocator == NULL &&
         create_info != NULL && pool != NULL &&
         create_info->sType == VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO &&
         create_info->pNext == NULL && create_info->flags == 0U &&
-        create_info->maxSets == 1U && create_info->poolSizeCount == 3U &&
+        create_info->maxSets == (require_journal ? 2U : 1U) &&
+        create_info->poolSizeCount == 3U &&
         create_info->pPoolSizes != NULL &&
         create_info->pPoolSizes[0].type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER &&
-        create_info->pPoolSizes[0].descriptorCount == 2U &&
+        create_info->pPoolSizes[0].descriptorCount ==
+            (require_journal ? 4U : 2U) &&
         create_info->pPoolSizes[1].type ==
             VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER &&
-        create_info->pPoolSizes[1].descriptorCount == 1U &&
+        create_info->pPoolSizes[1].descriptorCount ==
+            (require_journal ? 2U : 1U) &&
         create_info->pPoolSizes[2].type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE &&
-        create_info->pPoolSizes[2].descriptorCount == 1U) {
+        create_info->pPoolSizes[2].descriptorCount ==
+            (require_journal ? 2U : 1U)) {
         *pool = fake_dxvk_descriptor_pool;
         fake_descriptor_template_step = 3U;
         return VK_SUCCESS;
@@ -1316,6 +1326,19 @@ static VkResult VKAPI_CALL fake_allocate_descriptor_sets(
         allocate_info->pSetLayouts[0] == fake_dxvk_descriptor_layout) {
         descriptor_sets[0] = fake_dxvk_descriptor_set;
         fake_descriptor_template_step = 4U;
+        return VK_SUCCESS;
+    }
+    if (getenv("BVB_FAKE_REQUIRE_DESCRIPTOR_JOURNAL") != NULL &&
+        fake_descriptor_template_step == 5U && allocate_info != NULL &&
+        descriptor_sets != NULL &&
+        allocate_info->sType == VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO &&
+        allocate_info->pNext == NULL &&
+        allocate_info->descriptorPool == fake_dxvk_descriptor_pool &&
+        allocate_info->descriptorSetCount == 1U &&
+        allocate_info->pSetLayouts != NULL &&
+        allocate_info->pSetLayouts[0] == fake_dxvk_descriptor_layout) {
+        descriptor_sets[0] = fake_dxvk_descriptor_set_2;
+        fake_descriptor_transaction_allocate_seen = 1;
         return VK_SUCCESS;
     }
     if (fake_descriptor_step != 2U || allocate_info == NULL ||
@@ -3791,8 +3814,10 @@ static VkResult VKAPI_CALL fake_device_wait_idle(VkDevice device) {
     }
     if (getenv("BVB_FAKE_REQUIRE_DESCRIPTOR_JOURNAL") != NULL &&
         fake_descriptor_template_step == 8U &&
-        fake_descriptor_journal_wait_seen != 1) {
-        fprintf(stderr, "fake descriptor journal did not flush before wait\n");
+        (fake_descriptor_journal_wait_seen != 1 ||
+         fake_descriptor_transaction_allocate_seen != 1)) {
+        fprintf(stderr,
+                "fake descriptor transaction did not allocate before wait\n");
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     if (fake_animation_enabled() &&

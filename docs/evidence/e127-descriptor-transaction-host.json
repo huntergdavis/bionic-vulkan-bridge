@@ -1,0 +1,44 @@
+{
+  "gate": "E127",
+  "date": "2026-08-22",
+  "source_base_commit": "8c4572abf3fe2f7cb8cefe8ccd0f16f04815a568",
+  "trigger": {
+    "e126_average_fps": 2.0,
+    "e126_descriptor_ms_per_present": 139.94517239895833,
+    "e126_allocate_calls_per_present": 532.0447916666667,
+    "e126_flush_calls_per_present": 350.64375,
+    "e126_updates_per_flush": 1.509,
+    "diagnosis": "Synchronous allocation interleaves with updates and forces hundreds of undersized journal drains."
+  },
+  "implementation": {
+    "transaction_opcode": 123,
+    "strict_allocate_opcode": 68,
+    "standalone_flush_opcode": 122,
+    "request_prefix_bytes": 32,
+    "journal_region_bytes": 16777216,
+    "ordering": "snapshot and validate every journal record, replay updates in order, then perform real native allocation and return its real result and typed IDs",
+    "empty_journal_allowed": true,
+    "deferred_or_synthetic_allocation": false,
+    "uncertain_failure_policy": "permanently poison the client connection"
+  },
+  "validation": {
+    "strict_path_unchanged": true,
+    "shared_local_updates": 4097,
+    "shared_update_exchange_count": 0,
+    "transaction_exchange_count": 1,
+    "transaction_opcode_observed": 123,
+    "following_wait_exchange_count": 1,
+    "native_update_before_allocate": true,
+    "canonical_protocol_roundtrip": true,
+    "focused_protocol_and_dispatch_suite": "6/6 passed",
+    "full_host_suite": "88/88 passed"
+  },
+  "claims": {
+    "tablet_deployed": false,
+    "tomb_raider_run": false,
+    "benchmark_fps": null,
+    "performance_improvement": null
+  },
+  "next_gate": "Build and deploy the exact source, then repeat the complete profiled benchmark. If opcode 123 remains the dominant boundary, replace its socket request/reply with a bounded shared request/completion ring without changing native allocation semantics.",
+  "reuse": "The required deja query returned no indexed descriptor-allocation transport. E127 reuses E075/E075a immutable shared-memory transaction discipline, E125/E126 measured selection evidence, E126's canonical update records, and the existing opcode-68 native allocation codec and ownership lifecycle."
+}

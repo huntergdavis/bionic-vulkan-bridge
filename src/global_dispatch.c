@@ -328,7 +328,8 @@ static int flush_descriptor_journal_locked(void);
 static int flush_descriptor_journal_before_exchange_locked(uint16_t opcode) {
     if (bvb_global_client.descriptor_journal_flushing ||
         opcode == BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_SETUP ||
-        opcode == BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_FLUSH) {
+        opcode == BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_FLUSH ||
+        opcode == BVB_OPCODE_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE) {
         return 0;
     }
     return flush_descriptor_journal_locked();
@@ -5265,23 +5266,58 @@ static VkResult VKAPI_CALL bvb_bridge_vkAllocateDescriptorSets(
             result = -EINVAL;
         }
     }
+    if (result == 0) result = connect_locked();
+    const bool descriptor_transaction =
+        result == 0 && bvb_global_client.descriptor_journal_enabled;
     struct bvb_protocol_packet request = {0};
     request.header = (struct bvb_protocol_header){
         .version = BVB_PROTOCOL_VERSION,
         .kind = BVB_PROTOCOL_REQUEST,
-        .opcode = BVB_OPCODE_VULKAN_DESCRIPTOR_SET_ALLOCATE,
+        .opcode = descriptor_transaction
+            ? BVB_OPCODE_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE
+            : BVB_OPCODE_VULKAN_DESCRIPTOR_SET_ALLOCATE,
         .request_id = next_request_id_locked(),
         .payload_length = payload_length,
     };
-    if (result == 0) memcpy(request.payload, payload, payload_length);
+    if (result == 0 && descriptor_transaction) {
+        const struct bvb_vulkan_descriptor_transaction_allocate_request
+            transaction = {
+                .journal_generation =
+                    bvb_global_client.descriptor_journal_generation,
+                .journal_sequence =
+                    bvb_global_client.next_descriptor_journal_sequence,
+                .journal_length =
+                    bvb_global_client.descriptor_journal_length,
+                .journal_record_count =
+                    bvb_global_client.descriptor_journal_record_count,
+                .allocation = decoded,
+            };
+        result =
+            bvb_protocol_encode_vulkan_descriptor_transaction_allocate_request(
+                request.payload, &transaction,
+                &request.header.payload_length);
+    } else if (result == 0) {
+        memcpy(request.payload, payload, payload_length);
+    }
     struct bvb_protocol_packet response = {0};
-    if (result == 0) result = connect_locked();
     if (result == 0) result = exchange_locked(&request, &response);
-    if (result == 0 && response.header.status != 0) result = -EPROTO;
+    if (result == 0 && response.header.status != 0)
+        result = response.header.status;
     struct bvb_vulkan_descriptor_set_allocate_response allocated = {0};
     if (result == 0) {
         result = bvb_protocol_decode_vulkan_descriptor_set_allocate_response(
             response.payload, response.header.payload_length, &allocated);
+    }
+    if (descriptor_transaction) {
+        if (result == 0) {
+            bvb_global_client.descriptor_journal_length = 0U;
+            bvb_global_client.descriptor_journal_record_count = 0U;
+            ++bvb_global_client.next_descriptor_journal_sequence;
+            if (bvb_global_client.next_descriptor_journal_sequence == 0U) {
+                result = -EOVERFLOW;
+            }
+        }
+        if (result != 0) poison_descriptor_journal_connection_locked();
     }
     VkResult vulkan_result = result == 0
         ? (VkResult)allocated.vulkan_result : VK_ERROR_INITIALIZATION_FAILED;
