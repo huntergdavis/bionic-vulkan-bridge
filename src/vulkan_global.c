@@ -5822,6 +5822,92 @@ static int replay_command_stream_clear_color_image_general(
     return 0;
 }
 
+static int replay_command_stream_clear_depth_stencil_image(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t command_buffer_id,
+    const struct bvb_vulkan_clear_depth_stencil_image_command *command) {
+    uint64_t device_id = 0U, image_device_id = 0U, image_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE, image_device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    int result = resolve_command_buffer(
+        context, command_buffer_id, &device_id, &device,
+        &command_pool, &command_buffer);
+    if (result == 0)
+        result = resolve_device_child(
+            context, command->image_id, BVB_OBJECT_IMAGE,
+            &image_device_id, &image_device, &image_bits);
+    if (result == 0 &&
+        (image_device_id != device_id || image_device != device))
+        result = -EPROTO;
+    if (result != 0) return result;
+    PFN_vkCmdClearDepthStencilImage clear =
+        (PFN_vkCmdClearDepthStencilImage)context->get_device_proc_addr(
+            device, "vkCmdClearDepthStencilImage");
+    if (clear == NULL) return -ENOSYS;
+    VkClearDepthStencilValue value = {.stencil = command->stencil};
+    memcpy(&value.depth, &command->depth_word, sizeof(value.depth));
+    VkImageSubresourceRange ranges[BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES] = {{0}};
+    for (uint32_t index = 0U; index < command->range_count; ++index) {
+        ranges[index] = (VkImageSubresourceRange){
+            .aspectMask = command->ranges[index].aspect_mask,
+            .baseMipLevel = command->ranges[index].base_mip_level,
+            .levelCount = command->ranges[index].level_count,
+            .baseArrayLayer = command->ranges[index].base_array_layer,
+            .layerCount = command->ranges[index].layer_count,
+        };
+    }
+    clear(command_buffer, image_from_bits(image_bits),
+          (VkImageLayout)command->image_layout, &value,
+          command->range_count, ranges);
+    return 0;
+}
+
+static int replay_command_stream_clear_attachments(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t command_buffer_id,
+    const struct bvb_vulkan_clear_attachments_command *command) {
+    uint64_t device_id = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    int result = resolve_command_buffer(
+        context, command_buffer_id, &device_id, &device,
+        &command_pool, &command_buffer);
+    if (result != 0) return result;
+    PFN_vkCmdClearAttachments clear =
+        (PFN_vkCmdClearAttachments)context->get_device_proc_addr(
+            device, "vkCmdClearAttachments");
+    if (clear == NULL) return -ENOSYS;
+    VkClearAttachment attachments[BVB_COMMAND_VULKAN_MAX_CLEAR_ATTACHMENTS];
+    VkClearRect rects[BVB_COMMAND_VULKAN_MAX_CLEAR_RECTS];
+    memset(attachments, 0, sizeof(attachments));
+    memset(rects, 0, sizeof(rects));
+    for (uint32_t index = 0U; index < command->attachment_count; ++index) {
+        attachments[index].aspectMask = command->attachments[index].aspect_mask;
+        attachments[index].colorAttachment =
+            command->attachments[index].color_attachment;
+        memcpy(&attachments[index].clearValue,
+               command->attachments[index].clear_words,
+               sizeof(command->attachments[index].clear_words));
+    }
+    for (uint32_t index = 0U; index < command->rect_count; ++index) {
+        rects[index] = (VkClearRect){
+            .rect = {
+                .offset = {command->rects[index].offset_x,
+                           command->rects[index].offset_y},
+                .extent = {command->rects[index].width,
+                           command->rects[index].height},
+            },
+            .baseArrayLayer = command->rects[index].base_array_layer,
+            .layerCount = command->rects[index].layer_count,
+        };
+    }
+    clear(command_buffer, command->attachment_count, attachments,
+          command->rect_count, rects);
+    return 0;
+}
+
 int bvb_vulkan_global_context_validate_queue_submit_2(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_queue_submit_2_request *request,
@@ -6132,6 +6218,20 @@ static int validate_render_command_record(
         struct bvb_vulkan_dynamic_state_command command;
         return bvb_command_decode_vulkan_dynamic_state(record, &command);
     }
+    if (record->opcode == BVB_COMMAND_VULKAN_CLEAR_DEPTH_STENCIL_IMAGE) {
+        struct bvb_vulkan_clear_depth_stencil_image_command command;
+        int result = bvb_command_decode_vulkan_clear_depth_stencil_image(
+            record, &command);
+        if (result == 0)
+            result = command_stream_child_matches_device(
+                context, command.image_id, BVB_OBJECT_IMAGE,
+                expected_device_id);
+        return result;
+    }
+    if (record->opcode == BVB_COMMAND_VULKAN_CLEAR_ATTACHMENTS) {
+        struct bvb_vulkan_clear_attachments_command command;
+        return bvb_command_decode_vulkan_clear_attachments(record, &command);
+    }
     if (command_stream_transfer_opcode(record->opcode))
         return validate_transfer_command_record(
             context, record, expected_device_id);
@@ -6250,6 +6350,22 @@ static int replay_render_command_record(
                  command.has_strides != 0U ? command.strides : NULL);
         }
         return 0;
+    }
+    if (record->opcode == BVB_COMMAND_VULKAN_CLEAR_DEPTH_STENCIL_IMAGE) {
+        struct bvb_vulkan_clear_depth_stencil_image_command command;
+        result = bvb_command_decode_vulkan_clear_depth_stencil_image(
+            record, &command);
+        return result != 0 ? result :
+            replay_command_stream_clear_depth_stencil_image(
+                context, command_buffer_id, &command);
+    }
+    if (record->opcode == BVB_COMMAND_VULKAN_CLEAR_ATTACHMENTS) {
+        struct bvb_vulkan_clear_attachments_command command;
+        result = bvb_command_decode_vulkan_clear_attachments(
+            record, &command);
+        return result != 0 ? result :
+            replay_command_stream_clear_attachments(
+                context, command_buffer_id, &command);
     }
     if (record->opcode == BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER ||
         record->opcode == BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER_2) {
@@ -7181,7 +7297,7 @@ int bvb_vulkan_global_context_validate_command_stream(
                 context, &record, expected_device_id, &rendering);
         } else if (record.opcode >=
                        BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS &&
-                   record.opcode <= BVB_COMMAND_VULKAN_DYNAMIC_STATE) {
+                   record.opcode <= BVB_COMMAND_VULKAN_CLEAR_ATTACHMENTS) {
             result = validate_render_command_record(
                 context, &record, expected_device_id, &rendering);
         } else if (command_stream_transfer_opcode(record.opcode)) {
@@ -7331,7 +7447,7 @@ int bvb_vulkan_global_context_replay_command_stream(
                    record.opcode == BVB_COMMAND_VULKAN_PUSH_CONSTANTS ||
                    (record.opcode >=
                         BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS &&
-                    record.opcode <= BVB_COMMAND_VULKAN_DYNAMIC_STATE) ||
+                    record.opcode <= BVB_COMMAND_VULKAN_CLEAR_ATTACHMENTS) ||
                    command_stream_transfer_opcode(record.opcode)) {
             result = replay_render_command_record(
                 context, info.command_buffer_id, &record);

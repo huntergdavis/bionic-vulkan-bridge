@@ -222,6 +222,9 @@ int main(void) {
                                "vkCmdDrawIndexedIndirectCount") == 0 ||
                         strcmp(entry->name,
                                "vkCmdDrawIndexedIndirectCountKHR") == 0 ||
+                        strcmp(entry->name, "vkCmdClearAttachments") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdClearDepthStencilImage") == 0 ||
                         strcmp(entry->name, "vkCmdSetBlendConstants") == 0 ||
                         strcmp(entry->name, "vkCmdSetCullMode") == 0 ||
                         strcmp(entry->name, "vkCmdSetCullModeEXT") == 0 ||
@@ -293,8 +296,8 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 149U);
-    CHECK(required_count == 291U);
+    CHECK(executable_count == 151U);
+    CHECK(required_count == 289U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");

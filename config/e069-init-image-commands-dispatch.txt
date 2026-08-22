@@ -5,6 +5,8 @@ vkBeginCommandBuffer
 vkBindBufferMemory
 vkBindImageMemory
 vkCmdClearColorImage
+vkCmdClearAttachments
+vkCmdClearDepthStencilImage
 vkCmdSetBlendConstants
 vkCmdSetCullMode
 vkCmdSetCullModeEXT

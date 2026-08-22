@@ -70,7 +70,9 @@ def main() -> int:
     assert "vkCmdPipelineBarrier2" in dispatch
     assert "vkCmdPipelineBarrier2KHR" not in dispatch
     assert "vkCmdClearColorImage" in dispatch
-    assert "vkCmdClearDepthStencilImage" not in dispatch
+    # E110 later promotes the adjacent depth/stencil clear family in the
+    # cumulative active dispatch configuration.
+    assert "vkCmdClearDepthStencilImage" in dispatch
     print("PASS: E069 DXVK init-image command architecture")
     return 0
 

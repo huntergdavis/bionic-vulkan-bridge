@@ -399,6 +399,14 @@ invalid enums, invalid booleans, and noncanonical inactive slots fail closed.
 Shared recording appends locally with no socket exchange, while the strict
 path sends one immediate record and the Bionic service reconstructs each
 native command call after resolving the owning command buffer.
+
+E110 groups the adjacent clear family: `vkCmdClearDepthStencilImage` and
+`vkCmdClearAttachments`. Fixed records 34 and 35 bound image subresource
+ranges, clear attachments, and clear rectangles; no glibc pointer crosses the
+wire. Shared clients append locally with zero recording RPC, while strict
+clients send one immediate record. The Bionic service rechecks typed image
+ancestry and reconstructs every native range, attachment, rectangle, and
+clear value before calling Turnip.
 One fixed 600-byte, pointer-free record carries up to eight color attachments,
 optional depth and stencil attachments, resolve image views, clear-value bits,
 render flags/area/multiview, and terminal attachment-feedback-loop metadata.

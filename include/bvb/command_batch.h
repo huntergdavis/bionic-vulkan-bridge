@@ -47,6 +47,8 @@ enum {
     BVB_COMMAND_VULKAN_DRAW_INDIRECT_COUNT = 31,
     BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT_COUNT = 32,
     BVB_COMMAND_VULKAN_DYNAMIC_STATE = 33,
+    BVB_COMMAND_VULKAN_CLEAR_DEPTH_STENCIL_IMAGE = 34,
+    BVB_COMMAND_VULKAN_CLEAR_ATTACHMENTS = 35,
     BVB_COMMAND_VULKAN_MAX_INIT_IMAGE_BARRIERS = 4,
     BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS = 16,
     BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS = 16,
@@ -59,6 +61,8 @@ enum {
     BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS = 8,
     BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS = 16,
     BVB_COMMAND_VULKAN_MAX_DYNAMIC_STATE_VALUES = 8,
+    BVB_COMMAND_VULKAN_MAX_CLEAR_ATTACHMENTS = 8,
+    BVB_COMMAND_VULKAN_MAX_CLEAR_RECTS = 8,
 };
 
 enum bvb_vulkan_dynamic_state_kind {
@@ -343,6 +347,39 @@ struct bvb_vulkan_dynamic_state_command {
     uint32_t values[BVB_COMMAND_VULKAN_MAX_DYNAMIC_STATE_VALUES];
 };
 
+struct bvb_vulkan_clear_depth_stencil_image_command {
+    uint64_t image_id;
+    uint32_t image_layout;
+    uint32_t range_count;
+    uint32_t depth_word;
+    uint32_t stencil;
+    struct bvb_vulkan_image_subresource_range
+        ranges[BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES];
+};
+
+struct bvb_vulkan_clear_attachment {
+    uint32_t aspect_mask;
+    uint32_t color_attachment;
+    uint32_t clear_words[4];
+};
+
+struct bvb_vulkan_clear_rect {
+    int32_t offset_x;
+    int32_t offset_y;
+    uint32_t width;
+    uint32_t height;
+    uint32_t base_array_layer;
+    uint32_t layer_count;
+};
+
+struct bvb_vulkan_clear_attachments_command {
+    uint32_t attachment_count;
+    uint32_t rect_count;
+    struct bvb_vulkan_clear_attachment
+        attachments[BVB_COMMAND_VULKAN_MAX_CLEAR_ATTACHMENTS];
+    struct bvb_vulkan_clear_rect rects[BVB_COMMAND_VULKAN_MAX_CLEAR_RECTS];
+};
+
 struct bvb_command_batch_builder {
     uint8_t *bytes;
     size_t capacity;
@@ -458,6 +495,12 @@ int bvb_command_batch_append_vulkan_draw_indirect_count(
 int bvb_command_batch_append_vulkan_dynamic_state(
     struct bvb_command_batch_builder *builder,
     const struct bvb_vulkan_dynamic_state_command *command);
+int bvb_command_batch_append_vulkan_clear_depth_stencil_image(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_clear_depth_stencil_image_command *command);
+int bvb_command_batch_append_vulkan_clear_attachments(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_clear_attachments_command *command);
 int bvb_command_batch_append_record(
     struct bvb_command_batch_builder *builder,
     const struct bvb_command_record *record);
@@ -548,5 +591,11 @@ int bvb_command_decode_vulkan_draw_indirect_count(
 int bvb_command_decode_vulkan_dynamic_state(
     const struct bvb_command_record *record,
     struct bvb_vulkan_dynamic_state_command *command);
+int bvb_command_decode_vulkan_clear_depth_stencil_image(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_clear_depth_stencil_image_command *command);
+int bvb_command_decode_vulkan_clear_attachments(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_clear_attachments_command *command);
 
 #endif

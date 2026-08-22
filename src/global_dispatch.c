@@ -8836,6 +8836,134 @@ static void VKAPI_CALL bvb_bridge_vkCmdSetBlendConstants(
         values, "vkCmdSetBlendConstants", "float_ptr");
 }
 
+static void VKAPI_CALL bvb_bridge_vkCmdClearDepthStencilImage(
+    VkCommandBuffer command_buffer, VkImage image,
+    VkImageLayout image_layout, const VkClearDepthStencilValue *value,
+    uint32_t range_count, const VkImageSubresourceRange *ranges) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    const char *shape =
+        "VkImage_value,VkImageLayout_value,VkClearDepthStencilValue_ptr,uint32_t_value,VkImageSubresourceRange_ptr";
+    if (state == NULL || value == NULL || ranges == NULL ||
+        (image_layout != VK_IMAGE_LAYOUT_GENERAL &&
+         image_layout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) ||
+        range_count == 0U ||
+        range_count > BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES) {
+        poison_shared_command_stream(
+            state, "vkCmdClearDepthStencilImage",
+            "unsupported_clear_shape", shape, -ENOTSUP);
+        return;
+    }
+    struct bvb_vulkan_clear_depth_stencil_image_command command = {
+        .image_id = non_dispatchable_wire_id(&image, sizeof(image)),
+        .image_layout = (uint32_t)image_layout,
+        .range_count = range_count,
+        .stencil = value->stencil,
+    };
+    command.depth_word = dynamic_float_word(value->depth);
+    for (uint32_t index = 0U; index < range_count; ++index) {
+        if ((ranges[index].aspectMask &
+             ~(VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) !=
+                0U ||
+            (ranges[index].aspectMask &
+             (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)) ==
+                0U ||
+            ranges[index].levelCount == 0U ||
+            ranges[index].layerCount == 0U) {
+            poison_shared_command_stream(
+                state, "vkCmdClearDepthStencilImage",
+                "unsupported_clear_range", shape, -ENOTSUP);
+            return;
+        }
+        command.ranges[index] = command_image_range(&ranges[index]);
+    }
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    int result = begin_single_render_record(state, bytes, &builder);
+    if (result == 0)
+        result = bvb_command_batch_append_vulkan_clear_depth_stencil_image(
+            &builder, &command);
+    if (result == 0)
+        result = finish_single_render_record(
+            state, bytes, &builder, "vkCmdClearDepthStencilImage", shape);
+    if (result != 0)
+        poison_shared_command_stream(
+            state, "vkCmdClearDepthStencilImage",
+            "clear_record_rejected", shape, result);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdClearAttachments(
+    VkCommandBuffer command_buffer, uint32_t attachment_count,
+    const VkClearAttachment *attachments, uint32_t rect_count,
+    const VkClearRect *rects) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    const char *shape =
+        "uint32_t_value,VkClearAttachment_ptr,uint32_t_value,VkClearRect_ptr";
+    if (state == NULL || attachments == NULL || rects == NULL ||
+        attachment_count == 0U ||
+        attachment_count > BVB_COMMAND_VULKAN_MAX_CLEAR_ATTACHMENTS ||
+        rect_count == 0U || rect_count > BVB_COMMAND_VULKAN_MAX_CLEAR_RECTS) {
+        poison_shared_command_stream(
+            state, "vkCmdClearAttachments",
+            "unsupported_clear_shape", shape, -ENOTSUP);
+        return;
+    }
+    struct bvb_vulkan_clear_attachments_command command = {
+        .attachment_count = attachment_count,
+        .rect_count = rect_count,
+    };
+    for (uint32_t index = 0U; index < attachment_count; ++index) {
+        if (attachments[index].aspectMask == 0U ||
+            (attachments[index].aspectMask &
+             ~(VK_IMAGE_ASPECT_COLOR_BIT | VK_IMAGE_ASPECT_DEPTH_BIT |
+               VK_IMAGE_ASPECT_STENCIL_BIT)) != 0U) {
+            poison_shared_command_stream(
+                state, "vkCmdClearAttachments",
+                "unsupported_clear_attachment", shape, -ENOTSUP);
+            return;
+        }
+        command.attachments[index].aspect_mask =
+            attachments[index].aspectMask;
+        command.attachments[index].color_attachment =
+            attachments[index].colorAttachment;
+        memcpy(command.attachments[index].clear_words,
+               &attachments[index].clearValue,
+               sizeof(command.attachments[index].clear_words));
+    }
+    for (uint32_t index = 0U; index < rect_count; ++index) {
+        if (rects[index].rect.extent.width == 0U ||
+            rects[index].rect.extent.height == 0U ||
+            rects[index].layerCount == 0U) {
+            poison_shared_command_stream(
+                state, "vkCmdClearAttachments",
+                "unsupported_clear_rect", shape, -ENOTSUP);
+            return;
+        }
+        command.rects[index] = (struct bvb_vulkan_clear_rect){
+            .offset_x = rects[index].rect.offset.x,
+            .offset_y = rects[index].rect.offset.y,
+            .width = rects[index].rect.extent.width,
+            .height = rects[index].rect.extent.height,
+            .base_array_layer = rects[index].baseArrayLayer,
+            .layer_count = rects[index].layerCount,
+        };
+    }
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    int result = begin_single_render_record(state, bytes, &builder);
+    if (result == 0)
+        result = bvb_command_batch_append_vulkan_clear_attachments(
+            &builder, &command);
+    if (result == 0)
+        result = finish_single_render_record(
+            state, bytes, &builder, "vkCmdClearAttachments", shape);
+    if (result != 0)
+        poison_shared_command_stream(
+            state, "vkCmdClearAttachments",
+            "clear_record_rejected", shape, result);
+}
+
 static struct bvb_vulkan_image_subresource_layers
 transfer_image_layers(const VkImageSubresourceLayers *layers) {
     return (struct bvb_vulkan_image_subresource_layers){
@@ -11136,6 +11264,10 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     BVB_DEVICE_MATCH("vkCmdSetLineWidth", bvb_bridge_vkCmdSetLineWidth)
     BVB_DEVICE_MATCH("vkCmdSetBlendConstants",
                      bvb_bridge_vkCmdSetBlendConstants)
+    BVB_DEVICE_MATCH("vkCmdClearDepthStencilImage",
+                     bvb_bridge_vkCmdClearDepthStencilImage)
+    BVB_DEVICE_MATCH("vkCmdClearAttachments",
+                     bvb_bridge_vkCmdClearAttachments)
     BVB_DEVICE_MATCH("vkCmdCopyBuffer2", bvb_bridge_vkCmdCopyBuffer2)
     BVB_DEVICE_MATCH("vkCmdCopyBufferToImage2",
                      bvb_bridge_vkCmdCopyBufferToImage2)

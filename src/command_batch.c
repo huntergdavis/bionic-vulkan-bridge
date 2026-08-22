@@ -53,6 +53,14 @@ enum {
     BVB_VULKAN_DRAW_INDIRECT_COUNT_SIZE = 48,
     BVB_VULKAN_DYNAMIC_STATE_SIZE = 8 +
         BVB_COMMAND_VULKAN_MAX_DYNAMIC_STATE_VALUES * sizeof(uint32_t),
+    BVB_VULKAN_CLEAR_DEPTH_STENCIL_IMAGE_SIZE = 24 +
+        BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES * BVB_VULKAN_IMAGE_RANGE_SIZE,
+    BVB_VULKAN_CLEAR_ATTACHMENT_SIZE = 24,
+    BVB_VULKAN_CLEAR_RECT_SIZE = 24,
+    BVB_VULKAN_CLEAR_ATTACHMENTS_SIZE = 8 +
+        BVB_COMMAND_VULKAN_MAX_CLEAR_ATTACHMENTS *
+            BVB_VULKAN_CLEAR_ATTACHMENT_SIZE +
+        BVB_COMMAND_VULKAN_MAX_CLEAR_RECTS * BVB_VULKAN_CLEAR_RECT_SIZE,
 };
 
 _Static_assert(sizeof(float) == sizeof(uint32_t),
@@ -886,6 +894,82 @@ int bvb_command_batch_append_vulkan_dynamic_state(
                          payload, sizeof(payload));
 }
 
+int bvb_command_batch_append_vulkan_clear_depth_stencil_image(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_clear_depth_stencil_image_command *command) {
+    if (command == NULL ||
+        bvb_handle_expect(command->image_id, BVB_OBJECT_IMAGE) != 0 ||
+        (command->image_layout != 1U && command->image_layout != 7U) ||
+        command->range_count == 0U ||
+        command->range_count > BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES ||
+        !float_word_is_finite(command->depth_word))
+        return -EINVAL;
+    uint8_t payload[BVB_VULKAN_CLEAR_DEPTH_STENCIL_IMAGE_SIZE] = {0};
+    bvb_wire_put_u64(payload, command->image_id);
+    bvb_wire_put_u32(payload + 8, command->image_layout);
+    bvb_wire_put_u32(payload + 12, command->range_count);
+    bvb_wire_put_u32(payload + 16, command->depth_word);
+    bvb_wire_put_u32(payload + 20, command->stencil);
+    for (uint32_t index = 0U; index < command->range_count; ++index) {
+        const struct bvb_vulkan_image_subresource_range *range =
+            &command->ranges[index];
+        if (!image_range_is_valid(range) ||
+            (range->aspect_mask & ~UINT32_C(6)) != 0U)
+            return -EINVAL;
+        encode_image_range(
+            payload + 24U + index * BVB_VULKAN_IMAGE_RANGE_SIZE, range);
+    }
+    return append_record(
+        builder, BVB_COMMAND_VULKAN_CLEAR_DEPTH_STENCIL_IMAGE,
+        payload, sizeof(payload));
+}
+
+int bvb_command_batch_append_vulkan_clear_attachments(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_clear_attachments_command *command) {
+    if (command == NULL || command->attachment_count == 0U ||
+        command->attachment_count > BVB_COMMAND_VULKAN_MAX_CLEAR_ATTACHMENTS ||
+        command->rect_count == 0U ||
+        command->rect_count > BVB_COMMAND_VULKAN_MAX_CLEAR_RECTS)
+        return -EINVAL;
+    uint8_t payload[BVB_VULKAN_CLEAR_ATTACHMENTS_SIZE] = {0};
+    bvb_wire_put_u32(payload, command->attachment_count);
+    bvb_wire_put_u32(payload + 4, command->rect_count);
+    for (uint32_t index = 0U; index < command->attachment_count; ++index) {
+        const struct bvb_vulkan_clear_attachment *attachment =
+            &command->attachments[index];
+        if (attachment->aspect_mask == 0U ||
+            (attachment->aspect_mask & ~UINT32_C(7)) != 0U)
+            return -EINVAL;
+        uint8_t *output = payload + 8U +
+            index * BVB_VULKAN_CLEAR_ATTACHMENT_SIZE;
+        bvb_wire_put_u32(output, attachment->aspect_mask);
+        bvb_wire_put_u32(output + 4, attachment->color_attachment);
+        for (uint32_t word = 0U; word < 4U; ++word)
+            bvb_wire_put_u32(output + 8U + word * sizeof(uint32_t),
+                             attachment->clear_words[word]);
+    }
+    const size_t rect_base = 8U + BVB_COMMAND_VULKAN_MAX_CLEAR_ATTACHMENTS *
+        BVB_VULKAN_CLEAR_ATTACHMENT_SIZE;
+    for (uint32_t index = 0U; index < command->rect_count; ++index) {
+        const struct bvb_vulkan_clear_rect *rect = &command->rects[index];
+        if (rect->width == 0U || rect->height == 0U ||
+            rect->layer_count == 0U)
+            return -EINVAL;
+        uint8_t *output = payload + rect_base +
+            index * BVB_VULKAN_CLEAR_RECT_SIZE;
+        bvb_wire_put_u32(output, (uint32_t)rect->offset_x);
+        bvb_wire_put_u32(output + 4, (uint32_t)rect->offset_y);
+        bvb_wire_put_u32(output + 8, rect->width);
+        bvb_wire_put_u32(output + 12, rect->height);
+        bvb_wire_put_u32(output + 16, rect->base_array_layer);
+        bvb_wire_put_u32(output + 20, rect->layer_count);
+    }
+    return append_record(
+        builder, BVB_COMMAND_VULKAN_CLEAR_ATTACHMENTS,
+        payload, sizeof(payload));
+}
+
 int bvb_command_batch_append_record(
     struct bvb_command_batch_builder *builder,
     const struct bvb_command_record *record) {
@@ -998,6 +1082,12 @@ static int expected_payload_size(uint16_t opcode, uint32_t *payload_size) {
             return 0;
         case BVB_COMMAND_VULKAN_DYNAMIC_STATE:
             *payload_size = BVB_VULKAN_DYNAMIC_STATE_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_CLEAR_DEPTH_STENCIL_IMAGE:
+            *payload_size = BVB_VULKAN_CLEAR_DEPTH_STENCIL_IMAGE_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_CLEAR_ATTACHMENTS:
+            *payload_size = BVB_VULKAN_CLEAR_ATTACHMENTS_SIZE;
             return 0;
         case BVB_COMMAND_VULKAN_BEGIN:
             *payload_size = BVB_VULKAN_BEGIN_SIZE;
@@ -1492,6 +1582,71 @@ static int validate_payload(uint16_t opcode, const uint8_t *payload) {
             if (kind == BVB_VULKAN_DYNAMIC_STATE_LINE_WIDTH &&
                 get_float(payload + 8) <= 0.0F)
                 return -EPROTO;
+            return 0;
+        }
+        case BVB_COMMAND_VULKAN_CLEAR_DEPTH_STENCIL_IMAGE: {
+            const uint32_t layout = bvb_wire_get_u32(payload + 8);
+            const uint32_t count = bvb_wire_get_u32(payload + 12);
+            if (bvb_handle_expect(bvb_wire_get_u64(payload),
+                                  BVB_OBJECT_IMAGE) != 0 ||
+                (layout != 1U && layout != 7U) || count == 0U ||
+                count > BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES ||
+                !float_word_is_finite(bvb_wire_get_u32(payload + 16)))
+                return -EPROTO;
+            for (uint32_t index = 0U;
+                 index < BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES; ++index) {
+                const uint8_t *range = payload + 24U +
+                    index * BVB_VULKAN_IMAGE_RANGE_SIZE;
+                if (index < count) {
+                    const uint32_t aspect = bvb_wire_get_u32(range);
+                    if (validate_image_range_wire(range) != 0 ||
+                        (aspect & ~UINT32_C(6)) != 0U)
+                        return -EPROTO;
+                } else if (!image_range_wire_is_zero(range)) {
+                    return -EPROTO;
+                }
+            }
+            return 0;
+        }
+        case BVB_COMMAND_VULKAN_CLEAR_ATTACHMENTS: {
+            const uint32_t attachment_count = bvb_wire_get_u32(payload);
+            const uint32_t rect_count = bvb_wire_get_u32(payload + 4);
+            if (attachment_count == 0U ||
+                attachment_count > BVB_COMMAND_VULKAN_MAX_CLEAR_ATTACHMENTS ||
+                rect_count == 0U ||
+                rect_count > BVB_COMMAND_VULKAN_MAX_CLEAR_RECTS)
+                return -EPROTO;
+            for (uint32_t index = 0U;
+                 index < BVB_COMMAND_VULKAN_MAX_CLEAR_ATTACHMENTS; ++index) {
+                const uint8_t *attachment = payload + 8U +
+                    index * BVB_VULKAN_CLEAR_ATTACHMENT_SIZE;
+                if (index < attachment_count) {
+                    const uint32_t aspect = bvb_wire_get_u32(attachment);
+                    if (aspect == 0U || (aspect & ~UINT32_C(7)) != 0U)
+                        return -EPROTO;
+                } else if (!bytes_are_zero(
+                               attachment,
+                               BVB_VULKAN_CLEAR_ATTACHMENT_SIZE)) {
+                    return -EPROTO;
+                }
+            }
+            const size_t rect_base = 8U +
+                BVB_COMMAND_VULKAN_MAX_CLEAR_ATTACHMENTS *
+                    BVB_VULKAN_CLEAR_ATTACHMENT_SIZE;
+            for (uint32_t index = 0U;
+                 index < BVB_COMMAND_VULKAN_MAX_CLEAR_RECTS; ++index) {
+                const uint8_t *rect = payload + rect_base +
+                    index * BVB_VULKAN_CLEAR_RECT_SIZE;
+                if (index < rect_count) {
+                    if (bvb_wire_get_u32(rect + 8) == 0U ||
+                        bvb_wire_get_u32(rect + 12) == 0U ||
+                        bvb_wire_get_u32(rect + 20) == 0U)
+                        return -EPROTO;
+                } else if (!bytes_are_zero(rect,
+                                           BVB_VULKAN_CLEAR_RECT_SIZE)) {
+                    return -EPROTO;
+                }
+            }
             return 0;
         }
         case BVB_COMMAND_VULKAN_BEGIN:
@@ -2237,5 +2392,67 @@ int bvb_command_decode_vulkan_dynamic_state(
     for (uint32_t index = 0U; index < command->value_count; ++index)
         command->values[index] = bvb_wire_get_u32(
             record->payload + 8U + index * sizeof(uint32_t));
+    return 0;
+}
+
+int bvb_command_decode_vulkan_clear_depth_stencil_image(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_clear_depth_stencil_image_command *command) {
+    if (record == NULL || command == NULL ||
+        record->opcode != BVB_COMMAND_VULKAN_CLEAR_DEPTH_STENCIL_IMAGE ||
+        record->payload_length != BVB_VULKAN_CLEAR_DEPTH_STENCIL_IMAGE_SIZE)
+        return -EINVAL;
+    memset(command, 0, sizeof(*command));
+    command->image_id = bvb_wire_get_u64(record->payload);
+    command->image_layout = bvb_wire_get_u32(record->payload + 8);
+    command->range_count = bvb_wire_get_u32(record->payload + 12);
+    command->depth_word = bvb_wire_get_u32(record->payload + 16);
+    command->stencil = bvb_wire_get_u32(record->payload + 20);
+    if (command->range_count > BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES)
+        return -EPROTO;
+    for (uint32_t index = 0U; index < command->range_count; ++index)
+        command->ranges[index] = decode_image_range(
+            record->payload + 24U +
+            index * BVB_VULKAN_IMAGE_RANGE_SIZE);
+    return 0;
+}
+
+int bvb_command_decode_vulkan_clear_attachments(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_clear_attachments_command *command) {
+    if (record == NULL || command == NULL ||
+        record->opcode != BVB_COMMAND_VULKAN_CLEAR_ATTACHMENTS ||
+        record->payload_length != BVB_VULKAN_CLEAR_ATTACHMENTS_SIZE)
+        return -EINVAL;
+    memset(command, 0, sizeof(*command));
+    command->attachment_count = bvb_wire_get_u32(record->payload);
+    command->rect_count = bvb_wire_get_u32(record->payload + 4);
+    if (command->attachment_count > BVB_COMMAND_VULKAN_MAX_CLEAR_ATTACHMENTS ||
+        command->rect_count > BVB_COMMAND_VULKAN_MAX_CLEAR_RECTS)
+        return -EPROTO;
+    for (uint32_t index = 0U; index < command->attachment_count; ++index) {
+        const uint8_t *input = record->payload + 8U +
+            index * BVB_VULKAN_CLEAR_ATTACHMENT_SIZE;
+        command->attachments[index].aspect_mask = bvb_wire_get_u32(input);
+        command->attachments[index].color_attachment =
+            bvb_wire_get_u32(input + 4);
+        for (uint32_t word = 0U; word < 4U; ++word)
+            command->attachments[index].clear_words[word] =
+                bvb_wire_get_u32(input + 8U + word * sizeof(uint32_t));
+    }
+    const size_t rect_base = 8U + BVB_COMMAND_VULKAN_MAX_CLEAR_ATTACHMENTS *
+        BVB_VULKAN_CLEAR_ATTACHMENT_SIZE;
+    for (uint32_t index = 0U; index < command->rect_count; ++index) {
+        const uint8_t *input = record->payload + rect_base +
+            index * BVB_VULKAN_CLEAR_RECT_SIZE;
+        command->rects[index] = (struct bvb_vulkan_clear_rect){
+            .offset_x = (int32_t)bvb_wire_get_u32(input),
+            .offset_y = (int32_t)bvb_wire_get_u32(input + 4),
+            .width = bvb_wire_get_u32(input + 8),
+            .height = bvb_wire_get_u32(input + 12),
+            .base_array_layer = bvb_wire_get_u32(input + 16),
+            .layer_count = bvb_wire_get_u32(input + 20),
+        };
+    }
     return 0;
 }

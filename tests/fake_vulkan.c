@@ -1825,10 +1825,50 @@ static void VKAPI_CALL fake_cmd_set_blend_constants(
                  blend_constants[3] == 1.0F);
 }
 
+static void VKAPI_CALL fake_cmd_clear_attachments(
+    VkCommandBuffer command_buffer, uint32_t attachment_count,
+    const VkClearAttachment *attachments, uint32_t rect_count,
+    const VkClearRect *rects) {
+    const bool valid = command_buffer != VK_NULL_HANDLE &&
+        attachment_count == 2U && attachments != NULL &&
+        attachments[0].aspectMask == VK_IMAGE_ASPECT_COLOR_BIT &&
+        attachments[0].colorAttachment == 0U &&
+        attachments[0].clearValue.color.float32[0] == 0.25F &&
+        attachments[0].clearValue.color.float32[3] == 1.0F &&
+        attachments[1].aspectMask ==
+            (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT) &&
+        attachments[1].clearValue.depthStencil.depth == 0.5F &&
+        attachments[1].clearValue.depthStencil.stencil == 3U &&
+        rect_count == 1U && rects != NULL &&
+        rects[0].rect.offset.x == -1 && rects[0].rect.offset.y == 2 &&
+        rects[0].rect.extent.width == 64U &&
+        rects[0].rect.extent.height == 32U &&
+        rects[0].baseArrayLayer == 0U && rects[0].layerCount == 1U;
+    fake_dynamic_state_step(35U, valid);
+}
+
 static void VKAPI_CALL fake_cmd_end_rendering(VkCommandBuffer command_buffer) {
-    if (fake_render_bundle_step == 35U && command_buffer != VK_NULL_HANDLE)
-        fake_render_bundle_step = 36U;
+    if (fake_render_bundle_step == 36U && command_buffer != VK_NULL_HANDLE)
+        fake_render_bundle_step = 37U;
     else fake_render_bundle_violation = 1;
+}
+
+static void VKAPI_CALL fake_cmd_clear_depth_stencil_image(
+    VkCommandBuffer command_buffer, VkImage image,
+    VkImageLayout image_layout, const VkClearDepthStencilValue *value,
+    uint32_t range_count, const VkImageSubresourceRange *ranges) {
+    const bool valid = command_buffer != VK_NULL_HANDLE &&
+        image == (VkImage)(uintptr_t)UINT64_C(0xa000) &&
+        image_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+        value != NULL && value->depth == 0.625F && value->stencil == 9U &&
+        range_count == 2U && ranges != NULL &&
+        ranges[0].aspectMask == VK_IMAGE_ASPECT_DEPTH_BIT &&
+        ranges[0].baseMipLevel == 0U && ranges[0].levelCount == 1U &&
+        ranges[0].baseArrayLayer == 0U && ranges[0].layerCount == 1U &&
+        ranges[1].aspectMask == VK_IMAGE_ASPECT_STENCIL_BIT &&
+        ranges[1].baseMipLevel == 1U && ranges[1].levelCount == 2U &&
+        ranges[1].baseArrayLayer == 3U && ranges[1].layerCount == 4U;
+    fake_dynamic_state_step(37U, valid);
 }
 
 static VkResult VKAPI_CALL fake_create_pipeline_layout(
@@ -3063,7 +3103,7 @@ static VkResult VKAPI_CALL fake_begin_command_buffer(
 static VkResult VKAPI_CALL fake_end_command_buffer(
     VkCommandBuffer command_buffer) {
     if (fake_render_bundle_step != 0U) {
-        if (fake_render_bundle_step != 36U || fake_render_bundle_violation != 0)
+        if (fake_render_bundle_step != 38U || fake_render_bundle_violation != 0)
             return VK_ERROR_INITIALIZATION_FAILED;
         fake_render_bundle_step = 0U;
     }
@@ -3876,6 +3916,9 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkCmdSetLineWidth", fake_cmd_set_line_width)
     BVB_DEVICE_MATCH("vkCmdSetBlendConstants",
                      fake_cmd_set_blend_constants)
+    BVB_DEVICE_MATCH("vkCmdClearAttachments", fake_cmd_clear_attachments)
+    BVB_DEVICE_MATCH("vkCmdClearDepthStencilImage",
+                     fake_cmd_clear_depth_stencil_image)
     BVB_DEVICE_MATCH("vkCreatePipelineLayout", fake_create_pipeline_layout)
     BVB_DEVICE_MATCH("vkDestroyPipelineLayout", fake_destroy_pipeline_layout)
     BVB_DEVICE_MATCH("vkCreateGraphicsPipelines", fake_create_graphics_pipelines)

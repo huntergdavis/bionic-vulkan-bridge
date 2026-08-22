@@ -253,6 +253,83 @@ static int test_dynamic_state_family(void) {
     return 0;
 }
 
+static int test_clear_family(void) {
+    uint8_t bytes[1024];
+    const uint64_t command_buffer =
+        bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 44U);
+    const uint64_t image = bvb_handle_id(BVB_OBJECT_IMAGE, 45U);
+    const struct bvb_vulkan_clear_depth_stencil_image_command depth = {
+        .image_id = image,
+        .image_layout = 7U,
+        .range_count = 2U,
+        .depth_word = UINT32_C(0x3f200000),
+        .stencil = 9U,
+        .ranges = {{.aspect_mask = 2U, .level_count = 1U,
+                    .layer_count = 1U},
+                   {.aspect_mask = 4U, .base_mip_level = 1U,
+                    .level_count = 2U, .base_array_layer = 3U,
+                    .layer_count = 4U}},
+    };
+    const struct bvb_vulkan_clear_attachments_command attachments = {
+        .attachment_count = 2U,
+        .rect_count = 1U,
+        .attachments = {{
+            .aspect_mask = 1U,
+            .color_attachment = 0U,
+            .clear_words = {UINT32_C(0x3e800000), 0U, 0U,
+                            UINT32_C(0x3f800000)},
+        }, {
+            .aspect_mask = 6U,
+            .clear_words = {UINT32_C(0x3f000000), 3U, 0U, 0U},
+        }},
+        .rects = {{.offset_x = -1, .offset_y = 2,
+                   .width = 64U, .height = 32U,
+                   .layer_count = 1U}},
+    };
+    struct bvb_command_batch_builder builder;
+    CHECK(bvb_command_batch_begin(
+              &builder, bytes, sizeof(bytes), command_buffer, 24U) == 0);
+    CHECK(bvb_command_batch_append_vulkan_clear_depth_stencil_image(
+              &builder, &depth) == 0);
+    CHECK(bvb_command_batch_append_vulkan_clear_attachments(
+              &builder, &attachments) == 0);
+    size_t length = 0U;
+    CHECK(bvb_command_batch_finish(&builder, &length) == 0);
+    struct bvb_command_batch_info info;
+    CHECK(bvb_command_batch_validate(bytes, length, &info) == 0);
+    CHECK(info.command_count == 2U && info.sequence == 24U);
+    struct bvb_command_batch_iterator iterator;
+    struct bvb_command_record record;
+    CHECK(bvb_command_batch_iterator_init(&iterator, bytes, length) == 0);
+    struct bvb_vulkan_clear_depth_stencil_image_command decoded_depth;
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    CHECK(bvb_command_decode_vulkan_clear_depth_stencil_image(
+              &record, &decoded_depth) == 0);
+    CHECK(decoded_depth.image_id == image &&
+          decoded_depth.range_count == 2U &&
+          decoded_depth.ranges[1].base_array_layer == 3U);
+    struct bvb_vulkan_clear_attachments_command decoded_attachments;
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    CHECK(bvb_command_decode_vulkan_clear_attachments(
+              &record, &decoded_attachments) == 0);
+    CHECK(decoded_attachments.attachment_count == 2U &&
+          decoded_attachments.rect_count == 1U &&
+          decoded_attachments.rects[0].offset_x == -1);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 1);
+
+    uint8_t corrupted[sizeof(bytes)];
+    memcpy(corrupted, bytes, length);
+    const size_t first_payload = BVB_COMMAND_BATCH_HEADER_SIZE +
+        BVB_COMMAND_RECORD_HEADER_SIZE;
+    bvb_wire_put_u32(corrupted + first_payload + 24U + 2U * 24U, 2U);
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+    memcpy(corrupted, bytes, length);
+    bvb_wire_put_u32(corrupted + first_payload + 16U,
+                     UINT32_C(0x7f800000));
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+    return 0;
+}
+
 static int test_handles(void) {
     const uint64_t device = bvb_handle_id(BVB_OBJECT_DEVICE, 1U);
     const uint64_t pipeline = bvb_handle_id(BVB_OBJECT_PIPELINE, 9U);
@@ -938,6 +1015,7 @@ int main(void) {
     CHECK(test_handles() == 0);
     CHECK(test_vertex_index_draw_family() == 0);
     CHECK(test_dynamic_state_family() == 0);
+    CHECK(test_clear_family() == 0);
     CHECK(test_batch() == 0);
     CHECK(test_transfer_batch() == 0);
     CHECK(test_vulkan_transfer_family() == 0);

@@ -4320,3 +4320,27 @@ inspection shows the bridge output still embedded in Samsung freeform mode,
 not a full-screen game frame. Activity focus alone was therefore not treated
 as a full-screen proof. Exact-run cleanup preserved Steam PID 14565/start
 121864440 and X11 PID 13643/start 121863492.
+
+## E110 — depth/stencil and attachment clear family (2026-08-21)
+
+The screenshot-checked E109 tablet run passed the complete scalar dynamic-
+state family and then rejected the actually invoked
+`vkCmdClearDepthStencilImage` at command sequence 10. E110 takes a broader
+adjacent-family gate: both depth/stencil image clears and rendering attachment
+clears are executable through fixed record IDs 34 and 35.
+
+The depth record supports up to four bounded subresource ranges. The
+attachment record supports up to eight clear attachments and eight clear
+rectangles. Both codecs reject noncanonical inactive slots, invalid aspects,
+invalid layouts/counts, and non-finite depth values. Strict mode adds two
+immediate-record calls to the expanded fake-native path (43 total); shared
+mode remains zero recording RPC. The Bionic service remains authoritative for
+typed image ancestry and reconstructs every Vulkan array locally. Policy is
+151 executable / 289 required-unimplemented / 302 probed-null. Compact host
+evidence is `docs/evidence/e110-clear-family-host.json`.
+
+The required `deja "BVB Tomb Raider vkCmdClearDepthStencilImage
+vkCmdClearAttachments image clear family E110 DXVK"` query returned no
+indexed implementation. Reuse comes from E075/E075a, E076, E080, E101, E105,
+and E109. Visibility and FPS remain unclaimed until exact-archive tablet
+deployment, bounded Tomb Raider execution, and automatic screenshot review.

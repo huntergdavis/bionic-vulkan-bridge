@@ -952,6 +952,8 @@ int main(void) {
     PFN_vkCmdSetStencilReference cmd_set_stencil_reference = NULL;
     PFN_vkCmdSetLineWidth cmd_set_line_width = NULL;
     PFN_vkCmdSetBlendConstants cmd_set_blend_constants = NULL;
+    PFN_vkCmdClearAttachments cmd_clear_attachments = NULL;
+    PFN_vkCmdClearDepthStencilImage cmd_clear_depth_stencil_image = NULL;
     PFN_vkCreatePipelineLayout create_pipeline_layout = NULL;
     PFN_vkDestroyPipelineLayout destroy_pipeline_layout = NULL;
     PFN_vkCreateGraphicsPipelines create_graphics_pipelines = NULL;
@@ -1222,6 +1224,9 @@ int main(void) {
     RESOLVE_DESCRIPTOR(vkCmdSetStencilReference, cmd_set_stencil_reference);
     RESOLVE_DESCRIPTOR(vkCmdSetLineWidth, cmd_set_line_width);
     RESOLVE_DESCRIPTOR(vkCmdSetBlendConstants, cmd_set_blend_constants);
+    RESOLVE_DESCRIPTOR(vkCmdClearAttachments, cmd_clear_attachments);
+    RESOLVE_DESCRIPTOR(vkCmdClearDepthStencilImage,
+                       cmd_clear_depth_stencil_image);
     RESOLVE_DESCRIPTOR(vkCreatePipelineLayout, create_pipeline_layout);
     RESOLVE_DESCRIPTOR(vkDestroyPipelineLayout, destroy_pipeline_layout);
     RESOLVE_DESCRIPTOR(vkCreateGraphicsPipelines, create_graphics_pipelines);
@@ -2979,7 +2984,42 @@ int main(void) {
     cmd_set_line_width(command_buffer, 1.5F);
     const float blend_constants[4] = {0.125F, 0.25F, 0.5F, 1.0F};
     cmd_set_blend_constants(command_buffer, blend_constants);
+    const VkClearAttachment clear_attachments[2] = {{
+        .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+        .colorAttachment = 0U,
+        .clearValue.color.float32 = {0.25F, 0.0F, 0.0F, 1.0F},
+    }, {
+        .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT |
+                      VK_IMAGE_ASPECT_STENCIL_BIT,
+        .clearValue.depthStencil = {.depth = 0.5F, .stencil = 3U},
+    }};
+    const VkClearRect clear_rect = {
+        .rect = {.offset = {-1, 2}, .extent = {64U, 32U}},
+        .baseArrayLayer = 0U,
+        .layerCount = 1U,
+    };
+    cmd_clear_attachments(
+        command_buffer, 2U, clear_attachments, 1U, &clear_rect);
     cmd_end_rendering(command_buffer);
+    const VkClearDepthStencilValue depth_stencil = {
+        .depth = 0.625F, .stencil = 9U,
+    };
+    const VkImageSubresourceRange depth_ranges[2] = {{
+        .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+        .baseMipLevel = 0U,
+        .levelCount = 1U,
+        .baseArrayLayer = 0U,
+        .layerCount = 1U,
+    }, {
+        .aspectMask = VK_IMAGE_ASPECT_STENCIL_BIT,
+        .baseMipLevel = 1U,
+        .levelCount = 2U,
+        .baseArrayLayer = 3U,
+        .layerCount = 4U,
+    }};
+    cmd_clear_depth_stencil_image(
+        command_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        &depth_stencil, 2U, depth_ranges);
     cmd_fill_buffer(command_buffer, buffer, 0U, 4096U, UINT32_C(0xa5c3f00d));
     const VkImageSubresourceRange init_image_range = {
         .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -3054,7 +3094,7 @@ int main(void) {
     CHECK(exchanges_after_recording >= exchanges_before_recording);
     const uint64_t recording_rtts =
         exchanges_after_recording - exchanges_before_recording;
-    CHECK(recording_rtts == (shared_command_stream ? 0U : 41U));
+    CHECK(recording_rtts == (shared_command_stream ? 0U : 43U));
     if (shared_mapped_memory) mapped[0] = UINT8_C(0x7b);
     const uint64_t exchanges_before_submit =
         bvb_global_dispatch_exchange_count();

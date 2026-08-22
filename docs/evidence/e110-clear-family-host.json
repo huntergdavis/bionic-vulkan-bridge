@@ -1,0 +1,46 @@
+{
+  "gate": "E110",
+  "date": "2026-08-21",
+  "source_base_commit": "8a4dfb38fd01bf8f418e34043695109d044da942",
+  "trigger": {
+    "run_id": "20260822T055502Z-22809",
+    "e109_dynamic_state_family": "passed through native replay",
+    "first_rejection_entry": "vkCmdClearDepthStencilImage",
+    "first_rejection_reason": "diagnostic_stub_invoked",
+    "command_sequence": 10,
+    "visible_game_frame": false,
+    "screenshot_sha256": "cd2f6c2411911811d72cc58ba5d177ea81d0fb3e8f879894c5f63dde467aec04"
+  },
+  "implementation": {
+    "command_record_ids": [34, 35],
+    "entry_points": ["vkCmdClearDepthStencilImage", "vkCmdClearAttachments"],
+    "maximum_image_ranges": 4,
+    "maximum_attachments": 8,
+    "maximum_rectangles": 8,
+    "pointer_free": true,
+    "strict_transport": "one immediate-record RPC per command",
+    "shared_transport": "local append with zero recording RPC",
+    "native_boundary": "Bionic resolves typed image ownership and reconstructs Vulkan arrays locally"
+  },
+  "validation": {
+    "codec_round_trips": "passed",
+    "inactive_slot_canonicalization": "passed",
+    "nonfinite_depth_rejection": "passed",
+    "strict_and_shared_native_reconstruction": "passed",
+    "fake_native_sequence": "clear attachments inside rendering, end rendering, then clear depth/stencil image",
+    "strict_recording_rpcs": 43,
+    "shared_recording_rpcs": 0,
+    "dispatch_policy": {
+      "executable": 151,
+      "required_unimplemented": 289,
+      "probed_null": 302
+    },
+    "host_suite": "70/70 passed",
+    "tablet_runtime": {
+      "status": "pending exact-archive deployment",
+      "visible_game_frame": false,
+      "benchmark_or_fps": false
+    }
+  },
+  "reuse": "The required deja query found no indexed E110 implementation. E110 reuses E075/E075a immutable shared streams, E076 fixed clear records, E080 typed ownership/cache validation, E101 strict immediate records, E105 family bundling, and E109's live vkCmdClearDepthStencilImage boundary."
+}
