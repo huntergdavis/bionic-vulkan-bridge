@@ -4456,3 +4456,16 @@ returned no indexed implementation. E113 reuses E075/E075a, E080, E107,
 E111, and E112. Compact evidence is
 `docs/evidence/e113-large-synchronization2-batches-host.json`; tablet pixels
 and FPS remain pending exact-archive deployment and screenshot review.
+
+The exact E113 archive passed 71/71 Termux contracts and the optimized glibc
+ICD self-test. Transactional install retained rollback
+`install-pre-upOS8kc2` and installed ICD/service SHA-256 identities
+`bedc18aa...0e78` and `38fbff4d...d593`. Bounded run
+`20260822T071507Z-29970` cleared E112's synchronization2 shape rejection and
+advanced from command sequence 18 to sequence 27. The next actual missing
+entry is `vkCmdUpdateBuffer`, caught by the required-unimplemented diagnostic
+stub before native replay.
+
+Automatic screenshot SHA-256 `28b73050...e9f8` still shows the bridge
+gradient triangle, not a Tomb Raider frame. Exact cleanup preserved Steam PID
+14565/start 121864440 and X11 PID 13643/start 121863492. No FPS is claimed.
