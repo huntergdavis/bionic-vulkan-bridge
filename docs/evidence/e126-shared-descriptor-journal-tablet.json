@@ -1,0 +1,73 @@
+{
+  "gate": "E126",
+  "date": "2026-08-22",
+  "source_commit": "5497d515de9516e265c0e2a5f0df2226ff496afc",
+  "target": {
+    "game": "Tomb Raider (2013)",
+    "resolution": "2800x1752",
+    "quality": "Low",
+    "refresh_hz": 60
+  },
+  "run": {
+    "id": "20260822T183003Z-8040",
+    "command_stream": "shared",
+    "mapped_memory": "shared",
+    "descriptor_journal": "shared",
+    "frame_profile": true,
+    "complete_windows": 52,
+    "profiled_presents": 1664,
+    "clean_exit": true
+  },
+  "game_authored_result": {
+    "minimum_fps": 0.6,
+    "maximum_fps": 3.7,
+    "average_fps": 2.0,
+    "source_sha256": "a45dca3b5424076f1e35b30822719c9d64eb0ae5a6f9ab526da42b3efb54d6b6",
+    "e125_average_fps": 2.0,
+    "fps_improvement_proven": false
+  },
+  "benchmark_scene_profile": {
+    "windows": 30,
+    "presents": 960,
+    "total_rpc_ms_per_present": 267.80239931770836,
+    "descriptor_allocate_opcode_68": {
+      "calls_per_present": 532.0447916666667,
+      "ms_per_present": 84.27027423854166
+    },
+    "descriptor_journal_flush_opcode_122": {
+      "calls_per_present": 350.64375,
+      "ms_per_present": 55.67489816041667
+    },
+    "strict_update_opcode_112": {
+      "calls_per_present": 0.0,
+      "ms_per_present": 0.0
+    },
+    "combined_descriptor_ms_per_present": 139.94517239895833,
+    "e125_combined_descriptor_ms_per_present": 162.4265546375,
+    "descriptor_blocking_reduction_percent": 13.841,
+    "approximate_updates_per_flush": 1.509
+  },
+  "installed_artifacts": {
+    "glibc_icd_sha256": "aa198300337fad28e8db36ed85d2b1d42076093630322133fa42d8d381f58c7d",
+    "bionic_service_sha256": "d7cd75c91babe5f44d3bbd6133b78fda5a27131ba913402e8a1470cb7d607420",
+    "normalized_manifest_sha256": "77f3395e3f657b6a7274c182afe994edacda2a4b38d49814ea84440520af33df"
+  },
+  "retained_hashes": {
+    "direct_profile_log_sha256": "1ef816b0dc790b95a4e9cf9e4d5bd9c267dd1b7eb5d809f69667057ed1fffb3c",
+    "service_profile_log_sha256": "41bf5e7968064735ca7ef4caf5708dd5222f32dd8ff7c01c2ddacbeeab0751f9",
+    "launcher_log_sha256": "bb2bc308d88647bb365368bc4dd9b405f684f5c9c0374f53ab2e6c5a45e4991a",
+    "lara_frame_1_sha256": "81bb3537a6803eb59a26a6405d75d8f090547ebd82c6a73acc98febe556da932",
+    "lara_frame_2_sha256": "82e49ee56def3257c8e3b44750860670c73c922098e4745a12e16b9b6aea0c91"
+  },
+  "protected_processes": {
+    "steam_pid": 15575,
+    "steam_start_ticks": 128118834,
+    "x11_pid": 13643,
+    "x11_start_ticks": 121863492,
+    "unchanged": true
+  },
+  "diagnosis": "The journal is correct and removes opcode 112, but synchronous opcode-68 allocation drains it after only about 1.5 updates. E127 must preserve ordered native allocation results while moving allocations and updates onto one bounded shared request/completion transport.",
+  "claim_boundary": "This complete tablet run proves a 13.8% reduction in profiled descriptor blocking, not an FPS increase. Average FPS remained 2.0.",
+  "canonical_full_evidence": "steamclienttermux/docs/evidence/tombraider-bvb-e126-descriptor-journal-profile-20260822.json",
+  "reuse": "Required deja queries returned no indexed descriptor-allocation transport. This analysis reuses E116 WSI windows, E117 RPC histograms, E125's matched complete profile, and E126's immutable typed journal."
+}

@@ -4923,3 +4923,23 @@ host architecture result only: no E126 tablet deployment, removed runtime
 opcode-112 count, benchmark, or FPS improvement is claimed yet. The next gate
 is a final-process-only launcher selector plus a complete profiled Tomb Raider
 run; opcode-68 allocation remains the next measured descriptor bottleneck.
+
+The exact source subsequently passed 85/85 Termux contracts and its glibc
+dispatch self-test, then completed the same native-resolution Low benchmark
+with the journal selector confined to Wine/DXVK. The game again reported 2.0
+FPS average (0.6 minimum, 3.7 maximum), so no FPS gain is claimed. The intended
+transport change is nevertheless measured: opcode 112 disappeared and
+benchmark-scene descriptor blocking fell from 162.4 to 139.9 ms/present, a
+13.8% reduction.
+
+Allocation is the reason the host journal's large-batch result did not carry
+through to the game. About 532 synchronous opcode-68 allocations per present
+force about 351 opcode-122 drains, only 1.5 updates per drain. Total measured
+RPC blocking fell only 6.4%, from 286.1 to 267.8 ms/present, and the roughly
+500-ms frame did not cross Tomb Raider's one-decimal FPS boundary. E127 must
+therefore preserve real native allocation results while replacing both
+allocation and update socket exchanges with one bounded shared
+request/completion transport. Compact runtime identities and measurements are
+in `docs/evidence/e126-shared-descriptor-journal-tablet.json`; canonical game
+evidence remains in the sibling `steamclienttermux` repository at commit
+`c5d4506`.
