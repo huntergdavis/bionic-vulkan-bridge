@@ -1627,9 +1627,17 @@ int main(void) {
         .pSetLayouts = &core_layout,
     };
     VkDescriptorSet core_set_before_reset = VK_NULL_HANDLE;
+    const uint64_t exchanges_before_descriptor_ring_setup =
+        bvb_global_dispatch_exchange_count();
     CHECK(allocate_descriptor_sets(
               device, &core_allocate_info,
               &core_set_before_reset) == VK_SUCCESS);
+    if (shared_descriptor_journal) {
+        CHECK(bvb_global_dispatch_exchange_count() -
+                  exchanges_before_descriptor_ring_setup == 1U);
+        CHECK(bvb_global_dispatch_last_opcode() ==
+              BVB_OPCODE_VULKAN_DESCRIPTOR_TRANSACTION_RING_SETUP);
+    }
     const uint64_t core_set_before_id =
         bvb_descriptor_set_proxy_id(core_set_before_reset);
     CHECK(bvb_handle_type(core_set_before_id) == BVB_OBJECT_DESCRIPTOR_SET);
@@ -1792,9 +1800,7 @@ int main(void) {
                   &transaction_set) == VK_SUCCESS);
         CHECK(transaction_set != VK_NULL_HANDLE);
         CHECK(bvb_global_dispatch_exchange_count() -
-                  exchanges_before_descriptor_transaction == 1U);
-        CHECK(bvb_global_dispatch_last_opcode() ==
-              BVB_OPCODE_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE);
+                  exchanges_before_descriptor_transaction == 0U);
         const uint64_t exchanges_before_descriptor_wait =
             bvb_global_dispatch_exchange_count();
         CHECK(device_wait_idle(device) == VK_SUCCESS);

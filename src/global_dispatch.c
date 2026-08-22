@@ -4,6 +4,7 @@
 #define VK_NO_PROTOTYPES
 
 #include <bvb/command_batch.h>
+#include <bvb/descriptor_transaction_ring.h>
 #include <bvb/first_rejection.h>
 #include <bvb/global_dispatch.h>
 #include <bvb/handle.h>
@@ -196,6 +197,9 @@ struct bvb_global_client_state {
     uint64_t next_descriptor_journal_sequence;
     uint32_t descriptor_journal_length;
     uint32_t descriptor_journal_record_count;
+    struct bvb_descriptor_transaction_ring *descriptor_transaction_ring;
+    uint64_t descriptor_transaction_ring_generation;
+    uint32_t next_descriptor_transaction_ring_sequence;
     atomic_bool command_stream_enabled;
     bool descriptor_journal_enabled;
     bool descriptor_journal_flushing;
@@ -214,6 +218,9 @@ struct bvb_global_client_state {
     uint64_t frame_profile_rpc_counts[BVB_OPCODE_LAST + 1U];
     uint64_t frame_profile_rpc_total_ns[BVB_OPCODE_LAST + 1U];
     uint64_t frame_profile_rpc_max_ns[BVB_OPCODE_LAST + 1U];
+    uint64_t frame_profile_descriptor_ring_calls;
+    uint64_t frame_profile_descriptor_ring_total_ns;
+    uint64_t frame_profile_descriptor_ring_max_ns;
     uint16_t last_opcode;
 };
 
@@ -329,7 +336,8 @@ static int flush_descriptor_journal_before_exchange_locked(uint16_t opcode) {
     if (bvb_global_client.descriptor_journal_flushing ||
         opcode == BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_SETUP ||
         opcode == BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_FLUSH ||
-        opcode == BVB_OPCODE_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE) {
+        opcode == BVB_OPCODE_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE ||
+        opcode == BVB_OPCODE_VULKAN_DESCRIPTOR_TRANSACTION_RING_SETUP) {
         return 0;
     }
     return flush_descriptor_journal_locked();
@@ -495,6 +503,9 @@ static void frame_profile_reset_rpc_window_locked(void) {
     memset(bvb_global_client.frame_profile_rpc_max_ns, 0,
            sizeof(bvb_global_client.frame_profile_rpc_max_ns));
     bvb_global_client.frame_profile_rpc_present_calls = 0U;
+    bvb_global_client.frame_profile_descriptor_ring_calls = 0U;
+    bvb_global_client.frame_profile_descriptor_ring_total_ns = 0U;
+    bvb_global_client.frame_profile_descriptor_ring_max_ns = 0U;
 }
 
 static void frame_profile_emit_rpc_summary_locked(void) {
@@ -552,6 +563,40 @@ static void frame_profile_emit_rpc_summary_locked(void) {
     if (used < sizeof(line) - 1U) line[used++] = '\n';
     const ssize_t ignored = write(STDERR_FILENO, line, used);
     (void)ignored;
+    char ring_line[256];
+    const int ring_written = snprintf(
+        ring_line, sizeof(ring_line),
+        "BVB_E128_DESCRIPTOR_RING_PROFILE present_calls=%u calls=%llu "
+        "total_ns=%llu max_ns=%llu\n",
+        bvb_global_client.frame_profile_rpc_present_calls,
+        (unsigned long long)
+            bvb_global_client.frame_profile_descriptor_ring_calls,
+        (unsigned long long)
+            bvb_global_client.frame_profile_descriptor_ring_total_ns,
+        (unsigned long long)
+            bvb_global_client.frame_profile_descriptor_ring_max_ns);
+    if (ring_written > 0) {
+        const size_t ring_length = (size_t)ring_written < sizeof(ring_line)
+            ? (size_t)ring_written : sizeof(ring_line) - 1U;
+        const ssize_t ring_ignored = write(
+            STDERR_FILENO, ring_line, ring_length);
+        (void)ring_ignored;
+    }
+}
+
+static void frame_profile_record_descriptor_ring_locked(
+    uint64_t started_ns, uint64_t finished_ns) {
+    if (!bvb_global_client.frame_profile_enabled ||
+        !bvb_global_client.frame_profile_rpc_window_started ||
+        started_ns == 0U || finished_ns < started_ns) {
+        return;
+    }
+    const uint64_t elapsed_ns = finished_ns - started_ns;
+    ++bvb_global_client.frame_profile_descriptor_ring_calls;
+    bvb_global_client.frame_profile_descriptor_ring_total_ns += elapsed_ns;
+    if (elapsed_ns > bvb_global_client.frame_profile_descriptor_ring_max_ns) {
+        bvb_global_client.frame_profile_descriptor_ring_max_ns = elapsed_ns;
+    }
 }
 
 static void frame_profile_record_rpc_locked(
@@ -745,6 +790,81 @@ static int setup_descriptor_journal_locked(void) {
 done:
     if (mapping != MAP_FAILED) {
         (void)munmap(mapping, BVB_DESCRIPTOR_JOURNAL_REGION_BYTES);
+    }
+    (void)close(memory_fd);
+    return result;
+}
+
+static int setup_descriptor_transaction_ring_locked(void) {
+    if (!bvb_global_client.descriptor_journal_enabled ||
+        bvb_global_client.descriptor_transaction_ring != NULL) {
+        return bvb_global_client.descriptor_journal_enabled ? 0 : -EINVAL;
+    }
+    int memory_fd = -1;
+    void *mapping = MAP_FAILED;
+    uint64_t generation = 0U;
+    const ssize_t random_bytes = syscall(
+        SYS_getrandom, &generation, sizeof(generation), 0);
+    if (random_bytes != (ssize_t)sizeof(generation) || generation == 0U) {
+        return -EIO;
+    }
+    memory_fd = (int)syscall(
+        SYS_memfd_create, "bvb-descriptor-transaction-ring",
+        MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (memory_fd < 0) return -errno;
+    int result = 0;
+    if (ftruncate(memory_fd,
+                  BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES) != 0) {
+        result = -errno;
+        goto done;
+    }
+    mapping = mmap(NULL, BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES,
+                   PROT_READ | PROT_WRITE, MAP_SHARED, memory_fd, 0);
+    if (mapping == MAP_FAILED) {
+        result = -errno;
+        goto done;
+    }
+    result = bvb_descriptor_transaction_ring_initialize(
+        mapping, BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES,
+        BVB_DESCRIPTOR_TRANSACTION_RING_SLOT_COUNT, generation);
+    if (result != 0) goto done;
+    if (fcntl(memory_fd, F_ADD_SEALS,
+              F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) != 0) {
+        result = -errno;
+        goto done;
+    }
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_DESCRIPTOR_TRANSACTION_RING_SETUP,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_SHARED_BATCH_SETUP_SIZE,
+    };
+    const struct bvb_shared_batch_setup setup = {
+        .region_bytes = BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES,
+        .generation = generation,
+    };
+    result = bvb_protocol_encode_shared_batch_setup(request.payload, &setup);
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        result = exchange_pass_fd_locked(&request, &response, memory_fd);
+    }
+    if (result == 0 &&
+        (response.header.status != 0 || response.header.payload_length != 0U)) {
+        result = response.header.status != 0 ? response.header.status
+                                             : -EPROTO;
+    }
+    if (result == 0) {
+        bvb_global_client.descriptor_transaction_ring = mapping;
+        bvb_global_client.descriptor_transaction_ring_generation = generation;
+        bvb_global_client.next_descriptor_transaction_ring_sequence = 1U;
+        mapping = MAP_FAILED;
+    }
+done:
+    if (mapping != MAP_FAILED) {
+        (void)munmap(mapping,
+                     BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES);
     }
     (void)close(memory_fd);
     return result;
@@ -5300,9 +5420,34 @@ static VkResult VKAPI_CALL bvb_bridge_vkAllocateDescriptorSets(
         memcpy(request.payload, payload, payload_length);
     }
     struct bvb_protocol_packet response = {0};
-    if (result == 0) result = exchange_locked(&request, &response);
-    if (result == 0 && response.header.status != 0)
-        result = response.header.status;
+    uint8_t ring_response[BVB_DESCRIPTOR_TRANSACTION_RING_RESPONSE_BYTES];
+    uint32_t ring_response_length = 0U;
+    if (result == 0 && descriptor_transaction) {
+        result = setup_descriptor_transaction_ring_locked();
+    }
+    if (result == 0 && descriptor_transaction) {
+        const uint64_t started_ns = bvb_global_client.frame_profile_enabled
+            ? frame_profile_monotonic_ns() : 0U;
+        result = bvb_descriptor_transaction_ring_call(
+            bvb_global_client.descriptor_transaction_ring,
+            BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES,
+            bvb_global_client.descriptor_transaction_ring_generation,
+            bvb_global_client.next_descriptor_transaction_ring_sequence,
+            request.payload, request.header.payload_length,
+            ring_response, sizeof(ring_response), &ring_response_length,
+            30000U);
+        const uint64_t finished_ns = bvb_global_client.frame_profile_enabled
+            ? frame_profile_monotonic_ns() : 0U;
+        frame_profile_record_descriptor_ring_locked(started_ns, finished_ns);
+        if (result == 0) {
+            memcpy(response.payload, ring_response, ring_response_length);
+            response.header.payload_length = ring_response_length;
+        }
+    } else if (result == 0) {
+        result = exchange_locked(&request, &response);
+        if (result == 0 && response.header.status != 0)
+            result = response.header.status;
+    }
     struct bvb_vulkan_descriptor_set_allocate_response allocated = {0};
     if (result == 0) {
         result = bvb_protocol_decode_vulkan_descriptor_set_allocate_response(
@@ -5316,8 +5461,22 @@ static VkResult VKAPI_CALL bvb_bridge_vkAllocateDescriptorSets(
             if (bvb_global_client.next_descriptor_journal_sequence == 0U) {
                 result = -EOVERFLOW;
             }
+            if (result == 0) {
+                ++bvb_global_client
+                      .next_descriptor_transaction_ring_sequence;
+                if (bvb_global_client
+                        .next_descriptor_transaction_ring_sequence == 0U) {
+                    result = -EOVERFLOW;
+                }
+            }
         }
-        if (result != 0) poison_descriptor_journal_connection_locked();
+        if (result != 0) {
+            if (bvb_global_client.descriptor_transaction_ring != NULL) {
+                (void)bvb_descriptor_transaction_ring_fail_client(
+                    bvb_global_client.descriptor_transaction_ring, result);
+            }
+            poison_descriptor_journal_connection_locked();
+        }
     }
     VkResult vulkan_result = result == 0
         ? (VkResult)allocated.vulkan_result : VK_ERROR_INITIALIZATION_FAILED;

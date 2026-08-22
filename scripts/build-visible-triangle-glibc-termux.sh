@@ -51,6 +51,7 @@ grun -s gcc -std=c17 -O3 -DNDEBUG -fPIC -fvisibility=hidden \
     "$project_dir/src/transport.c" \
     "$project_dir/src/handle.c" \
     "$project_dir/src/command_batch.c" \
+    "$project_dir/src/descriptor_transaction_ring.c" \
     "$project_dir/src/vulkan_discovery.c" \
     "$project_dir/src/dxvk_dispatch_policy.c" \
     "$project_dir/src/global_dispatch.c" \

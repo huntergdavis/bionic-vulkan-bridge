@@ -111,6 +111,19 @@ target_link_libraries(bvb-wsi-frame-ring PUBLIC Threads::Threads)
 bvb_enable_warnings(bvb-wsi-frame-ring)
 target_link_libraries(bvb-vulkan-global PRIVATE bvb-wsi-frame-ring)
 
+add_library(
+  bvb-descriptor-transaction-ring STATIC
+  src/descriptor_transaction_ring.c
+)
+target_include_directories(
+  bvb-descriptor-transaction-ring
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<INSTALL_INTERFACE:include>"
+)
+target_link_libraries(bvb-descriptor-transaction-ring PUBLIC Threads::Threads)
+bvb_enable_warnings(bvb-descriptor-transaction-ring)
+
 add_library(bvb-activity-frame-transport STATIC src/activity_frame_transport.c)
 target_include_directories(
   bvb-activity-frame-transport
@@ -326,7 +339,8 @@ target_include_directories(
 target_link_libraries(
   bvb-vulkan-client-dispatch
   PRIVATE bvb-command-batch bvb-vulkan-discovery bvb-wire
-          bvb-wsi-frame-ring Threads::Threads Vulkan::Headers
+          bvb-wsi-frame-ring bvb-descriptor-transaction-ring
+          Threads::Threads Vulkan::Headers
 )
 target_link_options(
   bvb-vulkan-client-dispatch PRIVATE "-Wl,-Bsymbolic-functions"
@@ -354,7 +368,8 @@ add_executable(bvb-bridge-service src/bridge_service.c)
 target_link_libraries(
   bvb-bridge-service
   PRIVATE bvb-wire bvb-command-batch bvb-vulkan-caps bvb-vulkan-global
-          bvb-vulkan-selftest-core bvb-activity-frame-transport Threads::Threads
+          bvb-vulkan-selftest-core bvb-activity-frame-transport
+          bvb-descriptor-transaction-ring Threads::Threads
 )
 bvb_enable_warnings(bvb-bridge-service)
 
@@ -461,6 +476,20 @@ if(BUILD_TESTING)
   )
   bvb_enable_warnings(bvb-wsi-frame-ring-test)
   add_test(NAME wsi-frame-ring-contract COMMAND bvb-wsi-frame-ring-test)
+
+  add_executable(
+    bvb-descriptor-transaction-ring-test
+    tests/descriptor_transaction_ring.c
+  )
+  target_link_libraries(
+    bvb-descriptor-transaction-ring-test
+    PRIVATE bvb-descriptor-transaction-ring Threads::Threads
+  )
+  bvb_enable_warnings(bvb-descriptor-transaction-ring-test)
+  add_test(
+    NAME descriptor-transaction-ring-contract
+    COMMAND bvb-descriptor-transaction-ring-test
+  )
 
   add_executable(
     bvb-activity-frame-transport-test tests/activity_frame_transport.c
@@ -1426,5 +1455,19 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_vulkan.c"
+  )
+  add_test(
+    NAME e128-descriptor-completion-ring-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e128_descriptor_completion_ring_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e128-descriptor-completion-ring-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/protocol.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/descriptor_transaction_ring.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/descriptor_transaction_ring.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-triangle-dispatch-glibc-termux.sh"
   )
 endif()

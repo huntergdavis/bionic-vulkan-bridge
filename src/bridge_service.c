@@ -5,6 +5,7 @@
 
 #include <bvb/command_batch.h>
 #include <bvb/activity_frame_transport.h>
+#include <bvb/descriptor_transaction_ring.h>
 #include <bvb/handle.h>
 #include <bvb/protocol.h>
 #include <bvb/transport.h>
@@ -50,6 +51,18 @@ struct shared_batch_region {
     struct bvb_command_stream_generation command_generations[4096];
     bool command_stream;
     bool descriptor_journal;
+};
+
+struct descriptor_transaction_worker {
+    struct bvb_descriptor_transaction_ring *ring;
+    size_t ring_length;
+    uint64_t ring_generation;
+    struct shared_batch_region *journal_region;
+    struct bvb_vulkan_global_context *context;
+    pthread_mutex_t *context_mutex;
+    pthread_t thread;
+    atomic_bool stop;
+    bool started;
 };
 
 struct connection_worker {
@@ -2218,6 +2231,205 @@ static int answer_vulkan_descriptor_transaction_allocate(
     return bvb_transport_send(client_fd, &response);
 }
 
+static void *descriptor_transaction_worker_main(void *opaque) {
+    struct descriptor_transaction_worker *worker = opaque;
+    uint32_t after_sequence = 0U;
+    while (!atomic_load_explicit(&worker->stop, memory_order_acquire)) {
+        uint8_t request[BVB_DESCRIPTOR_TRANSACTION_RING_REQUEST_BYTES];
+        uint32_t request_length = 0U;
+        uint32_t slot_index = 0U;
+        uint32_t ring_sequence = 0U;
+        int result = bvb_descriptor_transaction_ring_wait_request(
+            worker->ring, worker->ring_length, worker->ring_generation,
+            after_sequence, request, sizeof(request), &request_length,
+            &slot_index, &ring_sequence, 100U);
+        if (result == -ETIMEDOUT) continue;
+        if (result != 0) break;
+
+        uint8_t response[BVB_DESCRIPTOR_TRANSACTION_RING_RESPONSE_BYTES];
+        uint8_t encoded_response[BVB_PROTOCOL_MAX_PAYLOAD];
+        uint32_t response_length = 0U;
+        char diagnostic[512] = {0};
+        bool context_locked = false;
+        if (pthread_mutex_lock(worker->context_mutex) != 0) {
+            result = -EDEADLK;
+        } else {
+            context_locked = true;
+        }
+        struct bvb_vulkan_descriptor_transaction_allocate_request transaction;
+        if (result == 0) {
+            result =
+                bvb_protocol_decode_vulkan_descriptor_transaction_allocate_request(
+                    request, request_length, &transaction);
+        }
+        if (result == 0 &&
+            transaction.journal_generation !=
+                worker->journal_region->generation) {
+            result = -ESTALE;
+        }
+        if (result == 0 &&
+            (worker->journal_region->last_sequence == UINT64_MAX ||
+             transaction.journal_sequence !=
+                 worker->journal_region->last_sequence + 1U)) {
+            result = -ESTALE;
+        }
+        if (result == 0 &&
+            transaction.journal_length > worker->journal_region->length) {
+            result = -ERANGE;
+        }
+        uint8_t *snapshot = NULL;
+        if (result == 0 && transaction.journal_length != 0U) {
+            snapshot = malloc(transaction.journal_length);
+            if (snapshot == NULL) result = -ENOMEM;
+        }
+        if (result == 0 && transaction.journal_length != 0U) {
+            atomic_thread_fence(memory_order_acquire);
+            memcpy(snapshot, worker->journal_region->address,
+                   transaction.journal_length);
+            result = validate_descriptor_journal_snapshot(
+                snapshot, transaction.journal_length,
+                transaction.journal_record_count);
+        }
+        if (result == 0 && transaction.journal_length != 0U) {
+            result = replay_descriptor_journal_snapshot(
+                worker->context, snapshot, transaction.journal_length,
+                transaction.journal_record_count, diagnostic,
+                sizeof(diagnostic));
+        }
+        free(snapshot);
+        struct bvb_vulkan_descriptor_set_allocate_response allocated = {0};
+        if (result == 0) {
+            result = bvb_vulkan_global_context_allocate_descriptor_sets(
+                worker->context, &transaction.allocation, &allocated,
+                diagnostic, sizeof(diagnostic));
+        }
+        if (result == 0) {
+            result = bvb_protocol_encode_vulkan_descriptor_set_allocate_response(
+                encoded_response, &allocated, &response_length);
+        }
+        if (result == 0 &&
+            response_length > BVB_DESCRIPTOR_TRANSACTION_RING_RESPONSE_BYTES) {
+            result = -EOVERFLOW;
+        }
+        if (result == 0) {
+            memcpy(response, encoded_response, response_length);
+        }
+        if (result == 0) {
+            worker->journal_region->last_sequence =
+                transaction.journal_sequence;
+        }
+        if (context_locked) {
+            if (pthread_mutex_unlock(worker->context_mutex) != 0 &&
+                result == 0) {
+                result = -EDEADLK;
+            }
+        }
+        if (result != 0) {
+            fprintf(stderr,
+                    "bvb: descriptor ring transaction failed: %s\n",
+                    diagnostic[0] == '\0' ? strerror(-result) : diagnostic);
+            response_length = 0U;
+        }
+        const int completion_result =
+            bvb_descriptor_transaction_ring_complete(
+                worker->ring, worker->ring_length,
+                worker->ring_generation, slot_index, ring_sequence,
+                result, response, response_length);
+        after_sequence = ring_sequence;
+        if (completion_result != 0) break;
+    }
+    return NULL;
+}
+
+static int answer_descriptor_transaction_ring_setup(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    int received_fd, struct bvb_vulkan_global_context *context,
+    struct shared_batch_region *journal_region,
+    pthread_mutex_t *context_mutex,
+    struct descriptor_transaction_worker *worker) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    int status = 0;
+    struct bvb_shared_batch_setup setup;
+    if (!negotiated || received_fd < 0 || context == NULL ||
+        journal_region == NULL || journal_region->address == NULL ||
+        !journal_region->descriptor_journal || context_mutex == NULL ||
+        worker == NULL || worker->started ||
+        request->header.payload_length != BVB_SHARED_BATCH_SETUP_SIZE) {
+        status = -EPROTO;
+    } else {
+        status = bvb_protocol_decode_shared_batch_setup(
+            request->payload, &setup);
+    }
+    if (status == 0 &&
+        setup.region_bytes != BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES) {
+        status = -EINVAL;
+    }
+    if (status == 0) {
+        const int seals = fcntl(received_fd, F_GET_SEALS);
+        const int required_seals =
+            F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL;
+        if (seals < 0 || (seals & required_seals) != required_seals) {
+            status = -EPERM;
+        }
+    }
+    struct stat metadata;
+    if (status == 0 &&
+        (fstat(received_fd, &metadata) != 0 ||
+         !S_ISREG(metadata.st_mode) || metadata.st_size < 0 ||
+         (uint64_t)metadata.st_size != setup.region_bytes)) {
+        status = -EINVAL;
+    }
+    void *mapping = MAP_FAILED;
+    if (status == 0) {
+        mapping = mmap(NULL, setup.region_bytes, PROT_READ | PROT_WRITE,
+                       MAP_SHARED, received_fd, 0);
+        if (mapping == MAP_FAILED) status = -errno;
+    }
+    if (received_fd >= 0) (void)close(received_fd);
+    if (status == 0) {
+        status = bvb_descriptor_transaction_ring_validate(
+            mapping, setup.region_bytes, setup.generation);
+    }
+    if (status == 0) {
+        *worker = (struct descriptor_transaction_worker){
+            .ring = mapping,
+            .ring_length = setup.region_bytes,
+            .ring_generation = setup.generation,
+            .journal_region = journal_region,
+            .context = context,
+            .context_mutex = context_mutex,
+        };
+        atomic_init(&worker->stop, false);
+        const int thread_status = pthread_create(
+            &worker->thread, NULL, descriptor_transaction_worker_main,
+            worker);
+        if (thread_status != 0) {
+            status = -thread_status;
+            worker->ring = NULL;
+            worker->ring_length = 0U;
+        } else {
+            worker->started = true;
+            mapping = MAP_FAILED;
+        }
+    }
+    if (mapping != MAP_FAILED) {
+        (void)munmap(mapping, BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES);
+    }
+    response.header.status = status;
+    return bvb_transport_send(client_fd, &response);
+}
+
+static void stop_descriptor_transaction_worker(
+    struct descriptor_transaction_worker *worker) {
+    if (worker == NULL || !worker->started) return;
+    atomic_store_explicit(&worker->stop, true, memory_order_release);
+    (void)bvb_descriptor_transaction_ring_fail_service(
+        worker->ring, -ECANCELED);
+    (void)pthread_join(worker->thread, NULL);
+    worker->started = false;
+}
+
 static int answer_vulkan_buffer_requirements(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context) {
@@ -3568,6 +3780,8 @@ static int serve_connection(int client_fd, const char *loader_path,
     bool negotiated = false;
     struct shared_batch_region shared_region = {0};
     struct shared_batch_region descriptor_journal_region = {0};
+    struct descriptor_transaction_worker descriptor_worker = {0};
+    pthread_mutex_t context_mutex = PTHREAD_MUTEX_INITIALIZER;
     struct bvb_vulkan_batch_context *vulkan_context = NULL;
     struct bvb_vulkan_global_context *global_context = NULL;
     int connection_status = 0;
@@ -3592,6 +3806,8 @@ static int serve_connection(int client_fd, const char *loader_path,
              request.header.opcode !=
                  BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_SETUP &&
              request.header.opcode !=
+                 BVB_OPCODE_VULKAN_DESCRIPTOR_TRANSACTION_RING_SETUP &&
+             request.header.opcode !=
                  BVB_OPCODE_VULKAN_MEMORY_MIRROR_SETUP &&
              request.header.opcode !=
                  BVB_OPCODE_VULKAN_BUILTIN_GRAPHICS_PIPELINE_CREATE)) {
@@ -3599,6 +3815,12 @@ static int serve_connection(int client_fd, const char *loader_path,
                 (void)close(received_fd);
             }
             connection_status = -EPROTO;
+            break;
+        }
+        const int context_lock_status = pthread_mutex_lock(&context_mutex);
+        if (context_lock_status != 0) {
+            if (received_fd >= 0) (void)close(received_fd);
+            connection_status = -context_lock_status;
             break;
         }
         if (request.header.opcode == BVB_OPCODE_HELLO) {
@@ -3634,6 +3856,13 @@ static int serve_connection(int client_fd, const char *loader_path,
             result = answer_shared_batch_setup(
                 client_fd, &request, negotiated, received_fd,
                 &descriptor_journal_region, false, true);
+            received_fd = -1;
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_DESCRIPTOR_TRANSACTION_RING_SETUP) {
+            result = answer_descriptor_transaction_ring_setup(
+                client_fd, &request, negotiated, received_fd,
+                global_context, &descriptor_journal_region,
+                &context_mutex, &descriptor_worker);
             received_fd = -1;
         } else if (request.header.opcode == BVB_OPCODE_SHARED_BATCH_EXECUTE) {
             result = answer_shared_batch_execute(
@@ -3974,6 +4203,10 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else {
             result = -EPROTO;
         }
+        const int context_unlock_status = pthread_mutex_unlock(&context_mutex);
+        if (context_unlock_status != 0 && result == 0) {
+            result = -context_unlock_status;
+        }
         if (received_fd >= 0) {
             (void)close(received_fd);
         }
@@ -3982,6 +4215,7 @@ static int serve_connection(int client_fd, const char *loader_path,
             break;
         }
     }
+    stop_descriptor_transaction_worker(&descriptor_worker);
     if (cleanup_vulkan_context) {
         bvb_vulkan_batch_context_destroy(vulkan_context);
         bvb_vulkan_global_context_destroy(global_context);
@@ -4010,6 +4244,13 @@ static int serve_connection(int client_fd, const char *loader_path,
             connection_status = -errno;
         }
     }
+    if (descriptor_worker.ring != NULL) {
+        if (munmap(descriptor_worker.ring, descriptor_worker.ring_length) != 0 &&
+            connection_status == 0) {
+            connection_status = -errno;
+        }
+    }
+    (void)pthread_mutex_destroy(&context_mutex);
     return connection_status;
 }
 

@@ -43,7 +43,7 @@ def main() -> int:
     require(service, "replay_descriptor_journal_snapshot(", "ordered update replay")
     require(service, "bvb_vulkan_global_context_allocate_descriptor_sets(", "real native allocation")
     require(global_test, "exchanges_before_descriptor_transaction", "single exchange proof")
-    require(global_test, "BVB_OPCODE_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE", "exact opcode proof")
+    require(client, "BVB_OPCODE_VULKAN_DESCRIPTOR_TRANSACTION_ALLOCATE", "legacy exact opcode retained")
     require(fake, "fake_descriptor_transaction_allocate_seen", "native order proof")
     print("PASS: E127 descriptor transaction architecture")
     return 0

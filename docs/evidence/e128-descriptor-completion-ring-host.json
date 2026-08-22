@@ -1,0 +1,52 @@
+{
+  "gate": "E128",
+  "date": "2026-08-22",
+  "source_base_commit": "45e2f00",
+  "trigger": {
+    "e127_average_fps": 2.3,
+    "e127_descriptor_transaction_calls_per_present": 526.240625,
+    "e127_descriptor_transaction_ms_per_present": 100.33634976979167,
+    "e127_total_rpc_ms_per_present": 224.79033955416668,
+    "diagnosis": "The real native allocation result is correct, but one socket request/reply per allocation remains the largest measured bridge boundary."
+  },
+  "implementation": {
+    "setup_opcode": 124,
+    "legacy_transaction_opcode": 123,
+    "region_bytes": 8192,
+    "slot_count": 16,
+    "slot_bytes": 384,
+    "request_bytes": 176,
+    "response_bytes": 136,
+    "setup_fd_count": 1,
+    "steady_state_socket_exchanges_per_allocation": 0,
+    "wait_transport": "process-shared futex request/completion sequences",
+    "service_execution": "dedicated per-connection Bionic worker under the same context mutex as socket dispatch",
+    "journal_order": "immutable E126 snapshot validation and replay precede the real native allocation",
+    "native_allocation_deferred_or_synthetic": false,
+    "timeout_ms": 30000,
+    "uncertain_failure_policy": "publish peer failure, close the control socket, and permanently poison the client connection"
+  },
+  "validation": {
+    "ring_ordered_calls": 4096,
+    "ring_wraps": 256,
+    "ring_failure_wakeup": true,
+    "ring_thread_sanitizer": "1/1 passed",
+    "one_time_setup_exchange_count": 1,
+    "shared_update_exchange_count": 0,
+    "steady_state_transaction_exchange_count": 0,
+    "following_wait_exchange_count": 1,
+    "native_update_before_allocate": true,
+    "strict_path_retained": true,
+    "legacy_opcode_123_retained": true,
+    "focused_ring_protocol_and_global_suite": "3/3 passed",
+    "full_host_suite": "90/90 passed"
+  },
+  "claims": {
+    "tablet_deployed": false,
+    "tomb_raider_run": false,
+    "benchmark_fps": null,
+    "performance_improvement": null
+  },
+  "next_gate": "Complete the full host and Termux suites, deploy transactionally, then repeat the native-resolution profiled benchmark. E128 must drive socket opcode 123 to zero while its separate logical ring profile measures the remaining native allocation wait.",
+  "reuse": "The required deja query returned only current-session material and no prior descriptor completion-ring implementation. E128 reuses E014/E042's setup-only shared-memory discipline, E075/E075a's immutable sequenced transaction rules, E126's canonical journal records, and E127's real native allocation response codec and ownership lifecycle."
+}

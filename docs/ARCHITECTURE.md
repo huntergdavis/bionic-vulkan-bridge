@@ -534,3 +534,16 @@ native allocation failure remains a normal acknowledged Vulkan result. This
 removes the separate opcode-122 round trip at the measured allocation/update
 interleave without deferring allocation, inventing handles, or consuming pool
 capacity early. Strict opcode 68 and standalone journal drains remain intact.
+
+E128 removes E127's per-allocation socket request/reply without weakening its
+semantics. The glibc ICD installs one sealed-size 8-KiB shared region through
+setup opcode 124 after the Vulkan device exists. Sixteen fixed 384-byte slots
+carry only the canonical E127 transaction and allocation response. A dedicated
+per-connection Bionic worker waits on process-shared futex sequences, snapshots
+and validates the journal, replays updates, calls the real native allocation,
+and publishes the real result plus typed IDs. The service's socket dispatcher
+and ring worker share one context mutex, preserving authoritative native object
+and descriptor-pool ordering. The client still blocks until its exact result is
+available, but steady-state allocation makes no socket exchange. Timeout,
+stale sequence, malformed data, or ambiguous completion poisons the connection;
+strict mode and legacy opcode 123 remain intact.

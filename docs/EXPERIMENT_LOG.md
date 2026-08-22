@@ -4991,3 +4991,31 @@ moving requests and completions to a bounded shared ring or an equivalently
 strict pool-epoch-aware lease cache. Compact tablet evidence is retained in
 `docs/evidence/e127-descriptor-transaction-tablet.json`; canonical game evidence
 is in the sibling `steamclienttermux` repository at commit `1fe5e9e`.
+
+## E128 — shared descriptor request/completion ring (2026-08-22)
+
+E127 raised the game-authored average from 2.0 to 2.3 FPS, but its final 30
+windows still averaged 526 synchronous opcode-123 transactions and 100.34 ms
+blocked in them per present. The required `deja` query returned only the
+current session and no prior descriptor completion-ring implementation. E128
+therefore reuses the repository's existing setup-only shared-memory, immutable
+snapshot, monotonic sequence, typed ownership, and permanent-poison rules.
+
+Shared mode now installs one fixed 8-KiB, 16-slot cross-libc region through
+setup opcode 124. Each 384-byte slot carries the complete canonical E127
+request and allocation response. The glibc client release-publishes a request
+and waits on its completion futex; a dedicated Bionic worker copies the request,
+validates and replays the journal, performs the real native allocation, and
+release-publishes the result and typed IDs. Both service paths share one context
+mutex. Allocation remains synchronous to the application, but after the
+one-time setup it performs zero socket exchanges.
+
+The standalone ring completed 4,096 ordered calls and 256 full wraps, and its
+ThreadSanitizer contract passed 1/1. The complete host suite passed 90/90. The
+cross-process Vulkan fake proves one setup exchange, zero update exchanges,
+zero steady-state allocation exchanges, native update-before-allocation order,
+and one ordinary exchange for the following wait. Strict allocation and legacy
+opcode 123 remain available. This is host architecture evidence only; tablet
+deployment, Tomb Raider FPS, and any performance gain remain unclaimed until
+the complete build/deploy/profile gate. Exact boundaries are in
+`docs/evidence/e128-descriptor-completion-ring-host.json`.

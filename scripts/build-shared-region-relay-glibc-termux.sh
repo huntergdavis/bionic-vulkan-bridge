@@ -17,6 +17,7 @@ done
 for required_file in "$project_dir/src/lifecycle.c" \
     "$project_dir/src/protocol.c" "$project_dir/src/transport.c" \
     "$project_dir/src/handle.c" "$project_dir/src/command_batch.c" \
+    "$project_dir/src/descriptor_transaction_ring.c" \
     "$project_dir/src/vulkan_discovery.c" \
     "$project_dir/src/dxvk_dispatch_policy.c" \
     "$project_dir/src/global_dispatch.c" \
@@ -33,6 +34,7 @@ done
 mkdir -p "$object_dir"
 cmake --build "$build_dir" --parallel --target bvb-triangle-batch-builder
 for source_name in lifecycle protocol transport handle command_batch \
+    descriptor_transaction_ring \
     vulkan_discovery dxvk_dispatch_policy global_dispatch triangle_dispatch \
     triangle_batch_builder \
     shared_region_relay; do
@@ -46,6 +48,7 @@ grun -s gcc \
     "$object_dir/lifecycle.o" "$object_dir/protocol.o" \
     "$object_dir/transport.o" "$object_dir/handle.o" \
     "$object_dir/command_batch.o" "$object_dir/vulkan_discovery.o" \
+    "$object_dir/descriptor_transaction_ring.o" \
     "$object_dir/dxvk_dispatch_policy.o" "$object_dir/global_dispatch.o" \
     "$object_dir/triangle_dispatch.o" \
     "$object_dir/triangle_batch_builder.o" \
