@@ -566,5 +566,12 @@ rechecks the sequence, so the producer either observes that state and wakes it
 or the recheck observes the already-published work. Slow and timeout paths use
 the original process-shared futex, and peer failure still wakes both sequences
 unconditionally. No allocation result is deferred, no descriptor payload is
-changed, and strict mode is untouched. The bounded CPU-for-latency trade must
-be measured on the tablet before any speed claim.
+changed, and strict mode is untouched. The matched tablet run reduced mean
+ring latency from 269.4 to 195.8 microseconds and improved game-authored
+average FPS from 2.0 to 2.4. It also proves active waiting is an optimization,
+not the final architecture: about 529 synchronous transactions still block
+103.6 ms per present. The next boundary is a bounded, service-created lease
+queue keyed by descriptor pool, layout, and reset epoch. A client may consume
+only an already-published typed lease locally; Bionic remains authoritative for
+batch refill, native allocation failure, finite pool capacity, reset/destroy
+invalidation, and the strict synchronous fallback.

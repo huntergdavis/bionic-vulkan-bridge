@@ -1,0 +1,119 @@
+{
+  "gate": "E130",
+  "date": "2026-08-22",
+  "runtime_source_commit": "61c1a4c444b18dcff329e684b15a490ece00c827",
+  "installer_fix_commit": "4e8f67367ed846fd1843fc07307fee8f8fd58e3c",
+  "target": {
+    "device": "Samsung Galaxy Tab S8+ SM-X808U",
+    "game": "Tomb Raider (2013)",
+    "resolution": "2800x1752",
+    "quality": "Low",
+    "refresh_hz": 60
+  },
+  "validation": {
+    "runtime_host_contracts": "92/92 passed",
+    "termux_contracts": "90/90 passed",
+    "installer_fix_host_contracts": "92/92 passed",
+    "probe_status": 0,
+    "profile_records": 129,
+    "worker_transactions": 526374,
+    "client_profile_windows": 53,
+    "profiled_presents": 1696,
+    "frame_setup_result": "pass",
+    "per_frame_java_calls": 0,
+    "per_frame_binder_calls": 0
+  },
+  "game_authored_result": {
+    "minimum_fps": 1.0,
+    "maximum_fps": 4.4,
+    "average_fps": 2.4,
+    "source_sha256": "c1043d693203803206a750ef08c86db3cce135646ba2d9a892a7a92d2acff9ff",
+    "e129_average_fps": 2.0,
+    "average_fps_change_percent": 20.0,
+    "launch_to_result_seconds": 591,
+    "e129_launch_to_result_seconds": 673
+  },
+  "worker_profile": {
+    "total_ms": 25341.283449,
+    "mean_microseconds_per_transaction": 48.143,
+    "e129_mean_microseconds_per_transaction": 78.235,
+    "mean_change_percent": -38.463,
+    "phase_coverage_percent": 99.293,
+    "context_wait_microseconds": 0.616,
+    "context_wait_percent": 1.280,
+    "decode_microseconds": 1.030,
+    "decode_percent": 2.140,
+    "snapshot_microseconds": 2.254,
+    "snapshot_percent": 4.682,
+    "journal_replay_microseconds": 6.732,
+    "journal_replay_percent": 13.984,
+    "native_allocation_microseconds": 33.227,
+    "native_allocation_percent": 69.017,
+    "response_microseconds": 0.457,
+    "response_percent": 0.949,
+    "completion_futex_microseconds": 3.486,
+    "completion_futex_percent": 7.242,
+    "e129_completion_futex_microseconds": 24.995,
+    "completion_futex_change_percent": -86.052,
+    "maximum_transaction_microseconds": 12944.948,
+    "maximum_native_allocation_microseconds": 9421.094
+  },
+  "client_worker_comparison": {
+    "client_profiled_transactions": 525167,
+    "worker_profiled_transactions": 526374,
+    "count_windows_are_not_identical": true,
+    "client_ring_mean_microseconds": 195.848,
+    "e129_client_ring_mean_microseconds": 269.396,
+    "client_ring_change_percent": -27.301,
+    "worker_mean_microseconds": 48.143,
+    "approximate_outside_worker_microseconds": 147.705,
+    "approximate_outside_worker_percent": 75.418,
+    "boundary": "Worker timing begins after request wait/copy and ends after completion publication. The approximate remainder includes client publication, cross-process scheduling, and response consumption; count windows are not identical."
+  },
+  "comparable_final_30_windows": {
+    "presents": 960,
+    "socket_calls_per_present": 38.96666666666667,
+    "socket_blocked_ms_per_present": 125.03659178020834,
+    "descriptor_ring_calls_per_present": 528.721875,
+    "descriptor_ring_blocked_ms_per_present": 103.63046465208333,
+    "descriptor_ring_mean_microseconds_per_call": 196.0018481400705,
+    "socket_plus_ring_ms_per_present": 228.66705643229167,
+    "e129_socket_plus_ring_ms_per_present": 272.8094952097917,
+    "socket_plus_ring_change_percent": -16.181
+  },
+  "wsi_profile": {
+    "client_combined_ms_per_present": 1.538835132075,
+    "service_combined_ms_per_present": 0.937857432193
+  },
+  "installed_artifacts": {
+    "glibc_icd_sha256": "fe8be79127899dcb0b1c71349a063fe4904178fa39abdb493da72401a93c351b",
+    "bionic_service_sha256": "1134c346ce7650d133422acf1d0250f6f00343581c5613fb1a6049788ecbae47",
+    "manifest_sha256": "77f3395e3f657b6a7274c182afe994edacda2a4b38d49814ea84440520af33df",
+    "install_stamp_sha256": "19bffa5ae80b61ae60f2e772f1d2bfc9e3663087f60038ab796e3056401a719b",
+    "rollback_backup": "/data/data/com.termux/files/home/steam-arm64/bvb/backups/install-pre-kQuPHP5u"
+  },
+  "retained_hashes": {
+    "source_archive_sha256": "95eea8c250fc7cedbdeb7699cc6731980854eac2b22804ccccf40e6f3c0f799c",
+    "termux_build_log_sha256": "fdafa57443a1d15580d35bb61b98a8292d29b1d22e8df4c4c3047f4b8cf46970",
+    "glibc_build_log_sha256": "ba71adfc19899ca86391c6b726d7e1593c8c7de27fc533ca0889827f7babf165",
+    "direct_profile_log_sha256": "c4a0d423998f5ee02e0f86ccbb3fa56e927b00d90175d1c7407a0a33db571b9f",
+    "service_profile_log_sha256": "f3049fd3a113e78c473f48b3f906d325ca31eac5a635a4f3b62e480aa8fec33d",
+    "probe_launcher_log_sha256": "10eb9ac3a466fa4594bf2cbc509a5ac0fb0f58528bf16cb7c1af31da79a6ef38",
+    "loading_frame_sha256": "bec41cdde1199a08165807b46f5750fa039846a4777356ad4b6d55c542cf7f4e",
+    "lara_frame_1_sha256": "64f59b3090300259f862222e777947aa4f18c7fb15274dafa220575bcb6d60a4",
+    "lara_frame_2_sha256": "21cddf9297580da739d2777fee63a0fcb547d52cb3ca2851147999e093c7f190"
+  },
+  "post_run": {
+    "steam_pid": 15575,
+    "steam_start_ticks": 128118834,
+    "x11_pid": 13643,
+    "x11_start_ticks": 121863492,
+    "protected_processes_unchanged": true,
+    "battery_temperature_c": 25.4
+  },
+  "diagnosis": "Bounded active handoff validates the scheduling diagnosis and turns it into a 20 percent game-authored FPS gain. It does not remove the synchronous per-set boundary: about 529 descriptor transactions still block 103.6 ms per present, and native allocation is now 69 percent of the smaller worker body.",
+  "next_gate": "Publish bounded Bionic-created descriptor-set leases keyed by pool, layout, and reset epoch. Refill leases in batches and let the glibc client claim a ready typed proxy locally. Preserve authoritative reset/destroy invalidation, finite capacity, native error reporting, journal ordering, and strict synchronous fallback.",
+  "claim_boundary": "One matched complete run proves the 20 percent average-FPS gain and measured phase reductions. It is not yet a cooled alternating statistical series; active polling may have target-specific power or contention costs. Client and worker windows differ slightly, so their outside interval remains approximate.",
+  "canonical_game_evidence": "steamclienttermux commit ceadc3b",
+  "reuse": "The required deja query returned no indexed active-handoff implementation. E130 reused E128's process-shared descriptor ring, E129's bounded worker/client profile, and permanent peer-failure wake semantics."
+}

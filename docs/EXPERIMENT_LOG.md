@@ -5115,3 +5115,33 @@ contention inside Android's restricted Termux cgroup. No tablet latency or FPS
 gain is claimed before the exact client/service pair completes the same
 profiled Tomb Raider benchmark. Exact boundaries are in
 `docs/evidence/e130-descriptor-ring-active-handoff-host.json`.
+
+The exact E130 client/service pair then passed 90/90 Termux contracts. The
+first installation attempt failed closed even though `readelf` proved the
+service used `/system/bin/linker64`: `grep -q` closed the pipeline after its
+match, and `pipefail` could treat the producer's exit as failure. Commit
+`4e8f673` consumes the complete ELF-inspection stream and adds a large
+trailing-output regression; its full host suite also passed 92/92. The
+corrected transaction retained rollback `install-pre-kQuPHP5u` and preserved
+the original Steam and X11 processes.
+
+The native-resolution Low benchmark rendered the fullscreen loading screen
+and distinct Lara frames, completed cleanly, and reported **1.0 minimum, 4.4
+maximum, and 2.4 average FPS**. This is a **20% average-FPS gain** over E129.
+Client descriptor-ring latency fell from 269.4 to 195.8 microseconds (27.3%),
+worker time fell from 78.2 to 48.1 microseconds (38.5%), and completion
+publication/wake fell from 25.0 to 3.5 microseconds (86.1%). In the comparable
+final 30 windows, combined socket-plus-ring blocking fell from 272.8 to 228.7
+ms per present (16.2%). WSI remained essentially unchanged at 1.54 ms on the
+client and 0.94 ms in the service per present.
+
+This validates the scheduling diagnosis but not a complete solution. About
+529 synchronous descriptor transactions still block 103.6 ms per present;
+native allocation is now 69.0% of the reduced worker. E131 should publish
+bounded service-created descriptor-set leases keyed by pool, layout, and reset
+epoch, refill them in batches, and let the client claim ready typed proxies
+without one request/completion wake per set. Reset/destroy invalidation, finite
+pool capacity, journal ordering, native error reporting, and strict fallback
+remain authoritative. Tablet identities and exact caveats are retained in
+`docs/evidence/e130-descriptor-ring-active-handoff-tablet.json`; canonical game
+evidence is sibling `steamclienttermux` commit `ceadc3b`.
