@@ -1562,9 +1562,124 @@ static void VKAPI_CALL fake_cmd_draw(
     else fake_render_bundle_violation = 1;
 }
 
-static void VKAPI_CALL fake_cmd_end_rendering(VkCommandBuffer command_buffer) {
-    if (fake_render_bundle_step == 7U && command_buffer != VK_NULL_HANDLE)
+static void VKAPI_CALL fake_cmd_bind_vertex_buffers(
+    VkCommandBuffer command_buffer, uint32_t first_binding,
+    uint32_t binding_count, const VkBuffer *buffers,
+    const VkDeviceSize *offsets) {
+    if (fake_render_bundle_step == 7U && command_buffer != VK_NULL_HANDLE &&
+        first_binding == 2U && binding_count == 1U && buffers != NULL &&
+        offsets != NULL && buffers[0] == (VkBuffer)(uintptr_t)0x4000U &&
+        offsets[0] == 128U)
         fake_render_bundle_step = 8U;
+    else
+        fake_render_bundle_violation = 1;
+}
+
+static void VKAPI_CALL fake_cmd_bind_vertex_buffers_2(
+    VkCommandBuffer command_buffer, uint32_t first_binding,
+    uint32_t binding_count, const VkBuffer *buffers,
+    const VkDeviceSize *offsets, const VkDeviceSize *sizes,
+    const VkDeviceSize *strides) {
+    if (fake_render_bundle_step == 8U && command_buffer != VK_NULL_HANDLE &&
+        first_binding == 3U && binding_count == 2U && buffers != NULL &&
+        offsets != NULL && sizes != NULL && strides != NULL &&
+        buffers[0] == (VkBuffer)(uintptr_t)0x4000U &&
+        buffers[1] == VK_NULL_HANDLE && offsets[0] == 128U &&
+        offsets[1] == 0U && sizes[0] == 256U &&
+        sizes[1] == VK_WHOLE_SIZE && strides[0] == 32U &&
+        strides[1] == 0U)
+        fake_render_bundle_step = 9U;
+    else
+        fake_render_bundle_violation = 1;
+}
+
+static void VKAPI_CALL fake_cmd_bind_index_buffer(
+    VkCommandBuffer command_buffer, VkBuffer buffer, VkDeviceSize offset,
+    VkIndexType index_type) {
+    if (fake_render_bundle_step == 9U && command_buffer != VK_NULL_HANDLE &&
+        buffer == (VkBuffer)(uintptr_t)0x4000U && offset == 32U &&
+        index_type == VK_INDEX_TYPE_UINT16)
+        fake_render_bundle_step = 10U;
+    else
+        fake_render_bundle_violation = 1;
+}
+
+static void VKAPI_CALL fake_cmd_bind_index_buffer_2(
+    VkCommandBuffer command_buffer, VkBuffer buffer, VkDeviceSize offset,
+    VkDeviceSize size, VkIndexType index_type) {
+    if (fake_render_bundle_step == 10U && command_buffer != VK_NULL_HANDLE &&
+        buffer == (VkBuffer)(uintptr_t)0x4000U && offset == 64U &&
+        size == 512U && index_type == VK_INDEX_TYPE_UINT32)
+        fake_render_bundle_step = 11U;
+    else
+        fake_render_bundle_violation = 1;
+}
+
+static void VKAPI_CALL fake_cmd_draw_indexed(
+    VkCommandBuffer command_buffer, uint32_t index_count,
+    uint32_t instance_count, uint32_t first_index, int32_t vertex_offset,
+    uint32_t first_instance) {
+    if (fake_render_bundle_step == 11U && command_buffer != VK_NULL_HANDLE &&
+        index_count == 6U && instance_count == 2U && first_index == 1U &&
+        vertex_offset == -3 && first_instance == 4U)
+        fake_render_bundle_step = 12U;
+    else
+        fake_render_bundle_violation = 1;
+}
+
+static void VKAPI_CALL fake_cmd_draw_indirect(
+    VkCommandBuffer command_buffer, VkBuffer buffer, VkDeviceSize offset,
+    uint32_t draw_count, uint32_t stride) {
+    if (fake_render_bundle_step == 12U && command_buffer != VK_NULL_HANDLE &&
+        buffer == (VkBuffer)(uintptr_t)0x4000U && offset == 128U &&
+        draw_count == 2U && stride == 16U)
+        fake_render_bundle_step = 13U;
+    else
+        fake_render_bundle_violation = 1;
+}
+
+static void VKAPI_CALL fake_cmd_draw_indexed_indirect(
+    VkCommandBuffer command_buffer, VkBuffer buffer, VkDeviceSize offset,
+    uint32_t draw_count, uint32_t stride) {
+    if (fake_render_bundle_step == 13U && command_buffer != VK_NULL_HANDLE &&
+        buffer == (VkBuffer)(uintptr_t)0x4000U && offset == 256U &&
+        draw_count == 3U && stride == 20U)
+        fake_render_bundle_step = 14U;
+    else
+        fake_render_bundle_violation = 1;
+}
+
+static void VKAPI_CALL fake_cmd_draw_indirect_count(
+    VkCommandBuffer command_buffer, VkBuffer buffer, VkDeviceSize offset,
+    VkBuffer count_buffer, VkDeviceSize count_buffer_offset,
+    uint32_t maximum_draw_count, uint32_t stride) {
+    if (fake_render_bundle_step == 14U && command_buffer != VK_NULL_HANDLE &&
+        buffer == (VkBuffer)(uintptr_t)0x4000U && offset == 384U &&
+        count_buffer == (VkBuffer)(uintptr_t)0x4000U &&
+        count_buffer_offset == 12U && maximum_draw_count == 4U &&
+        stride == 16U)
+        fake_render_bundle_step = 15U;
+    else
+        fake_render_bundle_violation = 1;
+}
+
+static void VKAPI_CALL fake_cmd_draw_indexed_indirect_count(
+    VkCommandBuffer command_buffer, VkBuffer buffer, VkDeviceSize offset,
+    VkBuffer count_buffer, VkDeviceSize count_buffer_offset,
+    uint32_t maximum_draw_count, uint32_t stride) {
+    if (fake_render_bundle_step == 15U && command_buffer != VK_NULL_HANDLE &&
+        buffer == (VkBuffer)(uintptr_t)0x4000U && offset == 512U &&
+        count_buffer == (VkBuffer)(uintptr_t)0x4000U &&
+        count_buffer_offset == 16U && maximum_draw_count == 5U &&
+        stride == 20U)
+        fake_render_bundle_step = 16U;
+    else
+        fake_render_bundle_violation = 1;
+}
+
+static void VKAPI_CALL fake_cmd_end_rendering(VkCommandBuffer command_buffer) {
+    if (fake_render_bundle_step == 16U && command_buffer != VK_NULL_HANDLE)
+        fake_render_bundle_step = 17U;
     else fake_render_bundle_violation = 1;
 }
 
@@ -2800,7 +2915,7 @@ static VkResult VKAPI_CALL fake_begin_command_buffer(
 static VkResult VKAPI_CALL fake_end_command_buffer(
     VkCommandBuffer command_buffer) {
     if (fake_render_bundle_step != 0U) {
-        if (fake_render_bundle_step != 8U || fake_render_bundle_violation != 0)
+        if (fake_render_bundle_step != 17U || fake_render_bundle_violation != 0)
             return VK_ERROR_INITIALIZATION_FAILED;
         fake_render_bundle_step = 0U;
     }
@@ -3545,6 +3660,22 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkCmdSetScissorWithCountEXT",
                      fake_cmd_set_scissor_with_count)
     BVB_DEVICE_MATCH("vkCmdDraw", fake_cmd_draw)
+    BVB_DEVICE_MATCH("vkCmdBindVertexBuffers", fake_cmd_bind_vertex_buffers)
+    BVB_DEVICE_MATCH("vkCmdBindVertexBuffers2", fake_cmd_bind_vertex_buffers_2)
+    BVB_DEVICE_MATCH("vkCmdBindVertexBuffers2EXT",
+                     fake_cmd_bind_vertex_buffers_2)
+    BVB_DEVICE_MATCH("vkCmdBindIndexBuffer", fake_cmd_bind_index_buffer)
+    BVB_DEVICE_MATCH("vkCmdBindIndexBuffer2", fake_cmd_bind_index_buffer_2)
+    BVB_DEVICE_MATCH("vkCmdBindIndexBuffer2KHR", fake_cmd_bind_index_buffer_2)
+    BVB_DEVICE_MATCH("vkCmdDrawIndexed", fake_cmd_draw_indexed)
+    BVB_DEVICE_MATCH("vkCmdDrawIndirect", fake_cmd_draw_indirect)
+    BVB_DEVICE_MATCH("vkCmdDrawIndexedIndirect", fake_cmd_draw_indexed_indirect)
+    BVB_DEVICE_MATCH("vkCmdDrawIndirectCount", fake_cmd_draw_indirect_count)
+    BVB_DEVICE_MATCH("vkCmdDrawIndirectCountKHR", fake_cmd_draw_indirect_count)
+    BVB_DEVICE_MATCH("vkCmdDrawIndexedIndirectCount",
+                     fake_cmd_draw_indexed_indirect_count)
+    BVB_DEVICE_MATCH("vkCmdDrawIndexedIndirectCountKHR",
+                     fake_cmd_draw_indexed_indirect_count)
     BVB_DEVICE_MATCH("vkCreatePipelineLayout", fake_create_pipeline_layout)
     BVB_DEVICE_MATCH("vkDestroyPipelineLayout", fake_destroy_pipeline_layout)
     BVB_DEVICE_MATCH("vkCreateGraphicsPipelines", fake_create_graphics_pipelines)

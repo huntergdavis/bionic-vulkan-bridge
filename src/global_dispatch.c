@@ -8296,6 +8296,330 @@ static void VKAPI_CALL bvb_bridge_vkCmdDraw(
                                      "render_record_rejected", shape, result);
 }
 
+static int shared_buffers_owned_by_command_device(
+    struct bvb_command_buffer_proxy *state, const uint64_t *buffer_ids,
+    uint32_t buffer_count) {
+    if (!command_stream_is_enabled()) return 1;
+    if (state == NULL || buffer_ids == NULL || buffer_count == 0U)
+        return -EINVAL;
+    if (pthread_mutex_lock(&state->stream_mutex) != 0) return -EDEADLK;
+    int result = 1;
+    for (uint32_t index = 0U; result > 0 && index < buffer_count; ++index) {
+        if (buffer_ids[index] == 0U) continue;
+        result = shared_object_owned_by_device_cached_locked(
+            state, buffer_ids[index], BVB_OBJECT_BUFFER);
+    }
+    if (result >= 0) (void)pthread_mutex_unlock(&state->stream_mutex);
+    return result;
+}
+
+static void submit_vertex_buffers_command(
+    struct bvb_command_buffer_proxy *state, uint16_t opcode,
+    const struct bvb_vulkan_bind_vertex_buffers_command *command,
+    const char *entry, const char *shape) {
+    const int owned = shared_buffers_owned_by_command_device(
+        state, command->buffer_ids, command->binding_count);
+    if (owned <= 0) {
+        poison_shared_command_stream(
+            state, entry, "vertex_buffer_ownership_rejected", shape,
+            owned < 0 ? owned : -EINVAL);
+        return;
+    }
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    int result = begin_single_render_record(state, bytes, &builder);
+    if (result == 0)
+        result = bvb_command_batch_append_vulkan_bind_vertex_buffers(
+            &builder, opcode, command);
+    if (result == 0)
+        result = finish_single_render_record(
+            state, bytes, &builder, entry, shape);
+    if (result != 0)
+        poison_shared_command_stream(
+            state, entry, "vertex_buffer_record_rejected", shape, result);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdBindVertexBuffers(
+    VkCommandBuffer command_buffer, uint32_t first_binding,
+    uint32_t binding_count, const VkBuffer *buffers,
+    const VkDeviceSize *offsets) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    const char *shape =
+        "uint32_t_value,uint32_t_value,VkBuffer_ptr,VkDeviceSize_ptr";
+    if (state == NULL || binding_count == 0U ||
+        binding_count > BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS ||
+        first_binding > UINT32_MAX - binding_count || buffers == NULL ||
+        offsets == NULL) {
+        poison_shared_command_stream(
+            state, "vkCmdBindVertexBuffers", "unsupported_vertex_shape",
+            shape, -ENOTSUP);
+        return;
+    }
+    struct bvb_vulkan_bind_vertex_buffers_command command = {
+        .first_binding = first_binding, .binding_count = binding_count,
+    };
+    for (uint32_t index = 0U; index < binding_count; ++index) {
+        command.buffer_ids[index] = non_dispatchable_wire_id(
+            &buffers[index], sizeof(buffers[index]));
+        command.offsets[index] = offsets[index];
+    }
+    submit_vertex_buffers_command(
+        state, BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS, &command,
+        "vkCmdBindVertexBuffers", shape);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdBindVertexBuffers2(
+    VkCommandBuffer command_buffer, uint32_t first_binding,
+    uint32_t binding_count, const VkBuffer *buffers,
+    const VkDeviceSize *offsets, const VkDeviceSize *sizes,
+    const VkDeviceSize *strides) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    const char *shape =
+        "uint32_t_value,uint32_t_value,VkBuffer_ptr,VkDeviceSize_ptr,VkDeviceSize_ptr,VkDeviceSize_ptr";
+    if (state == NULL || binding_count == 0U ||
+        binding_count > BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS ||
+        first_binding > UINT32_MAX - binding_count || buffers == NULL ||
+        offsets == NULL) {
+        poison_shared_command_stream(
+            state, "vkCmdBindVertexBuffers2", "unsupported_vertex_shape",
+            shape, -ENOTSUP);
+        return;
+    }
+    struct bvb_vulkan_bind_vertex_buffers_command command = {
+        .first_binding = first_binding, .binding_count = binding_count,
+        .has_sizes = sizes != NULL ? 1U : 0U,
+        .has_strides = strides != NULL ? 1U : 0U,
+    };
+    for (uint32_t index = 0U; index < binding_count; ++index) {
+        command.buffer_ids[index] = non_dispatchable_wire_id(
+            &buffers[index], sizeof(buffers[index]));
+        command.offsets[index] = offsets[index];
+        if (sizes != NULL) command.sizes[index] = sizes[index];
+        if (strides != NULL) command.strides[index] = strides[index];
+    }
+    submit_vertex_buffers_command(
+        state, BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS_2, &command,
+        "vkCmdBindVertexBuffers2", shape);
+}
+
+static void submit_index_buffer_command(
+    struct bvb_command_buffer_proxy *state, uint16_t opcode,
+    const struct bvb_vulkan_bind_index_buffer_command *command,
+    const char *entry, const char *shape) {
+    const int owned = shared_buffers_owned_by_command_device(
+        state, &command->buffer_id, 1U);
+    if (owned <= 0) {
+        poison_shared_command_stream(
+            state, entry, "index_buffer_ownership_rejected", shape,
+            owned < 0 ? owned : -EINVAL);
+        return;
+    }
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    int result = begin_single_render_record(state, bytes, &builder);
+    if (result == 0)
+        result = bvb_command_batch_append_vulkan_bind_index_buffer(
+            &builder, opcode, command);
+    if (result == 0)
+        result = finish_single_render_record(
+            state, bytes, &builder, entry, shape);
+    if (result != 0)
+        poison_shared_command_stream(
+            state, entry, "index_buffer_record_rejected", shape, result);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdBindIndexBuffer(
+    VkCommandBuffer command_buffer, VkBuffer buffer, VkDeviceSize offset,
+    VkIndexType index_type) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    const char *shape = "VkBuffer_value,VkDeviceSize_value,VkIndexType_value";
+    const struct bvb_vulkan_bind_index_buffer_command command = {
+        .buffer_id = non_dispatchable_wire_id(&buffer, sizeof(buffer)),
+        .offset = offset, .size = UINT64_MAX,
+        .index_type = (uint32_t)index_type,
+    };
+    submit_index_buffer_command(
+        state, BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER, &command,
+        "vkCmdBindIndexBuffer", shape);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdBindIndexBuffer2(
+    VkCommandBuffer command_buffer, VkBuffer buffer, VkDeviceSize offset,
+    VkDeviceSize size, VkIndexType index_type) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    const char *shape =
+        "VkBuffer_value,VkDeviceSize_value,VkDeviceSize_value,VkIndexType_value";
+    const struct bvb_vulkan_bind_index_buffer_command command = {
+        .buffer_id = non_dispatchable_wire_id(&buffer, sizeof(buffer)),
+        .offset = offset, .size = size,
+        .index_type = (uint32_t)index_type,
+    };
+    submit_index_buffer_command(
+        state, BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER_2, &command,
+        "vkCmdBindIndexBuffer2", shape);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdDrawIndexed(
+    VkCommandBuffer command_buffer, uint32_t index_count,
+    uint32_t instance_count, uint32_t first_index, int32_t vertex_offset,
+    uint32_t first_instance) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    const char *shape =
+        "uint32_t_value,uint32_t_value,uint32_t_value,int32_t_value,uint32_t_value";
+    const struct bvb_vulkan_draw_indexed_command command = {
+        .index_count = index_count, .instance_count = instance_count,
+        .first_index = first_index, .vertex_offset = vertex_offset,
+        .first_instance = first_instance,
+    };
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    int result = begin_single_render_record(state, bytes, &builder);
+    if (result == 0)
+        result = bvb_command_batch_append_vulkan_draw_indexed(
+            &builder, &command);
+    if (result == 0)
+        result = finish_single_render_record(
+            state, bytes, &builder, "vkCmdDrawIndexed", shape);
+    if (result != 0)
+        poison_shared_command_stream(
+            state, "vkCmdDrawIndexed", "draw_record_rejected", shape,
+            result);
+}
+
+static void submit_indirect_draw_command(
+    struct bvb_command_buffer_proxy *state, uint16_t opcode,
+    const struct bvb_vulkan_draw_indirect_command *command,
+    const char *entry, const char *shape) {
+    const int owned = shared_buffers_owned_by_command_device(
+        state, &command->buffer_id, 1U);
+    if (owned <= 0) {
+        poison_shared_command_stream(
+            state, entry, "indirect_buffer_ownership_rejected", shape,
+            owned < 0 ? owned : -EINVAL);
+        return;
+    }
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    int result = begin_single_render_record(state, bytes, &builder);
+    if (result == 0)
+        result = bvb_command_batch_append_vulkan_draw_indirect(
+            &builder, opcode, command);
+    if (result == 0)
+        result = finish_single_render_record(
+            state, bytes, &builder, entry, shape);
+    if (result != 0)
+        poison_shared_command_stream(
+            state, entry, "indirect_draw_record_rejected", shape, result);
+}
+
+static void bvb_bridge_vkCmdDrawIndirectCommon(
+    VkCommandBuffer command_buffer, VkBuffer buffer, VkDeviceSize offset,
+    uint32_t draw_count, uint32_t stride, uint16_t opcode,
+    const char *entry) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    const char *shape =
+        "VkBuffer_value,VkDeviceSize_value,uint32_t_value,uint32_t_value";
+    const struct bvb_vulkan_draw_indirect_command command = {
+        .buffer_id = non_dispatchable_wire_id(&buffer, sizeof(buffer)),
+        .offset = offset, .draw_count = draw_count, .stride = stride,
+    };
+    submit_indirect_draw_command(
+        state, opcode, &command, entry, shape);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdDrawIndirect(
+    VkCommandBuffer command_buffer, VkBuffer buffer, VkDeviceSize offset,
+    uint32_t draw_count, uint32_t stride) {
+    bvb_bridge_vkCmdDrawIndirectCommon(
+        command_buffer, buffer, offset, draw_count, stride,
+        BVB_COMMAND_VULKAN_DRAW_INDIRECT, "vkCmdDrawIndirect");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdDrawIndexedIndirect(
+    VkCommandBuffer command_buffer, VkBuffer buffer, VkDeviceSize offset,
+    uint32_t draw_count, uint32_t stride) {
+    bvb_bridge_vkCmdDrawIndirectCommon(
+        command_buffer, buffer, offset, draw_count, stride,
+        BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT,
+        "vkCmdDrawIndexedIndirect");
+}
+
+static void submit_indirect_count_draw_command(
+    struct bvb_command_buffer_proxy *state, uint16_t opcode,
+    const struct bvb_vulkan_draw_indirect_count_command *command,
+    const char *entry, const char *shape) {
+    const uint64_t buffers[2] = {
+        command->buffer_id, command->count_buffer_id};
+    const int owned = shared_buffers_owned_by_command_device(
+        state, buffers, 2U);
+    if (owned <= 0) {
+        poison_shared_command_stream(
+            state, entry, "indirect_count_ownership_rejected", shape,
+            owned < 0 ? owned : -EINVAL);
+        return;
+    }
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    int result = begin_single_render_record(state, bytes, &builder);
+    if (result == 0)
+        result = bvb_command_batch_append_vulkan_draw_indirect_count(
+            &builder, opcode, command);
+    if (result == 0)
+        result = finish_single_render_record(
+            state, bytes, &builder, entry, shape);
+    if (result != 0)
+        poison_shared_command_stream(
+            state, entry, "indirect_count_record_rejected", shape, result);
+}
+
+static void bvb_bridge_vkCmdDrawIndirectCountCommon(
+    VkCommandBuffer command_buffer, VkBuffer buffer, VkDeviceSize offset,
+    VkBuffer count_buffer, VkDeviceSize count_buffer_offset,
+    uint32_t maximum_draw_count, uint32_t stride, uint16_t opcode,
+    const char *entry) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    const char *shape =
+        "VkBuffer_value,VkDeviceSize_value,VkBuffer_value,VkDeviceSize_value,uint32_t_value,uint32_t_value";
+    const struct bvb_vulkan_draw_indirect_count_command command = {
+        .buffer_id = non_dispatchable_wire_id(&buffer, sizeof(buffer)),
+        .offset = offset,
+        .count_buffer_id = non_dispatchable_wire_id(
+            &count_buffer, sizeof(count_buffer)),
+        .count_buffer_offset = count_buffer_offset,
+        .maximum_draw_count = maximum_draw_count, .stride = stride,
+    };
+    submit_indirect_count_draw_command(
+        state, opcode, &command, entry, shape);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdDrawIndirectCount(
+    VkCommandBuffer command_buffer, VkBuffer buffer, VkDeviceSize offset,
+    VkBuffer count_buffer, VkDeviceSize count_buffer_offset,
+    uint32_t maximum_draw_count, uint32_t stride) {
+    bvb_bridge_vkCmdDrawIndirectCountCommon(
+        command_buffer, buffer, offset, count_buffer, count_buffer_offset,
+        maximum_draw_count, stride, BVB_COMMAND_VULKAN_DRAW_INDIRECT_COUNT,
+        "vkCmdDrawIndirectCount");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdDrawIndexedIndirectCount(
+    VkCommandBuffer command_buffer, VkBuffer buffer, VkDeviceSize offset,
+    VkBuffer count_buffer, VkDeviceSize count_buffer_offset,
+    uint32_t maximum_draw_count, uint32_t stride) {
+    bvb_bridge_vkCmdDrawIndirectCountCommon(
+        command_buffer, buffer, offset, count_buffer, count_buffer_offset,
+        maximum_draw_count, stride,
+        BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT_COUNT,
+        "vkCmdDrawIndexedIndirectCount");
+}
+
 static struct bvb_vulkan_image_subresource_layers
 transfer_image_layers(const VkImageSubresourceLayers *layers) {
     return (struct bvb_vulkan_image_subresource_layers){
@@ -10519,6 +10843,30 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     BVB_DEVICE_MATCH("vkCmdSetScissorWithCountEXT",
                      bvb_bridge_vkCmdSetScissorWithCount)
     BVB_DEVICE_MATCH("vkCmdDraw", bvb_bridge_vkCmdDraw)
+    BVB_DEVICE_MATCH("vkCmdBindVertexBuffers",
+                     bvb_bridge_vkCmdBindVertexBuffers)
+    BVB_DEVICE_MATCH("vkCmdBindVertexBuffers2",
+                     bvb_bridge_vkCmdBindVertexBuffers2)
+    BVB_DEVICE_MATCH("vkCmdBindVertexBuffers2EXT",
+                     bvb_bridge_vkCmdBindVertexBuffers2)
+    BVB_DEVICE_MATCH("vkCmdBindIndexBuffer",
+                     bvb_bridge_vkCmdBindIndexBuffer)
+    BVB_DEVICE_MATCH("vkCmdBindIndexBuffer2",
+                     bvb_bridge_vkCmdBindIndexBuffer2)
+    BVB_DEVICE_MATCH("vkCmdBindIndexBuffer2KHR",
+                     bvb_bridge_vkCmdBindIndexBuffer2)
+    BVB_DEVICE_MATCH("vkCmdDrawIndexed", bvb_bridge_vkCmdDrawIndexed)
+    BVB_DEVICE_MATCH("vkCmdDrawIndirect", bvb_bridge_vkCmdDrawIndirect)
+    BVB_DEVICE_MATCH("vkCmdDrawIndexedIndirect",
+                     bvb_bridge_vkCmdDrawIndexedIndirect)
+    BVB_DEVICE_MATCH("vkCmdDrawIndirectCount",
+                     bvb_bridge_vkCmdDrawIndirectCount)
+    BVB_DEVICE_MATCH("vkCmdDrawIndirectCountKHR",
+                     bvb_bridge_vkCmdDrawIndirectCount)
+    BVB_DEVICE_MATCH("vkCmdDrawIndexedIndirectCount",
+                     bvb_bridge_vkCmdDrawIndexedIndirectCount)
+    BVB_DEVICE_MATCH("vkCmdDrawIndexedIndirectCountKHR",
+                     bvb_bridge_vkCmdDrawIndexedIndirectCount)
     BVB_DEVICE_MATCH("vkCmdCopyBuffer2", bvb_bridge_vkCmdCopyBuffer2)
     BVB_DEVICE_MATCH("vkCmdCopyBufferToImage2",
                      bvb_bridge_vkCmdCopyBufferToImage2)

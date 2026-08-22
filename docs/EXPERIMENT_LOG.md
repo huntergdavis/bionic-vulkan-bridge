@@ -4239,3 +4239,33 @@ calls. Its exact next command poison is `vkCmdBindVertexBuffers2` at sequence
 `28b73050...e9f8`; visual inspection still shows the full-screen bridge
 triangle, not a Tomb Raider pixel. Cleanup preserved Steam PID 14565 and X11
 PID 13643 and removed only run-owned children.
+
+## E108 — vertex, index, and indirect draw family (2026-08-21)
+
+The screenshot-checked E107 run crossed the complete synchronization2 family
+and failed next at the actually invoked `vkCmdBindVertexBuffers2`, sequence 11.
+E108 implements the whole adjacent draw-input family in one gate: legacy and
+core/extension vertex binding, legacy and maintenance5 index binding, indexed
+drawing, direct/indexed indirect drawing, and both indirect-count variants.
+Thirteen public core/KHR/EXT names map to nine canonical command records 24–32.
+
+The largest record is a fixed 528-byte vertex-binding payload with at most 16
+bindings; other records are 24–48 bytes. All application arrays become
+canonical little-endian values and typed buffer IDs. Shared mode performs E080
+cached ownership checks and appends locally with zero recording RPC; strict
+mode sends one immediate record. The Bionic service revalidates every non-null
+buffer against the command-buffer device and reconstructs native arrays only
+inside the service.
+
+The cross-process fake native requires the exact nine-call sequence, including
+a null vertex slot, offsets/sizes/strides, both index types, signed vertex
+offset, and distinct indirect strides/count offsets. Strict mode now measures
+22 recording RPCs for the expanded test bundle while shared remains zero.
+Compact evidence is
+`docs/evidence/e108-vertex-index-draw-family-host.json`. The required
+`deja "BVB Tomb Raider vkCmdBindVertexBuffers2 vertex index draw indexed
+command family E108"` query returned no indexed implementation. E108 reuses
+E075/E075a immutable streams, E076 fixed records, E080 ownership caching,
+E101 immediate records, E105 family bundling, and E107's live tablet boundary.
+The host suite passes 68/68; tablet pixels and FPS remain unclaimed pending the
+next automatic screenshot-checked run.

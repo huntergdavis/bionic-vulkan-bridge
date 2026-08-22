@@ -6074,6 +6074,60 @@ static int validate_render_command_record(
     if (record->opcode == BVB_COMMAND_VULKAN_IMAGE_BARRIER_2)
         return validate_pipeline_barrier_record(
             context, record, expected_device_id);
+    if (record->opcode == BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS ||
+        record->opcode == BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS_2) {
+        struct bvb_vulkan_bind_vertex_buffers_command command;
+        int result = bvb_command_decode_vulkan_bind_vertex_buffers(
+            record, &command);
+        for (uint32_t index = 0U;
+             result == 0 && index < command.binding_count; ++index) {
+            if (command.buffer_ids[index] != 0U)
+                result = command_stream_child_matches_device(
+                    context, command.buffer_ids[index], BVB_OBJECT_BUFFER,
+                    expected_device_id);
+        }
+        return result;
+    }
+    if (record->opcode == BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER ||
+        record->opcode == BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER_2) {
+        struct bvb_vulkan_bind_index_buffer_command command;
+        int result = bvb_command_decode_vulkan_bind_index_buffer(
+            record, &command);
+        return result != 0 || command.buffer_id == 0U ? result :
+            command_stream_child_matches_device(
+                context, command.buffer_id, BVB_OBJECT_BUFFER,
+                expected_device_id);
+    }
+    if (record->opcode == BVB_COMMAND_VULKAN_DRAW_INDEXED) {
+        struct bvb_vulkan_draw_indexed_command command;
+        if (!*rendering) return -EPROTO;
+        return bvb_command_decode_vulkan_draw_indexed(record, &command);
+    }
+    if (record->opcode == BVB_COMMAND_VULKAN_DRAW_INDIRECT ||
+        record->opcode == BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT) {
+        struct bvb_vulkan_draw_indirect_command command;
+        int result = !*rendering ? -EPROTO :
+            bvb_command_decode_vulkan_draw_indirect(record, &command);
+        return result != 0 ? result : command_stream_child_matches_device(
+            context, command.buffer_id, BVB_OBJECT_BUFFER,
+            expected_device_id);
+    }
+    if (record->opcode == BVB_COMMAND_VULKAN_DRAW_INDIRECT_COUNT ||
+        record->opcode ==
+            BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT_COUNT) {
+        struct bvb_vulkan_draw_indirect_count_command command;
+        int result = !*rendering ? -EPROTO :
+            bvb_command_decode_vulkan_draw_indirect_count(record, &command);
+        if (result == 0)
+            result = command_stream_child_matches_device(
+                context, command.buffer_id, BVB_OBJECT_BUFFER,
+                expected_device_id);
+        if (result == 0)
+            result = command_stream_child_matches_device(
+                context, command.count_buffer_id, BVB_OBJECT_BUFFER,
+                expected_device_id);
+        return result;
+    }
     if (command_stream_transfer_opcode(record->opcode))
         return validate_transfer_command_record(
             context, record, expected_device_id);
@@ -6149,6 +6203,183 @@ static int replay_render_command_record(
         result = bvb_command_decode_vulkan_image_barrier_2(record, &barrier);
         return result != 0 ? result : replay_command_stream_image_barrier_2(
             context, command_buffer_id, &barrier);
+    }
+    if (record->opcode == BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS ||
+        record->opcode == BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS_2) {
+        struct bvb_vulkan_bind_vertex_buffers_command command;
+        result = bvb_command_decode_vulkan_bind_vertex_buffers(
+            record, &command);
+        VkBuffer buffers[BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS] = {0};
+        for (uint32_t index = 0U;
+             result == 0 && index < command.binding_count; ++index) {
+            if (command.buffer_ids[index] == 0U) continue;
+            uint64_t child_device_id = 0U, bits = 0U;
+            VkDevice child_device = VK_NULL_HANDLE;
+            result = resolve_device_child(
+                context, command.buffer_ids[index], BVB_OBJECT_BUFFER,
+                &child_device_id, &child_device, &bits);
+            if (result == 0 &&
+                (child_device_id != device_id || child_device != device))
+                result = -EPROTO;
+            if (result == 0) buffers[index] = buffer_from_bits(bits);
+        }
+        if (result != 0) return result;
+        if (record->opcode == BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS) {
+            PFN_vkCmdBindVertexBuffers call =
+                (PFN_vkCmdBindVertexBuffers)context->get_device_proc_addr(
+                    device, "vkCmdBindVertexBuffers");
+            if (call == NULL) return -ENOSYS;
+            call(command_buffer, command.first_binding,
+                 command.binding_count, buffers, command.offsets);
+        } else {
+            PFN_vkCmdBindVertexBuffers2 call =
+                (PFN_vkCmdBindVertexBuffers2)context->get_device_proc_addr(
+                    device, "vkCmdBindVertexBuffers2");
+            if (call == NULL)
+                call = (PFN_vkCmdBindVertexBuffers2)
+                    context->get_device_proc_addr(
+                        device, "vkCmdBindVertexBuffers2EXT");
+            if (call == NULL) return -ENOSYS;
+            call(command_buffer, command.first_binding,
+                 command.binding_count, buffers, command.offsets,
+                 command.has_sizes != 0U ? command.sizes : NULL,
+                 command.has_strides != 0U ? command.strides : NULL);
+        }
+        return 0;
+    }
+    if (record->opcode == BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER ||
+        record->opcode == BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER_2) {
+        struct bvb_vulkan_bind_index_buffer_command command;
+        result = bvb_command_decode_vulkan_bind_index_buffer(
+            record, &command);
+        VkBuffer buffer = VK_NULL_HANDLE;
+        if (result == 0 && command.buffer_id != 0U) {
+            uint64_t child_device_id = 0U, bits = 0U;
+            VkDevice child_device = VK_NULL_HANDLE;
+            result = resolve_device_child(
+                context, command.buffer_id, BVB_OBJECT_BUFFER,
+                &child_device_id, &child_device, &bits);
+            if (result == 0 &&
+                (child_device_id != device_id || child_device != device))
+                result = -EPROTO;
+            if (result == 0) buffer = buffer_from_bits(bits);
+        }
+        if (result != 0) return result;
+        if (record->opcode == BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER) {
+            PFN_vkCmdBindIndexBuffer call =
+                (PFN_vkCmdBindIndexBuffer)context->get_device_proc_addr(
+                    device, "vkCmdBindIndexBuffer");
+            if (call == NULL) return -ENOSYS;
+            call(command_buffer, buffer, command.offset,
+                 (VkIndexType)command.index_type);
+        } else {
+            PFN_vkCmdBindIndexBuffer2 call =
+                (PFN_vkCmdBindIndexBuffer2)context->get_device_proc_addr(
+                    device, "vkCmdBindIndexBuffer2");
+            if (call == NULL)
+                call = (PFN_vkCmdBindIndexBuffer2)
+                    context->get_device_proc_addr(
+                        device, "vkCmdBindIndexBuffer2KHR");
+            if (call == NULL) return -ENOSYS;
+            call(command_buffer, buffer, command.offset, command.size,
+                 (VkIndexType)command.index_type);
+        }
+        return 0;
+    }
+    if (record->opcode == BVB_COMMAND_VULKAN_DRAW_INDEXED) {
+        struct bvb_vulkan_draw_indexed_command command;
+        result = bvb_command_decode_vulkan_draw_indexed(record, &command);
+        PFN_vkCmdDrawIndexed call = result == 0
+            ? (PFN_vkCmdDrawIndexed)context->get_device_proc_addr(
+                  device, "vkCmdDrawIndexed") : NULL;
+        if (result != 0 || call == NULL) return result != 0 ? result : -ENOSYS;
+        call(command_buffer, command.index_count, command.instance_count,
+             command.first_index, command.vertex_offset,
+             command.first_instance);
+        return 0;
+    }
+    if (record->opcode == BVB_COMMAND_VULKAN_DRAW_INDIRECT ||
+        record->opcode == BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT) {
+        struct bvb_vulkan_draw_indirect_command command;
+        result = bvb_command_decode_vulkan_draw_indirect(record, &command);
+        uint64_t child_device_id = 0U, bits = 0U;
+        VkDevice child_device = VK_NULL_HANDLE;
+        if (result == 0)
+            result = resolve_device_child(
+                context, command.buffer_id, BVB_OBJECT_BUFFER,
+                &child_device_id, &child_device, &bits);
+        if (result == 0 &&
+            (child_device_id != device_id || child_device != device))
+            result = -EPROTO;
+        if (result != 0) return result;
+        if (record->opcode == BVB_COMMAND_VULKAN_DRAW_INDIRECT) {
+            PFN_vkCmdDrawIndirect call =
+                (PFN_vkCmdDrawIndirect)context->get_device_proc_addr(
+                    device, "vkCmdDrawIndirect");
+            if (call == NULL) return -ENOSYS;
+            call(command_buffer, buffer_from_bits(bits), command.offset,
+                 command.draw_count, command.stride);
+        } else {
+            PFN_vkCmdDrawIndexedIndirect call =
+                (PFN_vkCmdDrawIndexedIndirect)
+                    context->get_device_proc_addr(
+                        device, "vkCmdDrawIndexedIndirect");
+            if (call == NULL) return -ENOSYS;
+            call(command_buffer, buffer_from_bits(bits), command.offset,
+                 command.draw_count, command.stride);
+        }
+        return 0;
+    }
+    if (record->opcode == BVB_COMMAND_VULKAN_DRAW_INDIRECT_COUNT ||
+        record->opcode ==
+            BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT_COUNT) {
+        struct bvb_vulkan_draw_indirect_count_command command;
+        result = bvb_command_decode_vulkan_draw_indirect_count(
+            record, &command);
+        uint64_t draw_device_id = 0U, draw_bits = 0U;
+        uint64_t count_device_id = 0U, count_bits = 0U;
+        VkDevice draw_device = VK_NULL_HANDLE, count_device = VK_NULL_HANDLE;
+        if (result == 0)
+            result = resolve_device_child(
+                context, command.buffer_id, BVB_OBJECT_BUFFER,
+                &draw_device_id, &draw_device, &draw_bits);
+        if (result == 0)
+            result = resolve_device_child(
+                context, command.count_buffer_id, BVB_OBJECT_BUFFER,
+                &count_device_id, &count_device, &count_bits);
+        if (result == 0 &&
+            (draw_device_id != device_id || count_device_id != device_id ||
+             draw_device != device || count_device != device))
+            result = -EPROTO;
+        if (result != 0) return result;
+        if (record->opcode == BVB_COMMAND_VULKAN_DRAW_INDIRECT_COUNT) {
+            PFN_vkCmdDrawIndirectCount call =
+                (PFN_vkCmdDrawIndirectCount)
+                    context->get_device_proc_addr(
+                        device, "vkCmdDrawIndirectCount");
+            if (call == NULL)
+                call = (PFN_vkCmdDrawIndirectCount)
+                    context->get_device_proc_addr(
+                        device, "vkCmdDrawIndirectCountKHR");
+            if (call == NULL) return -ENOSYS;
+            call(command_buffer, buffer_from_bits(draw_bits), command.offset,
+                 buffer_from_bits(count_bits), command.count_buffer_offset,
+                 command.maximum_draw_count, command.stride);
+        } else {
+            PFN_vkCmdDrawIndexedIndirectCount call =
+                (PFN_vkCmdDrawIndexedIndirectCount)
+                    context->get_device_proc_addr(
+                        device, "vkCmdDrawIndexedIndirectCount");
+            if (call == NULL)
+                call = (PFN_vkCmdDrawIndexedIndirectCount)
+                    context->get_device_proc_addr(
+                        device, "vkCmdDrawIndexedIndirectCountKHR");
+            if (call == NULL) return -ENOSYS;
+            call(command_buffer, buffer_from_bits(draw_bits), command.offset,
+                 buffer_from_bits(count_bits), command.count_buffer_offset,
+                 command.maximum_draw_count, command.stride);
+        }
+        return 0;
     }
     if (record->opcode == BVB_COMMAND_BEGIN_RENDERING) {
         struct bvb_begin_rendering_command command;
@@ -6760,6 +6991,12 @@ int bvb_vulkan_global_context_validate_command_stream(
         } else if (record.opcode == BVB_COMMAND_VULKAN_PUSH_CONSTANTS) {
             result = validate_render_command_record(
                 context, &record, expected_device_id, &rendering);
+        } else if (record.opcode >=
+                       BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS &&
+                   record.opcode <=
+                       BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT_COUNT) {
+            result = validate_render_command_record(
+                context, &record, expected_device_id, &rendering);
         } else if (command_stream_transfer_opcode(record.opcode)) {
             result = validate_render_command_record(
                 context, &record, expected_device_id, &rendering);
@@ -6905,6 +7142,10 @@ int bvb_vulkan_global_context_replay_command_stream(
         } else if ((record.opcode >= BVB_COMMAND_BEGIN_RENDERING &&
                     record.opcode <= BVB_COMMAND_END_RENDERING) ||
                    record.opcode == BVB_COMMAND_VULKAN_PUSH_CONSTANTS ||
+                   (record.opcode >=
+                        BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS &&
+                    record.opcode <=
+                        BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT_COUNT) ||
                    command_stream_transfer_opcode(record.opcode)) {
             result = replay_render_command_record(
                 context, info.command_buffer_id, &record);

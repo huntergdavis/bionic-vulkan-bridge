@@ -45,6 +45,12 @@ enum {
     BVB_VULKAN_TRANSFER_SIZE = BVB_VULKAN_TRANSFER_HEADER_SIZE +
         BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS *
             BVB_VULKAN_TRANSFER_REGION_SIZE,
+    BVB_VULKAN_BIND_VERTEX_BUFFERS_SIZE = 16 +
+        4 * BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS * sizeof(uint64_t),
+    BVB_VULKAN_BIND_INDEX_BUFFER_SIZE = 32,
+    BVB_VULKAN_DRAW_INDEXED_SIZE = 24,
+    BVB_VULKAN_DRAW_INDIRECT_SIZE = 32,
+    BVB_VULKAN_DRAW_INDIRECT_COUNT_SIZE = 48,
 };
 
 _Static_assert(sizeof(float) == sizeof(uint32_t),
@@ -737,6 +743,125 @@ int bvb_command_batch_append_vulkan_transfer(
     return append_record(builder, opcode, payload, sizeof(payload));
 }
 
+int bvb_command_batch_append_vulkan_bind_vertex_buffers(
+    struct bvb_command_batch_builder *builder, uint16_t opcode,
+    const struct bvb_vulkan_bind_vertex_buffers_command *command) {
+    if ((opcode != BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS &&
+         opcode != BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS_2) ||
+        command == NULL || command->binding_count == 0U ||
+        command->binding_count > BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS ||
+        command->has_sizes > 1U || command->has_strides > 1U ||
+        (opcode == BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS &&
+         (command->has_sizes != 0U || command->has_strides != 0U)))
+        return -EINVAL;
+    uint8_t payload[BVB_VULKAN_BIND_VERTEX_BUFFERS_SIZE];
+    memset(payload, 0, sizeof(payload));
+    bvb_wire_put_u32(payload, command->first_binding);
+    bvb_wire_put_u32(payload + 4, command->binding_count);
+    bvb_wire_put_u32(payload + 8, command->has_sizes);
+    bvb_wire_put_u32(payload + 12, command->has_strides);
+    const size_t ids = 16U;
+    const size_t offsets = ids +
+        BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS * sizeof(uint64_t);
+    const size_t sizes = offsets +
+        BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS * sizeof(uint64_t);
+    const size_t strides = sizes +
+        BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS * sizeof(uint64_t);
+    for (uint32_t index = 0U; index < command->binding_count; ++index) {
+        if (command->buffer_ids[index] != 0U &&
+            bvb_handle_expect(command->buffer_ids[index],
+                              BVB_OBJECT_BUFFER) != 0)
+            return -EINVAL;
+        bvb_wire_put_u64(payload + ids + index * sizeof(uint64_t),
+                         command->buffer_ids[index]);
+        bvb_wire_put_u64(payload + offsets + index * sizeof(uint64_t),
+                         command->offsets[index]);
+        if (command->has_sizes != 0U)
+            bvb_wire_put_u64(payload + sizes + index * sizeof(uint64_t),
+                             command->sizes[index]);
+        if (command->has_strides != 0U)
+            bvb_wire_put_u64(payload + strides + index * sizeof(uint64_t),
+                             command->strides[index]);
+    }
+    return append_record(builder, opcode, payload, sizeof(payload));
+}
+
+int bvb_command_batch_append_vulkan_bind_index_buffer(
+    struct bvb_command_batch_builder *builder, uint16_t opcode,
+    const struct bvb_vulkan_bind_index_buffer_command *command) {
+    if ((opcode != BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER &&
+         opcode != BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER_2) ||
+        command == NULL ||
+        (command->buffer_id != 0U &&
+         bvb_handle_expect(command->buffer_id, BVB_OBJECT_BUFFER) != 0) ||
+        (opcode == BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER &&
+         command->size != UINT64_MAX) ||
+        (command->buffer_id != 0U && command->size == 0U))
+        return -EINVAL;
+    uint8_t payload[BVB_VULKAN_BIND_INDEX_BUFFER_SIZE] = {0};
+    bvb_wire_put_u64(payload, command->buffer_id);
+    bvb_wire_put_u64(payload + 8, command->offset);
+    bvb_wire_put_u64(payload + 16, command->size);
+    bvb_wire_put_u32(payload + 24, command->index_type);
+    return append_record(builder, opcode, payload, sizeof(payload));
+}
+
+int bvb_command_batch_append_vulkan_draw_indexed(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_draw_indexed_command *command) {
+    if (command == NULL) return -EINVAL;
+    uint8_t payload[BVB_VULKAN_DRAW_INDEXED_SIZE] = {0};
+    bvb_wire_put_u32(payload, command->index_count);
+    bvb_wire_put_u32(payload + 4, command->instance_count);
+    bvb_wire_put_u32(payload + 8, command->first_index);
+    bvb_wire_put_u32(payload + 12, (uint32_t)command->vertex_offset);
+    bvb_wire_put_u32(payload + 16, command->first_instance);
+    return append_record(builder, BVB_COMMAND_VULKAN_DRAW_INDEXED,
+                         payload, sizeof(payload));
+}
+
+int bvb_command_batch_append_vulkan_draw_indirect(
+    struct bvb_command_batch_builder *builder, uint16_t opcode,
+    const struct bvb_vulkan_draw_indirect_command *command) {
+    const bool indexed = opcode == BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT;
+    if ((!indexed && opcode != BVB_COMMAND_VULKAN_DRAW_INDIRECT) ||
+        command == NULL ||
+        bvb_handle_expect(command->buffer_id, BVB_OBJECT_BUFFER) != 0 ||
+        (command->stride & 3U) != 0U ||
+        (command->draw_count > 1U &&
+         command->stride < (indexed ? 20U : 16U)))
+        return -EINVAL;
+    uint8_t payload[BVB_VULKAN_DRAW_INDIRECT_SIZE] = {0};
+    bvb_wire_put_u64(payload, command->buffer_id);
+    bvb_wire_put_u64(payload + 8, command->offset);
+    bvb_wire_put_u32(payload + 16, command->draw_count);
+    bvb_wire_put_u32(payload + 20, command->stride);
+    return append_record(builder, opcode, payload, sizeof(payload));
+}
+
+int bvb_command_batch_append_vulkan_draw_indirect_count(
+    struct bvb_command_batch_builder *builder, uint16_t opcode,
+    const struct bvb_vulkan_draw_indirect_count_command *command) {
+    const bool indexed =
+        opcode == BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT_COUNT;
+    if ((!indexed && opcode != BVB_COMMAND_VULKAN_DRAW_INDIRECT_COUNT) ||
+        command == NULL ||
+        bvb_handle_expect(command->buffer_id, BVB_OBJECT_BUFFER) != 0 ||
+        bvb_handle_expect(command->count_buffer_id, BVB_OBJECT_BUFFER) != 0 ||
+        (command->stride & 3U) != 0U ||
+        (command->maximum_draw_count > 1U &&
+         command->stride < (indexed ? 20U : 16U)))
+        return -EINVAL;
+    uint8_t payload[BVB_VULKAN_DRAW_INDIRECT_COUNT_SIZE] = {0};
+    bvb_wire_put_u64(payload, command->buffer_id);
+    bvb_wire_put_u64(payload + 8, command->offset);
+    bvb_wire_put_u64(payload + 16, command->count_buffer_id);
+    bvb_wire_put_u64(payload + 24, command->count_buffer_offset);
+    bvb_wire_put_u32(payload + 32, command->maximum_draw_count);
+    bvb_wire_put_u32(payload + 36, command->stride);
+    return append_record(builder, opcode, payload, sizeof(payload));
+}
+
 int bvb_command_batch_append_record(
     struct bvb_command_batch_builder *builder,
     const struct bvb_command_record *record) {
@@ -827,6 +952,25 @@ static int expected_payload_size(uint16_t opcode, uint32_t *payload_size) {
         case BVB_COMMAND_VULKAN_BLIT_IMAGE_2:
         case BVB_COMMAND_VULKAN_RESOLVE_IMAGE_2:
             *payload_size = BVB_VULKAN_TRANSFER_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS:
+        case BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS_2:
+            *payload_size = BVB_VULKAN_BIND_VERTEX_BUFFERS_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER:
+        case BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER_2:
+            *payload_size = BVB_VULKAN_BIND_INDEX_BUFFER_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_DRAW_INDEXED:
+            *payload_size = BVB_VULKAN_DRAW_INDEXED_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_DRAW_INDIRECT:
+        case BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT:
+            *payload_size = BVB_VULKAN_DRAW_INDIRECT_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_DRAW_INDIRECT_COUNT:
+        case BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT_COUNT:
+            *payload_size = BVB_VULKAN_DRAW_INDIRECT_COUNT_SIZE;
             return 0;
         case BVB_COMMAND_VULKAN_BEGIN:
             *payload_size = BVB_VULKAN_BEGIN_SIZE;
@@ -1139,6 +1283,91 @@ static int validate_payload(uint16_t opcode, const uint8_t *payload) {
                     return -EPROTO;
             }
             return 0;
+        }
+        case BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS:
+        case BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS_2: {
+            const uint32_t count = bvb_wire_get_u32(payload + 4);
+            const uint32_t has_sizes = bvb_wire_get_u32(payload + 8);
+            const uint32_t has_strides = bvb_wire_get_u32(payload + 12);
+            if (count == 0U ||
+                count > BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS ||
+                has_sizes > 1U || has_strides > 1U ||
+                (opcode == BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS &&
+                 (has_sizes != 0U || has_strides != 0U)))
+                return -EPROTO;
+            const size_t ids = 16U;
+            const size_t offsets = ids +
+                BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS * sizeof(uint64_t);
+            const size_t sizes = offsets +
+                BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS * sizeof(uint64_t);
+            const size_t strides = sizes +
+                BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS * sizeof(uint64_t);
+            for (uint32_t index = 0U;
+                 index < BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS; ++index) {
+                const uint64_t id = bvb_wire_get_u64(
+                    payload + ids + index * sizeof(uint64_t));
+                const uint64_t offset = bvb_wire_get_u64(
+                    payload + offsets + index * sizeof(uint64_t));
+                const uint64_t size = bvb_wire_get_u64(
+                    payload + sizes + index * sizeof(uint64_t));
+                const uint64_t stride = bvb_wire_get_u64(
+                    payload + strides + index * sizeof(uint64_t));
+                if (index >= count) {
+                    if (id != 0U || offset != 0U || size != 0U ||
+                        stride != 0U) return -EPROTO;
+                    continue;
+                }
+                if ((id != 0U &&
+                     bvb_handle_expect(id, BVB_OBJECT_BUFFER) != 0) ||
+                    (has_sizes == 0U && size != 0U) ||
+                    (has_strides == 0U && stride != 0U))
+                    return -EPROTO;
+            }
+            return 0;
+        }
+        case BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER:
+        case BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER_2: {
+            const uint64_t id = bvb_wire_get_u64(payload);
+            const uint64_t size = bvb_wire_get_u64(payload + 16);
+            return (id != 0U &&
+                    bvb_handle_expect(id, BVB_OBJECT_BUFFER) != 0) ||
+                           (id != 0U && size == 0U) ||
+                           (opcode == BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER &&
+                            size != UINT64_MAX) ||
+                           bvb_wire_get_u32(payload + 28) != 0U
+                       ? -EPROTO : 0;
+        }
+        case BVB_COMMAND_VULKAN_DRAW_INDEXED:
+            return bvb_wire_get_u32(payload + 20) != 0U ? -EPROTO : 0;
+        case BVB_COMMAND_VULKAN_DRAW_INDIRECT:
+        case BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT: {
+            const uint32_t count = bvb_wire_get_u32(payload + 16);
+            const uint32_t stride = bvb_wire_get_u32(payload + 20);
+            const uint32_t minimum =
+                opcode == BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT
+                    ? 20U : 16U;
+            return bvb_handle_expect(bvb_wire_get_u64(payload),
+                                     BVB_OBJECT_BUFFER) != 0 ||
+                           (stride & 3U) != 0U ||
+                           (count > 1U && stride < minimum) ||
+                           bvb_wire_get_u64(payload + 24) != 0U
+                       ? -EPROTO : 0;
+        }
+        case BVB_COMMAND_VULKAN_DRAW_INDIRECT_COUNT:
+        case BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT_COUNT: {
+            const uint32_t count = bvb_wire_get_u32(payload + 32);
+            const uint32_t stride = bvb_wire_get_u32(payload + 36);
+            const uint32_t minimum =
+                opcode == BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT_COUNT
+                    ? 20U : 16U;
+            return bvb_handle_expect(bvb_wire_get_u64(payload),
+                                     BVB_OBJECT_BUFFER) != 0 ||
+                           bvb_handle_expect(bvb_wire_get_u64(payload + 16),
+                                             BVB_OBJECT_BUFFER) != 0 ||
+                           (stride & 3U) != 0U ||
+                           (count > 1U && stride < minimum) ||
+                           bvb_wire_get_u64(payload + 40) != 0U
+                       ? -EPROTO : 0;
         }
         case BVB_COMMAND_VULKAN_BEGIN:
             return (bvb_wire_get_u32(payload) & ~1U) != 0U ||
@@ -1761,5 +1990,109 @@ int bvb_command_decode_vulkan_transfer(
             .depth = bvb_wire_get_u32(wire + 120),
         };
     }
+    return 0;
+}
+
+int bvb_command_decode_vulkan_bind_vertex_buffers(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_bind_vertex_buffers_command *command) {
+    if (record == NULL || command == NULL ||
+        (record->opcode != BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS &&
+         record->opcode != BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS_2) ||
+        record->payload_length != BVB_VULKAN_BIND_VERTEX_BUFFERS_SIZE)
+        return -EINVAL;
+    memset(command, 0, sizeof(*command));
+    command->first_binding = bvb_wire_get_u32(record->payload);
+    command->binding_count = bvb_wire_get_u32(record->payload + 4);
+    command->has_sizes = bvb_wire_get_u32(record->payload + 8);
+    command->has_strides = bvb_wire_get_u32(record->payload + 12);
+    const size_t ids = 16U;
+    const size_t offsets = ids +
+        BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS * sizeof(uint64_t);
+    const size_t sizes = offsets +
+        BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS * sizeof(uint64_t);
+    const size_t strides = sizes +
+        BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS * sizeof(uint64_t);
+    for (uint32_t index = 0U; index < command->binding_count; ++index) {
+        command->buffer_ids[index] = bvb_wire_get_u64(
+            record->payload + ids + index * sizeof(uint64_t));
+        command->offsets[index] = bvb_wire_get_u64(
+            record->payload + offsets + index * sizeof(uint64_t));
+        command->sizes[index] = bvb_wire_get_u64(
+            record->payload + sizes + index * sizeof(uint64_t));
+        command->strides[index] = bvb_wire_get_u64(
+            record->payload + strides + index * sizeof(uint64_t));
+    }
+    return 0;
+}
+
+int bvb_command_decode_vulkan_bind_index_buffer(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_bind_index_buffer_command *command) {
+    if (record == NULL || command == NULL ||
+        (record->opcode != BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER &&
+         record->opcode != BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER_2) ||
+        record->payload_length != BVB_VULKAN_BIND_INDEX_BUFFER_SIZE)
+        return -EINVAL;
+    *command = (struct bvb_vulkan_bind_index_buffer_command){
+        .buffer_id = bvb_wire_get_u64(record->payload),
+        .offset = bvb_wire_get_u64(record->payload + 8),
+        .size = bvb_wire_get_u64(record->payload + 16),
+        .index_type = bvb_wire_get_u32(record->payload + 24),
+    };
+    return 0;
+}
+
+int bvb_command_decode_vulkan_draw_indexed(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_draw_indexed_command *command) {
+    if (record == NULL || command == NULL ||
+        record->opcode != BVB_COMMAND_VULKAN_DRAW_INDEXED ||
+        record->payload_length != BVB_VULKAN_DRAW_INDEXED_SIZE)
+        return -EINVAL;
+    *command = (struct bvb_vulkan_draw_indexed_command){
+        .index_count = bvb_wire_get_u32(record->payload),
+        .instance_count = bvb_wire_get_u32(record->payload + 4),
+        .first_index = bvb_wire_get_u32(record->payload + 8),
+        .vertex_offset = (int32_t)bvb_wire_get_u32(record->payload + 12),
+        .first_instance = bvb_wire_get_u32(record->payload + 16),
+    };
+    return 0;
+}
+
+int bvb_command_decode_vulkan_draw_indirect(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_draw_indirect_command *command) {
+    if (record == NULL || command == NULL ||
+        (record->opcode != BVB_COMMAND_VULKAN_DRAW_INDIRECT &&
+         record->opcode != BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT) ||
+        record->payload_length != BVB_VULKAN_DRAW_INDIRECT_SIZE)
+        return -EINVAL;
+    *command = (struct bvb_vulkan_draw_indirect_command){
+        .buffer_id = bvb_wire_get_u64(record->payload),
+        .offset = bvb_wire_get_u64(record->payload + 8),
+        .draw_count = bvb_wire_get_u32(record->payload + 16),
+        .stride = bvb_wire_get_u32(record->payload + 20),
+    };
+    return 0;
+}
+
+int bvb_command_decode_vulkan_draw_indirect_count(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_draw_indirect_count_command *command) {
+    if (record == NULL || command == NULL ||
+        (record->opcode != BVB_COMMAND_VULKAN_DRAW_INDIRECT_COUNT &&
+         record->opcode !=
+             BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT_COUNT) ||
+        record->payload_length != BVB_VULKAN_DRAW_INDIRECT_COUNT_SIZE)
+        return -EINVAL;
+    *command = (struct bvb_vulkan_draw_indirect_count_command){
+        .buffer_id = bvb_wire_get_u64(record->payload),
+        .offset = bvb_wire_get_u64(record->payload + 8),
+        .count_buffer_id = bvb_wire_get_u64(record->payload + 16),
+        .count_buffer_offset = bvb_wire_get_u64(record->payload + 24),
+        .maximum_draw_count = bvb_wire_get_u32(record->payload + 32),
+        .stride = bvb_wire_get_u32(record->payload + 36),
+    };
     return 0;
 }

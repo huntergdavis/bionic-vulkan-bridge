@@ -20,6 +20,147 @@ static bool generation_is_live(uint64_t command_buffer_id, void *user_data) {
     return command_buffer_id == *(const uint64_t *)user_data;
 }
 
+static int test_vertex_index_draw_family(void) {
+    uint8_t bytes[2048];
+    const uint64_t command_buffer =
+        bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 41U);
+    const uint64_t buffer = bvb_handle_id(BVB_OBJECT_BUFFER, 42U);
+    struct bvb_command_batch_builder builder;
+    CHECK(bvb_command_batch_begin(
+              &builder, bytes, sizeof(bytes), command_buffer, 19U) == 0);
+    const struct bvb_vulkan_bind_vertex_buffers_command vertex = {
+        .first_binding = 2U,
+        .binding_count = 2U,
+        .has_sizes = 1U,
+        .has_strides = 1U,
+        .buffer_ids = {buffer, 0U},
+        .offsets = {128U, 0U},
+        .sizes = {256U, UINT64_MAX},
+        .strides = {32U, 0U},
+    };
+    CHECK(bvb_command_batch_append_vulkan_bind_vertex_buffers(
+              &builder, BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS_2,
+              &vertex) == 0);
+    struct bvb_vulkan_bind_vertex_buffers_command legacy_vertex = vertex;
+    legacy_vertex.binding_count = 1U;
+    legacy_vertex.has_sizes = 0U;
+    legacy_vertex.has_strides = 0U;
+    CHECK(bvb_command_batch_append_vulkan_bind_vertex_buffers(
+              &builder, BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS,
+              &legacy_vertex) == 0);
+    CHECK(bvb_command_batch_append_vulkan_bind_index_buffer(
+              &builder, BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER,
+              &(const struct bvb_vulkan_bind_index_buffer_command){
+                  .buffer_id = buffer, .offset = 32U,
+                  .size = UINT64_MAX, .index_type = 0U,
+              }) == 0);
+    CHECK(bvb_command_batch_append_vulkan_bind_index_buffer(
+              &builder, BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER_2,
+              &(const struct bvb_vulkan_bind_index_buffer_command){
+                  .buffer_id = buffer, .offset = 64U,
+                  .size = 512U, .index_type = 1U,
+              }) == 0);
+    CHECK(bvb_command_batch_append_vulkan_draw_indexed(
+              &builder,
+              &(const struct bvb_vulkan_draw_indexed_command){
+                  .index_count = 6U, .instance_count = 2U,
+                  .first_index = 1U, .vertex_offset = -3,
+                  .first_instance = 4U,
+              }) == 0);
+    CHECK(bvb_command_batch_append_vulkan_draw_indirect(
+              &builder, BVB_COMMAND_VULKAN_DRAW_INDIRECT,
+              &(const struct bvb_vulkan_draw_indirect_command){
+                  .buffer_id = buffer, .offset = 128U,
+                  .draw_count = 2U, .stride = 16U,
+              }) == 0);
+    CHECK(bvb_command_batch_append_vulkan_draw_indirect(
+              &builder, BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT,
+              &(const struct bvb_vulkan_draw_indirect_command){
+                  .buffer_id = buffer, .offset = 256U,
+                  .draw_count = 3U, .stride = 20U,
+              }) == 0);
+    CHECK(bvb_command_batch_append_vulkan_draw_indirect_count(
+              &builder, BVB_COMMAND_VULKAN_DRAW_INDIRECT_COUNT,
+              &(const struct bvb_vulkan_draw_indirect_count_command){
+                  .buffer_id = buffer, .offset = 384U,
+                  .count_buffer_id = buffer,
+                  .count_buffer_offset = 12U,
+                  .maximum_draw_count = 4U, .stride = 16U,
+              }) == 0);
+    CHECK(bvb_command_batch_append_vulkan_draw_indirect_count(
+              &builder, BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT_COUNT,
+              &(const struct bvb_vulkan_draw_indirect_count_command){
+                  .buffer_id = buffer, .offset = 512U,
+                  .count_buffer_id = buffer,
+                  .count_buffer_offset = 16U,
+                  .maximum_draw_count = 5U, .stride = 20U,
+              }) == 0);
+    size_t length = 0U;
+    CHECK(bvb_command_batch_finish(&builder, &length) == 0);
+    struct bvb_command_batch_info info;
+    CHECK(bvb_command_batch_validate(bytes, length, &info) == 0);
+    CHECK(info.command_buffer_id == command_buffer && info.sequence == 19U &&
+          info.command_count == 9U && info.byte_length == length);
+    struct bvb_command_batch_iterator iterator;
+    struct bvb_command_record record;
+    CHECK(bvb_command_batch_iterator_init(&iterator, bytes, length) == 0);
+    struct bvb_vulkan_bind_vertex_buffers_command decoded_vertex;
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    CHECK(bvb_command_decode_vulkan_bind_vertex_buffers(
+              &record, &decoded_vertex) == 0);
+    CHECK(decoded_vertex.first_binding == 2U &&
+          decoded_vertex.binding_count == 2U &&
+          decoded_vertex.buffer_ids[0] == buffer &&
+          decoded_vertex.buffer_ids[1] == 0U &&
+          decoded_vertex.sizes[0] == 256U &&
+          decoded_vertex.strides[0] == 32U);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    CHECK(bvb_command_decode_vulkan_bind_vertex_buffers(
+              &record, &decoded_vertex) == 0);
+    CHECK(decoded_vertex.binding_count == 1U &&
+          decoded_vertex.has_sizes == 0U &&
+          decoded_vertex.has_strides == 0U);
+    struct bvb_vulkan_bind_index_buffer_command decoded_index;
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    CHECK(bvb_command_decode_vulkan_bind_index_buffer(
+              &record, &decoded_index) == 0);
+    CHECK(decoded_index.size == UINT64_MAX && decoded_index.offset == 32U);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    CHECK(bvb_command_decode_vulkan_bind_index_buffer(
+              &record, &decoded_index) == 0);
+    CHECK(decoded_index.size == 512U && decoded_index.index_type == 1U);
+    struct bvb_vulkan_draw_indexed_command decoded_draw;
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    CHECK(bvb_command_decode_vulkan_draw_indexed(&record, &decoded_draw) == 0);
+    CHECK(decoded_draw.vertex_offset == -3 && decoded_draw.index_count == 6U);
+    for (uint32_t index = 0U; index < 2U; ++index) {
+        struct bvb_vulkan_draw_indirect_command decoded;
+        CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+        CHECK(bvb_command_decode_vulkan_draw_indirect(&record, &decoded) == 0);
+        CHECK(decoded.buffer_id == buffer);
+        CHECK(decoded.stride == (index == 0U ? 16U : 20U));
+    }
+    for (uint32_t index = 0U; index < 2U; ++index) {
+        struct bvb_vulkan_draw_indirect_count_command decoded;
+        CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+        CHECK(bvb_command_decode_vulkan_draw_indirect_count(
+                  &record, &decoded) == 0);
+        CHECK(decoded.buffer_id == buffer && decoded.count_buffer_id == buffer);
+        CHECK(decoded.maximum_draw_count == (index == 0U ? 4U : 5U));
+    }
+    CHECK(bvb_command_batch_next(&iterator, &record) == 1);
+
+    uint8_t corrupted[sizeof(bytes)];
+    memcpy(corrupted, bytes, length);
+    /* Inactive vertex slots are canonical zeroes. */
+    bvb_wire_put_u64(corrupted + BVB_COMMAND_BATCH_HEADER_SIZE +
+                         BVB_COMMAND_RECORD_HEADER_SIZE + 16U +
+                         2U * sizeof(uint64_t),
+                     buffer);
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+    return 0;
+}
+
 static int test_handles(void) {
     const uint64_t device = bvb_handle_id(BVB_OBJECT_DEVICE, 1U);
     const uint64_t pipeline = bvb_handle_id(BVB_OBJECT_PIPELINE, 9U);
@@ -703,6 +844,7 @@ static int test_vulkan_command_stream(void) {
 
 int main(void) {
     CHECK(test_handles() == 0);
+    CHECK(test_vertex_index_draw_family() == 0);
     CHECK(test_batch() == 0);
     CHECK(test_transfer_batch() == 0);
     CHECK(test_vulkan_transfer_family() == 0);

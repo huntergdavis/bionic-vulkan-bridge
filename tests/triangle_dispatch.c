@@ -203,6 +203,25 @@ int main(void) {
                                "vkCmdSetScissorWithCount") == 0 ||
                         strcmp(entry->name,
                                "vkCmdSetScissorWithCountEXT") == 0 ||
+                        strcmp(entry->name, "vkCmdBindVertexBuffers") == 0 ||
+                        strcmp(entry->name, "vkCmdBindVertexBuffers2") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdBindVertexBuffers2EXT") == 0 ||
+                        strcmp(entry->name, "vkCmdBindIndexBuffer") == 0 ||
+                        strcmp(entry->name, "vkCmdBindIndexBuffer2") == 0 ||
+                        strcmp(entry->name, "vkCmdBindIndexBuffer2KHR") == 0 ||
+                        strcmp(entry->name, "vkCmdDrawIndexed") == 0 ||
+                        strcmp(entry->name, "vkCmdDrawIndirect") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdDrawIndexedIndirect") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdDrawIndirectCount") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdDrawIndirectCountKHR") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdDrawIndexedIndirectCount") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdDrawIndexedIndirectCountKHR") == 0 ||
                         strcmp(entry->name,
                                "vkUpdateDescriptorSetWithTemplate") == 0 ||
                         strcmp(entry->name,
@@ -226,8 +245,8 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 105U);
-    CHECK(required_count == 335U);
+    CHECK(executable_count == 118U);
+    CHECK(required_count == 322U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");

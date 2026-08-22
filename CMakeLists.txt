@@ -1194,4 +1194,17 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_vulkan.c"
   )
+  add_test(
+    NAME e108-vertex-index-draw-family-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e108_vertex_draw_family_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e108-vertex-index-draw-family-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/command_batch.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/command_batch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_vulkan.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/config/e069-init-image-commands-dispatch.txt"
+  )
 endif()

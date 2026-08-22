@@ -37,6 +37,15 @@ enum {
     BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE = 21,
     BVB_COMMAND_VULKAN_INIT_IMAGE_BARRIER = 22,
     BVB_COMMAND_VULKAN_END = 23,
+    BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS = 24,
+    BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS_2 = 25,
+    BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER = 26,
+    BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER_2 = 27,
+    BVB_COMMAND_VULKAN_DRAW_INDEXED = 28,
+    BVB_COMMAND_VULKAN_DRAW_INDIRECT = 29,
+    BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT = 30,
+    BVB_COMMAND_VULKAN_DRAW_INDIRECT_COUNT = 31,
+    BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT_COUNT = 32,
     BVB_COMMAND_VULKAN_MAX_INIT_IMAGE_BARRIERS = 4,
     BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS = 16,
     BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS = 16,
@@ -47,6 +56,7 @@ enum {
     BVB_COMMAND_VULKAN_MAX_PUSH_CONSTANT_BYTES = 256,
     BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS = 16,
     BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS = 8,
+    BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS = 16,
 };
 
 struct bvb_vulkan_rendering_attachment {
@@ -261,6 +271,48 @@ struct bvb_vulkan_transfer_command {
         regions[BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS];
 };
 
+struct bvb_vulkan_bind_vertex_buffers_command {
+    uint32_t first_binding;
+    uint32_t binding_count;
+    uint32_t has_sizes;
+    uint32_t has_strides;
+    uint64_t buffer_ids[BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS];
+    uint64_t offsets[BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS];
+    uint64_t sizes[BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS];
+    uint64_t strides[BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS];
+};
+
+struct bvb_vulkan_bind_index_buffer_command {
+    uint64_t buffer_id;
+    uint64_t offset;
+    uint64_t size;
+    uint32_t index_type;
+};
+
+struct bvb_vulkan_draw_indexed_command {
+    uint32_t index_count;
+    uint32_t instance_count;
+    uint32_t first_index;
+    int32_t vertex_offset;
+    uint32_t first_instance;
+};
+
+struct bvb_vulkan_draw_indirect_command {
+    uint64_t buffer_id;
+    uint64_t offset;
+    uint32_t draw_count;
+    uint32_t stride;
+};
+
+struct bvb_vulkan_draw_indirect_count_command {
+    uint64_t buffer_id;
+    uint64_t offset;
+    uint64_t count_buffer_id;
+    uint64_t count_buffer_offset;
+    uint32_t maximum_draw_count;
+    uint32_t stride;
+};
+
 struct bvb_command_batch_builder {
     uint8_t *bytes;
     size_t capacity;
@@ -358,6 +410,21 @@ int bvb_command_batch_append_vulkan_push_constants(
 int bvb_command_batch_append_vulkan_transfer(
     struct bvb_command_batch_builder *builder, uint16_t opcode,
     const struct bvb_vulkan_transfer_command *command);
+int bvb_command_batch_append_vulkan_bind_vertex_buffers(
+    struct bvb_command_batch_builder *builder, uint16_t opcode,
+    const struct bvb_vulkan_bind_vertex_buffers_command *command);
+int bvb_command_batch_append_vulkan_bind_index_buffer(
+    struct bvb_command_batch_builder *builder, uint16_t opcode,
+    const struct bvb_vulkan_bind_index_buffer_command *command);
+int bvb_command_batch_append_vulkan_draw_indexed(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_draw_indexed_command *command);
+int bvb_command_batch_append_vulkan_draw_indirect(
+    struct bvb_command_batch_builder *builder, uint16_t opcode,
+    const struct bvb_vulkan_draw_indirect_command *command);
+int bvb_command_batch_append_vulkan_draw_indirect_count(
+    struct bvb_command_batch_builder *builder, uint16_t opcode,
+    const struct bvb_vulkan_draw_indirect_count_command *command);
 int bvb_command_batch_append_record(
     struct bvb_command_batch_builder *builder,
     const struct bvb_command_record *record);
@@ -430,5 +497,20 @@ int bvb_command_decode_vulkan_push_constants(
 int bvb_command_decode_vulkan_transfer(
     const struct bvb_command_record *record,
     struct bvb_vulkan_transfer_command *command);
+int bvb_command_decode_vulkan_bind_vertex_buffers(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_bind_vertex_buffers_command *command);
+int bvb_command_decode_vulkan_bind_index_buffer(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_bind_index_buffer_command *command);
+int bvb_command_decode_vulkan_draw_indexed(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_draw_indexed_command *command);
+int bvb_command_decode_vulkan_draw_indirect(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_draw_indirect_command *command);
+int bvb_command_decode_vulkan_draw_indirect_count(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_draw_indirect_count_command *command);
 
 #endif

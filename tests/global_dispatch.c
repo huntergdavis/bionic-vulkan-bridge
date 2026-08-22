@@ -923,6 +923,15 @@ int main(void) {
     PFN_vkCmdSetViewportWithCount cmd_set_viewport_with_count = NULL;
     PFN_vkCmdSetScissorWithCount cmd_set_scissor_with_count = NULL;
     PFN_vkCmdDraw cmd_draw = NULL;
+    PFN_vkCmdBindVertexBuffers cmd_bind_vertex_buffers = NULL;
+    PFN_vkCmdBindVertexBuffers2 cmd_bind_vertex_buffers_2 = NULL;
+    PFN_vkCmdBindIndexBuffer cmd_bind_index_buffer = NULL;
+    PFN_vkCmdBindIndexBuffer2 cmd_bind_index_buffer_2 = NULL;
+    PFN_vkCmdDrawIndexed cmd_draw_indexed = NULL;
+    PFN_vkCmdDrawIndirect cmd_draw_indirect = NULL;
+    PFN_vkCmdDrawIndexedIndirect cmd_draw_indexed_indirect = NULL;
+    PFN_vkCmdDrawIndirectCount cmd_draw_indirect_count = NULL;
+    PFN_vkCmdDrawIndexedIndirectCount cmd_draw_indexed_indirect_count = NULL;
     PFN_vkCreatePipelineLayout create_pipeline_layout = NULL;
     PFN_vkDestroyPipelineLayout destroy_pipeline_layout = NULL;
     PFN_vkCreateGraphicsPipelines create_graphics_pipelines = NULL;
@@ -1133,6 +1142,23 @@ int main(void) {
     CHECK(vkGetDeviceProcAddr(device, "vkCmdSetScissorWithCountEXT") ==
           erased);
     RESOLVE_DESCRIPTOR(vkCmdDraw, cmd_draw);
+    RESOLVE_DESCRIPTOR(vkCmdBindVertexBuffers, cmd_bind_vertex_buffers);
+    RESOLVE_DESCRIPTOR(vkCmdBindVertexBuffers2, cmd_bind_vertex_buffers_2);
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdBindVertexBuffers2EXT") ==
+          erased);
+    RESOLVE_DESCRIPTOR(vkCmdBindIndexBuffer, cmd_bind_index_buffer);
+    RESOLVE_DESCRIPTOR(vkCmdBindIndexBuffer2, cmd_bind_index_buffer_2);
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdBindIndexBuffer2KHR") == erased);
+    RESOLVE_DESCRIPTOR(vkCmdDrawIndexed, cmd_draw_indexed);
+    RESOLVE_DESCRIPTOR(vkCmdDrawIndirect, cmd_draw_indirect);
+    RESOLVE_DESCRIPTOR(vkCmdDrawIndexedIndirect, cmd_draw_indexed_indirect);
+    RESOLVE_DESCRIPTOR(vkCmdDrawIndirectCount, cmd_draw_indirect_count);
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdDrawIndirectCountKHR") ==
+          erased);
+    RESOLVE_DESCRIPTOR(vkCmdDrawIndexedIndirectCount,
+                       cmd_draw_indexed_indirect_count);
+    CHECK(vkGetDeviceProcAddr(
+              device, "vkCmdDrawIndexedIndirectCountKHR") == erased);
     RESOLVE_DESCRIPTOR(vkCreatePipelineLayout, create_pipeline_layout);
     RESOLVE_DESCRIPTOR(vkDestroyPipelineLayout, destroy_pipeline_layout);
     RESOLVE_DESCRIPTOR(vkCreateGraphicsPipelines, create_graphics_pipelines);
@@ -2843,6 +2869,26 @@ int main(void) {
                        VK_SHADER_STAGE_FRAGMENT_BIT, 0U,
                        sizeof(render_constants), render_constants);
     cmd_draw(command_buffer, 3U, 1U, 0U, 0U);
+    const VkBuffer vertex_buffers[2] = {buffer, VK_NULL_HANDLE};
+    const VkDeviceSize vertex_offsets[2] = {128U, 0U};
+    const VkDeviceSize vertex_sizes[2] = {256U, VK_WHOLE_SIZE};
+    const VkDeviceSize vertex_strides[2] = {32U, 0U};
+    cmd_bind_vertex_buffers(
+        command_buffer, 2U, 1U, vertex_buffers, vertex_offsets);
+    cmd_bind_vertex_buffers_2(
+        command_buffer, 3U, 2U, vertex_buffers, vertex_offsets,
+        vertex_sizes, vertex_strides);
+    cmd_bind_index_buffer(
+        command_buffer, buffer, 32U, VK_INDEX_TYPE_UINT16);
+    cmd_bind_index_buffer_2(
+        command_buffer, buffer, 64U, 512U, VK_INDEX_TYPE_UINT32);
+    cmd_draw_indexed(command_buffer, 6U, 2U, 1U, -3, 4U);
+    cmd_draw_indirect(command_buffer, buffer, 128U, 2U, 16U);
+    cmd_draw_indexed_indirect(command_buffer, buffer, 256U, 3U, 20U);
+    cmd_draw_indirect_count(
+        command_buffer, buffer, 384U, buffer, 12U, 4U, 16U);
+    cmd_draw_indexed_indirect_count(
+        command_buffer, buffer, 512U, buffer, 16U, 5U, 20U);
     cmd_end_rendering(command_buffer);
     cmd_fill_buffer(command_buffer, buffer, 0U, 4096U, UINT32_C(0xa5c3f00d));
     const VkImageSubresourceRange init_image_range = {
@@ -2918,7 +2964,7 @@ int main(void) {
     CHECK(exchanges_after_recording >= exchanges_before_recording);
     const uint64_t recording_rtts =
         exchanges_after_recording - exchanges_before_recording;
-    CHECK(recording_rtts == (shared_command_stream ? 0U : 13U));
+    CHECK(recording_rtts == (shared_command_stream ? 0U : 22U));
     if (shared_mapped_memory) mapped[0] = UINT8_C(0x7b);
     const uint64_t exchanges_before_submit =
         bvb_global_dispatch_exchange_count();

@@ -381,6 +381,15 @@ memory, buffer, and image arrays. Strict clients send one pointer-free record;
 shared clients append it locally, while the Bionic service remains the only
 side that reconstructs native barriers and authoritatively resolves buffer and
 image ownership.
+
+E108 treats vertex/index binding and indirect drawing as one hot-path family.
+Nine canonical record IDs cover thirteen core/KHR/EXT public names without
+adding per-command sockets in shared mode. Fixed arrays contain typed buffer
+IDs and scalar offsets/sizes/strides only; the Bionic service authoritatively
+checks same-device ancestry and reconstructs native handles and arrays. Null
+vertex/index slots remain representable for the enabled maintenance/null-
+descriptor feature set, while malformed or cross-device streams poison the
+whole command buffer before native replay.
 One fixed 600-byte, pointer-free record carries up to eight color attachments,
 optional depth and stencil attachments, resolve image views, clear-value bits,
 render flags/area/multiview, and terminal attachment-feedback-loop metadata.
