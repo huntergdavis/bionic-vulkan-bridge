@@ -1200,6 +1200,19 @@ BVB_GLOBAL_EXPORT uint64_t bvb_image_view_proxy_id(VkImageView image_view) {
     return result;
 }
 
+BVB_GLOBAL_EXPORT uint64_t bvb_descriptor_set_proxy_id(
+    VkDescriptorSet descriptor_set) {
+    const uint64_t wire_id = non_dispatchable_wire_id(
+        &descriptor_set, sizeof(descriptor_set));
+    uint64_t result = 0U;
+    if (pthread_mutex_lock(&bvb_global_client.mutex) == 0) {
+        result = resource_proxy_locked(wire_id, BVB_OBJECT_DESCRIPTOR_SET) ==
+                NULL ? 0U : wire_id;
+        (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    }
+    return result;
+}
+
 BVB_GLOBAL_EXPORT uint64_t bvb_memory_proxy_id(VkDeviceMemory memory) {
     const uint64_t wire_id = non_dispatchable_wire_id(&memory, sizeof(memory));
     uint64_t result = 0U;
@@ -4793,6 +4806,44 @@ static void VKAPI_CALL bvb_bridge_vkDestroyDescriptorPool(
         device, non_dispatchable_wire_id(&pool, sizeof(pool)),
         BVB_OBJECT_DESCRIPTOR_POOL,
         BVB_OPCODE_VULKAN_DESCRIPTOR_OBJECT_DESTROY, allocator);
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkResetDescriptorPool(
+    VkDevice device, VkDescriptorPool descriptor_pool,
+    VkDescriptorPoolResetFlags flags) {
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || flags != 0U ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    const uint64_t pool_id = non_dispatchable_wire_id(
+        &descriptor_pool, sizeof(descriptor_pool));
+    struct bvb_resource_proxy *pool_state =
+        resource_proxy_locked(pool_id, BVB_OBJECT_DESCRIPTOR_POOL);
+    VkResult vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    if (pool_state != NULL && pool_state->parent_id == device_state->wire_id) {
+        const struct bvb_vulkan_descriptor_pool_reset_request reset_request = {
+            .descriptor_pool_id = pool_id,
+            .flags = flags,
+        };
+        uint8_t payload[BVB_VULKAN_DESCRIPTOR_POOL_RESET_REQUEST_SIZE];
+        int result = bvb_protocol_encode_vulkan_descriptor_pool_reset_request(
+            payload, &reset_request);
+        if (result == 0) {
+            vulkan_result = result_request_locked(
+                BVB_OPCODE_VULKAN_DESCRIPTOR_POOL_RESET, payload,
+                sizeof(payload));
+            if (vulkan_result == VK_SUCCESS) {
+                if (pthread_rwlock_wrlock(&bvb_object_registry_lock) != 0) {
+                    vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+                } else {
+                    remove_descriptor_sets_for_pool_locked(pool_id);
+                    (void)pthread_rwlock_unlock(&bvb_object_registry_lock);
+                }
+            }
+        }
+    }
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return vulkan_result;
 }
 
 static VkResult VKAPI_CALL bvb_bridge_vkAllocateDescriptorSets(
@@ -11584,6 +11635,8 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
                      bvb_bridge_vkCreateDescriptorPool)
     BVB_DEVICE_MATCH("vkDestroyDescriptorPool",
                      bvb_bridge_vkDestroyDescriptorPool)
+    BVB_DEVICE_MATCH("vkResetDescriptorPool",
+                     bvb_bridge_vkResetDescriptorPool)
     BVB_DEVICE_MATCH("vkAllocateDescriptorSets",
                      bvb_bridge_vkAllocateDescriptorSets)
     BVB_DEVICE_MATCH("vkCreateSampler", bvb_bridge_vkCreateSampler)

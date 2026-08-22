@@ -170,6 +170,38 @@ int bvb_protocol_decode_vulkan_descriptor_pool_create_request(
     return 0;
 }
 
+int bvb_protocol_encode_vulkan_descriptor_pool_reset_request(
+    uint8_t output[BVB_VULKAN_DESCRIPTOR_POOL_RESET_REQUEST_SIZE],
+    const struct bvb_vulkan_descriptor_pool_reset_request *request) {
+    if (output == NULL || request == NULL ||
+        !wire_id_is(request->descriptor_pool_id,
+                    BVB_OBJECT_DESCRIPTOR_POOL) ||
+        request->flags != 0U) {
+        return -EINVAL;
+    }
+    memset(output, 0, BVB_VULKAN_DESCRIPTOR_POOL_RESET_REQUEST_SIZE);
+    bvb_wire_put_u64(output, request->descriptor_pool_id);
+    bvb_wire_put_u32(output + 8, request->flags);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_descriptor_pool_reset_request(
+    const uint8_t input[BVB_VULKAN_DESCRIPTOR_POOL_RESET_REQUEST_SIZE],
+    struct bvb_vulkan_descriptor_pool_reset_request *request) {
+    if (input == NULL || request == NULL || bvb_wire_get_u32(input + 12) != 0U)
+        return -EINVAL;
+    const struct bvb_vulkan_descriptor_pool_reset_request decoded = {
+        .descriptor_pool_id = bvb_wire_get_u64(input),
+        .flags = bvb_wire_get_u32(input + 8),
+    };
+    uint8_t validation[BVB_VULKAN_DESCRIPTOR_POOL_RESET_REQUEST_SIZE];
+    if (bvb_protocol_encode_vulkan_descriptor_pool_reset_request(
+            validation, &decoded) != 0)
+        return -EPROTO;
+    *request = decoded;
+    return 0;
+}
+
 int bvb_protocol_encode_vulkan_descriptor_set_allocate_request(
     uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
     const struct bvb_vulkan_descriptor_set_allocate_request *request,

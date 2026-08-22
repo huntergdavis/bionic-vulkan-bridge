@@ -12,6 +12,7 @@ enum {
     BVB_VULKAN_DESCRIPTOR_POOL_PREFIX_SIZE = 24,
     BVB_VULKAN_DESCRIPTOR_POOL_SIZE_RECORD_SIZE = 8,
     BVB_VULKAN_MAX_DESCRIPTOR_POOL_SIZES = 16,
+    BVB_VULKAN_DESCRIPTOR_POOL_RESET_REQUEST_SIZE = 16,
     BVB_VULKAN_DESCRIPTOR_SET_ALLOCATE_PREFIX_SIZE = 16,
     BVB_VULKAN_DESCRIPTOR_SET_ALLOCATE_RESPONSE_PREFIX_SIZE = 8,
     BVB_VULKAN_MAX_DESCRIPTOR_SETS_PER_ALLOCATE = 16,
@@ -61,6 +62,11 @@ struct bvb_vulkan_descriptor_pool_create_request {
     uint32_t pool_size_count;
     struct bvb_vulkan_descriptor_pool_size
         pool_sizes[BVB_VULKAN_MAX_DESCRIPTOR_POOL_SIZES];
+};
+
+struct bvb_vulkan_descriptor_pool_reset_request {
+    uint64_t descriptor_pool_id;
+    uint32_t flags;
 };
 
 struct bvb_vulkan_descriptor_set_allocate_request {
@@ -178,6 +184,12 @@ int bvb_protocol_encode_vulkan_descriptor_pool_create_request(
 int bvb_protocol_decode_vulkan_descriptor_pool_create_request(
     const uint8_t *input, uint32_t input_length,
     struct bvb_vulkan_descriptor_pool_create_request *request);
+int bvb_protocol_encode_vulkan_descriptor_pool_reset_request(
+    uint8_t output[BVB_VULKAN_DESCRIPTOR_POOL_RESET_REQUEST_SIZE],
+    const struct bvb_vulkan_descriptor_pool_reset_request *request);
+int bvb_protocol_decode_vulkan_descriptor_pool_reset_request(
+    const uint8_t input[BVB_VULKAN_DESCRIPTOR_POOL_RESET_REQUEST_SIZE],
+    struct bvb_vulkan_descriptor_pool_reset_request *request);
 int bvb_protocol_encode_vulkan_descriptor_set_allocate_request(
     uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
     const struct bvb_vulkan_descriptor_set_allocate_request *request,

@@ -474,3 +474,12 @@ only then sends the typed memory-free request. An uncertain unmap acknowledgemen
 still releases the local mapping and permanently poisons that connection, so a
 free cannot continue against ambiguous remote state. This changes no wire field
 or selector and preserves explicit unmap behavior for ordinary callers.
+
+E121 completes DXVK's descriptor-pool recycle path. The glibc ICD validates a
+typed same-device descriptor pool and sends a fixed 16-byte reset request. The
+Bionic service resolves the native pool, calls `vkResetDescriptorPool`, and—on
+success only—retires every descriptor-set child from its authoritative handle
+table. The client then retires the matching proxy children. This preserves
+Vulkan's implicit descriptor-set invalidation and prevents stale IDs on both
+sides. The gate intentionally supports DXVK's exact zero-flags whole-pool reset;
+individual `vkFreeDescriptorSets` is not inferred or promoted.

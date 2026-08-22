@@ -108,7 +108,8 @@ int main(void) {
     CHECK(BVB_OPCODE_VULKAN_COMMAND_BUFFER_BIND_DESCRIPTOR_SETS == 113);
     CHECK(BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMMEDIATE_RECORD == 114);
     CHECK(BVB_OPCODE_VULKAN_FORMAT_PROPERTIES_3 == 115);
-    CHECK(BVB_OPCODE_LAST == 115);
+    CHECK(BVB_OPCODE_VULKAN_DESCRIPTOR_POOL_RESET == 116);
+    CHECK(BVB_OPCODE_LAST == 116);
     CHECK(decoded.opcode == BVB_OPCODE_LAST);
 
     const struct bvb_hello_request hello = {
@@ -2054,6 +2055,28 @@ int main(void) {
               descriptor_wire, descriptor_wire_length,
               &descriptor_pool_decoded) == 0);
     CHECK(descriptor_pool_decoded.pool_sizes[0].descriptor_count == 4096U);
+
+    const struct bvb_vulkan_descriptor_pool_reset_request
+        descriptor_pool_reset_request = {
+            .descriptor_pool_id = UINT64_C(0x1500000000000001),
+        };
+    uint8_t descriptor_pool_reset_wire[
+        BVB_VULKAN_DESCRIPTOR_POOL_RESET_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_descriptor_pool_reset_request(
+              descriptor_pool_reset_wire,
+              &descriptor_pool_reset_request) == 0);
+    struct bvb_vulkan_descriptor_pool_reset_request
+        descriptor_pool_reset_decoded;
+    CHECK(bvb_protocol_decode_vulkan_descriptor_pool_reset_request(
+              descriptor_pool_reset_wire,
+              &descriptor_pool_reset_decoded) == 0);
+    CHECK(descriptor_pool_reset_decoded.descriptor_pool_id ==
+          descriptor_pool_reset_request.descriptor_pool_id);
+    descriptor_pool_reset_wire[12] = 1U;
+    CHECK(bvb_protocol_decode_vulkan_descriptor_pool_reset_request(
+              descriptor_pool_reset_wire,
+              &descriptor_pool_reset_decoded) == -EINVAL);
+    descriptor_pool_reset_wire[12] = 0U;
 
     const struct bvb_vulkan_descriptor_set_allocate_request
         descriptor_allocate_request = {

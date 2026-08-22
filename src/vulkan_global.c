@@ -3383,6 +3383,42 @@ int bvb_vulkan_global_context_destroy_descriptor_pool(
     return result;
 }
 
+int bvb_vulkan_global_context_reset_descriptor_pool(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_descriptor_pool_reset_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || vulkan_result == NULL ||
+        request->flags != 0U) return -EINVAL;
+    uint64_t device_id = 0U, pool_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, request->descriptor_pool_id, BVB_OBJECT_DESCRIPTOR_POOL,
+        &device_id, &device, &pool_bits);
+    if (result != 0) {
+        set_error(error, error_size, "unknown descriptor-pool handle");
+        return result;
+    }
+    PFN_vkResetDescriptorPool reset_pool =
+        (PFN_vkResetDescriptorPool)context->get_device_proc_addr(
+            device, "vkResetDescriptorPool");
+    if (reset_pool == NULL) return -ENOSYS;
+    *vulkan_result = reset_pool(
+        device, descriptor_pool_from_bits(pool_bits), request->flags);
+    if (*vulkan_result != VK_SUCCESS) return 0;
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_DESCRIPTOR_SET &&
+            entry->parent_id == request->descriptor_pool_id) {
+            result = bvb_handle_table_remove(
+                &context->objects, entry->wire_id,
+                BVB_OBJECT_DESCRIPTOR_SET, NULL);
+            if (result != 0) return result;
+        }
+    }
+    return 0;
+}
+
 int bvb_vulkan_global_context_allocate_descriptor_sets(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_descriptor_set_allocate_request *request,

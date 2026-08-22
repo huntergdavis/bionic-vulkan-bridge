@@ -137,6 +137,7 @@ vkQueueSubmit2
 vkQueueSubmit2KHR
 vkQueueWaitIdle
 vkResetCommandPool
+vkResetDescriptorPool
 vkResetFences
 vkSignalSemaphore
 vkSignalSemaphoreKHR

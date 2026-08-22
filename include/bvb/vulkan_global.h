@@ -125,6 +125,10 @@ int bvb_vulkan_global_context_create_descriptor_pool(
 int bvb_vulkan_global_context_destroy_descriptor_pool(
     struct bvb_vulkan_global_context *context, uint64_t pool_id,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_reset_descriptor_pool(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_descriptor_pool_reset_request *request,
+    int32_t *vulkan_result, char *error, size_t error_size);
 int bvb_vulkan_global_context_allocate_descriptor_sets(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_descriptor_set_allocate_request *request,

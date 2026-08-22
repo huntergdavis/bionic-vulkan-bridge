@@ -908,6 +908,7 @@ int main(void) {
     PFN_vkDestroyDescriptorSetLayout destroy_descriptor_set_layout = NULL;
     PFN_vkCreateDescriptorPool create_descriptor_pool = NULL;
     PFN_vkDestroyDescriptorPool destroy_descriptor_pool = NULL;
+    PFN_vkResetDescriptorPool reset_descriptor_pool = NULL;
     PFN_vkAllocateDescriptorSets allocate_descriptor_sets = NULL;
     PFN_vkCreateSampler create_sampler = NULL;
     PFN_vkDestroySampler destroy_sampler = NULL;
@@ -1143,6 +1144,7 @@ int main(void) {
                        destroy_descriptor_set_layout);
     RESOLVE_DESCRIPTOR(vkCreateDescriptorPool, create_descriptor_pool);
     RESOLVE_DESCRIPTOR(vkDestroyDescriptorPool, destroy_descriptor_pool);
+    RESOLVE_DESCRIPTOR(vkResetDescriptorPool, reset_descriptor_pool);
     RESOLVE_DESCRIPTOR(vkAllocateDescriptorSets, allocate_descriptor_sets);
     RESOLVE_DESCRIPTOR(vkCreateSampler, create_sampler);
     RESOLVE_DESCRIPTOR(vkDestroySampler, destroy_sampler);
@@ -1588,6 +1590,34 @@ int main(void) {
     VkDescriptorPool core_pool = VK_NULL_HANDLE;
     CHECK(create_descriptor_pool(
               device, &core_pool_info, NULL, &core_pool) == VK_SUCCESS);
+    const VkDescriptorSetAllocateInfo core_allocate_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = core_pool,
+        .descriptorSetCount = 1U,
+        .pSetLayouts = &core_layout,
+    };
+    VkDescriptorSet core_set_before_reset = VK_NULL_HANDLE;
+    CHECK(allocate_descriptor_sets(
+              device, &core_allocate_info,
+              &core_set_before_reset) == VK_SUCCESS);
+    const uint64_t core_set_before_id =
+        bvb_descriptor_set_proxy_id(core_set_before_reset);
+    CHECK(bvb_handle_type(core_set_before_id) == BVB_OBJECT_DESCRIPTOR_SET);
+    CHECK(reset_descriptor_pool(
+              ownership_device, core_pool, 0U) ==
+          VK_ERROR_INITIALIZATION_FAILED);
+    CHECK(reset_descriptor_pool(device, core_pool, 1U) ==
+          VK_ERROR_FEATURE_NOT_PRESENT);
+    CHECK(reset_descriptor_pool(device, core_pool, 0U) == VK_SUCCESS);
+    CHECK(bvb_descriptor_set_proxy_id(core_set_before_reset) == 0U);
+    VkDescriptorSet core_set_after_reset = VK_NULL_HANDLE;
+    CHECK(allocate_descriptor_sets(
+              device, &core_allocate_info,
+              &core_set_after_reset) == VK_SUCCESS);
+    const uint64_t core_set_after_id =
+        bvb_descriptor_set_proxy_id(core_set_after_reset);
+    CHECK(bvb_handle_type(core_set_after_id) == BVB_OBJECT_DESCRIPTOR_SET);
+    CHECK(core_set_after_id != core_set_before_id);
     destroy_descriptor_pool(device, core_pool, NULL);
     destroy_descriptor_set_layout(device, core_layout, NULL);
 

@@ -1,0 +1,32 @@
+{
+  "gate": "E121",
+  "date": "2026-08-22",
+  "source_base_commit": "09e5ad8",
+  "trigger": {
+    "runtime_boundary": "the E120 diagnostic run advanced from the prior 46-present stop to 66 presents",
+    "first_rejection": "vkAllocateDescriptorSets returned VK_ERROR_OUT_OF_POOL_MEMORY (-1000069000)",
+    "source_audit": "pinned DXVK a6764047 resets each in-flight descriptor pool on submission completion and then reuses it; the return from vkResetDescriptorPool is ignored",
+    "root_cause": "BVB exposed vkResetDescriptorPool as required-unimplemented, so DXVK marked pools reusable without the native reset and eventually exhausted a 1024-set pool"
+  },
+  "implementation": {
+    "opcode": 116,
+    "wire": "16-byte canonical little-endian descriptor-pool ID plus zero flags and reserved word",
+    "client": "validates typed same-device ownership, forwards the reset, and retires every child descriptor-set proxy only after VK_SUCCESS",
+    "service": "resolves the real Bionic VkDevice/VkDescriptorPool, calls native vkResetDescriptorPool, and retires every child descriptor-set ID only after VK_SUCCESS",
+    "policy": "vkResetDescriptorPool promoted from required-unimplemented to executable",
+    "scope": "exact DXVK flags=0 whole-pool recycle; vkFreeDescriptorSets remains outside this gate"
+  },
+  "validation": {
+    "wire_corruption": "reserved bytes and nonzero flags fail closed",
+    "cross_process": "allocate -> reset -> old client/service set IDs retired -> allocate again from the same pool",
+    "wrong_device_and_flags": "rejected before native reset",
+    "host_suite": "82/82 passed",
+    "tablet_run": "pending"
+  },
+  "claims": {
+    "present_66_boundary_fixed": null,
+    "next_visible_frame": null,
+    "benchmark_fps": null
+  },
+  "reuse": "The required deja query returned no indexed implementation. E121 reuses E056 typed descriptor pool/set ownership and the pinned DXVK a6764047 descriptor-pool completion lifecycle; the E120 diagnostic record selects this exact gate."
+}

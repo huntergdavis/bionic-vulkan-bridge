@@ -4729,3 +4729,29 @@ both operations. Focused normal, mapped-free, and lost-ack contracts pass. Full
 host validation then passed 81/81. Exact-archive tablet validation remains
 pending; E120 does not yet claim that the 46-present boundary is causal or
 fixed.
+
+## E121 — DXVK descriptor-pool reset lifecycle (2026-08-22)
+
+The first E120 run repeated the 46-present boundary and proved that implicit
+memory unmap was not causal. A second, selector-scoped first-rejection run
+advanced to 66 presents and emitted the exact active-game failure:
+`vkAllocateDescriptorSets` returned `VK_ERROR_OUT_OF_POOL_MEMORY`
+(-1000069000). The visible Activity frame also advanced to the Square Enix /
+Crystal Dynamics / Nixxes / Eidos splash.
+
+The required `deja "E121 Tomb Raider vkAllocateDescriptorSets
+VK_ERROR_FRAGMENTED_POOL present 66 BVB"` query returned no indexed
+implementation. The pinned DXVK a6764047 source shows that submission
+completion calls `vkResetDescriptorPool(pool, 0)`, ignores its return, and then
+marks that pool reusable. E121 reuses E056's typed descriptor ownership to
+bridge that exact missing lifecycle operation. Without it, DXVK reused an
+unreset native pool until its 1,024-set capacity was exhausted.
+
+Opcode 116 carries one typed pool ID, zero flags, and canonical reserved bytes.
+On native `VK_SUCCESS`, the service removes all child descriptor-set IDs and
+the client removes their matching proxies; failures leave both ownership tables
+unchanged. The cross-process host contract proves allocate, reset, old-ID
+retirement on both sides, and successful reallocation from the same pool. This
+gate does not infer `vkFreeDescriptorSets`. Full host validation passed 82/82;
+tablet validation remains pending, so the 66-present boundary is not yet
+claimed fixed.

@@ -72,6 +72,7 @@ static int fake_fence_created;
 static int fake_fence_signaled;
 static uint32_t fake_queue_submit_2_calls;
 static uint32_t fake_descriptor_step;
+static uint32_t fake_core_descriptor_pool_step;
 static uint32_t fake_descriptor_template_step;
 static int fake_descriptor_template_swapchain_update_seen;
 static int fake_descriptor_bind_seen;
@@ -133,6 +134,10 @@ static const VkDescriptorSetLayout fake_core_descriptor_layout =
     (VkDescriptorSetLayout)(uintptr_t)UINT64_C(0xa800);
 static const VkDescriptorPool fake_core_descriptor_pool =
     (VkDescriptorPool)(uintptr_t)UINT64_C(0xa900);
+static const VkDescriptorSet fake_core_descriptor_sets[] = {
+    (VkDescriptorSet)(uintptr_t)UINT64_C(0xa901),
+    (VkDescriptorSet)(uintptr_t)UINT64_C(0xa902),
+};
 static const VkDescriptorSetLayout fake_dxvk_descriptor_layout =
     (VkDescriptorSetLayout)(uintptr_t)UINT64_C(0xaa00);
 static const VkDescriptorUpdateTemplate fake_dxvk_descriptor_template =
@@ -1092,6 +1097,7 @@ static void VKAPI_CALL fake_destroy_device(
     fake_to_present_barrier = 0;
     fake_submitted = 0;
     fake_descriptor_step = 0U;
+    fake_core_descriptor_pool_step = 0U;
     fake_descriptor_template_step = 0U;
     fake_descriptor_template_swapchain_update_seen = 0;
     fake_descriptor_bind_seen = 0;
@@ -1277,6 +1283,21 @@ static VkResult VKAPI_CALL fake_allocate_descriptor_sets(
     VkDevice device, const VkDescriptorSetAllocateInfo *allocate_info,
     VkDescriptorSet *descriptor_sets) {
     (void)device;
+    if ((fake_core_descriptor_pool_step == 0U ||
+         fake_core_descriptor_pool_step == 2U) &&
+        allocate_info != NULL && descriptor_sets != NULL &&
+        allocate_info->sType ==
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO &&
+        allocate_info->pNext == NULL &&
+        allocate_info->descriptorPool == fake_core_descriptor_pool &&
+        allocate_info->descriptorSetCount == 1U &&
+        allocate_info->pSetLayouts != NULL &&
+        allocate_info->pSetLayouts[0] == fake_core_descriptor_layout) {
+        const uint32_t index = fake_core_descriptor_pool_step == 0U ? 0U : 1U;
+        descriptor_sets[0] = fake_core_descriptor_sets[index];
+        fake_core_descriptor_pool_step = index == 0U ? 1U : 3U;
+        return VK_SUCCESS;
+    }
     if (fake_descriptor_template_step == 3U && allocate_info != NULL &&
         descriptor_sets != NULL &&
         allocate_info->sType == VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO &&
@@ -1301,6 +1322,17 @@ static VkResult VKAPI_CALL fake_allocate_descriptor_sets(
     }
     descriptor_sets[0] = fake_descriptor_set;
     fake_descriptor_step = 3U;
+    return VK_SUCCESS;
+}
+
+static VkResult VKAPI_CALL fake_reset_descriptor_pool(
+    VkDevice device, VkDescriptorPool descriptor_pool,
+    VkDescriptorPoolResetFlags flags) {
+    if (device != (VkDevice)(uintptr_t)0x3000U ||
+        descriptor_pool != fake_core_descriptor_pool || flags != 0U ||
+        fake_core_descriptor_pool_step != 1U)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    fake_core_descriptor_pool_step = 2U;
     return VK_SUCCESS;
 }
 
@@ -2238,6 +2270,7 @@ static void VKAPI_CALL fake_destroy_descriptor_pool(
     }
     if (fake_descriptor_step == 0U && pool == fake_core_descriptor_pool &&
         allocator == NULL) {
+        if (fake_core_descriptor_pool_step != 3U) abort();
         return;
     }
     if (fake_descriptor_step == 12U && pool == fake_descriptor_pool &&
@@ -3634,6 +3667,13 @@ static VkResult VKAPI_CALL fake_device_wait_idle(VkDevice device) {
                 fake_descriptor_step);
         return VK_ERROR_INITIALIZATION_FAILED;
     }
+    if (fake_core_descriptor_pool_step != 0U &&
+        fake_core_descriptor_pool_step != 3U) {
+        fprintf(stderr,
+                "fake Vulkan core descriptor-pool sequence stopped at %u\n",
+                fake_core_descriptor_pool_step);
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
     if (fake_descriptor_template_step != 0U &&
         fake_descriptor_template_step != 8U) {
         fprintf(stderr,
@@ -3831,6 +3871,7 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
                      fake_destroy_descriptor_set_layout)
     BVB_DEVICE_MATCH("vkCreateDescriptorPool", fake_create_descriptor_pool)
     BVB_DEVICE_MATCH("vkDestroyDescriptorPool", fake_destroy_descriptor_pool)
+    BVB_DEVICE_MATCH("vkResetDescriptorPool", fake_reset_descriptor_pool)
     BVB_DEVICE_MATCH("vkAllocateDescriptorSets",
                      fake_allocate_descriptor_sets)
     BVB_DEVICE_MATCH("vkCreateSampler", fake_create_sampler)
