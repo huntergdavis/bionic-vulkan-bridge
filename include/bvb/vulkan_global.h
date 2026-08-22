@@ -125,6 +125,23 @@ int bvb_vulkan_global_context_create_descriptor_pool(
 int bvb_vulkan_global_context_destroy_descriptor_pool(
     struct bvb_vulkan_global_context *context, uint64_t pool_id,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_create_query_pool(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_query_pool_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_destroy_query_pool(
+    struct bvb_vulkan_global_context *context, uint64_t query_pool_id,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_get_query_pool_results(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_query_pool_results_request *request,
+    struct bvb_vulkan_query_pool_results_response *response,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_reset_query_pool(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_query_pool_reset_request *request,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_reset_descriptor_pool(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_descriptor_pool_reset_request *request,

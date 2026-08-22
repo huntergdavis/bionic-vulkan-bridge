@@ -287,7 +287,21 @@ int main(void) {
                         strcmp(entry->name,
                                "vkUpdateDescriptorSetWithTemplateKHR") == 0)) {
                 CHECK(resolved == NULL);
-            } else if (strcmp(entry->name, "vkResetDescriptorPool") == 0) {
+            } else if (strcmp(entry->name, "vkResetDescriptorPool") == 0 ||
+                       strcmp(entry->name, "vkCreateQueryPool") == 0 ||
+                       strcmp(entry->name, "vkDestroyQueryPool") == 0 ||
+                       strcmp(entry->name, "vkGetQueryPoolResults") == 0 ||
+                       strcmp(entry->name, "vkResetQueryPool") == 0 ||
+                       strcmp(entry->name, "vkCmdResetQueryPool") == 0 ||
+                       strcmp(entry->name, "vkCmdBeginQuery") == 0 ||
+                       strcmp(entry->name, "vkCmdEndQuery") == 0 ||
+                       strcmp(entry->name, "vkCmdWriteTimestamp") == 0 ||
+                       strcmp(entry->name, "vkCmdWriteTimestamp2") == 0 ||
+                       strcmp(entry->name, "vkCmdWriteTimestamp2KHR") == 0 ||
+                       strcmp(entry->name,
+                              "vkCmdBeginQueryIndexedEXT") == 0 ||
+                       strcmp(entry->name,
+                              "vkCmdEndQueryIndexedEXT") == 0) {
                 CHECK(resolved == NULL);
             } else {
                 CHECK(resolved != NULL);
@@ -307,8 +321,8 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 159U);
-    CHECK(required_count == 281U);
+    CHECK(executable_count == 171U);
+    CHECK(required_count == 269U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");

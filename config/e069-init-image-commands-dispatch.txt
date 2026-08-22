@@ -7,6 +7,10 @@ vkBindImageMemory
 vkCmdClearColorImage
 vkCmdClearAttachments
 vkCmdClearDepthStencilImage
+vkCmdBeginQuery
+vkCmdBeginQueryIndexedEXT
+vkCmdEndQuery
+vkCmdEndQueryIndexedEXT
 vkCmdSetBlendConstants
 vkCmdSetCullMode
 vkCmdSetCullModeEXT
@@ -67,6 +71,10 @@ vkCmdPipelineBarrier2
 vkCmdResolveImage
 vkCmdResolveImage2
 vkCmdUpdateBuffer
+vkCmdResetQueryPool
+vkCmdWriteTimestamp
+vkCmdWriteTimestamp2
+vkCmdWriteTimestamp2KHR
 vkCmdSetScissorWithCount
 vkCmdSetScissorWithCountEXT
 vkCmdSetViewportWithCount
@@ -83,6 +91,7 @@ vkCreateImage
 vkCreateImageView
 vkCreateInstance
 vkCreatePipelineLayout
+vkCreateQueryPool
 vkCreateSampler
 vkCreateSemaphore
 vkDestroyBuffer
@@ -97,6 +106,7 @@ vkDestroyImageView
 vkDestroyInstance
 vkDestroyPipeline
 vkDestroyPipelineLayout
+vkDestroyQueryPool
 vkDestroySampler
 vkDestroySemaphore
 vkDeviceWaitIdle
@@ -128,6 +138,7 @@ vkGetPhysicalDeviceProperties
 vkGetPhysicalDeviceQueueFamilyProperties
 vkGetSemaphoreCounterValue
 vkGetSemaphoreCounterValueKHR
+vkGetQueryPoolResults
 vkInvalidateMappedMemoryRanges
 vkMapMemory
 vkMapMemory2
@@ -138,6 +149,7 @@ vkQueueSubmit2KHR
 vkQueueWaitIdle
 vkResetCommandPool
 vkResetDescriptorPool
+vkResetQueryPool
 vkResetFences
 vkSignalSemaphore
 vkSignalSemaphoreKHR

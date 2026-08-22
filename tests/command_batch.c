@@ -758,6 +758,66 @@ static int test_vulkan_update_buffer(void) {
     return 0;
 }
 
+static int test_vulkan_query_family(void) {
+    uint8_t bytes[1024];
+    const uint64_t command_buffer =
+        bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 50U);
+    const uint64_t query_pool =
+        bvb_handle_id(BVB_OBJECT_QUERY_POOL, 51U);
+    struct bvb_command_batch_builder builder;
+    CHECK(bvb_command_batch_begin(
+              &builder, bytes, sizeof(bytes), command_buffer, 3U) == 0);
+    const struct bvb_vulkan_query_command commands[] = {
+        {.query_pool_id = query_pool, .first_query = 4U, .query_count = 8U,
+         .kind = BVB_VULKAN_QUERY_COMMAND_RESET},
+        {.query_pool_id = query_pool, .first_query = 4U, .query_count = 1U,
+         .flags = 1U, .kind = BVB_VULKAN_QUERY_COMMAND_BEGIN},
+        {.query_pool_id = query_pool, .first_query = 4U, .query_count = 1U,
+         .kind = BVB_VULKAN_QUERY_COMMAND_END},
+        {.query_pool_id = query_pool, .stage_mask = UINT64_C(0x1000),
+         .first_query = 5U, .query_count = 1U,
+         .kind = BVB_VULKAN_QUERY_COMMAND_WRITE_TIMESTAMP_2},
+        {.query_pool_id = query_pool, .first_query = 6U, .query_count = 1U,
+         .flags = 1U, .index = 2U,
+         .kind = BVB_VULKAN_QUERY_COMMAND_BEGIN_INDEXED},
+        {.query_pool_id = query_pool, .first_query = 6U, .query_count = 1U,
+         .index = 2U, .kind = BVB_VULKAN_QUERY_COMMAND_END_INDEXED},
+    };
+    for (size_t index = 0U; index < sizeof(commands) / sizeof(commands[0]);
+         ++index)
+        CHECK(bvb_command_batch_append_vulkan_query(
+                  &builder, &commands[index]) == 0);
+    size_t length = 0U;
+    CHECK(bvb_command_batch_finish(&builder, &length) == 0);
+    struct bvb_command_batch_info info;
+    CHECK(bvb_command_batch_validate(bytes, length, &info) == 0);
+    struct bvb_command_batch_iterator iterator;
+    CHECK(bvb_command_batch_iterator_init(&iterator, bytes, length) == 0);
+    for (size_t index = 0U; index < sizeof(commands) / sizeof(commands[0]);
+         ++index) {
+        struct bvb_command_record record;
+        struct bvb_vulkan_query_command decoded;
+        CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+        CHECK(bvb_command_decode_vulkan_query(&record, &decoded) == 0);
+        CHECK(decoded.query_pool_id == query_pool);
+        CHECK(decoded.kind == commands[index].kind);
+        CHECK(decoded.first_query == commands[index].first_query);
+    }
+    CHECK(bvb_command_batch_next(
+              &iterator, &(struct bvb_command_record){0}) == 1);
+    uint8_t corrupted[sizeof(bytes)];
+    memcpy(corrupted, bytes, length);
+    const size_t first_payload = BVB_COMMAND_BATCH_HEADER_SIZE +
+        BVB_COMMAND_RECORD_HEADER_SIZE;
+    bvb_wire_put_u64(corrupted + first_payload,
+                     bvb_handle_id(BVB_OBJECT_BUFFER, 51U));
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+    memcpy(corrupted, bytes, length);
+    bvb_wire_put_u32(corrupted + first_payload + 36U, 1U);
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+    return 0;
+}
+
 static int test_compact_transfer_capacity(void) {
     uint8_t bytes[64U * 1024U];
     const uint64_t command_buffer =
@@ -1189,6 +1249,7 @@ int main(void) {
     CHECK(test_transfer_batch() == 0);
     CHECK(test_vulkan_transfer_family() == 0);
     CHECK(test_vulkan_update_buffer() == 0);
+    CHECK(test_vulkan_query_family() == 0);
     CHECK(test_compact_transfer_capacity() == 0);
     CHECK(test_expanded_stream_slot_capacity() == 0);
     CHECK(test_large_image_barrier_batch() == 0);

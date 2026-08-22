@@ -4755,3 +4755,30 @@ retirement on both sides, and successful reallocation from the same pool. This
 gate does not infer `vkFreeDescriptorSets`. Full host validation passed 82/82;
 tablet validation remains pending, so the 66-present boundary is not yet
 claimed fixed.
+
+## E122 — complete DXVK query family (2026-08-22)
+
+The E121 tablet run advanced through authenticated EOS startup and rendered a
+real native-resolution Tomb Raider loading frame, then crashed before the
+benchmark result. The 32-bit minidump (`28e4fcbe...cce64`) records EIP
+`0x76d724a8`, EAX zero, and a read from address `0x4`. The loaded i386
+`d3d11.dll` is byte-identical to Proton's DXVK a6764047 build. Its RVA maps
+exactly to `DxvkGpuQueryAllocator::allocQuery`: after `createQueryPool()`
+returns without adding a chunk, the allocator dereferences null `m_free`.
+The bridge still classified `vkCreateQueryPool` as required-unimplemented, so
+the causal boundary is exact rather than inferred from resolver order.
+
+The required `deja` queries for this crash/query boundary returned no indexed
+implementation. E122 reuses E011's measured function inventory, E079a's
+fail-closed diagnostic, and E075/E076's immutable typed shared records. Opcodes
+117–120 implement create, destroy, results, and host reset. Command record 37
+implements command-buffer reset, begin/end, legacy/synchronization2 timestamps,
+and indexed begin/end. Native metadata binds pool type/count to its Bionic
+device; every query range is checked before native execution.
+
+The cross-process contract reproduces DXVK's 16,384-entry occlusion pool and
+proves create, command reset/begin/end, submit, 64-bit result plus availability,
+host reset, and destroy. Shared recording adds zero query-command RPCs; strict
+adds three. Protocol corruption and typed/range failures are fail-closed. The
+complete 83/83 host suite passes. Tablet deployment and the benchmark rerun are
+the next boundary, so no completed benchmark or FPS is claimed yet.

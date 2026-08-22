@@ -26,17 +26,17 @@
     "maximum_shape_bytes_excluding_nul": 384,
     "exact_signature_source": "pinned Vulkan-Headers vk.xml",
     "resolved_name_source": "E011 Tomb Raider dispatch manifest",
-    "active_executable_source": "generated triangle dispatch plus the current cumulative active configuration through E121",
+    "active_executable_source": "generated triangle dispatch plus the current cumulative active configuration through E122",
     "generator_sha256": "11b2d58e16de8a773ab052f0029f07aaf19ad0550fe6d0b9a949ec2646eb5258",
-    "generated_include_sha256": "175b13cd0628db622257031a8ddca0debed711860510420d0ca60689fc51e8f6",
+    "generated_include_sha256": "435a924988d52bc8839778a2a7f04a285168aaf41b290804a6df694743f27477",
     "vk_xml_sha256": "80e7394d0e787d6ec78b67aa324add6f96129fdd042ba640cc336a5481a208ee",
     "e011_manifest_sha256": "6a78ddd1f1b34773e4123d3612233fab2270ed0ff418d01204ad41af1cab8afc",
     "triangle_dispatch_sha256": "20185caa17fbe85cea88699ba43b3a98d2b162de67cd748e69349620b8b7bd3e",
-    "active_config_sha256": "dd41566cf5cd5b3ee41c58486596146d13d10f81b2251185e9add863abe6e0b5"
+    "active_config_sha256": "c59c07ae01d8803c487174b1061aa46ce6487b10d6eb1cede0801d07f498358e"
   },
   "policy_unchanged": {
-    "executable": 159,
-    "required_unimplemented": 281,
+    "executable": 171,
+    "required_unimplemented": 269,
     "probed_null": 302,
     "generated_policy_sha256": "846f0e3788c3987a0bdac010786f52ea1e37ef04c96ad40683497ba3cf5cc9a1"
   },

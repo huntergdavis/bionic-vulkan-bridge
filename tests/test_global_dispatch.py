@@ -450,7 +450,7 @@ def main() -> int:
             ) in completed.stdout
             assert (
                 "recording_rtts=0" if shared_command_stream
-                else "recording_rtts=44"
+                else "recording_rtts=47"
             ) in completed.stdout
             assert (
                 "animated_frames=4 animated_reused_image=1 "

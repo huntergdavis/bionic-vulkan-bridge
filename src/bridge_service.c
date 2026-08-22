@@ -1601,6 +1601,19 @@ static int answer_vulkan_resource_create(
                 context, &decoded, &created, diagnostic, sizeof(diagnostic));
         }
         expected_type = BVB_OBJECT_DESCRIPTOR_POOL;
+    } else if (request->header.opcode ==
+                   BVB_OPCODE_VULKAN_QUERY_POOL_CREATE &&
+               request->header.payload_length ==
+                   BVB_VULKAN_QUERY_POOL_CREATE_REQUEST_SIZE) {
+        struct bvb_vulkan_query_pool_create_request decoded;
+        result = bvb_protocol_decode_vulkan_query_pool_create_request(
+            request->payload, &decoded);
+        if (result == 0) {
+            result = bvb_vulkan_global_context_create_query_pool(
+                context, &decoded, &created, diagnostic,
+                sizeof(diagnostic));
+        }
+        expected_type = BVB_OBJECT_QUERY_POOL;
     } else if (request->header.opcode == BVB_OPCODE_VULKAN_SAMPLER_CREATE &&
                request->header.payload_length ==
                    BVB_VULKAN_SAMPLER_CREATE_REQUEST_SIZE) {
@@ -1755,9 +1768,12 @@ static int answer_vulkan_resource_destroy(
         request->header.opcode == BVB_OPCODE_VULKAN_IMAGE_DESTROY;
     const bool image_view =
         request->header.opcode == BVB_OPCODE_VULKAN_IMAGE_VIEW_DESTROY;
+    const bool query_pool =
+        request->header.opcode == BVB_OPCODE_VULKAN_QUERY_POOL_DESTROY;
     uint64_t object_id = 0U;
     int result = buffer || memory || fence || semaphore || pipeline_layout ||
                          pipeline || image || image_view ||
+                         query_pool ||
                          descriptor_layout || descriptor_pool || sampler ||
                          descriptor_update_template
                      ? bvb_protocol_decode_vulkan_object_id(
@@ -1770,6 +1786,7 @@ static int answer_vulkan_resource_destroy(
                            pipeline ? BVB_OBJECT_PIPELINE :
                            image ? BVB_OBJECT_IMAGE :
                            image_view ? BVB_OBJECT_IMAGE_VIEW :
+                           query_pool ? BVB_OBJECT_QUERY_POOL :
                            descriptor_layout
                                ? BVB_OBJECT_DESCRIPTOR_SET_LAYOUT
                            : descriptor_pool
@@ -1803,6 +1820,9 @@ static int answer_vulkan_resource_destroy(
                 context, object_id, diagnostic, sizeof(diagnostic));
         } else if (image_view) {
             result = bvb_vulkan_global_context_destroy_image_view(
+                context, object_id, diagnostic, sizeof(diagnostic));
+        } else if (query_pool) {
+            result = bvb_vulkan_global_context_destroy_query_pool(
                 context, object_id, diagnostic, sizeof(diagnostic));
         } else if (descriptor_layout) {
             result = bvb_vulkan_global_context_destroy_descriptor_set_layout(
@@ -1887,6 +1907,60 @@ static int answer_vulkan_descriptor_pool_reset(
     if (result == 0) {
         response.header.payload_length = BVB_VULKAN_RESULT_SIZE;
     } else {
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_query_pool_results(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_QUERY_POOL_RESULTS_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_query_pool_results_request decoded;
+    struct bvb_vulkan_query_pool_results_response results = {0};
+    int result = bvb_protocol_decode_vulkan_query_pool_results_request(
+        request->payload, &decoded);
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_get_query_pool_results(
+            context, &decoded, &results, diagnostic, sizeof(diagnostic));
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_query_pool_results_response(
+            response.payload, &results, &response.header.payload_length);
+    if (result != 0) {
+        fprintf(stderr, "bvb: query-pool results failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_query_pool_reset(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_QUERY_POOL_RESET_REQUEST_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_query_pool_reset_request decoded;
+    int result = bvb_protocol_decode_vulkan_query_pool_reset_request(
+        request->payload, &decoded);
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_reset_query_pool(
+            context, &decoded, diagnostic, sizeof(diagnostic));
+    if (result != 0) {
+        fprintf(stderr, "bvb: query-pool reset failed: %s\n", diagnostic);
         response.header.status = result;
     }
     return bvb_transport_send(client_fd, &response);
@@ -3468,6 +3542,8 @@ static int serve_connection(int client_fd, const char *loader_path,
                    request.header.opcode ==
                        BVB_OPCODE_VULKAN_DESCRIPTOR_POOL_CREATE ||
                    request.header.opcode ==
+                       BVB_OPCODE_VULKAN_QUERY_POOL_CREATE ||
+                   request.header.opcode ==
                        BVB_OPCODE_VULKAN_SAMPLER_CREATE ||
                    request.header.opcode ==
                        BVB_OPCODE_VULKAN_DESCRIPTOR_UPDATE_TEMPLATE_CREATE ||
@@ -3498,6 +3574,8 @@ static int serve_connection(int client_fd, const char *loader_path,
                        BVB_OPCODE_VULKAN_PIPELINE_DESTROY ||
                    request.header.opcode == BVB_OPCODE_VULKAN_IMAGE_DESTROY ||
                    request.header.opcode ==
+                       BVB_OPCODE_VULKAN_QUERY_POOL_DESTROY ||
+                   request.header.opcode ==
                        BVB_OPCODE_VULKAN_IMAGE_VIEW_DESTROY) {
             result = answer_vulkan_resource_destroy(
                 client_fd, &request, negotiated, global_context);
@@ -3508,6 +3586,14 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_DESCRIPTOR_POOL_RESET) {
             result = answer_vulkan_descriptor_pool_reset(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_QUERY_POOL_RESULTS) {
+            result = answer_vulkan_query_pool_results(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_QUERY_POOL_RESET) {
+            result = answer_vulkan_query_pool_reset(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_DESCRIPTOR_UPDATE) {

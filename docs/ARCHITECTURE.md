@@ -483,3 +483,12 @@ table. The client then retires the matching proxy children. This preserves
 Vulkan's implicit descriptor-set invalidation and prevents stale IDs on both
 sides. The gate intentionally supports DXVK's exact zero-flags whole-pool reset;
 individual `vkFreeDescriptorSets` is not inferred or promoted.
+
+E122 completes DXVK's query-pool family after a real 32-bit Tomb Raider dump
+mapped its null dereference to `DxvkGpuQueryAllocator::allocQuery`. Four fixed
+RPCs own pool create/destroy/results/host reset; one bounded command-stream
+record owns reset, begin/end, timestamps, and indexed begin/end. The glibc ICD
+uses only typed IDs. Bionic retains the authoritative pool type/count, checks
+every range and same-device relationship, reconstructs native calls, and
+destroys pools before their device. Shared recording adds no per-command socket
+round trip, while strict mode retains the immediate-record path.

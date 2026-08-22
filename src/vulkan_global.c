@@ -100,6 +100,13 @@ struct bvb_semaphore_metadata {
     VkSemaphoreType type;
 };
 
+struct bvb_query_pool_metadata {
+    uint64_t query_pool_id;
+    uint64_t device_id;
+    uint32_t query_type;
+    uint32_t query_count;
+};
+
 struct bvb_image_metadata {
     uint64_t image_id;
     uint64_t device_id;
@@ -195,6 +202,7 @@ struct bvb_vulkan_global_context {
     uint64_t next_pipeline_layout_serial;
     uint64_t next_image_view_serial;
     uint64_t next_pipeline_serial;
+    uint64_t next_query_pool_serial;
     struct bvb_device_metadata device_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_memory_metadata memory_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_memory_mirror_metadata
@@ -203,6 +211,8 @@ struct bvb_vulkan_global_context {
     struct bvb_buffer_metadata buffer_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_semaphore_metadata
         semaphore_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
+    struct bvb_query_pool_metadata
+        query_pool_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_image_metadata image_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_swapchain_metadata
         swapchain_metadata[BVB_WSI_FRAME_RING_MAX_SLOTS];
@@ -445,6 +455,7 @@ BVB_DEFINE_HANDLE_FROM_BITS(descriptor_update_template_from_bits,
                             VkDescriptorUpdateTemplate)
 BVB_DEFINE_HANDLE_FROM_BITS(pipeline_layout_from_bits, VkPipelineLayout)
 BVB_DEFINE_HANDLE_FROM_BITS(pipeline_from_bits, VkPipeline)
+BVB_DEFINE_HANDLE_FROM_BITS(query_pool_from_bits, VkQueryPool)
 
 #undef BVB_DEFINE_HANDLE_FROM_BITS
 
@@ -651,6 +662,7 @@ int bvb_vulkan_global_context_create(
     context->next_pipeline_layout_serial = 1U;
     context->next_image_view_serial = 1U;
     context->next_pipeline_serial = 1U;
+    context->next_query_pool_serial = 1U;
     *output = context;
     return 0;
 }
@@ -1969,6 +1981,15 @@ int bvb_vulkan_global_context_destroy_device(
     }
     for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
         const struct bvb_handle_entry *entry = &context->object_entries[index];
+        if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_QUERY_POOL &&
+            entry->parent_id == device_id) {
+            result = bvb_vulkan_global_context_destroy_query_pool(
+                context, entry->wire_id, NULL, 0U);
+            if (result != 0) return result;
+        }
+    }
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_handle_entry *entry = &context->object_entries[index];
         if (bvb_handle_type(entry->wire_id) == BVB_OBJECT_DESCRIPTOR_POOL &&
             entry->parent_id == device_id) {
             result = bvb_vulkan_global_context_destroy_descriptor_pool(
@@ -2746,6 +2767,49 @@ static int resolve_device_child(
     return result;
 }
 
+static struct bvb_query_pool_metadata *query_pool_metadata_slot(
+    struct bvb_vulkan_global_context *context, uint64_t query_pool_id) {
+    struct bvb_query_pool_metadata *empty = NULL;
+    if (context == NULL) return NULL;
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        struct bvb_query_pool_metadata *metadata =
+            &context->query_pool_metadata[index];
+        if (metadata->query_pool_id == query_pool_id) return metadata;
+        if (metadata->query_pool_id == 0U && empty == NULL) empty = metadata;
+    }
+    return empty;
+}
+
+static const struct bvb_query_pool_metadata *query_pool_metadata_find(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t query_pool_id) {
+    if (context == NULL) return NULL;
+    for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
+        const struct bvb_query_pool_metadata *metadata =
+            &context->query_pool_metadata[index];
+        if (metadata->query_pool_id == query_pool_id) return metadata;
+    }
+    return NULL;
+}
+
+static int query_pool_range_matches_device(
+    const struct bvb_vulkan_global_context *context,
+    uint64_t query_pool_id, uint64_t expected_device_id,
+    uint32_t first_query, uint32_t query_count) {
+    const struct bvb_query_pool_metadata *metadata =
+        query_pool_metadata_find(context, query_pool_id);
+    if (metadata == NULL || metadata->device_id != expected_device_id ||
+        query_count == 0U || first_query > metadata->query_count ||
+        query_count > metadata->query_count - first_query)
+        return -EPROTO;
+    uint64_t parent_id = 0U, native_bits = 0U;
+    const int result = bvb_handle_table_lookup(
+        &context->objects, query_pool_id, BVB_OBJECT_QUERY_POOL,
+        &parent_id, &native_bits);
+    return result != 0 || parent_id != expected_device_id || native_bits == 0U
+        ? -EPROTO : 0;
+}
+
 static struct bvb_memory_metadata *memory_metadata_slot(
     struct bvb_vulkan_global_context *context, uint64_t memory_id) {
     struct bvb_memory_metadata *empty = NULL;
@@ -3381,6 +3445,153 @@ int bvb_vulkan_global_context_destroy_descriptor_pool(
         destroy_pool(device, descriptor_pool_from_bits(pool_bits), NULL);
     }
     return result;
+}
+
+int bvb_vulkan_global_context_create_query_pool(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_query_pool_create_request *request,
+    struct bvb_vulkan_object_create_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL)
+        return -EINVAL;
+    *response = (struct bvb_vulkan_object_create_response){0};
+    uint64_t device_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE,
+        NULL, &device_bits);
+    if (result != 0) return result;
+    const VkDevice device = device_from_bits(device_bits);
+    PFN_vkCreateQueryPool create_query_pool =
+        (PFN_vkCreateQueryPool)context->get_device_proc_addr(
+            device, "vkCreateQueryPool");
+    PFN_vkDestroyQueryPool destroy_query_pool =
+        (PFN_vkDestroyQueryPool)context->get_device_proc_addr(
+            device, "vkDestroyQueryPool");
+    if (create_query_pool == NULL || destroy_query_pool == NULL)
+        return -ENOSYS;
+    const VkQueryPoolCreateInfo create_info = {
+        .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+        .flags = (VkQueryPoolCreateFlags)request->flags,
+        .queryType = (VkQueryType)request->query_type,
+        .queryCount = request->query_count,
+        .pipelineStatistics =
+            (VkQueryPipelineStatisticFlags)request->pipeline_statistics,
+    };
+    VkQueryPool pool = VK_NULL_HANDLE;
+    response->vulkan_result =
+        create_query_pool(device, &create_info, NULL, &pool);
+    if (response->vulkan_result != VK_SUCCESS) return 0;
+    const uint64_t wire_id = bvb_handle_id(
+        BVB_OBJECT_QUERY_POOL, context->next_query_pool_serial++);
+    result = bvb_handle_table_insert(
+        &context->objects, wire_id, request->device_id,
+        handle_bits(&pool, sizeof(pool)));
+    struct bvb_query_pool_metadata *metadata = result == 0
+        ? query_pool_metadata_slot(context, wire_id) : NULL;
+    if (result != 0 || metadata == NULL) {
+        if (result == 0)
+            (void)bvb_handle_table_remove(
+                &context->objects, wire_id, BVB_OBJECT_QUERY_POOL, NULL);
+        destroy_query_pool(device, pool, NULL);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    *metadata = (struct bvb_query_pool_metadata){
+        .query_pool_id = wire_id,
+        .device_id = request->device_id,
+        .query_type = request->query_type,
+        .query_count = request->query_count,
+    };
+    response->object_id = wire_id;
+    return 0;
+}
+
+int bvb_vulkan_global_context_destroy_query_pool(
+    struct bvb_vulkan_global_context *context, uint64_t query_pool_id,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    uint64_t device_id = 0U, pool_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, query_pool_id, BVB_OBJECT_QUERY_POOL, &device_id,
+        &device, &pool_bits);
+    if (result != 0) return result;
+    PFN_vkDestroyQueryPool destroy_query_pool =
+        (PFN_vkDestroyQueryPool)context->get_device_proc_addr(
+            device, "vkDestroyQueryPool");
+    if (destroy_query_pool == NULL) return -ENOSYS;
+    result = bvb_handle_table_remove(
+        &context->objects, query_pool_id, BVB_OBJECT_QUERY_POOL, NULL);
+    if (result == 0) {
+        destroy_query_pool(device, query_pool_from_bits(pool_bits), NULL);
+        struct bvb_query_pool_metadata *metadata =
+            query_pool_metadata_slot(context, query_pool_id);
+        if (metadata != NULL && metadata->query_pool_id == query_pool_id)
+            *metadata = (struct bvb_query_pool_metadata){0};
+    }
+    return result;
+}
+
+int bvb_vulkan_global_context_get_query_pool_results(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_query_pool_results_request *request,
+    struct bvb_vulkan_query_pool_results_response *response,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || response == NULL)
+        return -EINVAL;
+    *response = (struct bvb_vulkan_query_pool_results_response){
+        .data_size = (uint32_t)request->data_size,
+    };
+    const struct bvb_query_pool_metadata *metadata =
+        query_pool_metadata_find(context, request->query_pool_id);
+    if (metadata == NULL || request->first_query > metadata->query_count ||
+        request->query_count > metadata->query_count - request->first_query)
+        return -EPROTO;
+    uint64_t device_id = 0U, pool_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, request->query_pool_id, BVB_OBJECT_QUERY_POOL,
+        &device_id, &device, &pool_bits);
+    if (result != 0 || device_id != metadata->device_id)
+        return result != 0 ? result : -EPROTO;
+    PFN_vkGetQueryPoolResults get_results =
+        (PFN_vkGetQueryPoolResults)context->get_device_proc_addr(
+            device, "vkGetQueryPoolResults");
+    if (get_results == NULL) return -ENOSYS;
+    response->vulkan_result = get_results(
+        device, query_pool_from_bits(pool_bits), request->first_query,
+        request->query_count, (size_t)request->data_size, response->data,
+        (VkDeviceSize)request->stride, (VkQueryResultFlags)request->flags);
+    return 0;
+}
+
+int bvb_vulkan_global_context_reset_query_pool(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_query_pool_reset_request *request,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL) return -EINVAL;
+    const struct bvb_query_pool_metadata *metadata =
+        query_pool_metadata_find(context, request->query_pool_id);
+    if (metadata == NULL || request->first_query > metadata->query_count ||
+        request->query_count > metadata->query_count - request->first_query)
+        return -EPROTO;
+    uint64_t device_id = 0U, pool_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, request->query_pool_id, BVB_OBJECT_QUERY_POOL,
+        &device_id, &device, &pool_bits);
+    if (result != 0 || device_id != metadata->device_id)
+        return result != 0 ? result : -EPROTO;
+    PFN_vkResetQueryPool reset_query_pool =
+        (PFN_vkResetQueryPool)context->get_device_proc_addr(
+            device, "vkResetQueryPool");
+    if (reset_query_pool == NULL) return -ENOSYS;
+    reset_query_pool(device, query_pool_from_bits(pool_bits),
+                     request->first_query, request->query_count);
+    return 0;
 }
 
 int bvb_vulkan_global_context_reset_descriptor_pool(
@@ -6333,6 +6544,19 @@ static int validate_render_command_record(
             context, command.buffer_id, BVB_OBJECT_BUFFER,
             expected_device_id);
     }
+    if (record->opcode == BVB_COMMAND_VULKAN_QUERY) {
+        struct bvb_vulkan_query_command command;
+        int result = bvb_command_decode_vulkan_query(record, &command);
+        if (result == 0)
+            result = query_pool_range_matches_device(
+                context, command.query_pool_id, expected_device_id,
+                command.first_query, command.query_count);
+        if (result == 0 &&
+            command.kind == BVB_VULKAN_QUERY_COMMAND_WRITE_TIMESTAMP &&
+            command.stage_mask > UINT32_MAX)
+            result = -EPROTO;
+        return result;
+    }
     if (command_stream_transfer_opcode(record->opcode))
         return validate_transfer_command_record(
             context, record, expected_device_id);
@@ -6403,6 +6627,95 @@ static int replay_render_command_record(
         context, command_buffer_id, &device_id, &device,
         &command_pool, &command_buffer);
     if (result != 0) return result;
+    if (record->opcode == BVB_COMMAND_VULKAN_QUERY) {
+        struct bvb_vulkan_query_command command;
+        uint64_t child_device_id = 0U, pool_bits = 0U;
+        VkDevice child_device = VK_NULL_HANDLE;
+        result = bvb_command_decode_vulkan_query(record, &command);
+        if (result == 0)
+            result = resolve_device_child(
+                context, command.query_pool_id, BVB_OBJECT_QUERY_POOL,
+                &child_device_id, &child_device, &pool_bits);
+        if (result == 0 &&
+            (child_device_id != device_id || child_device != device))
+            result = -EPROTO;
+        if (result != 0) return result;
+        const VkQueryPool pool = query_pool_from_bits(pool_bits);
+        switch (command.kind) {
+            case BVB_VULKAN_QUERY_COMMAND_RESET: {
+                PFN_vkCmdResetQueryPool call =
+                    (PFN_vkCmdResetQueryPool)context->get_device_proc_addr(
+                        device, "vkCmdResetQueryPool");
+                if (call == NULL) return -ENOSYS;
+                call(command_buffer, pool, command.first_query,
+                     command.query_count);
+                return 0;
+            }
+            case BVB_VULKAN_QUERY_COMMAND_BEGIN: {
+                PFN_vkCmdBeginQuery call =
+                    (PFN_vkCmdBeginQuery)context->get_device_proc_addr(
+                        device, "vkCmdBeginQuery");
+                if (call == NULL) return -ENOSYS;
+                call(command_buffer, pool, command.first_query,
+                     (VkQueryControlFlags)command.flags);
+                return 0;
+            }
+            case BVB_VULKAN_QUERY_COMMAND_END: {
+                PFN_vkCmdEndQuery call =
+                    (PFN_vkCmdEndQuery)context->get_device_proc_addr(
+                        device, "vkCmdEndQuery");
+                if (call == NULL) return -ENOSYS;
+                call(command_buffer, pool, command.first_query);
+                return 0;
+            }
+            case BVB_VULKAN_QUERY_COMMAND_WRITE_TIMESTAMP: {
+                PFN_vkCmdWriteTimestamp call =
+                    (PFN_vkCmdWriteTimestamp)context->get_device_proc_addr(
+                        device, "vkCmdWriteTimestamp");
+                if (call == NULL) return -ENOSYS;
+                call(command_buffer,
+                     (VkPipelineStageFlagBits)(uint32_t)command.stage_mask,
+                     pool, command.first_query);
+                return 0;
+            }
+            case BVB_VULKAN_QUERY_COMMAND_WRITE_TIMESTAMP_2: {
+                PFN_vkCmdWriteTimestamp2 call =
+                    (PFN_vkCmdWriteTimestamp2)context->get_device_proc_addr(
+                        device, "vkCmdWriteTimestamp2");
+                if (call == NULL)
+                    call = (PFN_vkCmdWriteTimestamp2)
+                        context->get_device_proc_addr(
+                            device, "vkCmdWriteTimestamp2KHR");
+                if (call == NULL) return -ENOSYS;
+                call(command_buffer,
+                     (VkPipelineStageFlags2)command.stage_mask,
+                     pool, command.first_query);
+                return 0;
+            }
+            case BVB_VULKAN_QUERY_COMMAND_BEGIN_INDEXED: {
+                PFN_vkCmdBeginQueryIndexedEXT call =
+                    (PFN_vkCmdBeginQueryIndexedEXT)
+                        context->get_device_proc_addr(
+                            device, "vkCmdBeginQueryIndexedEXT");
+                if (call == NULL) return -ENOSYS;
+                call(command_buffer, pool, command.first_query,
+                     (VkQueryControlFlags)command.flags, command.index);
+                return 0;
+            }
+            case BVB_VULKAN_QUERY_COMMAND_END_INDEXED: {
+                PFN_vkCmdEndQueryIndexedEXT call =
+                    (PFN_vkCmdEndQueryIndexedEXT)
+                        context->get_device_proc_addr(
+                            device, "vkCmdEndQueryIndexedEXT");
+                if (call == NULL) return -ENOSYS;
+                call(command_buffer, pool, command.first_query,
+                     command.index);
+                return 0;
+            }
+            default:
+                return -EPROTO;
+        }
+    }
     if (record->opcode == BVB_COMMAND_VULKAN_IMAGE_BARRIER_2) {
         struct bvb_vulkan_image_barrier_2_command barrier;
         result = bvb_command_decode_vulkan_image_barrier_2(record, &barrier);
@@ -7419,7 +7732,7 @@ int bvb_vulkan_global_context_validate_command_stream(
                 context, &record, expected_device_id, &rendering);
         } else if (record.opcode >=
                        BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS &&
-                   record.opcode <= BVB_COMMAND_VULKAN_UPDATE_BUFFER) {
+                   record.opcode <= BVB_COMMAND_VULKAN_QUERY) {
             result = validate_render_command_record(
                 context, &record, expected_device_id, &rendering);
         } else if (command_stream_transfer_opcode(record.opcode)) {
@@ -7569,7 +7882,7 @@ int bvb_vulkan_global_context_replay_command_stream(
                    record.opcode == BVB_COMMAND_VULKAN_PUSH_CONSTANTS ||
                    (record.opcode >=
                         BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS &&
-                    record.opcode <= BVB_COMMAND_VULKAN_UPDATE_BUFFER) ||
+                    record.opcode <= BVB_COMMAND_VULKAN_QUERY) ||
                    command_stream_transfer_opcode(record.opcode)) {
             result = replay_render_command_record(
                 context, info.command_buffer_id, &record);

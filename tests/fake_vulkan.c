@@ -74,6 +74,7 @@ static uint32_t fake_queue_submit_2_calls;
 static uint32_t fake_descriptor_step;
 static uint32_t fake_core_descriptor_pool_step;
 static uint32_t fake_descriptor_template_step;
+static uint32_t fake_query_step;
 static int fake_descriptor_template_swapchain_update_seen;
 static int fake_descriptor_bind_seen;
 static uint32_t fake_render_bundle_step;
@@ -146,6 +147,8 @@ static const VkDescriptorPool fake_dxvk_descriptor_pool =
     (VkDescriptorPool)(uintptr_t)UINT64_C(0xac00);
 static const VkDescriptorSet fake_dxvk_descriptor_set =
     (VkDescriptorSet)(uintptr_t)UINT64_C(0xad00);
+static const VkQueryPool fake_query_pool =
+    (VkQueryPool)(uintptr_t)UINT64_C(0xae00);
 static const uint32_t fake_dxvk_dummy_frag[] = {
     UINT32_C(0x07230203), UINT32_C(0x00010600), UINT32_C(0x0008000b),
     UINT32_C(0x00000006), UINT32_C(0x00000000), UINT32_C(0x00020011),
@@ -1099,6 +1102,7 @@ static void VKAPI_CALL fake_destroy_device(
     fake_descriptor_step = 0U;
     fake_core_descriptor_pool_step = 0U;
     fake_descriptor_template_step = 0U;
+    fake_query_step = 0U;
     fake_descriptor_template_swapchain_update_seen = 0;
     fake_descriptor_bind_seen = 0;
     fake_init_image_step = 0U;
@@ -2300,6 +2304,84 @@ static void VKAPI_CALL fake_destroy_descriptor_set_layout(
                set_layout == fake_descriptor_layout) {
         fake_descriptor_step = 14U;
     }
+}
+
+static VkResult VKAPI_CALL fake_create_query_pool(
+    VkDevice device, const VkQueryPoolCreateInfo *create_info,
+    const VkAllocationCallbacks *allocator, VkQueryPool *query_pool) {
+    (void)device;
+    if (fake_query_step != 0U || create_info == NULL || query_pool == NULL ||
+        allocator != NULL ||
+        create_info->sType != VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO ||
+        create_info->pNext != NULL || create_info->flags != 0U ||
+        create_info->queryType != VK_QUERY_TYPE_OCCLUSION ||
+        create_info->queryCount != 16384U ||
+        create_info->pipelineStatistics != 0U)
+        return VK_ERROR_INITIALIZATION_FAILED;
+    *query_pool = fake_query_pool;
+    fake_query_step = 1U;
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL fake_cmd_reset_query_pool(
+    VkCommandBuffer command_buffer, VkQueryPool query_pool,
+    uint32_t first_query, uint32_t query_count) {
+    if (fake_query_step == 1U && command_buffer != VK_NULL_HANDLE &&
+        query_pool == fake_query_pool && first_query == 7U &&
+        query_count == 1U)
+        fake_query_step = 2U;
+}
+
+static void VKAPI_CALL fake_cmd_begin_query(
+    VkCommandBuffer command_buffer, VkQueryPool query_pool,
+    uint32_t query, VkQueryControlFlags flags) {
+    if (fake_query_step == 2U && command_buffer != VK_NULL_HANDLE &&
+        query_pool == fake_query_pool && query == 7U && flags == 0U)
+        fake_query_step = 3U;
+}
+
+static void VKAPI_CALL fake_cmd_end_query(
+    VkCommandBuffer command_buffer, VkQueryPool query_pool,
+    uint32_t query) {
+    if (fake_query_step == 3U && command_buffer != VK_NULL_HANDLE &&
+        query_pool == fake_query_pool && query == 7U)
+        fake_query_step = 4U;
+}
+
+static VkResult VKAPI_CALL fake_get_query_pool_results(
+    VkDevice device, VkQueryPool query_pool, uint32_t first_query,
+    uint32_t query_count, size_t data_size, void *data,
+    VkDeviceSize stride, VkQueryResultFlags flags) {
+    (void)device;
+    if (fake_query_step != 4U || query_pool != fake_query_pool ||
+        first_query != 7U || query_count != 1U || data_size != 16U ||
+        data == NULL || stride != 16U ||
+        flags != (VK_QUERY_RESULT_64_BIT |
+                  VK_QUERY_RESULT_WITH_AVAILABILITY_BIT))
+        return VK_ERROR_INITIALIZATION_FAILED;
+    const uint64_t values[2] = {UINT64_C(42), UINT64_C(1)};
+    memcpy(data, values, sizeof(values));
+    fake_query_step = 5U;
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL fake_reset_query_pool(
+    VkDevice device, VkQueryPool query_pool, uint32_t first_query,
+    uint32_t query_count) {
+    (void)device;
+    if (fake_query_step == 5U && query_pool == fake_query_pool &&
+        first_query == 7U && query_count == 1U)
+        fake_query_step = 6U;
+}
+
+static void VKAPI_CALL fake_destroy_query_pool(
+    VkDevice device, VkQueryPool query_pool,
+    const VkAllocationCallbacks *allocator) {
+    (void)device;
+    if (fake_query_step != 6U || query_pool != fake_query_pool ||
+        allocator != NULL)
+        abort();
+    fake_query_step = 7U;
 }
 
 static VkResult VKAPI_CALL fake_create_swapchain(
@@ -3872,6 +3954,13 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkCreateDescriptorPool", fake_create_descriptor_pool)
     BVB_DEVICE_MATCH("vkDestroyDescriptorPool", fake_destroy_descriptor_pool)
     BVB_DEVICE_MATCH("vkResetDescriptorPool", fake_reset_descriptor_pool)
+    BVB_DEVICE_MATCH("vkCreateQueryPool", fake_create_query_pool)
+    BVB_DEVICE_MATCH("vkDestroyQueryPool", fake_destroy_query_pool)
+    BVB_DEVICE_MATCH("vkGetQueryPoolResults", fake_get_query_pool_results)
+    BVB_DEVICE_MATCH("vkResetQueryPool", fake_reset_query_pool)
+    BVB_DEVICE_MATCH("vkCmdResetQueryPool", fake_cmd_reset_query_pool)
+    BVB_DEVICE_MATCH("vkCmdBeginQuery", fake_cmd_begin_query)
+    BVB_DEVICE_MATCH("vkCmdEndQuery", fake_cmd_end_query)
     BVB_DEVICE_MATCH("vkAllocateDescriptorSets",
                      fake_allocate_descriptor_sets)
     BVB_DEVICE_MATCH("vkCreateSampler", fake_create_sampler)

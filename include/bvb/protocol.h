@@ -125,7 +125,11 @@ enum {
     BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMMEDIATE_RECORD = 114,
     BVB_OPCODE_VULKAN_FORMAT_PROPERTIES_3 = 115,
     BVB_OPCODE_VULKAN_DESCRIPTOR_POOL_RESET = 116,
-    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_DESCRIPTOR_POOL_RESET,
+    BVB_OPCODE_VULKAN_QUERY_POOL_CREATE = 117,
+    BVB_OPCODE_VULKAN_QUERY_POOL_DESTROY = 118,
+    BVB_OPCODE_VULKAN_QUERY_POOL_RESULTS = 119,
+    BVB_OPCODE_VULKAN_QUERY_POOL_RESET = 120,
+    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_QUERY_POOL_RESET,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -184,6 +188,13 @@ enum {
     BVB_VULKAN_BUFFER_CREATE_REQUEST_SIZE = 24,
     BVB_VULKAN_OBJECT_CREATE_RESPONSE_SIZE = 16,
     BVB_VULKAN_OBJECT_ID_SIZE = 8,
+    BVB_VULKAN_QUERY_POOL_CREATE_REQUEST_SIZE = 24,
+    BVB_VULKAN_QUERY_POOL_RESULTS_REQUEST_SIZE = 40,
+    BVB_VULKAN_QUERY_POOL_RESET_REQUEST_SIZE = 16,
+    BVB_VULKAN_QUERY_POOL_RESULTS_RESPONSE_PREFIX_SIZE = 8,
+    BVB_VULKAN_QUERY_POOL_RESULTS_MAX_BYTES =
+        BVB_PROTOCOL_MAX_PAYLOAD -
+        BVB_VULKAN_QUERY_POOL_RESULTS_RESPONSE_PREFIX_SIZE,
     BVB_VULKAN_BUFFER_REQUIREMENTS_SIZE = 24,
     BVB_VULKAN_DEVICE_BUFFER_MAX_QUEUE_FAMILIES = 8,
     BVB_VULKAN_DEVICE_BUFFER_REQUIREMENTS_REQUEST_SIZE = 64,
@@ -698,6 +709,35 @@ struct bvb_vulkan_buffer_create_request {
 struct bvb_vulkan_object_create_response {
     int32_t vulkan_result;
     uint64_t object_id;
+};
+
+struct bvb_vulkan_query_pool_create_request {
+    uint64_t device_id;
+    uint32_t flags;
+    uint32_t query_type;
+    uint32_t query_count;
+    uint32_t pipeline_statistics;
+};
+
+struct bvb_vulkan_query_pool_results_request {
+    uint64_t query_pool_id;
+    uint64_t data_size;
+    uint64_t stride;
+    uint32_t first_query;
+    uint32_t query_count;
+    uint32_t flags;
+};
+
+struct bvb_vulkan_query_pool_results_response {
+    int32_t vulkan_result;
+    uint32_t data_size;
+    uint8_t data[BVB_VULKAN_QUERY_POOL_RESULTS_MAX_BYTES];
+};
+
+struct bvb_vulkan_query_pool_reset_request {
+    uint64_t query_pool_id;
+    uint32_t first_query;
+    uint32_t query_count;
 };
 
 struct bvb_vulkan_buffer_requirements {
@@ -1330,6 +1370,31 @@ int bvb_protocol_decode_vulkan_object_create_response(
     const uint8_t input[BVB_VULKAN_OBJECT_CREATE_RESPONSE_SIZE],
     struct bvb_vulkan_object_create_response *response,
     uint8_t expected_type);
+int bvb_protocol_encode_vulkan_query_pool_create_request(
+    uint8_t output[BVB_VULKAN_QUERY_POOL_CREATE_REQUEST_SIZE],
+    const struct bvb_vulkan_query_pool_create_request *request);
+int bvb_protocol_decode_vulkan_query_pool_create_request(
+    const uint8_t input[BVB_VULKAN_QUERY_POOL_CREATE_REQUEST_SIZE],
+    struct bvb_vulkan_query_pool_create_request *request);
+int bvb_protocol_encode_vulkan_query_pool_results_request(
+    uint8_t output[BVB_VULKAN_QUERY_POOL_RESULTS_REQUEST_SIZE],
+    const struct bvb_vulkan_query_pool_results_request *request);
+int bvb_protocol_decode_vulkan_query_pool_results_request(
+    const uint8_t input[BVB_VULKAN_QUERY_POOL_RESULTS_REQUEST_SIZE],
+    struct bvb_vulkan_query_pool_results_request *request);
+int bvb_protocol_encode_vulkan_query_pool_results_response(
+    uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
+    const struct bvb_vulkan_query_pool_results_response *response,
+    uint32_t *output_length);
+int bvb_protocol_decode_vulkan_query_pool_results_response(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_query_pool_results_response *response);
+int bvb_protocol_encode_vulkan_query_pool_reset_request(
+    uint8_t output[BVB_VULKAN_QUERY_POOL_RESET_REQUEST_SIZE],
+    const struct bvb_vulkan_query_pool_reset_request *request);
+int bvb_protocol_decode_vulkan_query_pool_reset_request(
+    const uint8_t input[BVB_VULKAN_QUERY_POOL_RESET_REQUEST_SIZE],
+    struct bvb_vulkan_query_pool_reset_request *request);
 int bvb_protocol_encode_vulkan_object_id(
     uint8_t output[BVB_VULKAN_OBJECT_ID_SIZE], uint64_t object_id,
     uint8_t expected_type);

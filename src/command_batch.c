@@ -65,6 +65,7 @@ enum {
     BVB_VULKAN_UPDATE_BUFFER_HEADER_SIZE = 24,
     BVB_VULKAN_UPDATE_BUFFER_MAX_SIZE = BVB_VULKAN_UPDATE_BUFFER_HEADER_SIZE +
         BVB_COMMAND_VULKAN_MAX_UPDATE_BUFFER_BYTES,
+    BVB_VULKAN_QUERY_SIZE = 40,
 };
 
 _Static_assert(sizeof(float) == sizeof(uint32_t),
@@ -1054,6 +1055,62 @@ int bvb_command_batch_append_vulkan_update_buffer(
                                       command->data_size);
 }
 
+int bvb_command_batch_append_vulkan_query(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_query_command *command) {
+    if (command == NULL ||
+        bvb_handle_expect(command->query_pool_id,
+                          BVB_OBJECT_QUERY_POOL) != 0 ||
+        command->query_count == 0U)
+        return -EINVAL;
+    switch (command->kind) {
+        case BVB_VULKAN_QUERY_COMMAND_RESET:
+            if (command->stage_mask != 0U || command->flags != 0U ||
+                command->index != 0U)
+                return -EINVAL;
+            break;
+        case BVB_VULKAN_QUERY_COMMAND_BEGIN:
+            if (command->stage_mask != 0U || command->query_count != 1U ||
+                (command->flags & ~UINT32_C(1)) != 0U ||
+                command->index != 0U)
+                return -EINVAL;
+            break;
+        case BVB_VULKAN_QUERY_COMMAND_END:
+            if (command->stage_mask != 0U || command->query_count != 1U ||
+                command->flags != 0U || command->index != 0U)
+                return -EINVAL;
+            break;
+        case BVB_VULKAN_QUERY_COMMAND_WRITE_TIMESTAMP:
+        case BVB_VULKAN_QUERY_COMMAND_WRITE_TIMESTAMP_2:
+            if (command->stage_mask == 0U || command->query_count != 1U ||
+                command->flags != 0U || command->index != 0U)
+                return -EINVAL;
+            break;
+        case BVB_VULKAN_QUERY_COMMAND_BEGIN_INDEXED:
+            if (command->stage_mask != 0U || command->query_count != 1U ||
+                (command->flags & ~UINT32_C(1)) != 0U)
+                return -EINVAL;
+            break;
+        case BVB_VULKAN_QUERY_COMMAND_END_INDEXED:
+            if (command->stage_mask != 0U || command->query_count != 1U ||
+                command->flags != 0U)
+                return -EINVAL;
+            break;
+        default:
+            return -EINVAL;
+    }
+    uint8_t payload[BVB_VULKAN_QUERY_SIZE] = {0};
+    bvb_wire_put_u64(payload, command->query_pool_id);
+    bvb_wire_put_u64(payload + 8, command->stage_mask);
+    bvb_wire_put_u32(payload + 16, command->first_query);
+    bvb_wire_put_u32(payload + 20, command->query_count);
+    bvb_wire_put_u32(payload + 24, command->flags);
+    bvb_wire_put_u32(payload + 28, command->index);
+    bvb_wire_put_u32(payload + 32, command->kind);
+    return append_record(builder, BVB_COMMAND_VULKAN_QUERY,
+                         payload, sizeof(payload));
+}
+
 int bvb_command_batch_append_record(
     struct bvb_command_batch_builder *builder,
     const struct bvb_command_record *record) {
@@ -1174,6 +1231,9 @@ static int expected_payload_size(uint16_t opcode, uint32_t *payload_size) {
             return 0;
         case BVB_COMMAND_VULKAN_UPDATE_BUFFER:
             *payload_size = BVB_VULKAN_UPDATE_BUFFER_MAX_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_QUERY:
+            *payload_size = BVB_VULKAN_QUERY_SIZE;
             return 0;
         case BVB_COMMAND_VULKAN_BEGIN:
             *payload_size = BVB_VULKAN_BEGIN_SIZE;
@@ -1715,6 +1775,44 @@ static int validate_payload(uint16_t opcode, const uint8_t *payload) {
                            bvb_wire_get_u32(payload + 20) != 0U
                        ? -EPROTO
                        : 0;
+        case BVB_COMMAND_VULKAN_QUERY: {
+            const uint64_t stage = bvb_wire_get_u64(payload + 8);
+            const uint32_t count = bvb_wire_get_u32(payload + 20);
+            const uint32_t flags = bvb_wire_get_u32(payload + 24);
+            const uint32_t index = bvb_wire_get_u32(payload + 28);
+            const uint32_t kind = bvb_wire_get_u32(payload + 32);
+            if (bvb_handle_expect(bvb_wire_get_u64(payload),
+                                  BVB_OBJECT_QUERY_POOL) != 0 ||
+                count == 0U || bvb_wire_get_u32(payload + 36) != 0U)
+                return -EPROTO;
+            switch (kind) {
+                case BVB_VULKAN_QUERY_COMMAND_RESET:
+                    return stage == 0U && flags == 0U && index == 0U
+                        ? 0 : -EPROTO;
+                case BVB_VULKAN_QUERY_COMMAND_BEGIN:
+                    return stage == 0U && count == 1U &&
+                                   (flags & ~UINT32_C(1)) == 0U && index == 0U
+                        ? 0 : -EPROTO;
+                case BVB_VULKAN_QUERY_COMMAND_END:
+                    return stage == 0U && count == 1U && flags == 0U &&
+                                   index == 0U
+                        ? 0 : -EPROTO;
+                case BVB_VULKAN_QUERY_COMMAND_WRITE_TIMESTAMP:
+                case BVB_VULKAN_QUERY_COMMAND_WRITE_TIMESTAMP_2:
+                    return stage != 0U && count == 1U && flags == 0U &&
+                                   index == 0U
+                        ? 0 : -EPROTO;
+                case BVB_VULKAN_QUERY_COMMAND_BEGIN_INDEXED:
+                    return stage == 0U && count == 1U &&
+                                   (flags & ~UINT32_C(1)) == 0U
+                        ? 0 : -EPROTO;
+                case BVB_VULKAN_QUERY_COMMAND_END_INDEXED:
+                    return stage == 0U && count == 1U && flags == 0U
+                        ? 0 : -EPROTO;
+                default:
+                    return -EPROTO;
+            }
+        }
         case BVB_COMMAND_VULKAN_BEGIN:
             return (bvb_wire_get_u32(payload) & ~1U) != 0U ||
                            bvb_wire_get_u32(payload + 4) != 0U
@@ -2541,4 +2639,23 @@ int bvb_command_decode_vulkan_update_buffer(
            record->payload + BVB_VULKAN_UPDATE_BUFFER_HEADER_SIZE,
            command->data_size);
     return 0;
+}
+
+int bvb_command_decode_vulkan_query(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_query_command *command) {
+    if (record == NULL || command == NULL ||
+        record->opcode != BVB_COMMAND_VULKAN_QUERY ||
+        record->payload_length != BVB_VULKAN_QUERY_SIZE)
+        return -EINVAL;
+    *command = (struct bvb_vulkan_query_command){
+        .query_pool_id = bvb_wire_get_u64(record->payload),
+        .stage_mask = bvb_wire_get_u64(record->payload + 8),
+        .first_query = bvb_wire_get_u32(record->payload + 16),
+        .query_count = bvb_wire_get_u32(record->payload + 20),
+        .flags = bvb_wire_get_u32(record->payload + 24),
+        .index = bvb_wire_get_u32(record->payload + 28),
+        .kind = bvb_wire_get_u32(record->payload + 32),
+    };
+    return validate_payload(record->opcode, record->payload);
 }

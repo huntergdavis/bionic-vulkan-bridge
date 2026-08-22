@@ -109,7 +109,11 @@ int main(void) {
     CHECK(BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMMEDIATE_RECORD == 114);
     CHECK(BVB_OPCODE_VULKAN_FORMAT_PROPERTIES_3 == 115);
     CHECK(BVB_OPCODE_VULKAN_DESCRIPTOR_POOL_RESET == 116);
-    CHECK(BVB_OPCODE_LAST == 116);
+    CHECK(BVB_OPCODE_VULKAN_QUERY_POOL_CREATE == 117);
+    CHECK(BVB_OPCODE_VULKAN_QUERY_POOL_DESTROY == 118);
+    CHECK(BVB_OPCODE_VULKAN_QUERY_POOL_RESULTS == 119);
+    CHECK(BVB_OPCODE_VULKAN_QUERY_POOL_RESET == 120);
+    CHECK(BVB_OPCODE_LAST == 120);
     CHECK(decoded.opcode == BVB_OPCODE_LAST);
 
     const struct bvb_hello_request hello = {
@@ -2346,6 +2350,71 @@ int main(void) {
     CHECK(bvb_protocol_decode_vulkan_graphics_pipeline_create_request(
               graphics_pipeline_wire, graphics_pipeline_wire_length,
               &graphics_pipeline_decoded) == -EPROTO);
+
+    const struct bvb_vulkan_query_pool_create_request query_create = {
+        .device_id = UINT64_C(0x0300000000000001),
+        .query_type = VK_QUERY_TYPE_OCCLUSION,
+        .query_count = 16384U,
+    };
+    uint8_t query_create_wire[BVB_VULKAN_QUERY_POOL_CREATE_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_query_pool_create_request(
+              query_create_wire, &query_create) == 0);
+    struct bvb_vulkan_query_pool_create_request query_create_decoded;
+    CHECK(bvb_protocol_decode_vulkan_query_pool_create_request(
+              query_create_wire, &query_create_decoded) == 0);
+    CHECK(query_create_decoded.query_count == 16384U);
+    bvb_wire_put_u32(query_create_wire + 20U, 1U);
+    CHECK(bvb_protocol_decode_vulkan_query_pool_create_request(
+              query_create_wire, &query_create_decoded) == -EPROTO);
+
+    const uint64_t query_pool_id = UINT64_C(0x1900000000000001);
+    const struct bvb_vulkan_query_pool_results_request query_results = {
+        .query_pool_id = query_pool_id,
+        .data_size = 88U,
+        .stride = 88U,
+        .first_query = 7U,
+        .query_count = 1U,
+        .flags = VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT,
+    };
+    uint8_t query_results_wire[BVB_VULKAN_QUERY_POOL_RESULTS_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_query_pool_results_request(
+              query_results_wire, &query_results) == 0);
+    struct bvb_vulkan_query_pool_results_request query_results_decoded;
+    CHECK(bvb_protocol_decode_vulkan_query_pool_results_request(
+              query_results_wire, &query_results_decoded) == 0);
+    CHECK(query_results_decoded.data_size == 88U);
+    query_results_wire[39] = 1U;
+    CHECK(bvb_protocol_decode_vulkan_query_pool_results_request(
+              query_results_wire, &query_results_decoded) == -EPROTO);
+
+    struct bvb_vulkan_query_pool_results_response query_response = {
+        .vulkan_result = VK_SUCCESS,
+        .data_size = 88U,
+        .data = {0x5aU},
+    };
+    uint8_t query_response_wire[BVB_PROTOCOL_MAX_PAYLOAD];
+    uint32_t query_response_length = 0U;
+    CHECK(bvb_protocol_encode_vulkan_query_pool_results_response(
+              query_response_wire, &query_response,
+              &query_response_length) == 0);
+    struct bvb_vulkan_query_pool_results_response query_response_decoded;
+    CHECK(bvb_protocol_decode_vulkan_query_pool_results_response(
+              query_response_wire, query_response_length,
+              &query_response_decoded) == 0);
+    CHECK(query_response_decoded.data[0] == 0x5aU);
+
+    const struct bvb_vulkan_query_pool_reset_request query_reset = {
+        .query_pool_id = query_pool_id,
+        .first_query = 5U,
+        .query_count = 3U,
+    };
+    uint8_t query_reset_wire[BVB_VULKAN_QUERY_POOL_RESET_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_query_pool_reset_request(
+              query_reset_wire, &query_reset) == 0);
+    struct bvb_vulkan_query_pool_reset_request query_reset_decoded;
+    CHECK(bvb_protocol_decode_vulkan_query_pool_reset_request(
+              query_reset_wire, &query_reset_decoded) == 0);
+    CHECK(query_reset_decoded.first_query == 5U);
 
     const struct bvb_vulkan_builtin_graphics_pipeline_create_request
         general_graphics_request = {

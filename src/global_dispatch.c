@@ -4846,6 +4846,151 @@ static VkResult VKAPI_CALL bvb_bridge_vkResetDescriptorPool(
     return vulkan_result;
 }
 
+static VkResult VKAPI_CALL bvb_bridge_vkCreateQueryPool(
+    VkDevice device, const VkQueryPoolCreateInfo *create_info,
+    const VkAllocationCallbacks *allocator, VkQueryPool *query_pool) {
+    if (query_pool != NULL) *query_pool = VK_NULL_HANDLE;
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || create_info == NULL || query_pool == NULL ||
+        allocator != NULL ||
+        create_info->sType != VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO ||
+        create_info->pNext != NULL)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    const struct bvb_vulkan_query_pool_create_request decoded = {
+        .device_id = device_state->wire_id,
+        .flags = create_info->flags,
+        .query_type = create_info->queryType,
+        .query_count = create_info->queryCount,
+        .pipeline_statistics = create_info->pipelineStatistics,
+    };
+    uint8_t payload[BVB_VULKAN_QUERY_POOL_CREATE_REQUEST_SIZE];
+    int result = bvb_protocol_encode_vulkan_query_pool_create_request(
+        payload, &decoded);
+    struct bvb_resource_proxy *state = calloc(1, sizeof(*state));
+    if (state == NULL) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    state->allocation_size = create_info->queryCount;
+    state->subtype = create_info->queryType;
+    if (result != 0 || pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        free(state);
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    }
+    uint64_t wire_id = 0U;
+    const VkResult vulkan_result = create_resource_locked(
+        BVB_OPCODE_VULKAN_QUERY_POOL_CREATE, payload, sizeof(payload),
+        BVB_OBJECT_QUERY_POOL, device_state->wire_id, state, &wire_id);
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    if (vulkan_result != VK_SUCCESS) {
+        free(state);
+        return vulkan_result;
+    }
+    memcpy(query_pool, &wire_id, sizeof(*query_pool));
+    return VK_SUCCESS;
+}
+
+static void VKAPI_CALL bvb_bridge_vkDestroyQueryPool(
+    VkDevice device, VkQueryPool query_pool,
+    const VkAllocationCallbacks *allocator) {
+    destroy_resource(
+        device, non_dispatchable_wire_id(&query_pool, sizeof(query_pool)),
+        BVB_OBJECT_QUERY_POOL, BVB_OPCODE_VULKAN_QUERY_POOL_DESTROY,
+        allocator);
+}
+
+static VkResult VKAPI_CALL bvb_bridge_vkGetQueryPoolResults(
+    VkDevice device, VkQueryPool query_pool, uint32_t first_query,
+    uint32_t query_count, size_t data_size, void *data,
+    VkDeviceSize stride, VkQueryResultFlags flags) {
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    const uint64_t pool_id = non_dispatchable_wire_id(
+        &query_pool, sizeof(query_pool));
+    if (device_state == NULL || data == NULL || data_size == 0U ||
+        data_size > BVB_VULKAN_QUERY_POOL_RESULTS_MAX_BYTES ||
+        stride > SIZE_MAX ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0)
+        return VK_ERROR_FEATURE_NOT_PRESENT;
+    struct bvb_resource_proxy *state =
+        resource_proxy_locked(pool_id, BVB_OBJECT_QUERY_POOL);
+    int result = state != NULL && state->parent_id == device_state->wire_id &&
+                         first_query <= state->allocation_size &&
+                         query_count <= state->allocation_size - first_query
+                     ? connect_locked() : -EINVAL;
+    const struct bvb_vulkan_query_pool_results_request decoded = {
+        .query_pool_id = pool_id,
+        .data_size = data_size,
+        .stride = stride,
+        .first_query = first_query,
+        .query_count = query_count,
+        .flags = flags,
+    };
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_QUERY_POOL_RESULTS,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_QUERY_POOL_RESULTS_REQUEST_SIZE,
+    };
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_query_pool_results_request(
+            request.payload, &decoded);
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) result = exchange_locked(&request, &response);
+    if (result == 0 && response.header.status != 0)
+        result = response.header.status;
+    struct bvb_vulkan_query_pool_results_response results = {
+        .vulkan_result = VK_ERROR_INITIALIZATION_FAILED,
+    };
+    if (result == 0)
+        result = bvb_protocol_decode_vulkan_query_pool_results_response(
+            response.payload, response.header.payload_length, &results);
+    if (result == 0 && results.data_size != data_size) result = -EPROTO;
+    if (result == 0) memcpy(data, results.data, data_size);
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+    return result == 0 ? (VkResult)results.vulkan_result
+                       : VK_ERROR_INITIALIZATION_FAILED;
+}
+
+static void VKAPI_CALL bvb_bridge_vkResetQueryPool(
+    VkDevice device, VkQueryPool query_pool, uint32_t first_query,
+    uint32_t query_count) {
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    const uint64_t pool_id = non_dispatchable_wire_id(
+        &query_pool, sizeof(query_pool));
+    if (device_state == NULL || query_count == 0U ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0)
+        return;
+    struct bvb_resource_proxy *state =
+        resource_proxy_locked(pool_id, BVB_OBJECT_QUERY_POOL);
+    int result = state != NULL && state->parent_id == device_state->wire_id &&
+                         first_query <= state->allocation_size &&
+                         query_count <= state->allocation_size - first_query
+                     ? connect_locked() : -EINVAL;
+    const struct bvb_vulkan_query_pool_reset_request decoded = {
+        .query_pool_id = pool_id,
+        .first_query = first_query,
+        .query_count = query_count,
+    };
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_QUERY_POOL_RESET,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_VULKAN_QUERY_POOL_RESET_REQUEST_SIZE,
+    };
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_query_pool_reset_request(
+            request.payload, &decoded);
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) result = exchange_locked(&request, &response);
+    if (result == 0 &&
+        (response.header.status != 0 || response.header.payload_length != 0U))
+        result = response.header.status != 0
+            ? response.header.status : -EPROTO;
+    (void)result;
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+}
+
 static VkResult VKAPI_CALL bvb_bridge_vkAllocateDescriptorSets(
     VkDevice device, const VkDescriptorSetAllocateInfo *allocate_info,
     VkDescriptorSet *descriptor_sets) {
@@ -8167,6 +8312,98 @@ static int finish_single_render_record(
     int result = bvb_command_batch_finish(builder, &length);
     return result != 0 ? result : submit_single_render_record(
         command_state, bytes, length, entry, shape);
+}
+
+static void record_query_command(
+    VkCommandBuffer command_buffer, VkQueryPool query_pool,
+    uint32_t first_query, uint32_t query_count, uint32_t flags,
+    uint32_t index, uint64_t stage_mask, uint32_t kind,
+    const char *entry) {
+    struct bvb_command_buffer_proxy *command_state =
+        command_buffer_proxy(command_buffer);
+    const char *shape =
+        "VkQueryPool_value,uint32_t_value,uint32_t_value,uint64_t_value";
+    if (command_state == NULL) return;
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    const struct bvb_vulkan_query_command command = {
+        .query_pool_id = non_dispatchable_wire_id(
+            &query_pool, sizeof(query_pool)),
+        .stage_mask = stage_mask,
+        .first_query = first_query,
+        .query_count = query_count,
+        .flags = flags,
+        .index = index,
+        .kind = kind,
+    };
+    int result = begin_single_render_record(
+        command_state, bytes, &builder);
+    if (result == 0)
+        result = bvb_command_batch_append_vulkan_query(&builder, &command);
+    if (result == 0)
+        result = finish_single_render_record(
+            command_state, bytes, &builder, entry, shape);
+    if (result != 0)
+        poison_shared_command_stream(
+            command_state, entry, "query_record_rejected", shape, result);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdResetQueryPool(
+    VkCommandBuffer command_buffer, VkQueryPool query_pool,
+    uint32_t first_query, uint32_t query_count) {
+    record_query_command(
+        command_buffer, query_pool, first_query, query_count, 0U, 0U, 0U,
+        BVB_VULKAN_QUERY_COMMAND_RESET, "vkCmdResetQueryPool");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdBeginQuery(
+    VkCommandBuffer command_buffer, VkQueryPool query_pool,
+    uint32_t query, VkQueryControlFlags flags) {
+    record_query_command(
+        command_buffer, query_pool, query, 1U, flags, 0U, 0U,
+        BVB_VULKAN_QUERY_COMMAND_BEGIN, "vkCmdBeginQuery");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdEndQuery(
+    VkCommandBuffer command_buffer, VkQueryPool query_pool,
+    uint32_t query) {
+    record_query_command(
+        command_buffer, query_pool, query, 1U, 0U, 0U, 0U,
+        BVB_VULKAN_QUERY_COMMAND_END, "vkCmdEndQuery");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdWriteTimestamp(
+    VkCommandBuffer command_buffer, VkPipelineStageFlagBits stage,
+    VkQueryPool query_pool, uint32_t query) {
+    record_query_command(
+        command_buffer, query_pool, query, 1U, 0U, 0U, stage,
+        BVB_VULKAN_QUERY_COMMAND_WRITE_TIMESTAMP, "vkCmdWriteTimestamp");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdWriteTimestamp2(
+    VkCommandBuffer command_buffer, VkPipelineStageFlags2 stage,
+    VkQueryPool query_pool, uint32_t query) {
+    record_query_command(
+        command_buffer, query_pool, query, 1U, 0U, 0U, stage,
+        BVB_VULKAN_QUERY_COMMAND_WRITE_TIMESTAMP_2, "vkCmdWriteTimestamp2");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdBeginQueryIndexedEXT(
+    VkCommandBuffer command_buffer, VkQueryPool query_pool,
+    uint32_t query, VkQueryControlFlags flags, uint32_t index) {
+    record_query_command(
+        command_buffer, query_pool, query, 1U, flags, index, 0U,
+        BVB_VULKAN_QUERY_COMMAND_BEGIN_INDEXED,
+        "vkCmdBeginQueryIndexedEXT");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdEndQueryIndexedEXT(
+    VkCommandBuffer command_buffer, VkQueryPool query_pool,
+    uint32_t query, uint32_t index) {
+    record_query_command(
+        command_buffer, query_pool, query, 1U, 0U, index, 0U,
+        BVB_VULKAN_QUERY_COMMAND_END_INDEXED,
+        "vkCmdEndQueryIndexedEXT");
 }
 
 static int rendering_attachment_to_command(
@@ -11637,6 +11874,11 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
                      bvb_bridge_vkDestroyDescriptorPool)
     BVB_DEVICE_MATCH("vkResetDescriptorPool",
                      bvb_bridge_vkResetDescriptorPool)
+    BVB_DEVICE_MATCH("vkCreateQueryPool", bvb_bridge_vkCreateQueryPool)
+    BVB_DEVICE_MATCH("vkDestroyQueryPool", bvb_bridge_vkDestroyQueryPool)
+    BVB_DEVICE_MATCH("vkGetQueryPoolResults",
+                     bvb_bridge_vkGetQueryPoolResults)
+    BVB_DEVICE_MATCH("vkResetQueryPool", bvb_bridge_vkResetQueryPool)
     BVB_DEVICE_MATCH("vkAllocateDescriptorSets",
                      bvb_bridge_vkAllocateDescriptorSets)
     BVB_DEVICE_MATCH("vkCreateSampler", bvb_bridge_vkCreateSampler)
@@ -11792,6 +12034,20 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     BVB_DEVICE_MATCH("vkCmdClearAttachments",
                      bvb_bridge_vkCmdClearAttachments)
     BVB_DEVICE_MATCH("vkCmdUpdateBuffer", bvb_bridge_vkCmdUpdateBuffer)
+    BVB_DEVICE_MATCH("vkCmdResetQueryPool",
+                     bvb_bridge_vkCmdResetQueryPool)
+    BVB_DEVICE_MATCH("vkCmdBeginQuery", bvb_bridge_vkCmdBeginQuery)
+    BVB_DEVICE_MATCH("vkCmdEndQuery", bvb_bridge_vkCmdEndQuery)
+    BVB_DEVICE_MATCH("vkCmdWriteTimestamp",
+                     bvb_bridge_vkCmdWriteTimestamp)
+    BVB_DEVICE_MATCH("vkCmdWriteTimestamp2",
+                     bvb_bridge_vkCmdWriteTimestamp2)
+    BVB_DEVICE_MATCH("vkCmdWriteTimestamp2KHR",
+                     bvb_bridge_vkCmdWriteTimestamp2)
+    BVB_DEVICE_MATCH("vkCmdBeginQueryIndexedEXT",
+                     bvb_bridge_vkCmdBeginQueryIndexedEXT)
+    BVB_DEVICE_MATCH("vkCmdEndQueryIndexedEXT",
+                     bvb_bridge_vkCmdEndQueryIndexedEXT)
     BVB_DEVICE_MATCH("vkCmdCopyBuffer", bvb_bridge_vkCmdCopyBuffer)
     BVB_DEVICE_MATCH("vkCmdCopyBufferToImage",
                      bvb_bridge_vkCmdCopyBufferToImage)

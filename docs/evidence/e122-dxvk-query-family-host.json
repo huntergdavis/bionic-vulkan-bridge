@@ -1,0 +1,58 @@
+{
+  "gate": "E122",
+  "date": "2026-08-22",
+  "source_base_commit": "66e298650d16a538fe7d5e3945eedb0ab13d0bd5",
+  "trigger": {
+    "runtime_boundary": "Tomb Raider rendered a native-resolution loading frame after authenticated EOS startup, then raised a 32-bit access violation before producing benchmark results",
+    "visible_frame_sha256": "a2799d6ddad132cf5082fc8d53ac2d028938336da3ffd772a3017224fb155077",
+    "minidump_sha256": "28e4fcbe24482b3251198548c6e241d0b007617bb23f9b5ae93727ffccccce64",
+    "loaded_d3d11_sha256": "22d58fc6c2194591336e26cdead948b60312e28e03c3aa122c1dede45d41458c",
+    "loaded_dxvk_commit": "a6764047e587178283fcde4073ae6e1410af594f",
+    "fault": "EIP 0x76d724a8 read address 0x4 with EAX=0",
+    "source_match": "DxvkGpuQueryAllocator::allocQuery dereferenced m_free after createQueryPool returned without adding a chunk",
+    "root_cause": "BVB returned an E079 fail-closed error for vkCreateQueryPool because the complete query family was still required-unimplemented"
+  },
+  "implementation": {
+    "object_type": 25,
+    "opcodes": {
+      "create": 117,
+      "destroy": 118,
+      "results": 119,
+      "host_reset": 120
+    },
+    "command_record": 37,
+    "lifecycle": "typed same-device query pools retain native type/count metadata; all ranges are checked client-side and authoritatively by Bionic before native calls",
+    "commands": [
+      "vkCmdResetQueryPool",
+      "vkCmdBeginQuery",
+      "vkCmdEndQuery",
+      "vkCmdWriteTimestamp",
+      "vkCmdWriteTimestamp2",
+      "vkCmdWriteTimestamp2KHR",
+      "vkCmdBeginQueryIndexedEXT",
+      "vkCmdEndQueryIndexedEXT"
+    ],
+    "host_calls": [
+      "vkCreateQueryPool",
+      "vkDestroyQueryPool",
+      "vkGetQueryPoolResults",
+      "vkResetQueryPool"
+    ],
+    "performance": "shared command-stream mode appends query commands locally with zero recording RPCs; strict mode preserves one immediate RPC per command",
+    "policy": "12 measured E011 names promoted, yielding 171 executable / 269 required-unimplemented / 302 probed-null"
+  },
+  "validation": {
+    "exact_dxvk_shape": "16,384-entry VK_QUERY_TYPE_OCCLUSION pool",
+    "cross_process": "create -> command reset -> begin -> end -> submit -> 64-bit result+availability -> host reset -> destroy",
+    "modes": "strict and shared command-stream global contracts",
+    "corruption": "typed-handle, reserved-word, zero-count, stage/kind, range, and response-length failures are rejected",
+    "host_suite": "83/83 passed",
+    "tablet_run": "pending"
+  },
+  "claims": {
+    "crash_fixed_on_tablet": null,
+    "benchmark_completed": null,
+    "benchmark_fps": null
+  },
+  "reuse": "The required deja queries returned no indexed implementation. E122 reuses E011's measured dispatch inventory, E079a's fail-closed first-rejection boundary, E075/E076's immutable typed shared command records, and the exact pinned DXVK a6764047 source used to map the minidump RVA."
+}

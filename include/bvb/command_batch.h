@@ -50,6 +50,7 @@ enum {
     BVB_COMMAND_VULKAN_CLEAR_DEPTH_STENCIL_IMAGE = 34,
     BVB_COMMAND_VULKAN_CLEAR_ATTACHMENTS = 35,
     BVB_COMMAND_VULKAN_UPDATE_BUFFER = 36,
+    BVB_COMMAND_VULKAN_QUERY = 37,
     BVB_COMMAND_VULKAN_MAX_INIT_IMAGE_BARRIERS = 4,
     BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS = 64,
     BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS = 256,
@@ -65,6 +66,16 @@ enum {
     BVB_COMMAND_VULKAN_MAX_CLEAR_ATTACHMENTS = 8,
     BVB_COMMAND_VULKAN_MAX_CLEAR_RECTS = 8,
     BVB_COMMAND_VULKAN_MAX_UPDATE_BUFFER_BYTES = 64 * 1024,
+};
+
+enum bvb_vulkan_query_command_kind {
+    BVB_VULKAN_QUERY_COMMAND_RESET = 1,
+    BVB_VULKAN_QUERY_COMMAND_BEGIN = 2,
+    BVB_VULKAN_QUERY_COMMAND_END = 3,
+    BVB_VULKAN_QUERY_COMMAND_WRITE_TIMESTAMP = 4,
+    BVB_VULKAN_QUERY_COMMAND_WRITE_TIMESTAMP_2 = 5,
+    BVB_VULKAN_QUERY_COMMAND_BEGIN_INDEXED = 6,
+    BVB_VULKAN_QUERY_COMMAND_END_INDEXED = 7,
 };
 
 enum bvb_vulkan_dynamic_state_kind {
@@ -389,6 +400,16 @@ struct bvb_vulkan_update_buffer_command {
     uint8_t data[BVB_COMMAND_VULKAN_MAX_UPDATE_BUFFER_BYTES];
 };
 
+struct bvb_vulkan_query_command {
+    uint64_t query_pool_id;
+    uint64_t stage_mask;
+    uint32_t first_query;
+    uint32_t query_count;
+    uint32_t flags;
+    uint32_t index;
+    uint32_t kind;
+};
+
 struct bvb_command_batch_builder {
     uint8_t *bytes;
     size_t capacity;
@@ -513,6 +534,12 @@ int bvb_command_batch_append_vulkan_clear_attachments(
 int bvb_command_batch_append_vulkan_update_buffer(
     struct bvb_command_batch_builder *builder,
     const struct bvb_vulkan_update_buffer_command *command);
+int bvb_command_batch_append_vulkan_query(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_query_command *command);
+int bvb_command_decode_vulkan_query(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_query_command *command);
 int bvb_command_batch_append_record(
     struct bvb_command_batch_builder *builder,
     const struct bvb_command_record *record);

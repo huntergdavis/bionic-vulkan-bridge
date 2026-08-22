@@ -44,7 +44,7 @@ def main() -> int:
     require(client, "bvb_bridge_vkCmdUpdateBuffer", "client update")
     require(service, 'device, "vkCmdUpdateBuffer"', "native update replay")
     require(test, "test_vulkan_update_buffer", "maximum update test")
-    require(global_test, "recording_rtts == (shared_command_stream ? 0U : 44U)",
+    require(global_test, "recording_rtts == (shared_command_stream ? 0U : 47U)",
             "zero shared recording RPC proof")
 
     wrappers = {

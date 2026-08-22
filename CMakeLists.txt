@@ -1359,4 +1359,19 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/config/e069-init-image-commands-dispatch.txt"
   )
+  add_test(
+    NAME e122-dxvk-query-family-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e122_query_family.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e122-dxvk-query-family-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/protocol.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/command_batch.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_vulkan.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/config/e069-init-image-commands-dispatch.txt"
+  )
 endif()

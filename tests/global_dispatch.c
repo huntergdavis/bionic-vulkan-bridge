@@ -909,6 +909,13 @@ int main(void) {
     PFN_vkCreateDescriptorPool create_descriptor_pool = NULL;
     PFN_vkDestroyDescriptorPool destroy_descriptor_pool = NULL;
     PFN_vkResetDescriptorPool reset_descriptor_pool = NULL;
+    PFN_vkCreateQueryPool create_query_pool = NULL;
+    PFN_vkDestroyQueryPool destroy_query_pool = NULL;
+    PFN_vkGetQueryPoolResults get_query_pool_results = NULL;
+    PFN_vkResetQueryPool reset_query_pool = NULL;
+    PFN_vkCmdResetQueryPool cmd_reset_query_pool = NULL;
+    PFN_vkCmdBeginQuery cmd_begin_query = NULL;
+    PFN_vkCmdEndQuery cmd_end_query = NULL;
     PFN_vkAllocateDescriptorSets allocate_descriptor_sets = NULL;
     PFN_vkCreateSampler create_sampler = NULL;
     PFN_vkDestroySampler destroy_sampler = NULL;
@@ -1003,6 +1010,27 @@ int main(void) {
     erased = vkGetDeviceProcAddr(device, "vkEndCommandBuffer");
     CHECK(erased != NULL);
     memcpy(&end_command_buffer, &erased, sizeof(end_command_buffer));
+    erased = vkGetDeviceProcAddr(device, "vkCreateQueryPool");
+    CHECK(erased != NULL);
+    memcpy(&create_query_pool, &erased, sizeof(create_query_pool));
+    erased = vkGetDeviceProcAddr(device, "vkDestroyQueryPool");
+    CHECK(erased != NULL);
+    memcpy(&destroy_query_pool, &erased, sizeof(destroy_query_pool));
+    erased = vkGetDeviceProcAddr(device, "vkGetQueryPoolResults");
+    CHECK(erased != NULL);
+    memcpy(&get_query_pool_results, &erased, sizeof(get_query_pool_results));
+    erased = vkGetDeviceProcAddr(device, "vkResetQueryPool");
+    CHECK(erased != NULL);
+    memcpy(&reset_query_pool, &erased, sizeof(reset_query_pool));
+    erased = vkGetDeviceProcAddr(device, "vkCmdResetQueryPool");
+    CHECK(erased != NULL);
+    memcpy(&cmd_reset_query_pool, &erased, sizeof(cmd_reset_query_pool));
+    erased = vkGetDeviceProcAddr(device, "vkCmdBeginQuery");
+    CHECK(erased != NULL);
+    memcpy(&cmd_begin_query, &erased, sizeof(cmd_begin_query));
+    erased = vkGetDeviceProcAddr(device, "vkCmdEndQuery");
+    CHECK(erased != NULL);
+    memcpy(&cmd_end_query, &erased, sizeof(cmd_end_query));
     erased = vkGetDeviceProcAddr(device, "vkCreateBuffer");
     CHECK(erased != NULL);
     memcpy(&create_buffer, &erased, sizeof(create_buffer));
@@ -2272,6 +2300,17 @@ int main(void) {
         CHECK(bvb_handle_serial(command_buffer_id) ==
               (animated_wsi ? 2U : 1U));
     }
+    const VkQueryPoolCreateInfo query_pool_info = {
+        .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+        .queryType = VK_QUERY_TYPE_OCCLUSION,
+        .queryCount = 16384U,
+    };
+    VkQueryPool query_pool = VK_NULL_HANDLE;
+    CHECK(create_query_pool(
+              device, &query_pool_info, NULL, &query_pool) == VK_SUCCESS);
+    uint64_t query_pool_id = 0U;
+    memcpy(&query_pool_id, &query_pool, sizeof(query_pool));
+    CHECK(bvb_handle_type(query_pool_id) == BVB_OBJECT_QUERY_POOL);
     const VkBufferCreateInfo device_buffer_create_info = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = 65536U,
@@ -2916,6 +2955,9 @@ int main(void) {
         bvb_global_dispatch_exchange_count();
     CHECK(exchanges_before_recording != UINT64_MAX);
     CHECK(begin_command_buffer(command_buffer, &begin_info) == VK_SUCCESS);
+    cmd_reset_query_pool(command_buffer, query_pool, 7U, 1U);
+    cmd_begin_query(command_buffer, query_pool, 7U, 0U);
+    cmd_end_query(command_buffer, query_pool, 7U);
     const VkAttachmentFeedbackLoopInfoEXT render_feedback = {
         .sType = VK_STRUCTURE_TYPE_ATTACHMENT_FEEDBACK_LOOP_INFO_EXT,
         .feedbackLoopEnable = VK_TRUE,
@@ -3140,7 +3182,7 @@ int main(void) {
     CHECK(exchanges_after_recording >= exchanges_before_recording);
     const uint64_t recording_rtts =
         exchanges_after_recording - exchanges_before_recording;
-    CHECK(recording_rtts == (shared_command_stream ? 0U : 44U));
+    CHECK(recording_rtts == (shared_command_stream ? 0U : 47U));
     if (shared_mapped_memory) mapped[0] = UINT8_C(0x7b);
     const uint64_t exchanges_before_submit =
         bvb_global_dispatch_exchange_count();
@@ -3169,6 +3211,13 @@ int main(void) {
     CHECK(get_fence_status(device, fence) == VK_SUCCESS);
     CHECK(wait_for_fences(device, 1U, &fence, VK_TRUE, UINT64_MAX) ==
           VK_SUCCESS);
+    uint64_t query_values[2] = {0U, 0U};
+    CHECK(get_query_pool_results(
+              device, query_pool, 7U, 1U, sizeof(query_values), query_values,
+              sizeof(query_values), VK_QUERY_RESULT_64_BIT |
+                  VK_QUERY_RESULT_WITH_AVAILABILITY_BIT) == VK_SUCCESS);
+    CHECK(query_values[0] == 42U && query_values[1] == 1U);
+    reset_query_pool(device, query_pool, 7U, 1U);
     uint32_t mismatched_words = 0U;
     if (shared_mapped_memory) {
         CHECK(invalidate_mapped_memory_ranges(
@@ -3490,6 +3539,7 @@ int main(void) {
     destroy_sampler(device, sampler, NULL);
     destroy_descriptor_pool(device, descriptor_pool, NULL);
     destroy_descriptor_set_layout(device, descriptor_layout, NULL);
+    destroy_query_pool(device, query_pool, NULL);
     CHECK(device_wait_idle(device) == VK_SUCCESS);
     destroy_semaphore(device, timeline, NULL);
     destroy_image_view(device, image_view, NULL);
