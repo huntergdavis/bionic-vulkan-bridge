@@ -5019,3 +5019,23 @@ opcode 123 remain available. This is host architecture evidence only; tablet
 deployment, Tomb Raider FPS, and any performance gain remain unclaimed until
 the complete build/deploy/profile gate. Exact boundaries are in
 `docs/evidence/e128-descriptor-completion-ring-host.json`.
+
+The exact E128 source then passed 88/88 Termux contracts and the glibc
+dispatch self-test before transactional installation. Its matched 2800x1752
+Low benchmark completed with **0.8 minimum, 3.8 maximum, and 2.0 average
+FPS**, regressing from E127's 2.3 average. The transport change itself is real:
+socket blocking fell from 224.79 to 128.93 ms/present, but the replacement ring
+still performed about 531 synchronous transactions and blocked for 139.00 ms.
+Combined socket-plus-ring wait rose to 267.93 ms/present, and mean descriptor
+transaction latency rose from 190.7 to 261.7 microseconds.
+
+The live process ancestry also excludes PRoot as the per-frame explanation.
+The parked Pressure Vessel request still creates a PRoot process, but the final
+Wine/Tomb Raider process is re-launched directly under the glibc dispatcher and
+has no PRoot ancestor. E128 therefore rejects transport substitution as the
+next performance direction. The next gate must separate worker scheduling,
+journal replay, native allocation, and completion timing, then eliminate the
+hundreds of native allocations through descriptor-pool reset-epoch reuse.
+Compact tablet evidence is retained in
+`docs/evidence/e128-descriptor-completion-ring-tablet.json`; canonical game
+evidence is in sibling `steamclienttermux` commit `e2d72a2`.
