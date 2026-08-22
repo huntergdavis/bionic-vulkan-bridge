@@ -40,7 +40,15 @@ enum {
     BVB_GLOBAL_OBJECT_CAPACITY = 4096,
     BVB_DESCRIPTOR_TEMPLATE_METADATA_CAPACITY = 256,
     BVB_EXPOSED_INSTANCE_EXTENSION_CAPACITY = 3,
+    BVB_MEMORY_MIRROR_COMPARE_BLOCK_BYTES = 4096,
+    BVB_MEMORY_MIRROR_COMPARE_SUPERBLOCK_BYTES = 65536,
 };
+
+_Static_assert(
+    BVB_MEMORY_MIRROR_COMPARE_SUPERBLOCK_BYTES %
+            BVB_MEMORY_MIRROR_COMPARE_BLOCK_BYTES ==
+        0,
+    "memory mirror comparison hierarchy must divide exactly");
 
 static const char *const bvb_instance_extension_allowlist[
     BVB_EXPOSED_INSTANCE_EXTENSION_CAPACITY] = {
@@ -7796,19 +7804,43 @@ static void upload_host_diverged_range(
     const size_t end = first + length;
     size_t cursor = first;
     while (cursor < end) {
-        while (cursor < end &&
-               mirror->mirror[cursor] == mirror->baseline[cursor])
-            ++cursor;
-        const size_t dirty_first = cursor;
-        while (cursor < end &&
-               mirror->mirror[cursor] != mirror->baseline[cursor])
-            ++cursor;
-        if (cursor != dirty_first) {
-            const size_t dirty_length = cursor - dirty_first;
-            memcpy(mirror->native + mirror->offset + dirty_first,
-                   mirror->mirror + dirty_first, dirty_length);
-            memcpy(mirror->baseline + dirty_first,
-                   mirror->mirror + dirty_first, dirty_length);
+        size_t superblock_end = cursor +
+            BVB_MEMORY_MIRROR_COMPARE_SUPERBLOCK_BYTES;
+        if (superblock_end < cursor || superblock_end > end)
+            superblock_end = end;
+        const size_t superblock_length = superblock_end - cursor;
+        if (memcmp(mirror->mirror + cursor, mirror->baseline + cursor,
+                   superblock_length) == 0) {
+            cursor = superblock_end;
+            continue;
+        }
+        while (cursor < superblock_end) {
+            size_t block_end = cursor +
+                BVB_MEMORY_MIRROR_COMPARE_BLOCK_BYTES;
+            if (block_end < cursor || block_end > superblock_end)
+                block_end = superblock_end;
+            const size_t block_length = block_end - cursor;
+            if (memcmp(mirror->mirror + cursor, mirror->baseline + cursor,
+                       block_length) == 0) {
+                cursor = block_end;
+                continue;
+            }
+            while (cursor < block_end) {
+                while (cursor < block_end &&
+                       mirror->mirror[cursor] == mirror->baseline[cursor])
+                    ++cursor;
+                const size_t dirty_first = cursor;
+                while (cursor < block_end &&
+                       mirror->mirror[cursor] != mirror->baseline[cursor])
+                    ++cursor;
+                if (cursor != dirty_first) {
+                    const size_t dirty_length = cursor - dirty_first;
+                    memcpy(mirror->native + mirror->offset + dirty_first,
+                           mirror->mirror + dirty_first, dirty_length);
+                    memcpy(mirror->baseline + dirty_first,
+                           mirror->mirror + dirty_first, dirty_length);
+                }
+            }
         }
     }
 }

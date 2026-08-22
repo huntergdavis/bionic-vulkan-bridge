@@ -4666,3 +4666,26 @@ the next gate must preserve that exact boundary while attacking the newly
 exposed common submit path. Opcodes 105 and 85 now account for 81.840% of
 remaining RPC time and both run the same full coherent-mirror baseline scan
 before native `vkQueueSubmit2`.
+
+## E119 — hierarchical coherent-mirror scan (2026-08-22)
+
+E118 removed the 15,038-per-frame opcode-48 fan-out, then measured opcodes 105
+and 85 at 81.840% of the remaining RPC time. Despite different command-stream
+payloads, both take the same path through `sync_coherent_memory_mirrors` before
+native `vkQueueSubmit2`. That path compares every byte of every coherent mirror
+with scalar branch-heavy loops, including the overwhelmingly unchanged parts
+of DXVK's large mapped allocator chunks.
+
+The required `deja "E119 opcode 105 QueueSubmit2 stream replay mapped mirror
+baseline scan Tomb Raider"` query returned no indexed implementation. E119
+reuses E077/E118's private baseline, explicit-invalidate readback boundary, and
+GPU-native preservation rule. It adds a 64-KiB optimized `memcmp` fast path,
+then narrows differing regions to 4-KiB blocks before retaining the exact
+byte-run copier. Equal ranges become a vectorized libc comparison; changed
+ranges still copy only host-diverged bytes, so unchanged GPU output cannot be
+overwritten. No wire or selector changes.
+
+The historical strict/shared/coherent/noncoherent/uncertain-unmap contracts and
+the new architecture contract pass within the complete 79/79 host suite.
+Tablet A/B validation remains pending. No speedup, benchmark, FPS, or resolution
+of the repeatable present-46 stop is claimed at this checkpoint.

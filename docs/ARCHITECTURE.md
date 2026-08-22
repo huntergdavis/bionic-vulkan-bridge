@@ -457,3 +457,12 @@ Image-bound allocations remain in the strict path, and binding an image into an
 active mirror remains rejected. Explicit invalidate is still the only claimed
 device-to-host refresh boundary; E118 does not claim complete coherent readback
 semantics. There is no wire change.
+
+E119 accelerates E118's unchanged-mirror scan without weakening its byte-level
+ownership rule. Each coherent mirror is first compared in 64-KiB regions using
+optimized libc `memcmp`; differing regions are narrowed to 4-KiB blocks before
+the existing byte-exact dirty runs are copied. Equal regions skip tens of
+thousands of scalar branches, while a host change still copies only the exact
+changed bytes. Unchanged mirror bytes therefore cannot overwrite GPU-produced
+native bytes. The wire, selectors, mapping lifetime, and explicit-invalidate
+readback boundary are unchanged.

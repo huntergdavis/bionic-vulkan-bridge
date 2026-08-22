@@ -1,0 +1,35 @@
+{
+  "gate": "E119",
+  "date": "2026-08-22",
+  "source_base_commit": "8e2d6fb",
+  "trigger": {
+    "e118_rpc_seconds_per_present": 0.32914272771875,
+    "submit_opcodes": [105, 85],
+    "submit_rpc_percent": 81.84,
+    "common_path": "sync_coherent_memory_mirrors performs a full baseline comparison before native QueueSubmit2"
+  },
+  "implementation": {
+    "outer_equal_region_bytes": 65536,
+    "inner_equal_region_bytes": 4096,
+    "equal_region_primitive": "optimized libc memcmp",
+    "different_region_behavior": "retain byte-exact dirty-run detection and copy only host-diverged bytes",
+    "gpu_native_preservation": "unchanged mirror bytes are never copied over native bytes",
+    "wire_change": "none",
+    "selector_change": "none"
+  },
+  "validation": {
+    "historical_mirror_contracts": "passed: strict, coherent shared, noncoherent shared, uncertain unmap, E077, and E118",
+    "e119_architecture_contract": "passed",
+    "host_suite": "79/79 passed",
+    "tablet_build": "pending exact archive",
+    "tablet_ab": "pending matched Tomb Raider run"
+  },
+  "claims": {
+    "functional_semantics_changed": false,
+    "general_coherent_device_to_host_visibility": false,
+    "host_speedup": null,
+    "tablet_speedup": null,
+    "benchmark_fps": null
+  },
+  "reuse": "The required deja query returned no indexed E119 implementation. E119 reuses E077/E118's private baseline, explicit-invalidate readback boundary, and GPU-native preservation rule; E118's exact opcode profile selects the scan rather than a new Vulkan API family."
+}

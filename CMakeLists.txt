@@ -1316,4 +1316,13 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
   )
+  add_test(
+    NAME e119-hierarchical-mirror-scan-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e119_mirror_fast_scan.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e119-hierarchical-mirror-scan-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
+  )
 endif()
