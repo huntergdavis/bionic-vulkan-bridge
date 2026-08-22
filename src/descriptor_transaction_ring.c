@@ -447,15 +447,18 @@ int bvb_descriptor_lease_claim(
         const uint32_t cursor = load_u32(&bank->cursor);
         const uint32_t bank_count = load_u32(&bank->count);
         if (cursor > bank_count || count > bank_count - cursor)
-            return -ENOENT;
+            continue;
+        bool matches = true;
         for (uint32_t index = 0U; index < count; ++index) {
             const struct bvb_descriptor_lease_record *record =
                 &bank->records[cursor + index];
             if (record->layout_id != layout_ids[index] ||
                 record->descriptor_set_id == 0U) {
-                return -ENOENT;
+                matches = false;
+                break;
             }
         }
+        if (!matches) continue;
         for (uint32_t index = 0U; index < count; ++index)
             descriptor_set_ids[index] =
                 bank->records[cursor + index].descriptor_set_id;

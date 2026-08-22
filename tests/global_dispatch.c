@@ -1611,6 +1611,9 @@ int main(void) {
     VkDescriptorSetLayout core_layout = VK_NULL_HANDLE;
     CHECK(create_descriptor_set_layout(
               device, &core_layout_info, NULL, &core_layout) == VK_SUCCESS);
+    VkDescriptorSetLayout core_layout_2 = VK_NULL_HANDLE;
+    CHECK(create_descriptor_set_layout(
+              device, &core_layout_info, NULL, &core_layout_2) == VK_SUCCESS);
     const VkDescriptorPoolCreateInfo core_pool_info = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .maxSets = 1024U,
@@ -1641,6 +1644,47 @@ int main(void) {
     const uint64_t core_set_before_id =
         bvb_descriptor_set_proxy_id(core_set_before_reset);
     CHECK(bvb_handle_type(core_set_before_id) == BVB_OBJECT_DESCRIPTOR_SET);
+    VkDescriptorSet live_signature_sets[16] = {0};
+    VkDescriptorSet second_signature_sets[2] = {0};
+    if (shared_descriptor_journal) {
+        const uint64_t ring_calls_after_live_batch =
+            bvb_global_dispatch_descriptor_ring_call_count();
+        const uint64_t lease_hits_after_live_batch =
+            bvb_global_dispatch_descriptor_lease_hit_count();
+        for (uint32_t index = 0U; index < 15U; ++index) {
+            CHECK(allocate_descriptor_sets(
+                      device, &core_allocate_info,
+                      &live_signature_sets[index]) == VK_SUCCESS);
+            CHECK(bvb_handle_type(bvb_descriptor_set_proxy_id(
+                      live_signature_sets[index])) ==
+                  BVB_OBJECT_DESCRIPTOR_SET);
+        }
+        CHECK(bvb_global_dispatch_descriptor_ring_call_count() ==
+              ring_calls_after_live_batch);
+        CHECK(bvb_global_dispatch_descriptor_lease_hit_count() ==
+              lease_hits_after_live_batch + 15U);
+
+        const VkDescriptorSetAllocateInfo second_allocate_info = {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .descriptorPool = core_pool,
+            .descriptorSetCount = 1U,
+            .pSetLayouts = &core_layout_2,
+        };
+        const uint64_t ring_calls_before_second_signature =
+            bvb_global_dispatch_descriptor_ring_call_count();
+        CHECK(allocate_descriptor_sets(
+                  device, &second_allocate_info,
+                  &second_signature_sets[0]) == VK_SUCCESS);
+        CHECK(bvb_global_dispatch_descriptor_ring_call_count() ==
+              ring_calls_before_second_signature + 1U);
+        CHECK(allocate_descriptor_sets(
+                  device, &second_allocate_info,
+                  &second_signature_sets[1]) == VK_SUCCESS);
+        CHECK(bvb_global_dispatch_descriptor_ring_call_count() ==
+              ring_calls_before_second_signature + 1U);
+        CHECK(bvb_global_dispatch_descriptor_lease_hit_count() ==
+              lease_hits_after_live_batch + 16U);
+    }
     CHECK(reset_descriptor_pool(
               ownership_device, core_pool, 0U) ==
           VK_ERROR_INITIALIZATION_FAILED);
@@ -1648,6 +1692,13 @@ int main(void) {
           VK_ERROR_FEATURE_NOT_PRESENT);
     CHECK(reset_descriptor_pool(device, core_pool, 0U) == VK_SUCCESS);
     CHECK(bvb_descriptor_set_proxy_id(core_set_before_reset) == 0U);
+    if (shared_descriptor_journal) {
+        for (uint32_t index = 0U; index < 15U; ++index)
+            CHECK(bvb_descriptor_set_proxy_id(
+                      live_signature_sets[index]) == 0U);
+        CHECK(bvb_descriptor_set_proxy_id(second_signature_sets[0]) == 0U);
+        CHECK(bvb_descriptor_set_proxy_id(second_signature_sets[1]) == 0U);
+    }
     VkDescriptorSet core_set_after_reset = VK_NULL_HANDLE;
     const uint64_t exchanges_before_descriptor_lease =
         bvb_global_dispatch_exchange_count();
@@ -1671,6 +1722,7 @@ int main(void) {
     CHECK(bvb_handle_type(core_set_after_id) == BVB_OBJECT_DESCRIPTOR_SET);
     CHECK(core_set_after_id != core_set_before_id);
     destroy_descriptor_pool(device, core_pool, NULL);
+    destroy_descriptor_set_layout(device, core_layout_2, NULL);
     destroy_descriptor_set_layout(device, core_layout, NULL);
 
     const VkDescriptorType dxvk_template_types[] = {

@@ -35,16 +35,16 @@ def main() -> int:
     assert evidence["implementation"]["native_allocation_result_fabricated"] is False
     assert evidence["claims"]["tablet_deployed"] is False
 
-    require(header, "BVB_DESCRIPTOR_TRANSACTION_RING_VERSION = 3", "lease ABI version")
-    require(header, "BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES = 65536", "bounded region")
-    require(header, "BVB_DESCRIPTOR_LEASE_BANK_COUNT = 4", "bounded banks")
-    require(header, "BVB_DESCRIPTOR_LEASE_BANK_CAPACITY = 512", "bounded capacity")
+    require(header, "BVB_DESCRIPTOR_TRANSACTION_RING_VERSION = 4", "lease ABI successor")
+    require(header, "BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES = 131072", "bounded successor region")
+    require(header, "BVB_DESCRIPTOR_LEASE_BANK_COUNT = 64", "bounded successor banks")
+    require(header, "BVB_DESCRIPTOR_LEASE_BANK_CAPACITY = 64", "bounded successor capacity")
     require(source, "bvb_descriptor_lease_bank_publish(", "release publication")
     require(source, "bvb_descriptor_lease_claim(", "typed local claim")
     require(client, "descriptor_lease_claimed", "local dispatch branch")
     require(client, "descriptor_ring_call_count", "zero-ring counter")
     require(client, "BVB_E131_DESCRIPTOR_LEASE_PROFILE", "runtime hit profile")
-    require(service, "descriptor_lease_record_allocation(", "successful-call learning")
+    require(service, "descriptor_lease_allocate_live_batch(", "successful-call successor")
     require(service, "descriptor_lease_after_pool_reset(", "reset refill")
     require(service, "descriptor_lease_forget_pool(", "destroy invalidation")
     require(service, "bvb_vulkan_global_context_allocate_descriptor_sets(", "real native allocation")

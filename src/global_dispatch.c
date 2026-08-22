@@ -5474,7 +5474,9 @@ static VkResult VKAPI_CALL bvb_bridge_vkAllocateDescriptorSets(
     if (result == 0 && descriptor_transaction) {
         result = setup_descriptor_transaction_ring_locked();
     }
-    if (result == 0 && descriptor_transaction) {
+    if (result == 0 && descriptor_transaction &&
+        bvb_global_client.descriptor_journal_length == 0U &&
+        bvb_global_client.descriptor_journal_record_count == 0U) {
         uint64_t lease_epoch = 0U;
         const int lease_result = bvb_descriptor_lease_claim(
             bvb_global_client.descriptor_transaction_ring,

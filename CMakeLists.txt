@@ -1502,4 +1502,18 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/descriptor_transaction_ring.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
   )
+  add_test(
+    NAME e132-live-descriptor-signature-batches-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e132_live_descriptor_batches_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e132-live-descriptor-signature-batches-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/descriptor_transaction_ring.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/descriptor_transaction_ring.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_vulkan.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+  )
 endif()

@@ -6,10 +6,10 @@
 
 enum {
     BVB_DESCRIPTOR_TRANSACTION_RING_MAGIC = 0x31524442U,
-    BVB_DESCRIPTOR_TRANSACTION_RING_VERSION = 3,
+    BVB_DESCRIPTOR_TRANSACTION_RING_VERSION = 4,
     BVB_DESCRIPTOR_TRANSACTION_RING_CONTROL_BYTES = 128,
     BVB_DESCRIPTOR_TRANSACTION_RING_LEASE_OFFSET = 8192,
-    BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES = 65536,
+    BVB_DESCRIPTOR_TRANSACTION_RING_REGION_BYTES = 131072,
     BVB_DESCRIPTOR_TRANSACTION_RING_SLOT_COUNT = 16,
     BVB_DESCRIPTOR_TRANSACTION_RING_SLOT_BYTES = 384,
     BVB_DESCRIPTOR_TRANSACTION_RING_REQUEST_BYTES = 176,
@@ -20,8 +20,8 @@ enum {
     BVB_DESCRIPTOR_TRANSACTION_WAIT_IDLE = 0,
     BVB_DESCRIPTOR_TRANSACTION_WAIT_SPINNING = 1,
     BVB_DESCRIPTOR_TRANSACTION_WAIT_SLEEPING = 2,
-    BVB_DESCRIPTOR_LEASE_BANK_COUNT = 4,
-    BVB_DESCRIPTOR_LEASE_BANK_CAPACITY = 512,
+    BVB_DESCRIPTOR_LEASE_BANK_COUNT = 64,
+    BVB_DESCRIPTOR_LEASE_BANK_CAPACITY = 64,
     BVB_DESCRIPTOR_LEASE_MAX_CLAIM = 16,
     BVB_DESCRIPTOR_LEASE_BANK_READY = 1,
 };
@@ -85,8 +85,8 @@ _Static_assert(sizeof(struct bvb_descriptor_transaction_slot) ==
                "descriptor transaction ring slot must remain 384 bytes");
 _Static_assert(sizeof(struct bvb_descriptor_lease_record) == 16,
                "descriptor lease record must remain 16 bytes");
-_Static_assert(sizeof(struct bvb_descriptor_lease_bank) == 8224,
-               "descriptor lease bank must remain 8224 bytes");
+_Static_assert(sizeof(struct bvb_descriptor_lease_bank) == 1056,
+               "descriptor lease bank must remain 1056 bytes");
 _Static_assert(BVB_DESCRIPTOR_TRANSACTION_RING_LEASE_OFFSET +
                        BVB_DESCRIPTOR_LEASE_BANK_COUNT *
                            sizeof(struct bvb_descriptor_lease_bank) <=

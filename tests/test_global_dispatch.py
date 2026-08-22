@@ -644,6 +644,10 @@ def main() -> int:
                         "completion_ns",
                     )
                 )
+                assert profile["batch_attempts"] >= 4
+                assert profile["batch_successes"] >= 3
+                assert profile["batch_prefetched_sets"] >= 32
+                assert profile["batch_fallbacks"] >= 1
             else:
                 assert server_stderr == expected_server_stderr
                 assert not socket_path.exists()

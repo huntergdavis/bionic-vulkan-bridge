@@ -73,6 +73,7 @@ static int fake_fence_signaled;
 static uint32_t fake_queue_submit_2_calls;
 static uint32_t fake_descriptor_step;
 static uint32_t fake_core_descriptor_pool_step;
+static uint64_t fake_core_descriptor_set_serial;
 static uint32_t fake_descriptor_template_step;
 static uint32_t fake_descriptor_template_null_updates;
 static int fake_descriptor_journal_wait_seen;
@@ -138,10 +139,6 @@ static const VkDescriptorSetLayout fake_core_descriptor_layout =
     (VkDescriptorSetLayout)(uintptr_t)UINT64_C(0xa800);
 static const VkDescriptorPool fake_core_descriptor_pool =
     (VkDescriptorPool)(uintptr_t)UINT64_C(0xa900);
-static const VkDescriptorSet fake_core_descriptor_sets[] = {
-    (VkDescriptorSet)(uintptr_t)UINT64_C(0xa901),
-    (VkDescriptorSet)(uintptr_t)UINT64_C(0xa902),
-};
 static const VkDescriptorSetLayout fake_dxvk_descriptor_layout =
     (VkDescriptorSetLayout)(uintptr_t)UINT64_C(0xaa00);
 static const VkDescriptorUpdateTemplate fake_dxvk_descriptor_template =
@@ -1106,6 +1103,7 @@ static void VKAPI_CALL fake_destroy_device(
     fake_submitted = 0;
     fake_descriptor_step = 0U;
     fake_core_descriptor_pool_step = 0U;
+    fake_core_descriptor_set_serial = UINT64_C(0xa900);
     fake_descriptor_template_step = 0U;
     fake_descriptor_template_null_updates = 0U;
     fake_descriptor_journal_wait_seen = 0;
@@ -1301,30 +1299,59 @@ static VkResult VKAPI_CALL fake_allocate_descriptor_sets(
     VkDevice device, const VkDescriptorSetAllocateInfo *allocate_info,
     VkDescriptorSet *descriptor_sets) {
     (void)device;
-    if ((fake_core_descriptor_pool_step == 0U ||
-         fake_core_descriptor_pool_step == 2U) &&
+    if (fake_core_descriptor_pool_step <= 3U &&
         allocate_info != NULL && descriptor_sets != NULL &&
         allocate_info->sType ==
             VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO &&
         allocate_info->pNext == NULL &&
         allocate_info->descriptorPool == fake_core_descriptor_pool &&
-        allocate_info->descriptorSetCount == 1U &&
+        allocate_info->descriptorSetCount ==
+            (getenv("BVB_FAKE_REQUIRE_DESCRIPTOR_JOURNAL") != NULL ? 16U : 1U) &&
         allocate_info->pSetLayouts != NULL &&
         allocate_info->pSetLayouts[0] == fake_core_descriptor_layout) {
-        const uint32_t index = fake_core_descriptor_pool_step == 0U ? 0U : 1U;
-        descriptor_sets[0] = fake_core_descriptor_sets[index];
-        fake_core_descriptor_pool_step = index == 0U ? 1U : 3U;
+        for (uint32_t index = 0U;
+             index < allocate_info->descriptorSetCount; ++index) {
+            if (allocate_info->pSetLayouts[index] !=
+                fake_core_descriptor_layout) {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            descriptor_sets[index] = (VkDescriptorSet)(uintptr_t)
+                (++fake_core_descriptor_set_serial);
+        }
+        if (fake_core_descriptor_pool_step == 0U)
+            fake_core_descriptor_pool_step = 1U;
+        else if (fake_core_descriptor_pool_step == 2U)
+            fake_core_descriptor_pool_step = 3U;
         return VK_SUCCESS;
+    }
+    if (allocate_info != NULL &&
+        allocate_info->sType ==
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO &&
+        allocate_info->pNext == NULL &&
+        ((allocate_info->descriptorPool == fake_dxvk_descriptor_pool &&
+          allocate_info->descriptorSetCount > 2U) ||
+         (allocate_info->descriptorPool == fake_descriptor_pool &&
+          allocate_info->descriptorSetCount > 1U))) {
+        return VK_ERROR_OUT_OF_POOL_MEMORY;
     }
     if (fake_descriptor_template_step == 3U && allocate_info != NULL &&
         descriptor_sets != NULL &&
         allocate_info->sType == VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO &&
         allocate_info->pNext == NULL &&
         allocate_info->descriptorPool == fake_dxvk_descriptor_pool &&
-        allocate_info->descriptorSetCount == 1U &&
+        allocate_info->descriptorSetCount ==
+            (getenv("BVB_FAKE_REQUIRE_DESCRIPTOR_JOURNAL") != NULL ? 2U : 1U) &&
         allocate_info->pSetLayouts != NULL &&
         allocate_info->pSetLayouts[0] == fake_dxvk_descriptor_layout) {
         descriptor_sets[0] = fake_dxvk_descriptor_set;
+        if (allocate_info->descriptorSetCount == 2U) {
+            if (allocate_info->pSetLayouts[1] !=
+                fake_dxvk_descriptor_layout) {
+                return VK_ERROR_INITIALIZATION_FAILED;
+            }
+            descriptor_sets[1] =
+                (VkDescriptorSet)(uintptr_t)UINT64_C(0xaaf2);
+        }
         fake_descriptor_template_step = 4U;
         return VK_SUCCESS;
     }

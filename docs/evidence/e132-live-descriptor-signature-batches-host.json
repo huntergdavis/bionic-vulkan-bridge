@@ -1,0 +1,62 @@
+{
+  "gate": "E132",
+  "date": "2026-08-22",
+  "source_base_commit": "0f281a05d7c5b723d07613e3610b64e19a6d98bf",
+  "trigger": {
+    "e131_profiled_descriptor_allocation_attempts": 159843,
+    "e131_lease_hits": 36,
+    "e131_lease_hit_percent": 0.022522,
+    "e131_remaining_ring_calls": 159807,
+    "e131_mean_ring_call_microseconds": 220.987,
+    "e131_game_authored_result": false
+  },
+  "reuse": {
+    "deja_query": "E132 live descriptor allocation signature batch lease vkAllocateDescriptorSets prefetch pool",
+    "deja_result": "no indexed implementation",
+    "local_contracts": [
+      "E121 authoritative descriptor-pool reset and child retirement",
+      "E127 pending descriptor-journal ordering",
+      "E128 typed shared request/completion region",
+      "E131 locally claimed typed descriptor leases"
+    ],
+    "external_authority": "Vulkan vkAllocateDescriptorSets specifies that a failed multi-set allocation destroys any sets allocated by that call and returns all output handles as VK_NULL_HANDLE: https://registry.khronos.org/vulkan/specs/latest-ratified/pdf/vkspec.pdf"
+  },
+  "implementation": {
+    "ring_version": 4,
+    "shared_region_bytes": 131072,
+    "lease_bank_count": 64,
+    "sets_per_bank": 64,
+    "maximum_published_sets": 4096,
+    "maximum_native_batch_sets": 16,
+    "batch_backoff": "For a live miss, Bionic tries the largest bounded repetition of the exact pool/layout signature, then halves the repetition count after OUT_OF_POOL_MEMORY or FRAGMENTED_POOL until a useful batch fits; otherwise it performs the exact request.",
+    "multiple_signatures_per_pool": true,
+    "pending_journal_can_claim_lease": false,
+    "failed_batch_partial_sets_survive": false,
+    "steady_state_socket_exchanges_per_lease_hit": 0,
+    "steady_state_ring_calls_per_lease_hit": 0,
+    "strict_mode_changed": false
+  },
+  "correctness": {
+    "native_authority": "Every published ID comes from a successful real Bionic vkAllocateDescriptorSets call; the requested prefix is returned to that call and only the extras are published.",
+    "journal_order": "The glibc client bypasses local lease claim whenever descriptor-journal bytes or records are pending, forcing the ordered worker transaction to replay updates before allocation.",
+    "reset": "A successful pool reset disables every bank for that pool and clears capacity fallback state before any optional refill.",
+    "destroy": "Pool destruction disables and forgets every matching signature bank.",
+    "capacity": "Retry after OUT_OF_POOL_MEMORY or FRAGMENTED_POOL is safe because Vulkan destroys all partial sets from the failed multi-set call. Other native errors are returned unchanged.",
+    "bounded_caveat": "Published extras consume real pool capacity until claimed or until reset/destroy. A bank publication failure disables further batching for that signature until reset; no handle is fabricated."
+  },
+  "validation": {
+    "first_signature": "One live ring miss allocates sixteen real sets and the next fifteen identical calls are local typed lease hits with zero additional ring calls.",
+    "second_signature": "A distinct layout signature in the same pool incurs one live ring miss, then its next identical call is a local hit while the first bank remains valid.",
+    "fallback": "The fake native pool rejects oversized batches with OUT_OF_POOL_MEMORY; bounded backoff reaches a fitting batch or the exact one-set call, and the profile records the fallback.",
+    "reset_destroy": "The cross-process contract verifies reset invalidates every prior proxy and destroy retires the pool's banks.",
+    "focused_contracts": "5/5 passed",
+    "full_host_suite": "94/94 passed"
+  },
+  "claims": {
+    "host_architecture_complete": true,
+    "tablet_deployed": false,
+    "tomb_raider_run": false,
+    "fps_claim": false
+  },
+  "next_gate": "Deploy the exact client/service pair and rerun the native-resolution Low Tomb Raider benchmark. Compare lease hit rate, ring calls per present, ANR behavior, and game-authored FPS against E130 and E131."
+}

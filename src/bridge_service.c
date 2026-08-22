@@ -53,21 +53,14 @@ struct shared_batch_region {
     bool descriptor_journal;
 };
 
-struct descriptor_lease_plan_call {
-    uint16_t first_set;
-    uint16_t set_count;
-};
-
 struct descriptor_lease_plan {
     uint64_t pool_id;
     uint64_t epoch;
-    uint32_t call_count;
-    uint32_t set_count;
+    uint32_t signature_count;
     bool published;
-    bool cooldown;
-    struct descriptor_lease_plan_call
-        calls[BVB_DESCRIPTOR_LEASE_BANK_CAPACITY];
-    uint64_t layout_ids[BVB_DESCRIPTOR_LEASE_BANK_CAPACITY];
+    bool batch_disabled;
+    uint64_t signature_layout_ids[
+        BVB_VULKAN_MAX_DESCRIPTOR_SETS_PER_ALLOCATE];
 };
 
 struct descriptor_transaction_worker {
@@ -92,6 +85,10 @@ struct descriptor_transaction_worker {
     uint64_t profile_completion_ns;
     uint64_t profile_total_max_ns;
     uint64_t profile_allocate_max_ns;
+    uint64_t profile_batch_attempts;
+    uint64_t profile_batch_successes;
+    uint64_t profile_batch_prefetched_sets;
+    uint64_t profile_batch_fallbacks;
     struct descriptor_lease_plan
         lease_plans[BVB_DESCRIPTOR_LEASE_BANK_COUNT];
 };
@@ -2286,13 +2283,15 @@ static int answer_vulkan_descriptor_transaction_allocate(
 static void descriptor_worker_profile_emit(
     struct descriptor_transaction_worker *worker) {
     if (!worker->profile_enabled || worker->profile_calls == 0U) return;
-    char line[640];
+    char line[768];
     const int written = snprintf(
         line, sizeof(line),
         "BVB_E129_DESCRIPTOR_WORKER_PROFILE calls=%llu total_ns=%llu "
         "context_wait_ns=%llu decode_ns=%llu snapshot_ns=%llu "
         "replay_ns=%llu allocate_ns=%llu response_ns=%llu "
-        "completion_ns=%llu total_max_ns=%llu allocate_max_ns=%llu\n",
+        "completion_ns=%llu total_max_ns=%llu allocate_max_ns=%llu "
+        "batch_attempts=%llu batch_successes=%llu "
+        "batch_prefetched_sets=%llu batch_fallbacks=%llu\n",
         (unsigned long long)worker->profile_calls,
         (unsigned long long)worker->profile_total_ns,
         (unsigned long long)worker->profile_context_wait_ns,
@@ -2303,7 +2302,11 @@ static void descriptor_worker_profile_emit(
         (unsigned long long)worker->profile_response_ns,
         (unsigned long long)worker->profile_completion_ns,
         (unsigned long long)worker->profile_total_max_ns,
-        (unsigned long long)worker->profile_allocate_max_ns);
+        (unsigned long long)worker->profile_allocate_max_ns,
+        (unsigned long long)worker->profile_batch_attempts,
+        (unsigned long long)worker->profile_batch_successes,
+        (unsigned long long)worker->profile_batch_prefetched_sets,
+        (unsigned long long)worker->profile_batch_fallbacks);
     if (written > 0) {
         const size_t length = (size_t)written < sizeof(line)
             ? (size_t)written : sizeof(line) - 1U;
@@ -2321,6 +2324,10 @@ static void descriptor_worker_profile_emit(
     worker->profile_completion_ns = 0U;
     worker->profile_total_max_ns = 0U;
     worker->profile_allocate_max_ns = 0U;
+    worker->profile_batch_attempts = 0U;
+    worker->profile_batch_successes = 0U;
+    worker->profile_batch_prefetched_sets = 0U;
+    worker->profile_batch_fallbacks = 0U;
 }
 
 static void descriptor_worker_profile_record(
@@ -2346,16 +2353,30 @@ static void descriptor_worker_profile_record(
         descriptor_worker_profile_emit(worker);
 }
 
+static bool descriptor_lease_plan_matches(
+    const struct descriptor_lease_plan *plan, uint64_t pool_id,
+    const uint64_t *layout_ids, uint32_t count) {
+    return plan != NULL && plan->pool_id == pool_id &&
+           plan->signature_count == count && layout_ids != NULL &&
+           memcmp(plan->signature_layout_ids, layout_ids,
+                  (size_t)count * sizeof(layout_ids[0])) == 0;
+}
+
 static struct descriptor_lease_plan *descriptor_lease_plan_find(
     struct descriptor_transaction_worker *worker, uint64_t pool_id,
-    bool create, uint32_t *bank_index) {
-    if (worker == NULL || pool_id == 0U) return NULL;
+    const uint64_t *layout_ids, uint32_t count, bool create,
+    uint32_t *bank_index) {
+    if (worker == NULL || pool_id == 0U || layout_ids == NULL || count == 0U ||
+        count > BVB_VULKAN_MAX_DESCRIPTOR_SETS_PER_ALLOCATE) {
+        return NULL;
+    }
     struct descriptor_lease_plan *empty = NULL;
     uint32_t empty_index = 0U;
     for (uint32_t index = 0U; index < BVB_DESCRIPTOR_LEASE_BANK_COUNT;
          ++index) {
         struct descriptor_lease_plan *plan = &worker->lease_plans[index];
-        if (plan->pool_id == pool_id) {
+        if (descriptor_lease_plan_matches(
+                plan, pool_id, layout_ids, count)) {
             if (bank_index != NULL) *bank_index = index;
             return plan;
         }
@@ -2367,65 +2388,158 @@ static struct descriptor_lease_plan *descriptor_lease_plan_find(
     if (!create || empty == NULL) return NULL;
     *empty = (struct descriptor_lease_plan){
         .pool_id = pool_id,
+        .signature_count = count,
     };
+    memcpy(empty->signature_layout_ids, layout_ids,
+           (size_t)count * sizeof(layout_ids[0]));
     if (bank_index != NULL) *bank_index = empty_index;
     return empty;
 }
 
-static void descriptor_lease_record_allocation(
+static uint32_t descriptor_lease_batch_set_count(uint32_t signature_count) {
+    if (signature_count == 0U ||
+        signature_count > BVB_VULKAN_MAX_DESCRIPTOR_SETS_PER_ALLOCATE) {
+        return 0U;
+    }
+    return (BVB_VULKAN_MAX_DESCRIPTOR_SETS_PER_ALLOCATE / signature_count) *
+           signature_count;
+}
+
+static uint32_t descriptor_lease_smaller_batch_set_count(
+    uint32_t current_count, uint32_t signature_count) {
+    if (current_count <= signature_count || signature_count == 0U)
+        return signature_count;
+    uint32_t signature_repetitions = current_count / signature_count;
+    signature_repetitions /= 2U;
+    return signature_repetitions > 1U
+        ? signature_repetitions * signature_count : signature_count;
+}
+
+static void descriptor_lease_make_batch_request(
+    uint64_t pool_id, const uint64_t *layout_ids, uint32_t signature_count,
+    uint32_t batch_count,
+    struct bvb_vulkan_descriptor_set_allocate_request *batch) {
+    *batch = (struct bvb_vulkan_descriptor_set_allocate_request){
+        .descriptor_pool_id = pool_id,
+        .descriptor_set_count = batch_count,
+    };
+    for (uint32_t index = 0U; index < batch_count; ++index)
+        batch->set_layout_ids[index] = layout_ids[index % signature_count];
+}
+
+static int descriptor_lease_allocate_live_batch(
     struct descriptor_transaction_worker *worker,
     const struct bvb_vulkan_descriptor_set_allocate_request *request,
-    const struct bvb_vulkan_descriptor_set_allocate_response *response) {
+    struct bvb_vulkan_descriptor_set_allocate_response *response,
+    char *diagnostic, size_t diagnostic_size) {
     if (worker == NULL || !worker->started || worker->ring == NULL ||
-        request == NULL || response == NULL ||
-        response->vulkan_result != VK_SUCCESS ||
-        response->descriptor_set_count != request->descriptor_set_count) {
-        return;
+        request == NULL || response == NULL) {
+        return -EINVAL;
     }
     uint32_t bank_index = 0U;
     struct descriptor_lease_plan *plan = descriptor_lease_plan_find(
-        worker, request->descriptor_pool_id, true, &bank_index);
-    if (plan == NULL) return;
+        worker, request->descriptor_pool_id, request->set_layout_ids,
+        request->descriptor_set_count, true, &bank_index);
+    uint32_t batch_count =
+        descriptor_lease_batch_set_count(request->descriptor_set_count);
+    if (plan == NULL || plan->batch_disabled ||
+        batch_count <= request->descriptor_set_count) {
+        return bvb_vulkan_global_context_allocate_descriptor_sets(
+            worker->context, request, response, diagnostic, diagnostic_size);
+    }
     if (plan->published) {
         uint32_t cursor = 0U, count = 0U;
         const int cursor_result = bvb_descriptor_lease_bank_cursor(
             worker->ring, worker->ring_length, bank_index, &cursor, &count);
         if (cursor_result == 0 && cursor < count) {
-            (void)bvb_descriptor_lease_bank_disable(
-                worker->ring, worker->ring_length, bank_index);
-            plan->published = false;
-            plan->cooldown = true;
-            plan->call_count = 0U;
-            plan->set_count = 0U;
+            return bvb_vulkan_global_context_allocate_descriptor_sets(
+                worker->context, request, response, diagnostic,
+                diagnostic_size);
         }
-        return;
+        (void)bvb_descriptor_lease_bank_disable(
+            worker->ring, worker->ring_length, bank_index);
+        plan->published = false;
     }
-    if (plan->cooldown || request->descriptor_set_count == 0U ||
-        plan->call_count >= BVB_DESCRIPTOR_LEASE_BANK_CAPACITY ||
-        request->descriptor_set_count >
-            BVB_DESCRIPTOR_LEASE_BANK_CAPACITY - plan->set_count) {
-        return;
+
+    struct bvb_vulkan_descriptor_set_allocate_request batch_request;
+    struct bvb_vulkan_descriptor_set_allocate_response batch_response = {0};
+    int result = 0;
+    while (batch_count > request->descriptor_set_count) {
+        descriptor_lease_make_batch_request(
+            request->descriptor_pool_id, request->set_layout_ids,
+            request->descriptor_set_count, batch_count, &batch_request);
+        memset(&batch_response, 0, sizeof(batch_response));
+        ++worker->profile_batch_attempts;
+        result = bvb_vulkan_global_context_allocate_descriptor_sets(
+            worker->context, &batch_request, &batch_response, diagnostic,
+            diagnostic_size);
+        if (result != 0) return result;
+        if (batch_response.vulkan_result != VK_ERROR_OUT_OF_POOL_MEMORY &&
+            batch_response.vulkan_result != VK_ERROR_FRAGMENTED_POOL) {
+            break;
+        }
+        ++worker->profile_batch_fallbacks;
+        batch_count = descriptor_lease_smaller_batch_set_count(
+            batch_count, request->descriptor_set_count);
     }
-    struct descriptor_lease_plan_call *call =
-        &plan->calls[plan->call_count++];
-    call->first_set = (uint16_t)plan->set_count;
-    call->set_count = (uint16_t)request->descriptor_set_count;
-    for (uint32_t index = 0U; index < request->descriptor_set_count;
-         ++index) {
-        plan->layout_ids[plan->set_count++] = request->set_layout_ids[index];
+    if (batch_count <= request->descriptor_set_count) {
+        plan->batch_disabled = true;
+        return bvb_vulkan_global_context_allocate_descriptor_sets(
+            worker->context, request, response, diagnostic, diagnostic_size);
     }
+    if (batch_response.vulkan_result != VK_SUCCESS ||
+        batch_response.descriptor_set_count != batch_count) {
+        *response = batch_response;
+        return 0;
+    }
+
+    *response = (struct bvb_vulkan_descriptor_set_allocate_response){
+        .vulkan_result = VK_SUCCESS,
+        .descriptor_set_count = request->descriptor_set_count,
+    };
+    memcpy(response->descriptor_set_ids, batch_response.descriptor_set_ids,
+           (size_t)request->descriptor_set_count *
+               sizeof(response->descriptor_set_ids[0]));
+    struct bvb_descriptor_lease_record
+        leases[BVB_DESCRIPTOR_LEASE_BANK_CAPACITY] = {0};
+    const uint32_t lease_count =
+        batch_count - request->descriptor_set_count;
+    ++worker->profile_batch_successes;
+    worker->profile_batch_prefetched_sets += lease_count;
+    for (uint32_t index = 0U; index < lease_count; ++index) {
+        const uint32_t batch_index = request->descriptor_set_count + index;
+        leases[index] = (struct bvb_descriptor_lease_record){
+            .layout_id = batch_request.set_layout_ids[batch_index],
+            .descriptor_set_id =
+                batch_response.descriptor_set_ids[batch_index],
+        };
+    }
+    if (plan->epoch != UINT64_MAX) {
+        ++plan->epoch;
+        result = bvb_descriptor_lease_bank_publish(
+            worker->ring, worker->ring_length, bank_index, plan->pool_id,
+            plan->epoch, leases, lease_count);
+        if (result == 0) plan->published = true;
+    } else {
+        result = -EOVERFLOW;
+    }
+    if (result != 0) plan->batch_disabled = true;
+    return 0;
 }
 
 static void descriptor_lease_forget_pool(
     struct descriptor_transaction_worker *worker, uint64_t pool_id) {
-    uint32_t bank_index = 0U;
-    struct descriptor_lease_plan *plan = descriptor_lease_plan_find(
-        worker, pool_id, false, &bank_index);
-    if (plan == NULL) return;
-    if (worker->ring != NULL)
-        (void)bvb_descriptor_lease_bank_disable(
-            worker->ring, worker->ring_length, bank_index);
-    *plan = (struct descriptor_lease_plan){0};
+    if (worker == NULL || pool_id == 0U) return;
+    for (uint32_t bank_index = 0U;
+         bank_index < BVB_DESCRIPTOR_LEASE_BANK_COUNT; ++bank_index) {
+        struct descriptor_lease_plan *plan =
+            &worker->lease_plans[bank_index];
+        if (plan->pool_id != pool_id) continue;
+        if (worker->ring != NULL)
+            (void)bvb_descriptor_lease_bank_disable(
+                worker->ring, worker->ring_length, bank_index);
+        *plan = (struct descriptor_lease_plan){0};
+    }
 }
 
 static int descriptor_lease_after_pool_reset(
@@ -2436,71 +2550,64 @@ static int descriptor_lease_after_pool_reset(
         reset_request == NULL || reset_result != VK_SUCCESS) {
         return 0;
     }
+    struct descriptor_lease_plan *plan = NULL;
     uint32_t bank_index = 0U;
-    struct descriptor_lease_plan *plan = descriptor_lease_plan_find(
-        worker, reset_request->descriptor_pool_id, false, &bank_index);
-    if (plan == NULL) return 0;
-    (void)bvb_descriptor_lease_bank_disable(
-        worker->ring, worker->ring_length, bank_index);
-    plan->published = false;
-    if (plan->cooldown) {
-        plan->cooldown = false;
-        plan->call_count = 0U;
-        plan->set_count = 0U;
-        return 0;
+    for (uint32_t index = 0U; index < BVB_DESCRIPTOR_LEASE_BANK_COUNT;
+         ++index) {
+        struct descriptor_lease_plan *candidate =
+            &worker->lease_plans[index];
+        if (candidate->pool_id != reset_request->descriptor_pool_id) continue;
+        (void)bvb_descriptor_lease_bank_disable(
+            worker->ring, worker->ring_length, index);
+        candidate->published = false;
+        candidate->batch_disabled = false;
+        if (plan == NULL) {
+            plan = candidate;
+            bank_index = index;
+        }
     }
-    if (plan->set_count == 0U || plan->call_count == 0U) return 0;
+    if (plan == NULL || plan->signature_count == 0U) return 0;
     if (plan->epoch == UINT64_MAX) return -EOVERFLOW;
 
-    struct bvb_descriptor_lease_record
-        leases[BVB_DESCRIPTOR_LEASE_BANK_CAPACITY] = {0};
-    uint32_t lease_count = 0U;
-    int result = 0;
-    for (uint32_t call_index = 0U;
-         result == 0 && call_index < plan->call_count; ++call_index) {
-        const struct descriptor_lease_plan_call *call =
-            &plan->calls[call_index];
-        struct bvb_vulkan_descriptor_set_allocate_request request = {
-            .descriptor_pool_id = plan->pool_id,
-            .descriptor_set_count = call->set_count,
-        };
-        for (uint32_t index = 0U; index < call->set_count; ++index) {
-            request.set_layout_ids[index] =
-                plan->layout_ids[call->first_set + index];
-        }
-        struct bvb_vulkan_descriptor_set_allocate_response response = {0};
-        result = bvb_vulkan_global_context_allocate_descriptor_sets(
-            worker->context, &request, &response,
-            diagnostic, diagnostic_size);
-        if (result == 0 && response.vulkan_result != VK_SUCCESS)
-            result = -ENOSPC;
-        if (result == 0 &&
-            response.descriptor_set_count != request.descriptor_set_count)
-            result = -EPROTO;
-        for (uint32_t index = 0U;
-             result == 0 && index < response.descriptor_set_count; ++index) {
-            leases[lease_count++] = (struct bvb_descriptor_lease_record){
-                .layout_id = request.set_layout_ids[index],
-                .descriptor_set_id = response.descriptor_set_ids[index],
-            };
-        }
+    const uint32_t batch_count =
+        descriptor_lease_batch_set_count(plan->signature_count);
+    struct bvb_vulkan_descriptor_set_allocate_request request;
+    descriptor_lease_make_batch_request(
+        plan->pool_id, plan->signature_layout_ids, plan->signature_count,
+        batch_count, &request);
+    struct bvb_vulkan_descriptor_set_allocate_response response = {0};
+    ++worker->profile_batch_attempts;
+    int result = bvb_vulkan_global_context_allocate_descriptor_sets(
+        worker->context, &request, &response, diagnostic, diagnostic_size);
+    if (result == 0 && response.vulkan_result != VK_SUCCESS) {
+        ++worker->profile_batch_fallbacks;
+        result = -ENOSPC;
     }
+    if (result == 0 && response.descriptor_set_count != batch_count)
+        result = -EPROTO;
     if (result != 0) {
         int32_t cleanup_result = VK_ERROR_INITIALIZATION_FAILED;
         const int cleanup_status =
             bvb_vulkan_global_context_reset_descriptor_pool(
                 worker->context, reset_request, &cleanup_result,
                 diagnostic, diagnostic_size);
-        plan->call_count = 0U;
-        plan->set_count = 0U;
-        plan->cooldown = false;
         return cleanup_status != 0 ? cleanup_status
              : cleanup_result != VK_SUCCESS ? -EIO : 0;
     }
+    struct bvb_descriptor_lease_record
+        leases[BVB_DESCRIPTOR_LEASE_BANK_CAPACITY] = {0};
+    for (uint32_t index = 0U; index < batch_count; ++index) {
+        leases[index] = (struct bvb_descriptor_lease_record){
+            .layout_id = request.set_layout_ids[index],
+            .descriptor_set_id = response.descriptor_set_ids[index],
+        };
+    }
+    ++worker->profile_batch_successes;
+    worker->profile_batch_prefetched_sets += batch_count;
     ++plan->epoch;
     result = bvb_descriptor_lease_bank_publish(
         worker->ring, worker->ring_length, bank_index, plan->pool_id,
-        plan->epoch, leases, lease_count);
+        plan->epoch, leases, batch_count);
     if (result == 0) plan->published = true;
     return result;
 }
@@ -2600,13 +2707,9 @@ static void *descriptor_transaction_worker_main(void *opaque) {
         const uint64_t allocate_started_ns = replay_finished_ns;
         struct bvb_vulkan_descriptor_set_allocate_response allocated = {0};
         if (result == 0) {
-            result = bvb_vulkan_global_context_allocate_descriptor_sets(
-                worker->context, &transaction.allocation, &allocated,
-                diagnostic, sizeof(diagnostic));
-        }
-        if (result == 0) {
-            descriptor_lease_record_allocation(
-                worker, &transaction.allocation, &allocated);
+            result = descriptor_lease_allocate_live_batch(
+                worker, &transaction.allocation, &allocated, diagnostic,
+                sizeof(diagnostic));
         }
         const uint64_t allocate_finished_ns = monotonic_ns();
         allocate_ns = elapsed_ns(allocate_started_ns, allocate_finished_ns);

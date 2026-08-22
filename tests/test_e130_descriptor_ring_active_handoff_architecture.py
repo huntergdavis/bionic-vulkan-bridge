@@ -27,7 +27,7 @@ def main() -> int:
     assert evidence["implementation"]["spin_budget_nanoseconds_per_waiter"] == 250000
     assert evidence["implementation"]["native_allocation_result_deferred"] is False
     assert evidence["claims"]["tablet_deployed"] is False
-    require(header, "BVB_DESCRIPTOR_TRANSACTION_RING_VERSION = 3", "versioned ABI successor")
+    require(header, "BVB_DESCRIPTOR_TRANSACTION_RING_VERSION = 4", "versioned ABI successor")
     require(header, "BVB_DESCRIPTOR_TRANSACTION_WAIT_SPINNING", "spinning state")
     require(header, "BVB_DESCRIPTOR_TRANSACTION_WAIT_SLEEPING", "sleeping state")
     require(header, "request_wait_state", "request waiter state")

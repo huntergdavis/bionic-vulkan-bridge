@@ -596,3 +596,24 @@ allocated until the next reset; shared descriptor mode is therefore still an
 opt-in optimization, while strict mode is the semantic A/B control. The host
 gate proves the first identical post-reset allocation has zero socket and zero
 ring calls; tablet hit rate and FPS remain unclaimed until measured.
+
+E132 replaces E131's failed whole-epoch prediction with live, exact-signature
+batching. Ring ABI version 4 uses 64 bounded banks of 64 typed set records in a
+128-KiB sealed-size mapping, allowing multiple `{pool, ordered layout IDs}`
+signatures to coexist. On a live ring miss, Bionic repeats only that exact
+signature in a real native allocation of at most 16 sets. The requested prefix
+is returned to the blocked call and only successful extra IDs are
+release-published. The next matching glibc calls claim ordinary typed proxies
+locally with no socket exchange and no request/completion ring call.
+
+Oversized batches back off by whole signature repetitions after native
+`OUT_OF_POOL_MEMORY` or `FRAGMENTED_POOL`; if no useful batch fits, the exact
+request runs normally. Vulkan defines failed multi-set allocation as atomic
+with respect to its partial sets, so this retry does not leak a partially
+successful batch. Other native errors are returned unchanged. Pending
+descriptor-journal records prohibit local lease claims, preserving E127's
+update-before-allocation order. Reset disables every bank for the pool and
+clears its capacity state; destroy forgets every signature. Published but
+unclaimed extras remain real pool allocations until claim or reset/destroy,
+and a publication failure disables batching for that signature rather than
+fabricating a result. Strict descriptor mode remains unchanged.

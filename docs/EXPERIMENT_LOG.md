@@ -5203,3 +5203,37 @@ back to the exact request. Compact runtime evidence is
 `docs/evidence/e131-tombraider-runtime-failure.json`; canonical screenshots,
 artifact identities, logs, and protected-process state are retained by the
 sibling `steamclienttermux` evidence.
+
+## E132 — live descriptor signature batches (2026-08-22)
+
+E131 rendered real frames but converted only 36 of 159,843 allocation attempts
+into local leases: a 0.0225% hit rate. The required `deja "E132 live descriptor
+allocation signature batch lease vkAllocateDescriptorSets prefetch pool"`
+query returned no indexed implementation. E132 reuses E121's authoritative
+pool lifecycle, E127's descriptor-journal order, E128's typed shared region,
+and E131's local typed-proxy claim, but discards whole-reset-sequence
+prediction.
+
+Ring ABI version 4 expands the fixed region to 128 KiB and provides 64 banks of
+64 records. A ring miss now keys a plan by the exact pool and ordered layout-ID
+signature. Bionic repeats that signature in one real allocation of at most 16
+sets, returns the requested prefix, and publishes only the extra real IDs.
+Multiple signatures coexist in one pool. Oversized batches back off through
+smaller whole-signature repetitions after `OUT_OF_POOL_MEMORY` or
+`FRAGMENTED_POOL`, then fall back to the exact request. This retry relies on
+the Vulkan specification's guarantee that partial sets from a failed
+multi-set allocation are destroyed and all output handles are nulled. Pending
+journal records explicitly bypass lease claim so queued descriptor updates
+cannot be skipped.
+
+The cross-process fake proves a first live miss followed by fifteen typed local
+hits and zero additional ring calls. A second layout in the same pool incurs
+one miss and then independently hits while the first bank remains valid. Its
+small two-set pool exercises geometric backoff, while a one-set pool exercises
+the final exact fallback. Reset invalidates every earlier proxy and every bank;
+destroy forgets all signatures. The E129 profile now reports batch attempts,
+successes, published extras, and capacity fallbacks. Focused contracts passed
+5/5 and the complete host suite passed 94/94. Tablet deployment remains
+pending, so this entry makes no game, hit-rate, ANR, or FPS claim. Exact
+boundaries are retained in
+`docs/evidence/e132-live-descriptor-signature-batches-host.json`.
