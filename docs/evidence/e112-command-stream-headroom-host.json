@@ -40,9 +40,25 @@
     },
     "host_suite": "72/72 passed",
     "tablet_runtime": {
-      "status": "pending exact-archive deployment",
+      "status": "passed and advanced to a later command boundary",
+      "source_commit": "75edf275b00d99f57fc43a5bce8769df0d1bbd64",
+      "tablet_suite": "70/70 passed",
+      "glibc_icd_selftest": "passed",
+      "installed_icd_sha256": "2d0f3718678735909b559a52332f5adc30da504edd51835d6eaf7b36b7da42c2",
+      "installed_service_sha256": "63a2a593e71de074bbb3838bd556393b1254b11b18c857bd0ce55f4ae5e257fc",
+      "rollback": "install-pre-mMd2ZY22",
+      "run_id": "20260822T065846Z-20956",
+      "prior_copy_buffer_to_image_enospc_cleared": true,
+      "next_rejection_entry": "vkCmdPipelineBarrier2",
+      "next_rejection_reason": "unsupported_dependency_shape",
+      "next_rejection_command_sequence": 18,
+      "screenshot_sha256": "28b7305067678da2bc88ffcb75bf49b49141cf49c27c59d79df332dcee89e9f8",
+      "fullscreen_activity": true,
       "visible_game_frame": false,
-      "benchmark_or_fps": false
+      "benchmark_or_fps": false,
+      "protected_steam": "pid 14565 start_ticks 121864440 unchanged",
+      "protected_x11": "pid 13643 start_ticks 121863492 unchanged",
+      "cleanup": "exact run children and Activity removed"
     }
   },
   "reuse": "The required deja query found no indexed E112 implementation. E112 reuses E075/E075a's fixed shared-region lifecycle, E080 typed ownership, E107's bounded synchronization2 family, E111 compact variable-length validation, and E111's live residual-capacity result."

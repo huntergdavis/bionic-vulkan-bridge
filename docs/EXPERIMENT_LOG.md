@@ -4417,3 +4417,18 @@ records 256 KiB command stream slots Tomb Raider ENOSPC"` query returned no
 indexed implementation. E112 reuses E075/E075a, E080, E107, and E111. Compact
 evidence is `docs/evidence/e112-command-stream-headroom-host.json`; tablet
 pixels and FPS remain pending the next exact-archive run.
+
+The exact E112 archive passed 70/70 Termux contracts and the optimized glibc
+ICD self-test. Transactional install retained rollback
+`install-pre-mMd2ZY22` and installed ICD/service SHA-256 identities
+`2d0f3718...42c2` and `63a2a593...7fc`. Bounded run
+`20260822T065846Z-20956` cleared E111's repeated
+`vkCmdCopyBufferToImage2` `ENOSPC` boundary and advanced to an implemented
+`vkCmdPipelineBarrier2` at command sequence 18. Its exact rejection is now
+`unsupported_dependency_shape`, establishing that slot capacity is no longer
+the active failure and the next gate is broader synchronization2 semantics.
+
+Automatic full-screen screenshot SHA-256 `28b73050...e9f8` remains the known
+bridge gradient triangle, so no Tomb Raider frame or FPS is claimed. Exact
+cleanup removed the bounded run children and Activity while preserving Steam
+PID 14565/start 121864440 and X11 PID 13643/start 121863492.
