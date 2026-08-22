@@ -4974,3 +4974,20 @@ exchange. Canonical/corrupt protocol coverage, strict regression, selector,
 and both architecture contracts pass. The complete host suite passes 88/88.
 This is not yet a tablet or FPS result. Exact design and claim boundaries are
 in `docs/evidence/e127-descriptor-transaction-host.json`.
+
+The exact E127 source then passed 86/86 Termux contracts and the glibc dispatch
+self-test before transactional installation. The same native-resolution Low
+benchmark completed with **0.7 minimum, 4.1 maximum, and 2.3 average FPS**,
+a 15% average gain over E126's immediately preceding 2.0-FPS result. Steam and
+X11 retained their original process identities and the tablet ended at 23.6 C.
+
+The comparable final 30 windows show the mechanism and the remaining limit.
+Combined descriptor blocking fell 27.1%, from 139.95 to 102.08 ms/present;
+total RPC blocking fell 16.1%, from 267.80 to 224.79 ms/present. Opcode 68 is
+gone from shared mode, but the scene still issues about 526 synchronous
+opcode-123 transactions per present and spends 100.34 ms waiting for them.
+E128 must therefore preserve E127's ordered real native allocation result while
+moving requests and completions to a bounded shared ring or an equivalently
+strict pool-epoch-aware lease cache. Compact tablet evidence is retained in
+`docs/evidence/e127-descriptor-transaction-tablet.json`; canonical game evidence
+is in the sibling `steamclienttermux` repository at commit `1fe5e9e`.

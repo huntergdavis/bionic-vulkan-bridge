@@ -1,0 +1,74 @@
+{
+  "gate": "E127",
+  "date": "2026-08-22",
+  "source_commit": "376b8be752cce550ea588ae924ce00e229a3fe3a",
+  "tablet_build": {
+    "source_archive_sha256": "b4ce01b8fc2e266e5dd55a15e0209cf936233b8230b632d1e86b2b7b0f30d0b7",
+    "termux_suite": "86/86 passed",
+    "glibc_selftest": "triangle_dispatch_glibc=PASS",
+    "termux_build_log_sha256": "f8521627277c04f637f9088dd389bccfc13f0ec8e0659c5b9e8561deb269ccd3",
+    "glibc_build_log_sha256": "bd5fdf6893ccf59bc27a54cc1a331be4d68378fe0286646300130eca604ee585"
+  },
+  "installed_artifacts": {
+    "glibc_icd_bytes": 788320,
+    "glibc_icd_sha256": "64b0ab0833bbe8ee449f0f740c057e43057d4de1c3faecb62f217f31db8b6ba5",
+    "bionic_service_bytes": 357184,
+    "bionic_service_sha256": "7193e6ceea2633952a4c0c3dbae70103621a77194c696d3ba64d1508fa690fe7",
+    "normalized_manifest_sha256": "77f3395e3f657b6a7274c182afe994edacda2a4b38d49814ea84440520af33df",
+    "install_stamp_sha256": "edfdbae8eee1d142e1feeafb044cdd5a0c454d478f72c70b7a1b8fdc985162e7",
+    "rollback_backup": "/data/data/com.termux/files/home/steam-arm64/bvb/backups/install-pre-Po27PY5d"
+  },
+  "runtime": {
+    "run_id": "20260822T191104Z-25808",
+    "resolution": "2800x1752",
+    "quality": "Low",
+    "refresh_hz": 60,
+    "command_stream": "shared",
+    "mapped_memory": "shared",
+    "descriptor_journal": "shared",
+    "profile_windows": 53,
+    "profiled_presents": 1696,
+    "probe_status": 0,
+    "temperature_c_after_teardown": 23.6
+  },
+  "game_authored_result": {
+    "minimum_fps": 0.7,
+    "maximum_fps": 4.1,
+    "average_fps": 2.3,
+    "e126_average_fps": 2.0,
+    "average_fps_increase_percent": 15.0,
+    "raw_result_sha256": "07ea589922d453afef8b966510e8161923190ebe1661985a980374642a99c8cc"
+  },
+  "comparable_final_30_windows": {
+    "rpc_calls_per_present": 565.4489583333333,
+    "rpc_blocked_ms_per_present": 224.79033955416668,
+    "descriptor_transaction_calls_per_present": 526.240625,
+    "descriptor_transaction_ms_per_present": 100.33634976979167,
+    "descriptor_journal_flush_calls_per_present": 7.436458333333333,
+    "descriptor_journal_flush_ms_per_present": 1.7448031572916667,
+    "descriptor_combined_ms_per_present": 102.08115292708334,
+    "e126_descriptor_combined_ms_per_present": 139.94517239895833,
+    "descriptor_blocking_reduction_percent": 27.05632414666762,
+    "e126_rpc_blocked_ms_per_present": 267.80239931770836,
+    "total_rpc_reduction_percent": 16.061118150220217
+  },
+  "wsi": {
+    "client_ms_per_present": 1.5433550188679246,
+    "service_ms_per_present": 0.9554379581367924
+  },
+  "preservation": {
+    "steam_pid": 15575,
+    "steam_start_ticks": 128118834,
+    "x11_pid": 13643,
+    "x11_start_ticks": 121863492,
+    "protected_processes_unchanged": true
+  },
+  "diagnosis": "E127 produces a real 15% average-FPS gain and reduces descriptor blocking 27.1%, but opcode 123 remains the primary synchronous boundary at 526 calls and 100.3 ms per present. E128 should preserve native allocation semantics while moving request/completion traffic off the per-call socket path.",
+  "canonical_game_evidence": {
+    "repository": "steamclienttermux",
+    "commit": "1fe5e9e",
+    "path": "docs/evidence/tombraider-bvb-e127-descriptor-transaction-profile-20260822.json"
+  },
+  "claim_boundary": "One complete thermally cool E127 run proves the gain and remaining boundary; it is not a repeated paired series or parity evidence.",
+  "reuse": "The required deja query found no indexed descriptor completion-ring implementation. This runtime measurement reuses E116/E117's bounded per-present profilers, E125/E126's matched scene analysis, and E127's host-proven immutable ordered transaction."
+}
