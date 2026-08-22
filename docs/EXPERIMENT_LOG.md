@@ -4308,3 +4308,15 @@ test records 41 RPCs while shared remains zero. Compact evidence is
 DXVK"` query returned no indexed implementation. Reuse comes from E075/E075a,
 E076, E080, E101, E105, and E108. Tablet visibility and FPS remain unclaimed
 until the exact archive is deployed and automatically screenshot-checked.
+
+The exact E109 tablet archive passed 67/67 native contracts and the optimized
+glibc ICD self-test. Transactional install retained rollback
+`install-pre-LpplImZr` and installed ICD/service SHA-256 identities
+`dbcc4b31...f65b` and `4477089c...be9a`. Bounded run
+`20260822T055502Z-22809` crossed the full 19-state native sequence and moved
+the first game command poison to `vkCmdClearDepthStencilImage` at command
+sequence 10. The automatic screenshot SHA-256 is `cd2f6c24...ec04`; visual
+inspection shows the bridge output still embedded in Samsung freeform mode,
+not a full-screen game frame. Activity focus alone was therefore not treated
+as a full-screen proof. Exact-run cleanup preserved Steam PID 14565/start
+121864440 and X11 PID 13643/start 121863492.

@@ -70,7 +70,22 @@
       "probed_null": 302
     },
     "host_suite": "69/69 passed",
-    "tablet_runtime": "pending exact archive build and screenshot-checked run",
+    "tablet_runtime": {
+      "status": "passed_to_next_command_boundary",
+      "run_id": "20260822T055502Z-22809",
+      "tablet_suite": "67/67 passed",
+      "glibc_icd_selftest": "passed",
+      "installed_icd_sha256": "dbcc4b31ede2d3a9064f2eba502d3aa89505265358439c87605e11d27785f65b",
+      "installed_service_sha256": "4477089c5357aeb5852fdd12124cb287594a76d87fa635902e04169c76aabe9a",
+      "screenshot_sha256": "cd2f6c2411911811d72cc58ba5d177ea81d0fb3e8f879894c5f63dde467aec04",
+      "activity_focused": true,
+      "activity_fullscreen": false,
+      "next_rejection_entry": "vkCmdClearDepthStencilImage",
+      "next_rejection_reason": "diagnostic_stub_invoked",
+      "next_rejection_command_sequence": 10,
+      "rollback_snapshot": "install-pre-LpplImZr",
+      "steam_and_x_preserved": true
+    },
     "visible_game_frame": false,
     "benchmark_or_fps": false
   },
