@@ -1,3 +1,6 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #define _POSIX_C_SOURCE 200809L
 
 #include <bvb/command_batch.h>
@@ -46,6 +49,7 @@ struct shared_batch_region {
     uint64_t last_sequence;
     struct bvb_command_stream_generation command_generations[4096];
     bool command_stream;
+    bool descriptor_journal;
 };
 
 struct connection_worker {
@@ -2019,6 +2023,132 @@ static int answer_vulkan_descriptor_template_update(
     return bvb_transport_send(client_fd, &response);
 }
 
+static uint32_t descriptor_journal_record_length(uint32_t payload_length) {
+    if (payload_length > UINT32_MAX -
+                             BVB_DESCRIPTOR_JOURNAL_RECORD_HEADER_SIZE - 7U) {
+        return 0U;
+    }
+    return (BVB_DESCRIPTOR_JOURNAL_RECORD_HEADER_SIZE + payload_length + 7U) &
+        ~UINT32_C(7);
+}
+
+static int validate_descriptor_journal_snapshot(
+    const uint8_t *snapshot, uint32_t length, uint32_t record_count) {
+    if (snapshot == NULL || length == 0U ||
+        record_count == 0U ||
+        record_count > BVB_DESCRIPTOR_JOURNAL_MAX_RECORDS) {
+        return -EINVAL;
+    }
+    uint32_t offset = 0U;
+    for (uint32_t index = 0U; index < record_count; ++index) {
+        if (offset > length ||
+            BVB_DESCRIPTOR_JOURNAL_RECORD_HEADER_SIZE > length - offset) {
+            return -EPROTO;
+        }
+        const uint32_t payload_length = bvb_wire_get_u32(snapshot + offset);
+        const uint32_t reserved = bvb_wire_get_u32(snapshot + offset + 4U);
+        const uint32_t record_length =
+            descriptor_journal_record_length(payload_length);
+        if (reserved != 0U || payload_length == 0U ||
+            payload_length > BVB_PROTOCOL_MAX_PAYLOAD ||
+            record_length == 0U || record_length > length - offset) {
+            return -EPROTO;
+        }
+        struct bvb_vulkan_descriptor_template_update_request decoded;
+        int result =
+            bvb_protocol_decode_vulkan_descriptor_template_update_request(
+                snapshot + offset +
+                    BVB_DESCRIPTOR_JOURNAL_RECORD_HEADER_SIZE,
+                payload_length, &decoded);
+        if (result != 0) return result;
+        const uint32_t payload_end = offset +
+            BVB_DESCRIPTOR_JOURNAL_RECORD_HEADER_SIZE + payload_length;
+        for (uint32_t padding = payload_end;
+             padding < offset + record_length; ++padding) {
+            if (snapshot[padding] != 0U) return -EPROTO;
+        }
+        offset += record_length;
+    }
+    return offset == length ? 0 : -EPROTO;
+}
+
+static int replay_descriptor_journal_snapshot(
+    struct bvb_vulkan_global_context *context, const uint8_t *snapshot,
+    uint32_t length, uint32_t record_count,
+    char *diagnostic, size_t diagnostic_size) {
+    uint32_t offset = 0U;
+    for (uint32_t index = 0U; index < record_count; ++index) {
+        const uint32_t payload_length = bvb_wire_get_u32(snapshot + offset);
+        struct bvb_vulkan_descriptor_template_update_request decoded;
+        int result =
+            bvb_protocol_decode_vulkan_descriptor_template_update_request(
+                snapshot + offset +
+                    BVB_DESCRIPTOR_JOURNAL_RECORD_HEADER_SIZE,
+                payload_length, &decoded);
+        if (result == 0) {
+            result =
+                bvb_vulkan_global_context_update_descriptor_set_with_template(
+                    context, &decoded, diagnostic, diagnostic_size);
+        }
+        if (result != 0) return result;
+        offset += descriptor_journal_record_length(payload_length);
+    }
+    return offset == length ? 0 : -EPROTO;
+}
+
+static int answer_vulkan_descriptor_journal_flush(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context,
+    struct shared_batch_region *region) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL || region == NULL ||
+        region->address == NULL || !region->descriptor_journal ||
+        region->command_stream ||
+        request->header.payload_length !=
+            BVB_DESCRIPTOR_JOURNAL_FLUSH_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_descriptor_journal_flush flush;
+    int result = bvb_protocol_decode_vulkan_descriptor_journal_flush(
+        request->payload, &flush);
+    if (result == 0 && flush.generation != region->generation)
+        result = -ESTALE;
+    if (result == 0 &&
+        (region->last_sequence == UINT64_MAX ||
+         flush.sequence != region->last_sequence + 1U)) {
+        result = -ESTALE;
+    }
+    if (result == 0 && flush.length > region->length) result = -ERANGE;
+    uint8_t *snapshot = NULL;
+    if (result == 0) {
+        snapshot = malloc(flush.length);
+        if (snapshot == NULL) result = -ENOMEM;
+    }
+    if (result == 0) {
+        atomic_thread_fence(memory_order_acquire);
+        memcpy(snapshot, region->address, flush.length);
+        result = validate_descriptor_journal_snapshot(
+            snapshot, flush.length, flush.record_count);
+    }
+    char diagnostic[512] = {0};
+    if (result == 0) {
+        result = replay_descriptor_journal_snapshot(
+            context, snapshot, flush.length, flush.record_count,
+            diagnostic, sizeof(diagnostic));
+    }
+    free(snapshot);
+    if (result == 0) {
+        region->last_sequence = flush.sequence;
+    } else {
+        fprintf(stderr, "bvb: descriptor journal flush failed: %s\n",
+                diagnostic[0] == '\0' ? strerror(-result) : diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_buffer_requirements(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context) {
@@ -3218,7 +3348,7 @@ static int answer_vulkan_batch_selftest(
 static int answer_shared_batch_setup(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     int received_fd, struct shared_batch_region *region,
-    bool command_stream) {
+    bool command_stream, bool descriptor_journal) {
     struct bvb_protocol_packet response;
     prepare_response(&response, request);
     int status = 0;
@@ -3228,15 +3358,32 @@ static int answer_shared_batch_setup(
         request->header.payload_length != BVB_SHARED_BATCH_SETUP_SIZE) {
         status = -EPROTO;
     } else {
-        status = command_stream
-            ? bvb_protocol_decode_vulkan_command_stream_setup(
-                  request->payload, &setup)
-            : bvb_protocol_decode_shared_batch_setup(
-                  request->payload, &setup);
+        if (command_stream) {
+            status = bvb_protocol_decode_vulkan_command_stream_setup(
+                request->payload, &setup);
+        } else if (descriptor_journal) {
+            status = bvb_protocol_decode_vulkan_descriptor_journal_setup(
+                request->payload, &setup);
+        } else {
+            status = bvb_protocol_decode_shared_batch_setup(
+                request->payload, &setup);
+        }
     }
     if (status == 0 && command_stream &&
         setup.region_bytes != BVB_COMMAND_STREAM_REGION_BYTES) {
         status = -EINVAL;
+    }
+    if (status == 0 && descriptor_journal &&
+        setup.region_bytes != BVB_DESCRIPTOR_JOURNAL_REGION_BYTES) {
+        status = -EINVAL;
+    }
+    if (status == 0 && descriptor_journal) {
+        const int seals = fcntl(received_fd, F_GET_SEALS);
+        const int required_seals =
+            F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL;
+        if (seals < 0 || (seals & required_seals) != required_seals) {
+            status = -EPERM;
+        }
     }
     struct stat metadata;
     if (status == 0 &&
@@ -3267,6 +3414,7 @@ static int answer_shared_batch_setup(
             .length = setup.region_bytes,
             .generation = setup.generation,
             .command_stream = command_stream,
+            .descriptor_journal = descriptor_journal,
         };
     }
     response.header.status = status;
@@ -3280,7 +3428,8 @@ static int answer_shared_batch_execute(
     struct bvb_protocol_packet response;
     prepare_response(&response, request);
     if (!negotiated || region == NULL || region->address == NULL ||
-        region->command_stream || context == NULL ||
+        region->command_stream || region->descriptor_journal ||
+        context == NULL ||
         request->header.payload_length != BVB_SHARED_BATCH_EXECUTE_SIZE) {
         response.header.status = -EPROTO;
         return bvb_transport_send(client_fd, &response);
@@ -3349,6 +3498,7 @@ static int serve_connection(int client_fd, const char *loader_path,
                             bool cleanup_vulkan_context) {
     bool negotiated = false;
     struct shared_batch_region shared_region = {0};
+    struct shared_batch_region descriptor_journal_region = {0};
     struct bvb_vulkan_batch_context *vulkan_context = NULL;
     struct bvb_vulkan_global_context *global_context = NULL;
     int connection_status = 0;
@@ -3370,6 +3520,8 @@ static int serve_connection(int client_fd, const char *loader_path,
              request.header.opcode != BVB_OPCODE_SHARED_BATCH_SETUP &&
              request.header.opcode !=
                  BVB_OPCODE_VULKAN_COMMAND_STREAM_SETUP &&
+             request.header.opcode !=
+                 BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_SETUP &&
              request.header.opcode !=
                  BVB_OPCODE_VULKAN_MEMORY_MIRROR_SETUP &&
              request.header.opcode !=
@@ -3400,13 +3552,19 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode == BVB_OPCODE_SHARED_BATCH_SETUP) {
             result = answer_shared_batch_setup(client_fd, &request, negotiated,
                                                received_fd, &shared_region,
-                                               false);
+                                               false, false);
             received_fd = -1;
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_COMMAND_STREAM_SETUP) {
             result = answer_shared_batch_setup(client_fd, &request, negotiated,
                                                received_fd, &shared_region,
-                                               true);
+                                               true, false);
+            received_fd = -1;
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_SETUP) {
+            result = answer_shared_batch_setup(
+                client_fd, &request, negotiated, received_fd,
+                &descriptor_journal_region, false, true);
             received_fd = -1;
         } else if (request.header.opcode == BVB_OPCODE_SHARED_BATCH_EXECUTE) {
             result = answer_shared_batch_execute(
@@ -3607,6 +3765,11 @@ static int serve_connection(int client_fd, const char *loader_path,
             result = answer_vulkan_descriptor_template_update(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_FLUSH) {
+            result = answer_vulkan_descriptor_journal_flush(
+                client_fd, &request, negotiated, global_context,
+                &descriptor_journal_region);
+        } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_BUFFER_REQUIREMENTS) {
             result = answer_vulkan_buffer_requirements(
                 client_fd, &request, negotiated, global_context);
@@ -3762,6 +3925,13 @@ static int serve_connection(int client_fd, const char *loader_path,
     }
     if (shared_region.address != NULL) {
         if (munmap((void *)shared_region.address, shared_region.length) != 0 &&
+            connection_status == 0) {
+            connection_status = -errno;
+        }
+    }
+    if (descriptor_journal_region.address != NULL) {
+        if (munmap((void *)descriptor_journal_region.address,
+                   descriptor_journal_region.length) != 0 &&
             connection_status == 0) {
             connection_status = -errno;
         }

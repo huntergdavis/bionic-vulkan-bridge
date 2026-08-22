@@ -191,7 +191,14 @@ struct bvb_global_client_state {
     uint64_t command_stream_generation;
     uint64_t next_command_stream_sequence;
     uint64_t command_stream_slots[BVB_COMMAND_STREAM_SLOT_COUNT / 64U];
+    uint8_t *descriptor_journal_mapping;
+    uint64_t descriptor_journal_generation;
+    uint64_t next_descriptor_journal_sequence;
+    uint32_t descriptor_journal_length;
+    uint32_t descriptor_journal_record_count;
     atomic_bool command_stream_enabled;
+    bool descriptor_journal_enabled;
+    bool descriptor_journal_flushing;
     bool memory_mirror_enabled;
     bool frame_profile_enabled;
     bool connection_poisoned;
@@ -316,15 +323,28 @@ static PFN_vkVoidFunction erase_function(const void *bytes, size_t size) {
 static uint64_t frame_profile_monotonic_ns(void);
 static void frame_profile_record_rpc_locked(
     uint16_t opcode, uint64_t started_ns, uint64_t finished_ns);
+static int flush_descriptor_journal_locked(void);
+
+static int flush_descriptor_journal_before_exchange_locked(uint16_t opcode) {
+    if (bvb_global_client.descriptor_journal_flushing ||
+        opcode == BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_SETUP ||
+        opcode == BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_FLUSH) {
+        return 0;
+    }
+    return flush_descriptor_journal_locked();
+}
 
 static int exchange_locked(const struct bvb_protocol_packet *request,
                            struct bvb_protocol_packet *response) {
+    int result = flush_descriptor_journal_before_exchange_locked(
+        request->header.opcode);
+    if (result != 0) return result;
     ++bvb_global_client.exchange_count;
     bvb_global_client.last_opcode = request->header.opcode;
     const uint64_t profile_started_ns =
         bvb_global_client.frame_profile_enabled
         ? frame_profile_monotonic_ns() : 0U;
-    int result = bvb_transport_send(bvb_global_client.socket_fd, request);
+    result = bvb_transport_send(bvb_global_client.socket_fd, request);
     if (result == 0) {
         result = bvb_transport_receive(bvb_global_client.socket_fd, response);
     }
@@ -348,12 +368,15 @@ static int exchange_fds_locked(
     const struct bvb_protocol_packet *request,
     struct bvb_protocol_packet *response, int *received_fds,
     size_t fd_capacity, size_t *received_fd_count) {
+    int result = flush_descriptor_journal_before_exchange_locked(
+        request->header.opcode);
+    if (result != 0) return result;
     ++bvb_global_client.exchange_count;
     bvb_global_client.last_opcode = request->header.opcode;
     const uint64_t profile_started_ns =
         bvb_global_client.frame_profile_enabled
         ? frame_profile_monotonic_ns() : 0U;
-    int result = bvb_transport_send(bvb_global_client.socket_fd, request);
+    result = bvb_transport_send(bvb_global_client.socket_fd, request);
     if (result == 0)
         result = bvb_transport_receive_fds(
             bvb_global_client.socket_fd, response, received_fds,
@@ -374,12 +397,15 @@ static int exchange_fds_locked(
 static int exchange_pass_fd_locked(
     const struct bvb_protocol_packet *request,
     struct bvb_protocol_packet *response, int passed_fd) {
+    int result = flush_descriptor_journal_before_exchange_locked(
+        request->header.opcode);
+    if (result != 0) return result;
     ++bvb_global_client.exchange_count;
     bvb_global_client.last_opcode = request->header.opcode;
     const uint64_t profile_started_ns =
         bvb_global_client.frame_profile_enabled
         ? frame_profile_monotonic_ns() : 0U;
-    int result = bvb_transport_send_fd(
+    result = bvb_transport_send_fd(
         bvb_global_client.socket_fd, request, passed_fd);
     if (result == 0) {
         result = bvb_transport_receive(bvb_global_client.socket_fd, response);
@@ -434,6 +460,20 @@ static int frame_profile_requested(bool *enabled) {
     }
     if (strcmp(value, "1") == 0) {
         *enabled = true;
+        return 0;
+    }
+    return -EINVAL;
+}
+
+static int descriptor_journal_shared_requested(bool *shared) {
+    if (shared == NULL) return -EINVAL;
+    const char *mode = getenv("BVB_DESCRIPTOR_JOURNAL");
+    if (mode == NULL || strcmp(mode, "strict") == 0) {
+        *shared = false;
+        return 0;
+    }
+    if (strcmp(mode, "shared") == 0) {
+        *shared = true;
         return 0;
     }
     return -EINVAL;
@@ -640,19 +680,185 @@ done:
     return result;
 }
 
+static int setup_descriptor_journal_locked(void) {
+    if (!bvb_global_client.descriptor_journal_enabled) return 0;
+    int memory_fd = -1;
+    void *mapping = MAP_FAILED;
+    uint64_t generation = 0U;
+    const ssize_t random_bytes = syscall(
+        SYS_getrandom, &generation, sizeof(generation), 0);
+    if (random_bytes != (ssize_t)sizeof(generation) || generation == 0U) {
+        return -EIO;
+    }
+    memory_fd = (int)syscall(
+        SYS_memfd_create, "bvb-descriptor-journal",
+        MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (memory_fd < 0) return -errno;
+    int result = 0;
+    if (ftruncate(memory_fd, BVB_DESCRIPTOR_JOURNAL_REGION_BYTES) != 0) {
+        result = -errno;
+        goto done;
+    }
+    mapping = mmap(NULL, BVB_DESCRIPTOR_JOURNAL_REGION_BYTES,
+                   PROT_READ | PROT_WRITE, MAP_SHARED, memory_fd, 0);
+    if (mapping == MAP_FAILED) {
+        result = -errno;
+        goto done;
+    }
+    if (fcntl(memory_fd, F_ADD_SEALS,
+              F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL) != 0) {
+        result = -errno;
+        goto done;
+    }
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_SETUP,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_SHARED_BATCH_SETUP_SIZE,
+    };
+    const struct bvb_shared_batch_setup setup = {
+        .region_bytes = BVB_DESCRIPTOR_JOURNAL_REGION_BYTES,
+        .generation = generation,
+    };
+    result = bvb_protocol_encode_vulkan_descriptor_journal_setup(
+        request.payload, &setup);
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        result = exchange_pass_fd_locked(&request, &response, memory_fd);
+    }
+    if (result == 0 &&
+        (response.header.status != 0 || response.header.payload_length != 0U)) {
+        result = response.header.status != 0 ? response.header.status
+                                             : -EPROTO;
+    }
+    if (result == 0) {
+        bvb_global_client.descriptor_journal_mapping = mapping;
+        bvb_global_client.descriptor_journal_generation = generation;
+        bvb_global_client.next_descriptor_journal_sequence = 1U;
+        bvb_global_client.descriptor_journal_length = 0U;
+        bvb_global_client.descriptor_journal_record_count = 0U;
+        mapping = MAP_FAILED;
+    }
+done:
+    if (mapping != MAP_FAILED) {
+        (void)munmap(mapping, BVB_DESCRIPTOR_JOURNAL_REGION_BYTES);
+    }
+    (void)close(memory_fd);
+    return result;
+}
+
+static void poison_descriptor_journal_connection_locked(void) {
+    bvb_global_client.connection_poisoned = true;
+    if (bvb_global_client.socket_fd >= 0) {
+        (void)close(bvb_global_client.socket_fd);
+        bvb_global_client.socket_fd = -1;
+    }
+}
+
+static int flush_descriptor_journal_locked(void) {
+    if (!bvb_global_client.descriptor_journal_enabled ||
+        bvb_global_client.descriptor_journal_length == 0U) {
+        return 0;
+    }
+    if (bvb_global_client.socket_fd < 0 ||
+        bvb_global_client.descriptor_journal_mapping == NULL ||
+        bvb_global_client.next_descriptor_journal_sequence == 0U) {
+        poison_descriptor_journal_connection_locked();
+        return -EPIPE;
+    }
+    atomic_thread_fence(memory_order_release);
+    const struct bvb_descriptor_journal_flush flush = {
+        .generation = bvb_global_client.descriptor_journal_generation,
+        .sequence = bvb_global_client.next_descriptor_journal_sequence,
+        .length = bvb_global_client.descriptor_journal_length,
+        .record_count = bvb_global_client.descriptor_journal_record_count,
+    };
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_FLUSH,
+        .request_id = next_request_id_locked(),
+        .payload_length = BVB_DESCRIPTOR_JOURNAL_FLUSH_SIZE,
+    };
+    int result = bvb_protocol_encode_vulkan_descriptor_journal_flush(
+        request.payload, &flush);
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) {
+        bvb_global_client.descriptor_journal_flushing = true;
+        result = exchange_locked(&request, &response);
+        bvb_global_client.descriptor_journal_flushing = false;
+    }
+    if (result == 0 &&
+        (response.header.status != 0 || response.header.payload_length != 0U)) {
+        result = response.header.status != 0 ? response.header.status
+                                             : -EPROTO;
+    }
+    if (result != 0) {
+        poison_descriptor_journal_connection_locked();
+        return result;
+    }
+    bvb_global_client.descriptor_journal_length = 0U;
+    bvb_global_client.descriptor_journal_record_count = 0U;
+    ++bvb_global_client.next_descriptor_journal_sequence;
+    if (bvb_global_client.next_descriptor_journal_sequence == 0U) {
+        poison_descriptor_journal_connection_locked();
+        return -EOVERFLOW;
+    }
+    return 0;
+}
+
+static int append_descriptor_journal_locked(
+    const uint8_t *payload, uint32_t payload_length) {
+    if (!bvb_global_client.descriptor_journal_enabled || payload == NULL ||
+        payload_length == 0U || payload_length > BVB_PROTOCOL_MAX_PAYLOAD ||
+        bvb_global_client.descriptor_journal_mapping == NULL) {
+        return -EINVAL;
+    }
+    const uint32_t unaligned =
+        BVB_DESCRIPTOR_JOURNAL_RECORD_HEADER_SIZE + payload_length;
+    const uint32_t record_length = (unaligned + 7U) & ~UINT32_C(7);
+    if (record_length > BVB_DESCRIPTOR_JOURNAL_REGION_BYTES) return -E2BIG;
+    if (bvb_global_client.descriptor_journal_record_count ==
+            BVB_DESCRIPTOR_JOURNAL_MAX_RECORDS ||
+        record_length > BVB_DESCRIPTOR_JOURNAL_REGION_BYTES -
+                            bvb_global_client.descriptor_journal_length) {
+        int result = flush_descriptor_journal_locked();
+        if (result != 0) return result;
+    }
+    uint8_t *record = bvb_global_client.descriptor_journal_mapping +
+        bvb_global_client.descriptor_journal_length;
+    bvb_wire_put_u32(record, payload_length);
+    bvb_wire_put_u32(record + 4, 0U);
+    memcpy(record + BVB_DESCRIPTOR_JOURNAL_RECORD_HEADER_SIZE,
+           payload, payload_length);
+    memset(record + unaligned, 0, record_length - unaligned);
+    bvb_global_client.descriptor_journal_length += record_length;
+    ++bvb_global_client.descriptor_journal_record_count;
+    return 0;
+}
+
 static int connect_locked(void) {
     if (bvb_global_client.connection_poisoned) return -EPIPE;
     bool memory_mirror_enabled = false;
     bool frame_profile_enabled = false;
+    bool descriptor_journal_enabled = false;
     int result = mapped_memory_shared_requested(&memory_mirror_enabled);
     if (result == 0)
         result = frame_profile_requested(&frame_profile_enabled);
+    if (result == 0)
+        result = descriptor_journal_shared_requested(
+            &descriptor_journal_enabled);
     if (result != 0) return result;
     if (bvb_global_client.socket_fd >= 0) {
         return bvb_global_client.memory_mirror_enabled ==
                        memory_mirror_enabled &&
                    bvb_global_client.frame_profile_enabled ==
-                       frame_profile_enabled
+                       frame_profile_enabled &&
+                   bvb_global_client.descriptor_journal_enabled ==
+                       descriptor_journal_enabled
                    ? 0
                    : -EPROTO;
     }
@@ -722,7 +928,10 @@ static int connect_locked(void) {
     bvb_global_client.service_flags = decoded.service_flags;
     bvb_global_client.memory_mirror_enabled = memory_mirror_enabled;
     bvb_global_client.frame_profile_enabled = frame_profile_enabled;
+    bvb_global_client.descriptor_journal_enabled =
+        descriptor_journal_enabled;
     result = setup_command_stream_locked();
+    if (result == 0) result = setup_descriptor_journal_locked();
     if (result != 0) {
         (void)close(bvb_global_client.socket_fd);
         bvb_global_client.socket_fd = -1;
@@ -5532,10 +5741,18 @@ static void VKAPI_CALL bvb_bridge_vkUpdateDescriptorSetWithTemplate(
     if (result == 0) memcpy(request.payload, payload, payload_length);
     struct bvb_protocol_packet response = {0};
     if (result == 0) result = connect_locked();
-    if (result == 0) result = exchange_locked(&request, &response);
-    if (result == 0 &&
-        (response.header.status != 0 || response.header.payload_length != 0U))
-        result = -EPROTO;
+    if (result == 0 && bvb_global_client.descriptor_journal_enabled) {
+        result = append_descriptor_journal_locked(payload, payload_length);
+    } else if (result == 0) {
+        result = exchange_locked(&request, &response);
+        if (result == 0 &&
+            (response.header.status != 0 ||
+             response.header.payload_length != 0U)) {
+            result = -EPROTO;
+        }
+    }
+    if (result != 0 && bvb_global_client.descriptor_journal_enabled)
+        poison_descriptor_journal_connection_locked();
     if (result != 0 && getenv("BVB_ICD_DIAGNOSTICS") != NULL)
         fprintf(stderr, "BVB_ICD_DESCRIPTOR_TEMPLATE_UPDATE result=%d\n",
                 result);

@@ -4892,3 +4892,34 @@ GPU profiling follows only after those measured CPU/IPC costs fall. Full
 numbers and caveats are in
 `docs/evidence/e125-full-benchmark-rpc-profile-tablet.json`; the canonical
 game/system evidence remains in the sibling `steamclienttermux` repository.
+
+## E126 — shared descriptor-update journal (2026-08-22)
+
+The required `deja "BVB shared descriptor update template journal replay
+QueueSubmit2 DXVK descriptor RPC storm"` query returned no indexed
+implementation. This gate therefore reuses E075/E075a's one-time sealed shared
+region, immutable service snapshot, monotonically sequenced replay, and
+permanent-poison failure discipline. E125 supplies the selection evidence:
+the benchmark scene averaged 529.1 opcode-112 calls and 72.9 ms blocked in
+`vkUpdateDescriptorSetWithTemplate` per present, peaking above 1,020 calls and
+136 ms.
+
+With `BVB_DESCRIPTOR_JOURNAL=shared`, validated opcode-112 payloads are appended
+locally to a 16-MiB pointer-free journal. Any following bridge exchange first
+drains the journal through setup/flush opcodes 121/122, preserving host-call
+order relative to descriptor-pool reset/destruction, submission, and waits.
+The service copies the published range once into private memory, validates the
+entire record structure before replay, then reconstructs the existing native
+update calls in order. Uncertain or failed flushes poison the connection rather
+than risk replaying an already-applied void operation. Strict mode keeps the
+old immediate RPC.
+
+Focused host proof passed 4/4 and the complete host suite passed 87/87. The
+cross-process proof applies 4,096 null-template updates plus one
+typed virtual-image update with zero update-time exchanges, then observes
+exactly two exchanges at the next wait: one journal drain and the wait itself.
+The strict control still performs one opcode-112 exchange per call. This is a
+host architecture result only: no E126 tablet deployment, removed runtime
+opcode-112 count, benchmark, or FPS improvement is claimed yet. The next gate
+is a final-process-only launcher selector plus a complete profiled Tomb Raider
+run; opcode-68 allocation remains the next measured descriptor bottleneck.

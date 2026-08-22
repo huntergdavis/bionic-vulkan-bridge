@@ -738,6 +738,23 @@ if(BUILD_TESTING)
       "$<TARGET_FILE:bvb-fake-vulkan>"
   )
   add_test(
+    NAME global-dispatch-shared-descriptor-journal-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+      "$<TARGET_FILE:bvb-bridge-service>"
+      "$<TARGET_FILE:bvb-global-dispatch-test>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+      "shared-descriptor-journal"
+  )
+  add_test(
+    NAME descriptor-journal-selector-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_descriptor_journal_selector.py"
+      "$<TARGET_FILE:bvb-global-dispatch-test>"
+  )
+  add_test(
     NAME vulkan-loader-tls-lifetime-contract
     COMMAND
       "${Python3_EXECUTABLE}"
@@ -1384,5 +1401,17 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/src/command_batch.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/command_batch.c"
+  )
+  add_test(
+    NAME e126-shared-descriptor-journal-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e126_descriptor_journal_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e126-shared-descriptor-journal-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/protocol.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
   )
 endif()

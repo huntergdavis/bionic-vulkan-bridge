@@ -26,7 +26,8 @@ def main() -> int:
             "shared-mapped-memory|shared-noncoherent-memory|"
             "shared-mapped-free-memory|"
             "shared-memory-unmap-lost-ack|first-rejection-command|"
-            "first-rejection-wsi|loader-tls-lifetime]"
+            "first-rejection-wsi|shared-descriptor-journal|"
+            "loader-tls-lifetime]"
         )
     service, client, loader = map(
         lambda value: str(pathlib.Path(value).resolve()), sys.argv[1:4]
@@ -41,6 +42,7 @@ def main() -> int:
         "shared-noncoherent-memory", "shared-mapped-free-memory",
         "shared-memory-unmap-lost-ack",
         "first-rejection-command", "first-rejection-wsi",
+        "shared-descriptor-journal",
         "loader-tls-lifetime",
     ):
         raise SystemExit(f"unsupported validation mode: {validation_mode}")
@@ -69,6 +71,8 @@ def main() -> int:
             server_environment["BVB_FAKE_REAL_HARDWARE_VALUES"] = "1"
         if validation_mode == "shared-command-stream-non-success":
             server_environment["BVB_FAKE_QUEUE_SUBMIT2_FAIL_AT"] = "3"
+        if validation_mode == "shared-descriptor-journal":
+            server_environment["BVB_FAKE_REQUIRE_DESCRIPTOR_JOURNAL"] = "1"
         if validation_mode in (
             "shared-mapped-memory", "shared-noncoherent-memory",
             "shared-mapped-free-memory",
@@ -162,6 +166,12 @@ def main() -> int:
                 environment["BVB_COMMAND_STREAM"] = "shared"
             else:
                 environment.pop("BVB_COMMAND_STREAM", None)
+            if validation_mode == "shared-descriptor-journal":
+                environment["BVB_DESCRIPTOR_JOURNAL"] = "shared"
+                environment["BVB_TEST_DESCRIPTOR_JOURNAL"] = "1"
+            else:
+                environment.pop("BVB_DESCRIPTOR_JOURNAL", None)
+                environment.pop("BVB_TEST_DESCRIPTOR_JOURNAL", None)
             if validation_mode == "shared-command-stream-non-success":
                 environment["BVB_EXPECT_STREAM_SUBMIT_FAILURE"] = "1"
             if validation_mode == "shared-command-stream":

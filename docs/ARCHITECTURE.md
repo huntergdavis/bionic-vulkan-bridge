@@ -510,3 +510,14 @@ The compact transfer wire and typed ownership rules are unchanged. Capacity
 errors now have a distinct `command_stream_slot_exhausted` diagnostic. A
 command-stream-specific setup codec accepts only the exact 128 MiB region,
 leaving the generic shared-batch 16 MiB safety ceiling unchanged.
+
+E126 adds an independent, opt-in shared descriptor-update journal. The glibc
+ICD appends the existing canonical pointer-free
+`vkUpdateDescriptorSetWithTemplate` payload to a bounded 16-MiB memfd with no
+per-update socket exchange. Before any later bridge exchange it release-publishes
+one generation and flushes it. The Bionic service copies the referenced bytes
+once into private memory, validates the complete structural batch, then
+reconstructs and replays native updates in order. A rejected or uncertain flush
+permanently poisons the connection and is never retried. Strict mode keeps the
+original immediate opcode-112 path for A/B comparison; descriptor allocation,
+which returns handles, remains synchronous and is the next measured target.

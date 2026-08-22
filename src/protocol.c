@@ -4173,6 +4173,73 @@ int bvb_protocol_decode_vulkan_command_stream_setup(
     return 0;
 }
 
+int bvb_protocol_encode_vulkan_descriptor_journal_setup(
+    uint8_t output[BVB_SHARED_BATCH_SETUP_SIZE],
+    const struct bvb_shared_batch_setup *setup) {
+    if (output == NULL || setup == NULL || setup->generation == 0U ||
+        setup->region_bytes != BVB_DESCRIPTOR_JOURNAL_REGION_BYTES) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u32(output, setup->region_bytes);
+    bvb_wire_put_u32(output + 4, 0U);
+    bvb_wire_put_u64(output + 8, setup->generation);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_descriptor_journal_setup(
+    const uint8_t input[BVB_SHARED_BATCH_SETUP_SIZE],
+    struct bvb_shared_batch_setup *setup) {
+    if (input == NULL || setup == NULL) return -EINVAL;
+    const struct bvb_shared_batch_setup decoded = {
+        .region_bytes = bvb_wire_get_u32(input),
+        .generation = bvb_wire_get_u64(input + 8),
+    };
+    if (bvb_wire_get_u32(input + 4) != 0U || decoded.generation == 0U ||
+        decoded.region_bytes != BVB_DESCRIPTOR_JOURNAL_REGION_BYTES) {
+        return -EPROTO;
+    }
+    *setup = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_descriptor_journal_flush(
+    uint8_t output[BVB_DESCRIPTOR_JOURNAL_FLUSH_SIZE],
+    const struct bvb_descriptor_journal_flush *flush) {
+    if (output == NULL || flush == NULL || flush->generation == 0U ||
+        flush->sequence == 0U || flush->length == 0U ||
+        flush->length > BVB_DESCRIPTOR_JOURNAL_REGION_BYTES ||
+        flush->record_count == 0U ||
+        flush->record_count > BVB_DESCRIPTOR_JOURNAL_MAX_RECORDS) {
+        return -EINVAL;
+    }
+    bvb_wire_put_u64(output, flush->generation);
+    bvb_wire_put_u64(output + 8, flush->sequence);
+    bvb_wire_put_u32(output + 16, flush->length);
+    bvb_wire_put_u32(output + 20, flush->record_count);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_descriptor_journal_flush(
+    const uint8_t input[BVB_DESCRIPTOR_JOURNAL_FLUSH_SIZE],
+    struct bvb_descriptor_journal_flush *flush) {
+    if (input == NULL || flush == NULL) return -EINVAL;
+    const struct bvb_descriptor_journal_flush decoded = {
+        .generation = bvb_wire_get_u64(input),
+        .sequence = bvb_wire_get_u64(input + 8),
+        .length = bvb_wire_get_u32(input + 16),
+        .record_count = bvb_wire_get_u32(input + 20),
+    };
+    if (decoded.generation == 0U || decoded.sequence == 0U ||
+        decoded.length == 0U ||
+        decoded.length > BVB_DESCRIPTOR_JOURNAL_REGION_BYTES ||
+        decoded.record_count == 0U ||
+        decoded.record_count > BVB_DESCRIPTOR_JOURNAL_MAX_RECORDS) {
+        return -EPROTO;
+    }
+    *flush = decoded;
+    return 0;
+}
+
 int bvb_protocol_encode_shared_batch_execute(
     uint8_t output[BVB_SHARED_BATCH_EXECUTE_SIZE],
     const struct bvb_shared_batch_execute *execute) {

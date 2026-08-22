@@ -105,6 +105,9 @@ int main(void) {
     CHECK(BVB_OPCODE_VULKAN_DESCRIPTOR_UPDATE_TEMPLATE_CREATE == 110);
     CHECK(BVB_OPCODE_VULKAN_BUILTIN_GRAPHICS_PIPELINE_CREATE == 111);
     CHECK(BVB_OPCODE_VULKAN_DESCRIPTOR_UPDATE_TEMPLATE == 112);
+    CHECK(BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_SETUP == 121);
+    CHECK(BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_FLUSH == 122);
+    CHECK(BVB_OPCODE_LAST == 122);
     CHECK(BVB_OPCODE_VULKAN_COMMAND_BUFFER_BIND_DESCRIPTOR_SETS == 113);
     CHECK(BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMMEDIATE_RECORD == 114);
     CHECK(BVB_OPCODE_VULKAN_FORMAT_PROPERTIES_3 == 115);
@@ -113,7 +116,7 @@ int main(void) {
     CHECK(BVB_OPCODE_VULKAN_QUERY_POOL_DESTROY == 118);
     CHECK(BVB_OPCODE_VULKAN_QUERY_POOL_RESULTS == 119);
     CHECK(BVB_OPCODE_VULKAN_QUERY_POOL_RESET == 120);
-    CHECK(BVB_OPCODE_LAST == 120);
+    CHECK(BVB_OPCODE_LAST == 122);
     CHECK(decoded.opcode == BVB_OPCODE_LAST);
 
     const struct bvb_hello_request hello = {
@@ -1836,6 +1839,41 @@ int main(void) {
                      BVB_COMMAND_STREAM_REGION_BYTES - 4096U);
     CHECK(bvb_protocol_decode_vulkan_command_stream_setup(
               shared_setup_wire, &shared_setup_decoded) == -EPROTO);
+
+    const struct bvb_shared_batch_setup descriptor_journal_setup = {
+        .region_bytes = BVB_DESCRIPTOR_JOURNAL_REGION_BYTES,
+        .generation = UINT64_C(0x7766554433221100),
+    };
+    CHECK(bvb_protocol_encode_vulkan_descriptor_journal_setup(
+              shared_setup_wire, &descriptor_journal_setup) == 0);
+    CHECK(bvb_protocol_decode_vulkan_descriptor_journal_setup(
+              shared_setup_wire, &shared_setup_decoded) == 0);
+    CHECK(shared_setup_decoded.region_bytes ==
+          BVB_DESCRIPTOR_JOURNAL_REGION_BYTES);
+    bvb_wire_put_u32(shared_setup_wire,
+                     BVB_DESCRIPTOR_JOURNAL_REGION_BYTES - 4096U);
+    CHECK(bvb_protocol_decode_vulkan_descriptor_journal_setup(
+              shared_setup_wire, &shared_setup_decoded) == -EPROTO);
+
+    const struct bvb_descriptor_journal_flush journal_flush = {
+        .generation = descriptor_journal_setup.generation,
+        .sequence = 7U,
+        .length = 4096U,
+        .record_count = 32U,
+    };
+    uint8_t journal_flush_wire[BVB_DESCRIPTOR_JOURNAL_FLUSH_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_descriptor_journal_flush(
+              journal_flush_wire, &journal_flush) == 0);
+    struct bvb_descriptor_journal_flush journal_flush_decoded;
+    CHECK(bvb_protocol_decode_vulkan_descriptor_journal_flush(
+              journal_flush_wire, &journal_flush_decoded) == 0);
+    CHECK(journal_flush_decoded.generation == journal_flush.generation);
+    CHECK(journal_flush_decoded.sequence == journal_flush.sequence);
+    CHECK(journal_flush_decoded.length == journal_flush.length);
+    CHECK(journal_flush_decoded.record_count == journal_flush.record_count);
+    bvb_wire_put_u32(journal_flush_wire + 20, 0U);
+    CHECK(bvb_protocol_decode_vulkan_descriptor_journal_flush(
+              journal_flush_wire, &journal_flush_decoded) == -EPROTO);
 
     const struct bvb_shared_batch_execute shared_execute = {
         .generation = UINT64_C(0x1122334455667788),

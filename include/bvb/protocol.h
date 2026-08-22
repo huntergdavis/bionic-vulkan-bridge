@@ -129,7 +129,9 @@ enum {
     BVB_OPCODE_VULKAN_QUERY_POOL_DESTROY = 118,
     BVB_OPCODE_VULKAN_QUERY_POOL_RESULTS = 119,
     BVB_OPCODE_VULKAN_QUERY_POOL_RESET = 120,
-    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_QUERY_POOL_RESET,
+    BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_SETUP = 121,
+    BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_FLUSH = 122,
+    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_DESCRIPTOR_JOURNAL_FLUSH,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -283,6 +285,10 @@ enum {
     BVB_COMMAND_STREAM_SLOT_BYTES = 2 * 1024 * 1024,
     BVB_COMMAND_STREAM_REGION_BYTES =
         BVB_COMMAND_STREAM_SLOT_COUNT * BVB_COMMAND_STREAM_SLOT_BYTES,
+    BVB_DESCRIPTOR_JOURNAL_REGION_BYTES = 16 * 1024 * 1024,
+    BVB_DESCRIPTOR_JOURNAL_RECORD_HEADER_SIZE = 8,
+    BVB_DESCRIPTOR_JOURNAL_FLUSH_SIZE = 24,
+    BVB_DESCRIPTOR_JOURNAL_MAX_RECORDS = 64 * 1024,
     BVB_VULKAN_SUBMIT_2_COMMAND_SHARED_STREAM = 1U << 0,
     BVB_SERVICE_BIONIC = 1U << 0,
     BVB_SERVICE_ANDROID_VULKAN_LOADER = 1U << 1,
@@ -463,6 +469,13 @@ struct bvb_shared_batch_execute {
     uint32_t offset;
     uint32_t length;
     uint64_t sequence;
+};
+
+struct bvb_descriptor_journal_flush {
+    uint64_t generation;
+    uint64_t sequence;
+    uint32_t length;
+    uint32_t record_count;
 };
 
 struct bvb_visible_batch_setup {
@@ -1133,6 +1146,18 @@ int bvb_protocol_encode_vulkan_command_stream_setup(
 int bvb_protocol_decode_vulkan_command_stream_setup(
     const uint8_t input[BVB_SHARED_BATCH_SETUP_SIZE],
     struct bvb_shared_batch_setup *setup);
+int bvb_protocol_encode_vulkan_descriptor_journal_setup(
+    uint8_t output[BVB_SHARED_BATCH_SETUP_SIZE],
+    const struct bvb_shared_batch_setup *setup);
+int bvb_protocol_decode_vulkan_descriptor_journal_setup(
+    const uint8_t input[BVB_SHARED_BATCH_SETUP_SIZE],
+    struct bvb_shared_batch_setup *setup);
+int bvb_protocol_encode_vulkan_descriptor_journal_flush(
+    uint8_t output[BVB_DESCRIPTOR_JOURNAL_FLUSH_SIZE],
+    const struct bvb_descriptor_journal_flush *flush);
+int bvb_protocol_decode_vulkan_descriptor_journal_flush(
+    const uint8_t input[BVB_DESCRIPTOR_JOURNAL_FLUSH_SIZE],
+    struct bvb_descriptor_journal_flush *flush);
 int bvb_protocol_encode_shared_batch_execute(
     uint8_t output[BVB_SHARED_BATCH_EXECUTE_SIZE],
     const struct bvb_shared_batch_execute *execute);

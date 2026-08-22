@@ -220,6 +220,8 @@ static VkResult VKAPI_CALL test_set_device_loader_data(
 int main(void) {
     const bool hardware_mode = bvb_hardware_validation_enabled();
     const bool shared_command_stream = bvb_shared_command_stream_enabled();
+    const bool shared_descriptor_journal =
+        getenv("BVB_TEST_DESCRIPTOR_JOURNAL") != NULL;
     const bool concurrent_command_stream =
         shared_command_stream &&
         getenv("BVB_TEST_CONCURRENT_COMMAND_STREAMS") != NULL;
@@ -1756,8 +1758,17 @@ int main(void) {
         .imageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
     };
     memcpy(dxvk_template_data + 72U, &null_image, sizeof(null_image));
-    update_descriptor_set_with_template(
-        device, dxvk_template_set, dxvk_template, dxvk_template_data);
+    const uint32_t null_update_count =
+        shared_descriptor_journal ? 4096U : 1U;
+    const uint64_t exchanges_before_descriptor_updates =
+        bvb_global_dispatch_exchange_count();
+    for (uint32_t update = 0U; update < null_update_count; ++update) {
+        update_descriptor_set_with_template(
+            device, dxvk_template_set, dxvk_template, dxvk_template_data);
+    }
+    CHECK(bvb_global_dispatch_exchange_count() -
+              exchanges_before_descriptor_updates ==
+          (shared_descriptor_journal ? 0U : null_update_count));
     const VkDescriptorImageInfo virtual_descriptor = {
         .imageView = virtual_image_view,
         .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
@@ -1766,7 +1777,23 @@ int main(void) {
            sizeof(virtual_descriptor));
     update_descriptor_set_with_template(
         device, dxvk_template_set, dxvk_template, dxvk_template_data);
+    CHECK(bvb_global_dispatch_exchange_count() -
+              exchanges_before_descriptor_updates ==
+          (shared_descriptor_journal ? 0U : null_update_count + 1U));
+    if (shared_descriptor_journal) {
+        const uint64_t exchanges_before_descriptor_flush =
+            bvb_global_dispatch_exchange_count();
+        CHECK(device_wait_idle(device) == VK_SUCCESS);
+        CHECK(bvb_global_dispatch_exchange_count() -
+                  exchanges_before_descriptor_flush == 2U);
+    }
+    const uint64_t exchanges_before_descriptor_destroy =
+        bvb_global_dispatch_exchange_count();
     destroy_descriptor_pool(device, dxvk_template_pool, NULL);
+    if (shared_descriptor_journal) {
+        CHECK(bvb_global_dispatch_exchange_count() -
+                  exchanges_before_descriptor_destroy == 1U);
+    }
     /* Pinned DXVK destroys the layout before its update template. */
     destroy_descriptor_set_layout(device, dxvk_template_layout, NULL);
     destroy_descriptor_update_template(device, dxvk_template, NULL);
@@ -3794,6 +3821,8 @@ int main(void) {
            "fence_after_reset=1\n",
            hardware_mode ? "hardware"
                          : shared_command_stream ? "shared-command-stream"
+                         : shared_descriptor_journal
+                               ? "shared-descriptor-journal"
                          : free_mapped_memory ? "shared-mapped-free-memory"
                          : noncoherent_mapped_memory
                                ? "shared-noncoherent-memory"

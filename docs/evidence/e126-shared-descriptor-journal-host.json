@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "gate": "E126",
+  "date": "2026-08-22",
+  "source_base_commit": "34c6adec8981a09454b0aabeca7fb9bf29fc3a61",
+  "trigger": {
+    "game": "Tomb Raider (2013)",
+    "resolution": "2800x1752",
+    "graphics_profile": "Low",
+    "benchmark_average_fps": 2.0,
+    "benchmark_scene_op112_calls_per_present": 529.07,
+    "benchmark_scene_op112_blocked_ms_per_present": 72.93,
+    "peak_op112_calls_per_present": 1020.88,
+    "peak_op112_blocked_ms_per_present": 136.36,
+    "interpretation": "E125 measured vkUpdateDescriptorSetWithTemplate socket round trips as one of the two dominant per-frame RPC families."
+  },
+  "implementation": {
+    "selector": "BVB_DESCRIPTOR_JOURNAL=strict|shared; strict is the default and invalid values fail before connecting",
+    "setup_opcode": 121,
+    "flush_opcode": 122,
+    "region_bytes": 16777216,
+    "record_header_bytes": 8,
+    "maximum_records_per_flush": 65536,
+    "wire_payload": "Each record contains the existing canonical pointer-free opcode-112 payload plus a fixed length/reserved header and zero alignment padding.",
+    "ordering": "Every non-journal bridge exchange first drains pending updates, preserving host-call order relative to reset, destroy, submit, wait, and other RPC families.",
+    "service": "The Bionic service takes one immutable private snapshot, validates the complete structural batch, then reconstructs and replays native descriptor updates in order.",
+    "failure": "An uncertain or rejected flush permanently poisons the client connection; the journal is never retried against ambiguous native state.",
+    "strict_path": "The original immediate opcode-112 RPC remains byte-for-byte available for A/B validation."
+  },
+  "validation": {
+    "strict_immediate_updates": 2,
+    "shared_local_updates": 4097,
+    "shared_update_exchange_count": 0,
+    "next_wait_exchange_count": 2,
+    "next_wait_exchanges": "one descriptor-journal flush followed by one device-wait-idle RPC",
+    "typed_virtual_image_update": true,
+    "immutable_service_snapshot": true,
+    "whole_batch_structural_validation_before_replay": true,
+    "selector_fail_closed": true,
+    "focused_host_suite": "4/4 passed",
+    "full_host_suite": "87/87 passed"
+  },
+  "reuse": "The required deja query returned no indexed implementation. E126 reuses E075/E075a's one-time sealed shared-memory setup, immutable service snapshot, monotonically sequenced replay, and permanent-poison failure discipline; E125's measured opcode-112 call/time distribution selects this gate.",
+  "claims": {
+    "host_descriptor_journal_ready": true,
+    "tablet_deployed": false,
+    "op112_runtime_round_trips_removed": null,
+    "benchmark_fps": null,
+    "performance_improvement": null
+  },
+  "next_gate": "Deploy the exact E126 client/service with a final-process-only selector, repeat the complete benchmark and E117 profile, then address measured opcode-68 descriptor allocation traffic."
+}

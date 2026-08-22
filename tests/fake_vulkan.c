@@ -74,6 +74,8 @@ static uint32_t fake_queue_submit_2_calls;
 static uint32_t fake_descriptor_step;
 static uint32_t fake_core_descriptor_pool_step;
 static uint32_t fake_descriptor_template_step;
+static uint32_t fake_descriptor_template_null_updates;
+static int fake_descriptor_journal_wait_seen;
 static uint32_t fake_query_step;
 static int fake_descriptor_template_swapchain_update_seen;
 static int fake_descriptor_bind_seen;
@@ -1102,6 +1104,8 @@ static void VKAPI_CALL fake_destroy_device(
     fake_descriptor_step = 0U;
     fake_core_descriptor_pool_step = 0U;
     fake_descriptor_template_step = 0U;
+    fake_descriptor_template_null_updates = 0U;
+    fake_descriptor_journal_wait_seen = 0;
     fake_query_step = 0U;
     fake_descriptor_template_swapchain_update_seen = 0;
     fake_descriptor_bind_seen = 0;
@@ -1466,16 +1470,28 @@ static void VKAPI_CALL fake_update_descriptor_set_with_template(
     VkDescriptorImageInfo image;
     memcpy(&image, bytes + 72U, sizeof(image));
     if (image.sampler != VK_NULL_HANDLE) return;
-    if (fake_descriptor_template_step == 4U) {
-        if (image.imageView != VK_NULL_HANDLE ||
-            image.imageLayout != VK_IMAGE_LAYOUT_UNDEFINED) return;
-        fake_descriptor_template_step = 5U;
-    } else {
-        if (image.imageView == VK_NULL_HANDLE ||
-            image.imageLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-            return;
-        fake_descriptor_template_swapchain_update_seen = 1;
+    const bool require_journal =
+        getenv("BVB_FAKE_REQUIRE_DESCRIPTOR_JOURNAL") != NULL;
+    if (image.imageView == VK_NULL_HANDLE &&
+        image.imageLayout == VK_IMAGE_LAYOUT_UNDEFINED) {
+        if (fake_descriptor_template_step != 4U) return;
+        ++fake_descriptor_template_null_updates;
+        if (!require_journal) fake_descriptor_template_step = 5U;
+        return;
     }
+    if (image.imageView == VK_NULL_HANDLE ||
+        image.imageLayout != VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        return;
+    }
+    if (require_journal) {
+        if (fake_descriptor_template_step != 4U ||
+            fake_descriptor_template_null_updates != 4096U) return;
+        fake_descriptor_template_step = 5U;
+    } else if (fake_descriptor_template_step != 5U ||
+               fake_descriptor_template_null_updates != 1U) {
+        return;
+    }
+    fake_descriptor_template_swapchain_update_seen = 1;
 }
 
 static void VKAPI_CALL fake_cmd_bind_descriptor_sets(
@@ -3744,6 +3760,11 @@ static VkResult VKAPI_CALL fake_reset_command_buffer(
 
 static VkResult VKAPI_CALL fake_device_wait_idle(VkDevice device) {
     (void)device;
+    const bool descriptor_journal_mid_wait =
+        getenv("BVB_FAKE_REQUIRE_DESCRIPTOR_JOURNAL") != NULL &&
+        fake_descriptor_template_step == 5U &&
+        fake_descriptor_template_swapchain_update_seen;
+    if (descriptor_journal_mid_wait) fake_descriptor_journal_wait_seen = 1;
     if (fake_descriptor_step != 0U && fake_descriptor_step != 14U) {
         fprintf(stderr, "fake Vulkan descriptor sequence stopped at step %u\n",
                 fake_descriptor_step);
@@ -3756,7 +3777,8 @@ static VkResult VKAPI_CALL fake_device_wait_idle(VkDevice device) {
                 fake_core_descriptor_pool_step);
         return VK_ERROR_INITIALIZATION_FAILED;
     }
-    if (fake_descriptor_template_step != 0U &&
+    if (!descriptor_journal_mid_wait &&
+        fake_descriptor_template_step != 0U &&
         fake_descriptor_template_step != 8U) {
         fprintf(stderr,
                 "fake Vulkan descriptor template stopped at step %u\n",
@@ -3765,6 +3787,12 @@ static VkResult VKAPI_CALL fake_device_wait_idle(VkDevice device) {
     }
     if (fake_descriptor_step == 14U && fake_descriptor_bind_seen != 1) {
         fprintf(stderr, "fake Vulkan descriptor bind was not replayed\n");
+        return VK_ERROR_INITIALIZATION_FAILED;
+    }
+    if (getenv("BVB_FAKE_REQUIRE_DESCRIPTOR_JOURNAL") != NULL &&
+        fake_descriptor_template_step == 8U &&
+        fake_descriptor_journal_wait_seen != 1) {
+        fprintf(stderr, "fake descriptor journal did not flush before wait\n");
         return VK_ERROR_INITIALIZATION_FAILED;
     }
     if (fake_animation_enabled() &&
