@@ -1296,4 +1296,13 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/android/visible-host/native_main.c"
   )
+  add_test(
+    NAME e117-rpc-profile-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e117_rpc_profile_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e117-rpc-profile-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/protocol.h"
+  )
 endif()

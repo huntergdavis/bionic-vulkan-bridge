@@ -1,0 +1,39 @@
+{
+  "gate": "E117",
+  "date": "2026-08-22",
+  "source_base_commit": "9072f0a302f51845c8b260866f2dbf1bcfb839fe",
+  "trigger": {
+    "target": "Tomb Raider 2013 at 2800x1752",
+    "e116_observed_presentation_interval_seconds": "approximately 3",
+    "e116_client_present_average_ns": 6535381,
+    "e116_client_acquire_average_ns": 666999,
+    "reason": "E116 proved WSI and Activity transport cost milliseconds, leaving the time between acquire and the next present unaccounted"
+  },
+  "implementation": {
+    "selector": "reuses BVB_FRAME_PROFILE=1",
+    "default": "disabled",
+    "window_start": "first swapchain-present exchange",
+    "summary_window_presents": 32,
+    "top_opcode_count": 8,
+    "ranking": "descending aggregate blocking nanoseconds",
+    "top_entry_schema": "opcode/count/total_ns/max_ns",
+    "per_rpc_log_lines": 0,
+    "summary_lines_per_window": 1,
+    "wire_change": "none"
+  },
+  "coverage": {
+    "central_request_reply": "exchange_locked",
+    "receive_fds": "exchange_fds_locked",
+    "pass_fd": "exchange_pass_fd_locked",
+    "uncertain_unmap_ack": "manual memory-mirror unmap exchange",
+    "startup_excluded": true
+  },
+  "validation": {
+    "source_contract": "passed",
+    "host_suite": "77/77 passed",
+    "tablet_build": "pending exact archive",
+    "tablet_profile": "pending",
+    "speedup_or_fps_claimed": false
+  },
+  "reuse": "The required deja query returned no indexed E117 implementation. E117 reuses E116's strict default-off selector and 32-present aggregation window plus E075's bounded performance-instrumentation discipline."
+}

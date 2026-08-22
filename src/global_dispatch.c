@@ -202,6 +202,11 @@ struct bvb_global_client_state {
     uint64_t frame_profile_present_max_ns;
     uint32_t frame_profile_acquire_calls;
     uint32_t frame_profile_present_calls;
+    bool frame_profile_rpc_window_started;
+    uint32_t frame_profile_rpc_present_calls;
+    uint64_t frame_profile_rpc_counts[BVB_OPCODE_LAST + 1U];
+    uint64_t frame_profile_rpc_total_ns[BVB_OPCODE_LAST + 1U];
+    uint64_t frame_profile_rpc_max_ns[BVB_OPCODE_LAST + 1U];
     uint16_t last_opcode;
 };
 
@@ -321,14 +326,26 @@ static PFN_vkVoidFunction erase_function(const void *bytes, size_t size) {
 #define BVB_ERASE_FUNCTION(function, type)                                     \
     erase_function(&(type){(function)}, sizeof(type))
 
+static uint64_t frame_profile_monotonic_ns(void);
+static void frame_profile_record_rpc_locked(
+    uint16_t opcode, uint64_t started_ns, uint64_t finished_ns);
+
 static int exchange_locked(const struct bvb_protocol_packet *request,
                            struct bvb_protocol_packet *response) {
     ++bvb_global_client.exchange_count;
     bvb_global_client.last_opcode = request->header.opcode;
+    const uint64_t profile_started_ns =
+        bvb_global_client.frame_profile_enabled
+        ? frame_profile_monotonic_ns() : 0U;
     int result = bvb_transport_send(bvb_global_client.socket_fd, request);
     if (result == 0) {
         result = bvb_transport_receive(bvb_global_client.socket_fd, response);
     }
+    const uint64_t profile_finished_ns =
+        bvb_global_client.frame_profile_enabled
+        ? frame_profile_monotonic_ns() : 0U;
+    frame_profile_record_rpc_locked(
+        request->header.opcode, profile_started_ns, profile_finished_ns);
     if (result != 0) {
         return result;
     }
@@ -346,11 +363,19 @@ static int exchange_fds_locked(
     size_t fd_capacity, size_t *received_fd_count) {
     ++bvb_global_client.exchange_count;
     bvb_global_client.last_opcode = request->header.opcode;
+    const uint64_t profile_started_ns =
+        bvb_global_client.frame_profile_enabled
+        ? frame_profile_monotonic_ns() : 0U;
     int result = bvb_transport_send(bvb_global_client.socket_fd, request);
     if (result == 0)
         result = bvb_transport_receive_fds(
             bvb_global_client.socket_fd, response, received_fds,
             fd_capacity, received_fd_count);
+    const uint64_t profile_finished_ns =
+        bvb_global_client.frame_profile_enabled
+        ? frame_profile_monotonic_ns() : 0U;
+    frame_profile_record_rpc_locked(
+        request->header.opcode, profile_started_ns, profile_finished_ns);
     if (result != 0) return result;
     if (response->header.kind != BVB_PROTOCOL_RESPONSE ||
         response->header.opcode != request->header.opcode ||
@@ -364,11 +389,19 @@ static int exchange_pass_fd_locked(
     struct bvb_protocol_packet *response, int passed_fd) {
     ++bvb_global_client.exchange_count;
     bvb_global_client.last_opcode = request->header.opcode;
+    const uint64_t profile_started_ns =
+        bvb_global_client.frame_profile_enabled
+        ? frame_profile_monotonic_ns() : 0U;
     int result = bvb_transport_send_fd(
         bvb_global_client.socket_fd, request, passed_fd);
     if (result == 0) {
         result = bvb_transport_receive(bvb_global_client.socket_fd, response);
     }
+    const uint64_t profile_finished_ns =
+        bvb_global_client.frame_profile_enabled
+        ? frame_profile_monotonic_ns() : 0U;
+    frame_profile_record_rpc_locked(
+        request->header.opcode, profile_started_ns, profile_finished_ns);
     if (result != 0) return result;
     if (response->header.kind != BVB_PROTOCOL_RESPONSE ||
         response->header.opcode != request->header.opcode ||
@@ -424,6 +457,95 @@ static uint64_t frame_profile_monotonic_ns(void) {
     if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0U;
     return (uint64_t)now.tv_sec * UINT64_C(1000000000) +
            (uint64_t)now.tv_nsec;
+}
+
+static void frame_profile_reset_rpc_window_locked(void) {
+    memset(bvb_global_client.frame_profile_rpc_counts, 0,
+           sizeof(bvb_global_client.frame_profile_rpc_counts));
+    memset(bvb_global_client.frame_profile_rpc_total_ns, 0,
+           sizeof(bvb_global_client.frame_profile_rpc_total_ns));
+    memset(bvb_global_client.frame_profile_rpc_max_ns, 0,
+           sizeof(bvb_global_client.frame_profile_rpc_max_ns));
+    bvb_global_client.frame_profile_rpc_present_calls = 0U;
+}
+
+static void frame_profile_emit_rpc_summary_locked(void) {
+    enum { BVB_FRAME_PROFILE_RPC_TOP_COUNT = 8U,
+           BVB_FRAME_PROFILE_RPC_LINE_BYTES = 1024U };
+    uint64_t total_calls = 0U;
+    uint64_t total_ns = 0U;
+    for (uint16_t opcode = 1U; opcode <= BVB_OPCODE_LAST; ++opcode) {
+        total_calls += bvb_global_client.frame_profile_rpc_counts[opcode];
+        total_ns += bvb_global_client.frame_profile_rpc_total_ns[opcode];
+    }
+    char line[BVB_FRAME_PROFILE_RPC_LINE_BYTES];
+    int written = snprintf(
+        line, sizeof(line),
+        "BVB_E117_RPC_PROFILE present_calls=%u total_calls=%llu "
+        "total_ns=%llu top=",
+        bvb_global_client.frame_profile_rpc_present_calls,
+        (unsigned long long)total_calls, (unsigned long long)total_ns);
+    if (written < 0) return;
+    size_t used = (size_t)written;
+    if (used >= sizeof(line)) used = sizeof(line) - 1U;
+    bool selected[BVB_OPCODE_LAST + 1U] = {false};
+    for (uint32_t rank = 0U; rank < BVB_FRAME_PROFILE_RPC_TOP_COUNT; ++rank) {
+        uint16_t best_opcode = 0U;
+        uint64_t best_total_ns = 0U;
+        for (uint16_t opcode = 1U; opcode <= BVB_OPCODE_LAST; ++opcode) {
+            if (!selected[opcode] &&
+                bvb_global_client.frame_profile_rpc_counts[opcode] != 0U &&
+                (best_opcode == 0U ||
+                 bvb_global_client.frame_profile_rpc_total_ns[opcode] >
+                     best_total_ns)) {
+                best_opcode = opcode;
+                best_total_ns =
+                    bvb_global_client.frame_profile_rpc_total_ns[opcode];
+            }
+        }
+        if (best_opcode == 0U || used >= sizeof(line) - 2U) break;
+        selected[best_opcode] = true;
+        written = snprintf(
+            line + used, sizeof(line) - used,
+            "%s%u/%llu/%llu/%llu", rank == 0U ? "" : ",",
+            best_opcode,
+            (unsigned long long)
+                bvb_global_client.frame_profile_rpc_counts[best_opcode],
+            (unsigned long long)best_total_ns,
+            (unsigned long long)
+                bvb_global_client.frame_profile_rpc_max_ns[best_opcode]);
+        if (written < 0) break;
+        if ((size_t)written >= sizeof(line) - used) {
+            used = sizeof(line) - 1U;
+            break;
+        }
+        used += (size_t)written;
+    }
+    if (used < sizeof(line) - 1U) line[used++] = '\n';
+    const ssize_t ignored = write(STDERR_FILENO, line, used);
+    (void)ignored;
+}
+
+static void frame_profile_record_rpc_locked(
+    uint16_t opcode, uint64_t started_ns, uint64_t finished_ns) {
+    if (!bvb_global_client.frame_profile_enabled || opcode == 0U ||
+        opcode > BVB_OPCODE_LAST || started_ns == 0U ||
+        finished_ns < started_ns) return;
+    if (!bvb_global_client.frame_profile_rpc_window_started) {
+        if (opcode != BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT) return;
+        frame_profile_reset_rpc_window_locked();
+        bvb_global_client.frame_profile_rpc_window_started = true;
+    }
+    const uint64_t elapsed_ns = finished_ns - started_ns;
+    ++bvb_global_client.frame_profile_rpc_counts[opcode];
+    bvb_global_client.frame_profile_rpc_total_ns[opcode] += elapsed_ns;
+    if (elapsed_ns > bvb_global_client.frame_profile_rpc_max_ns[opcode])
+        bvb_global_client.frame_profile_rpc_max_ns[opcode] = elapsed_ns;
+    if (opcode != BVB_OPCODE_VULKAN_SWAPCHAIN_PRESENT) return;
+    ++bvb_global_client.frame_profile_rpc_present_calls;
+    if (bvb_global_client.frame_profile_rpc_present_calls < 32U) return;
+    frame_profile_emit_rpc_summary_locked();
+    frame_profile_reset_rpc_window_locked();
 }
 
 static void frame_profile_record_client_exchange_locked(
@@ -7606,6 +7728,9 @@ static void unmap_memory_mirror_locked(
     int result = bvb_protocol_encode_vulkan_memory_mirror_unmap_request(
         request.payload, &decoded);
     struct bvb_protocol_packet response = {0};
+    const uint64_t profile_started_ns =
+        result == 0 && bvb_global_client.frame_profile_enabled
+        ? frame_profile_monotonic_ns() : 0U;
     if (result == 0) {
         ++bvb_global_client.exchange_count;
         bvb_global_client.last_opcode = request.header.opcode;
@@ -7619,6 +7744,11 @@ static void unmap_memory_mirror_locked(
             result = bvb_transport_receive(
                 bvb_global_client.socket_fd, &response);
     }
+    const uint64_t profile_finished_ns =
+        bvb_global_client.frame_profile_enabled
+        ? frame_profile_monotonic_ns() : 0U;
+    frame_profile_record_rpc_locked(
+        request.header.opcode, profile_started_ns, profile_finished_ns);
     if (result == 0 &&
         (response.header.status != 0 || response.header.payload_length != 0U))
         result = response.header.status != 0 ? response.header.status

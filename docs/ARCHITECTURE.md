@@ -439,3 +439,11 @@ E116 adds a default-off, no-wire-change WSI timing profiler. One summary per
 fence time, and Activity Android-swapchain copy/present time. It emits no
 per-frame profiler lines and exists to select the next performance change from
 measured phase totals rather than Vulkan resolver order.
+
+E117 reuses that selector and window to time the centralized glibc request/reply
+boundary. Startup is excluded: the window begins at the first present exchange.
+After 32 presents, one bounded line reports total RPC calls/time and the eight
+opcodes with the greatest aggregate blocking time as
+`opcode/count/total_ns/max_ns`. No protocol field or opcode changes, and there
+is no per-RPC logging. This identifies whether submission, upload, or another
+synchronous family accounts for the time E116 left between acquire and present.

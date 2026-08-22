@@ -4595,3 +4595,20 @@ bounded gate must profile the synchronous bridge exchanges between presents,
 especially submission and upload traffic, instead of prematurely optimizing
 the Activity copy or removing the producer fence. This is still a per-present
 timing sample, not Tomb Raider's built-in benchmark or an FPS result.
+
+## E117 — bounded per-opcode RPC profiler (2026-08-22)
+
+E116 measured only single-digit milliseconds in the complete virtual WSI and
+Activity path while real presentations remained roughly three seconds apart.
+E117 therefore moves the same default-off profiler to the centralized glibc
+request/reply boundary. It begins at the first present, excludes startup, and
+after each 32-present window emits total exchange count/time plus the eight
+opcodes ranked by aggregate blocking nanoseconds. Each compact entry contains
+`opcode/count/total_ns/max_ns`; there are no per-call lines and no wire change.
+
+The required `deja "E117 per-opcode RPC histogram between Vulkan presents
+exchange_locked command submission bottleneck"` query returned no indexed
+implementation. E117 reuses E116's strict selector and 32-present window and
+E075's bounded, default-off performance-instrumentation discipline. Host and
+source validation passed with the complete 77/77 suite; exact-archive tablet
+validation remains pending. No speedup, benchmark, or FPS claim is made.
