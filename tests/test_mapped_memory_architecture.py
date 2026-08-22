@@ -78,14 +78,7 @@ def main() -> int:
     assert "F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL" in client
     assert "!state->mapped_shared" in client
     assert "if (shared_mapping) atomic_thread_fence(memory_order_release);" in client
-    client_classifier = client[
-        client.index("static bool buffer_usage_is_upload_only("):
-        client.index("static bool memory_is_upload_only_locked(")
-    ]
-    assert "VK_BUFFER_USAGE_TRANSFER_SRC_BIT" in client_classifier
-    assert "VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT" not in client_classifier
-    assert "memory_is_upload_only_locked(state->wire_id)" in client
-    assert "!memory_state->mapped_shared ||\n         buffer_usage_is_upload_only" in client
+    assert "memory_is_buffer_only_locked(state->wire_id)" in client
     assert "!memory_state->mapped_shared" in client
     assert "connection_poisoned" in client
     assert "if (bvb_global_client.connection_poisoned) return -EPIPE;" in client
@@ -102,16 +95,8 @@ def main() -> int:
     assert "(seals & required_seals) != required_seals" in native
     assert "(seals & F_SEAL_WRITE) != 0" in native
     assert "memory mirror references unknown or cross-device memory" in native
-    native_classifier_start = native.index(
-        "static bool buffer_usage_is_upload_only(uint32_t usage) {"
-    )
-    native_classifier = native[
-        native_classifier_start:
-        native.index("static bool memory_is_upload_only(", native_classifier_start)
-    ]
-    assert "VK_BUFFER_USAGE_TRANSFER_SRC_BIT" in native_classifier
-    assert "VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT" not in native_classifier
-    assert "memory mirror is not bound only to GPU-read-only buffers" in native
+    assert "static bool memory_is_buffer_only(" in native
+    assert "memory mirror is not bound exclusively to buffers" in native
     assert "upload_host_diverged_range(" in native
     assert "refresh_coherent_memory_mirrors" not in native
     assert "sync_coherent_memory_mirrors(context, device_id)" in native
@@ -125,6 +110,7 @@ def main() -> int:
     assert "mapped[0] = UINT8_C(0x44)" in global_test
     assert "ineligible_memory_rtts=" in global_test
     assert "bind_buffer_memory(device, unsafe_buffer, upload_memory" in global_test
+    assert "unsafe_buffer, upload_memory, 0U) ==\n              VK_SUCCESS" in global_test
     assert "bind_image_memory(device, unsafe_image, upload_memory" in global_test
     assert ".offset = 257U" in global_test
     assert ".size = 7U" in global_test
@@ -136,7 +122,7 @@ def main() -> int:
     assert '"memory_rtts=1,1,1,1,1"' in runner
     assert '"memory_rtts=2,2,2,2,3"' in runner
     assert '"memory_opcodes=106,107,108,109,47"' in runner
-    assert '"ineligible_memory_opcodes=49,48"' in runner
+    assert '"ineligible_memory_opcodes=106,109"' in runner
     assert "poison_retry_rtts=0" in runner
     print("PASS: E077 upload-only mapped-memory mirror architecture")
     return 0

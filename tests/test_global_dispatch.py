@@ -488,8 +488,8 @@ def main() -> int:
                 else "memory_opcodes=49,48,49,48,47"
             ) in completed.stdout
             assert (
-                "ineligible_memory_rtts=2,2 "
-                "ineligible_memory_opcodes=49,48"
+                "ineligible_memory_rtts=1,1 "
+                "ineligible_memory_opcodes=106,109"
                 if validation_mode in (
                     "shared-mapped-memory", "shared-noncoherent-memory"
                 )

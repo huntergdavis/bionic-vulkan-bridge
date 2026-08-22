@@ -447,3 +447,13 @@ opcodes with the greatest aggregate blocking time as
 `opcode/count/total_ns/max_ns`. No protocol field or opcode changes, and there
 is no per-RPC logging. This identifies whether submission, upload, or another
 synchronous family accounts for the time E116 left between acquire and present.
+
+E118 applies E117's measured result to the existing E077 memory mirror. Shared
+mode now accepts allocations bound exclusively to buffers even when their usage
+permits GPU writes (transfer destination, storage, or device address). The
+Bionic side retains a private baseline and, before submit, copies only bytes the
+host changed; unchanged mirror bytes cannot overwrite GPU-produced native data.
+Image-bound allocations remain in the strict path, and binding an image into an
+active mirror remains rejected. Explicit invalidate is still the only claimed
+device-to-host refresh boundary; E118 does not claim complete coherent readback
+semantics. There is no wire change.

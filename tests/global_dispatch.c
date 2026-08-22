@@ -2725,7 +2725,8 @@ int main(void) {
     uint64_t ineligible_unmap_rtts = 0U;
     uint16_t ineligible_map_opcode = 0U;
     uint16_t ineligible_unmap_opcode = 0U;
-    if (shared_mapped_memory) {
+    if (shared_mapped_memory &&
+        getenv("BVB_TEST_DROP_MEMORY_UNMAP_ACK") == NULL) {
         void *ineligible_mapping = NULL;
         const uint64_t before_ineligible_map =
             bvb_global_dispatch_exchange_count();
@@ -2751,7 +2752,7 @@ int main(void) {
         VkBuffer unsafe_buffer = VK_NULL_HANDLE;
         CHECK(create_buffer(device, &unsafe_buffer_info, NULL,
                             &unsafe_buffer) == VK_SUCCESS);
-        CHECK(bind_buffer_memory(device, unsafe_buffer, upload_memory, 0U) !=
+        CHECK(bind_buffer_memory(device, unsafe_buffer, upload_memory, 0U) ==
               VK_SUCCESS);
         destroy_buffer(device, unsafe_buffer, NULL);
         VkImage unsafe_image = VK_NULL_HANDLE;

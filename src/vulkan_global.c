@@ -252,8 +252,7 @@ static int sync_coherent_memory_mirrors(
     struct bvb_vulkan_global_context *context, uint64_t device_id);
 static struct bvb_memory_mirror_metadata *memory_mirror_slot(
     struct bvb_vulkan_global_context *context, uint64_t memory_id);
-static bool buffer_usage_is_upload_only(uint32_t usage);
-static bool memory_is_upload_only(
+static bool memory_is_buffer_only(
     const struct bvb_vulkan_global_context *context, uint64_t memory_id);
 
 static void set_error(char *output, size_t output_size, const char *format, ...) {
@@ -1597,25 +1596,13 @@ static struct bvb_device_metadata *device_metadata_slot(
     return empty;
 }
 
-static bool buffer_usage_is_upload_only(uint32_t usage) {
-    const uint32_t gpu_read_only =
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
-        VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT |
-        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
-        VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
-    return usage != 0U && (usage & ~gpu_read_only) == 0U;
-}
-
-static bool memory_is_upload_only(
+static bool memory_is_buffer_only(
     const struct bvb_vulkan_global_context *context, uint64_t memory_id) {
     bool found = false;
     for (size_t index = 0U; index < BVB_GLOBAL_OBJECT_CAPACITY; ++index) {
         const struct bvb_buffer_metadata *buffer =
             &context->buffer_metadata[index];
         if (buffer->bound_memory_id == memory_id) {
-            if (!buffer_usage_is_upload_only(buffer->usage)) return false;
             found = true;
         }
         if (context->image_metadata[index].bound_memory_id == memory_id)
@@ -5072,13 +5059,6 @@ int bvb_vulkan_global_context_bind_buffer_memory(
         context, request->buffer_id);
     if (metadata == NULL || metadata->device_id != buffer_device_id)
         return -EPROTO;
-    struct bvb_memory_mirror_metadata *mirror =
-        memory_mirror_slot(context, request->memory_id);
-    if (mirror != NULL && mirror->memory_id == request->memory_id &&
-        !buffer_usage_is_upload_only(metadata->usage)) {
-        *vulkan_result = VK_ERROR_MEMORY_MAP_FAILED;
-        return 0;
-    }
     PFN_vkBindBufferMemory bind =
         (PFN_vkBindBufferMemory)context->get_device_proc_addr(
             buffer_device, "vkBindBufferMemory");
@@ -7880,9 +7860,9 @@ int bvb_vulkan_global_context_setup_memory_mirror(
                   "memory mirror references unknown or cross-device memory");
         return result != 0 ? result : -EPROTO;
     }
-    if (!memory_is_upload_only(context, request->memory_id)) {
+    if (!memory_is_buffer_only(context, request->memory_id)) {
         set_error(error, error_size,
-                  "memory mirror is not bound only to GPU-read-only buffers");
+                  "memory mirror is not bound exclusively to buffers");
         *vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
         return 0;
     }

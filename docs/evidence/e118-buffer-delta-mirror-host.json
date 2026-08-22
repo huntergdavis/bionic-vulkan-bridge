@@ -1,0 +1,43 @@
+{
+  "gate": "E118",
+  "date": "2026-08-22",
+  "source_base_commit": "2aabe35",
+  "target": {
+    "opcode": 48,
+    "name": "VULKAN_MEMORY_WRITE",
+    "calls_per_present": 15037.5,
+    "seconds_per_present": 2.79790783446875,
+    "percent_of_rpc_ns": 96.484
+  },
+  "implementation": {
+    "selector": "BVB_MAPPED_MEMORY=shared",
+    "previous_eligibility": "allocations bound exclusively to GPU-read-only buffers",
+    "new_eligibility": "allocations bound exclusively to buffers, including transfer-destination, storage, and device-address usage",
+    "transport": "the existing setup-only shared memfd and Bionic-local baseline reconciliation",
+    "submit_behavior": "only host-diverged byte spans are copied from the mirror into native mapped memory before submit",
+    "image_allocations": "remain outside the shared mirror and image bind into an active mirror remains rejected",
+    "wire_change": "none"
+  },
+  "host_contract": {
+    "expanded_buffer_map_rtts": [1, 1],
+    "expanded_buffer_map_opcodes": [106, 109],
+    "order": ["map", "unmap"],
+    "gpu_writable_buffer_bind": "accepted",
+    "image_bind_into_mirror": "rejected",
+    "legacy_opcode48_submit_fanout_for_mirrored_buffers": 0
+  },
+  "validation": {
+    "focused_contracts": "passed: coherent, noncoherent, uncertain-unmap, historical E077, and E118 architecture",
+    "host_suite": "78/78 passed",
+    "tablet_build": "pending exact archive",
+    "tablet_ab": "pending"
+  },
+  "claims": {
+    "buffer_upload_transport": true,
+    "general_coherent_device_to_host_visibility": false,
+    "explicit_invalidate_device_to_host": true,
+    "speedup": null,
+    "benchmark_fps": null
+  },
+  "reuse": "The required deja query returned no indexed E118 implementation. E118 reuses E077's sealed shared mirror, typed ownership, explicit invalidate, and baseline dirty reconciliation, selected by E117's measured opcode-48 bottleneck."
+}

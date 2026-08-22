@@ -2764,6 +2764,31 @@ and either null output `pNext` or one terminal
 Malformed shapes deterministically return zero output without inventing a
 result.
 
+## E118 — buffer-only delta mirrors (2026-08-22)
+
+E117 found that opcode-48 memory writes consumed 89.533 of 92.795 measured RPC
+seconds: roughly 15,038 synchronous small writes and 2.798 seconds per present.
+Those allocations missed E077 because its first safe milestone accepted only
+GPU-read-only buffer usage. E118 expands the same opt-in shared mirror to any
+allocation bound exclusively to buffers, including transfer-destination,
+storage, and device-address usage. Bionic still owns the native mapping and a
+private baseline, and copies only host-diverged spans before submit. Images
+remain strict and cannot be bound into an active mirror.
+
+The required `deja "E118 eliminate opcode 48 MEMORY_WRITE synchronous 4KiB
+fanout mapped memory submit shared mirror Tomb Raider"` query returned no
+indexed implementation. E118 reuses E077's sealed setup-only memfd, typed
+ownership, explicit invalidate, and baseline reconciliation. No wire change is
+needed. General coherent device-to-host visibility is still not claimed; the
+tablet A/B must first prove opcode-48 removal and visible-frame correctness
+before any speedup or FPS claim.
+
+The focused coherent, noncoherent, uncertain-unmap, historical E077, and new
+E118 contracts pass, followed by the complete 78/78 host suite. The expanded
+GPU-writable buffer bind stays on opcodes 106/109 for map/unmap, produces no
+opcode-48 submit fan-out, and an image bind into that live mirror still fails
+closed. Exact-archive tablet validation remains pending.
+
 The existing buffer-create ceiling now matches pinned DXVK's bounded 256 MiB
 `MaxChunkSize`, and the accepted global-buffer usage mask is restricted to the
 source-audited allocator flags with mandatory transfer-src, transfer-dst, and

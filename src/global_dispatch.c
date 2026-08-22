@@ -276,25 +276,12 @@ static bool command_stream_is_enabled(void) {
                                 memory_order_acquire);
 }
 
-static bool buffer_usage_is_upload_only(uint32_t usage) {
-    const uint32_t gpu_read_only =
-        VK_BUFFER_USAGE_TRANSFER_SRC_BIT |
-        VK_BUFFER_USAGE_UNIFORM_TEXEL_BUFFER_BIT |
-        VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT |
-        VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-        VK_BUFFER_USAGE_VERTEX_BUFFER_BIT |
-        VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT;
-    return usage != 0U && (usage & ~gpu_read_only) == 0U;
-}
-
-static bool memory_is_upload_only_locked(uint64_t memory_id) {
+static bool memory_is_buffer_only_locked(uint64_t memory_id) {
     bool found = false;
     for (const struct bvb_resource_proxy *state = bvb_global_client.resources;
          state != NULL; state = state->next) {
         if (state->bound_memory_id != memory_id) continue;
-        if (state->type != BVB_OBJECT_BUFFER ||
-            !buffer_usage_is_upload_only(state->buffer_usage))
-            return false;
+        if (state->type != BVB_OBJECT_BUFFER) return false;
         found = true;
     }
     return found;
@@ -7103,9 +7090,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkBindBufferMemory(
     VkResult vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
     if (buffer_state != NULL && memory_state != NULL &&
         buffer_state->parent_id == device_state->wire_id &&
-        memory_state->parent_id == device_state->wire_id &&
-        (!memory_state->mapped_shared ||
-         buffer_usage_is_upload_only(buffer_state->buffer_usage))) {
+        memory_state->parent_id == device_state->wire_id) {
         const struct bvb_vulkan_buffer_bind_request decoded = {
             .buffer_id = buffer_id,
             .memory_id = memory_id,
@@ -7816,7 +7801,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkMapMemory(
         uint64_t generation = 0U;
         const bool use_shared_mirror =
             bvb_global_client.memory_mirror_enabled &&
-            memory_is_upload_only_locked(state->wire_id);
+            memory_is_buffer_only_locked(state->wire_id);
         used_shared_mirror = use_shared_mirror;
         if (use_shared_mirror) {
             result = setup_memory_mirror_locked(

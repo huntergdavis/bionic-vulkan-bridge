@@ -1305,4 +1305,15 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/protocol.h"
   )
+  add_test(
+    NAME e118-buffer-delta-mirror-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e118_buffer_mirror_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e118-buffer-delta-mirror-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+  )
 endif()
