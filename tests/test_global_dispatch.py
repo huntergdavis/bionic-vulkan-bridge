@@ -78,8 +78,7 @@ def main() -> int:
             server_environment["BVB_FAKE_KEEP_MEMORY_MAPPED"] = "1"
         if validation_mode == "loader-tls-lifetime":
             server_environment["BVB_FAKE_INSTALL_TLS_DESTRUCTOR"] = "1"
-        server = subprocess.Popen(
-            [
+        server_command = [
                 service,
                 "--socket",
                 str(socket_path),
@@ -91,8 +90,11 @@ def main() -> int:
                 token.hex(),
                 "--activity-frame-socket",
                 activity_frame_name,
-                "--once",
-            ],
+            ]
+        if validation_mode != "loader-tls-lifetime":
+            server_command.append("--once")
+        server = subprocess.Popen(
+            server_command,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -549,8 +551,15 @@ def main() -> int:
                     )
                     assert field_match is not None
                     assert int(field_match.group(1)) >> 56 == object_type
-            server_stdout, server_stderr = server.communicate(timeout=5.0)
-            assert server.returncode == 0, server_stderr
+            if validation_mode == "loader-tls-lifetime":
+                time.sleep(0.25)
+                assert server.poll() is None, server.communicate(timeout=1.0)
+                server.terminate()
+                server_stdout, server_stderr = server.communicate(timeout=5.0)
+                assert server.returncode == -15, server_stderr
+            else:
+                server_stdout, server_stderr = server.communicate(timeout=5.0)
+                assert server.returncode == 0, server_stderr
             assert server_stdout.splitlines() == [
                 "bvb-bridge-service: activity_event=1 sequence=1 "
                 "pid=12345 width=0 height=0",
@@ -565,13 +574,19 @@ def main() -> int:
                 "bvb-bridge-service: activity_event=9 sequence=6 "
                 "pid=12345 width=0 height=0",
             ]
-            assert server_stderr == (
+            expected_server_stderr = (
                 "bvb: queue submit2 failed: invalid or cross-device shared "
                 "command stream\n"
                 if validation_mode == "shared-command-stream-concurrency"
                 else ""
             )
-            assert not socket_path.exists()
+            if validation_mode == "loader-tls-lifetime":
+                assert server_stderr == "" or server_stderr.endswith(
+                    "failed: Connection reset by peer\n"
+                )
+            else:
+                assert server_stderr == expected_server_stderr
+                assert not socket_path.exists()
         finally:
             activity_frame_listener.close()
             if server.poll() is None:

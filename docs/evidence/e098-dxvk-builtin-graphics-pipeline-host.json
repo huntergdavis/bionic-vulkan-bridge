@@ -62,20 +62,20 @@
     "next_canonical_entry": "vkMapMemory2",
     "next_result": -8,
     "service_teardown_status": 139,
-    "service_teardown_cause": "private Turnip was dlclosed before pthread_key_clean_all invoked Mesa TLS destructors",
+    "service_teardown_cause": "pthread_key_clean_all invoked Mesa TLS cleanup after the detached worker destroyed its complete Vulkan connection context; retaining only the loader mapping proved insufficient in E099",
     "same_crash_observed_in_e097": true
   },
   "loader_lifetime_correction": {
-    "native_objects": "connection scoped",
-    "vulkan_loader_mapping": "process scoped",
-    "regression": "fake loader installs a pthread TLS destructor and detached service worker must exit cleanly",
+    "synchronous_once_context": "destroyed normally",
+    "detached_hardware_context": "complete Vulkan connection context retained for bounded service-process lifetime",
+    "regression": "fake loader installs a pthread TLS destructor; detached worker exits while the service remains alive and owns the retained context",
     "tablet_retest_pending": true
   },
   "validation": {
     "focused_contracts": "2/2",
-    "full_host_suite": "59/59",
-    "global_dispatch_test_sha256": "e950fc2d49c68b41a1551f2ad2697bd4db51310f6ca127e95cf5a3b0671abd98",
-    "bridge_service_sha256": "c6210f6b985a24fd2814c609d1c08506e4fb56d1c3d004b2c9cc5bfdfa07585a",
+    "full_host_suite": "60/60",
+    "global_dispatch_test_sha256": "157e0613228a1684b872a49722005b35f4d1731927396919351f42e5e30cea2b",
+    "bridge_service_sha256": "8a8081a6ed86c560af16ab4e8171d10684828f6a4fa18dd22e588c363c865f77",
     "host_icd_sha256": "9f172a2cbb53daf1929af5ea7403320f5b6729ee75f9baa79916078a68166376"
   },
   "reuse": [

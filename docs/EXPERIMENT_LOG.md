@@ -3892,16 +3892,19 @@ benchmark, or FPS claim is made.
 
 That run also reproduced a service teardown SIGSEGV already present in E097.
 Android's tombstone ends in `pthread_key_clean_all` after the connection worker
-destroyed its Vulkan context. The context had called `dlclose` on private
-Turnip before the worker exited, leaving Mesa-installed pthread TLS destructor
-callbacks pointing into unmapped code. Native Vulkan objects remain
-connection-scoped, but the Vulkan implementation mapping is now deliberately
-process-scoped. A fake loader installs a real pthread TLS destructor and the
-detached worker must exit cleanly, making the regression executable rather
-than a source-only assertion. The required `deja "BVB private Turnip dlclose
+destroyed its Vulkan context. Retaining only the private Turnip loader mapping
+was an insufficient first correction: E099 passed its Vulkan gate but produced
+the same status-139 teardown. Mesa's delayed thread-local destructors can also
+depend on driver objects or state released by context teardown. Detached
+hardware workers therefore retain the complete per-connection Vulkan context
+for the lifetime of the bounded per-game service process; synchronous `--once`
+host tests still destroy their context normally. A fake loader installs a real
+pthread TLS destructor and exercises the detached-worker boundary while the
+service remains alive, making the regression executable rather than a
+source-only assertion. The required `deja "BVB private Turnip dlclose
 pthread_key_clean_all SIGSEGV worker teardown Mesa TLS"` query returned no
-indexed implementation; this correction reuses the retained E097/E098 Android
-tombstone pattern and normal Vulkan object teardown.
+indexed implementation; this correction reuses the retained E097-E099 Android
+tombstone pattern and the launcher's existing bounded service lifetime.
 
 The first Android contract run exposed a platform-specific sealed-memfd detail
 before deployment: this kernel rejects even read-only `MAP_SHARED` mappings
@@ -3913,8 +3916,8 @@ modified during this correction.
 
 ## E099 — DXVK MapMemory2 compatibility entry (2026-08-21)
 
-Status: host implementation complete; tablet runtime pending. E098's bounded
-real run emitted one actual-invocation diagnostic for `vkMapMemory2KHR`, whose
+Status: tablet runtime passed E099 and advanced to E100. E098's bounded real
+run emitted one actual-invocation diagnostic for `vkMapMemory2KHR`, whose
 registry canonical entry is `vkMapMemory2`. E099 exposes the core and KHR names
 as the same validated client implementation. It accepts only a
 `VkMemoryMapInfo` with the exact structure type and no extension chain, clears
@@ -3932,5 +3935,16 @@ evidence is `docs/evidence/e099-map-memory2-host.json`. The required
 `deja "BVB vkMapMemory2KHR DXVK Tomb Raider mapped memory transport E099"`
 query returned no indexed implementation. E099 reuses E034's legacy mapping
 semantics, E077's strict/shared eligibility and dirty-upload model, and E098's
-actual tablet rejection. No tablet E099 result, game frame, benchmark, or FPS
-is claimed yet.
+actual tablet rejection.
+
+The bounded tablet run `20260822T001532Z-8551` proved both E099 aliases had
+advanced: no MapMemory2 rejection appeared, the E098 graphics pipeline still
+succeeded, and the next actually invoked rejection was
+`vkUpdateDescriptorSetWithTemplate` with canonical pointer shape
+`VkDevice,VkDescriptorSet,VkDescriptorUpdateTemplate,void*`. The authenticated
+frame helper again imported three images with zero per-frame Java/Binder calls.
+The retained 144,622-byte screenshot is still the bridge triangle, not a game
+pixel. The run also proved that retaining only the Turnip module mapping did
+not cure the worker-exit crash; the complete-context lifetime correction above
+is host-validated and awaits the next tablet run. No game-frame, benchmark, or
+FPS claim is made.

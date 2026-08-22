@@ -3,7 +3,7 @@
   "gate": "E099",
   "date": "2026-08-21",
   "source_base_commit": "dd799da9702b963b948eb401c0c652869164a20d",
-  "status": "host_pass_tablet_runtime_pending",
+  "status": "tablet_map_memory2_pass_next_gate_e100",
   "trigger": {
     "run_id": "20260821T235302Z-31988",
     "entry": "vkMapMemory2KHR",
@@ -33,6 +33,25 @@
     "global_contract_source_sha256": "f012d7da0ede3eed9380fbaee860d06cfa1e1a9e46787a966c7f0cdf06091374",
     "host_icd_sha256": "a7160e77b649783ccae66a03a2b59094e8c544e4824ce10c64eb8b44992c417f"
   },
+  "tablet_result": {
+    "run_id": "20260822T001532Z-8551",
+    "installed_icd_sha256": "1a79b7373821a339133cf7b546ba2c3397a2206046c90626f10b3153283a698f",
+    "installed_service_sha256": "f09fe29b663b59e446ed7e2a581a945c9a098cee34e4a35de0fbbd38d5ee6792",
+    "map_memory2_rejection_absent": true,
+    "builtin_graphics_pipeline_succeeded": true,
+    "next_actual_rejection": "vkUpdateDescriptorSetWithTemplate",
+    "next_result": -8,
+    "frame_helper": {"result": "pass", "image_count": 3, "per_frame_java_calls": 0, "per_frame_binder_calls": 0},
+    "service_teardown_status": 139,
+    "loader_only_lifetime_fix_sufficient": false
+  },
+  "observed_runtime_logs": {
+    "master": {"bytes": 1944, "sha256": "d63971d90e8ffe3618c36494a0ac418e1fb0e119cec8bf2035708c52ef0f1832"},
+    "wine": {"bytes": 103832, "sha256": "48609c625dd0f6a44b73eb357908d27551c26bfe5edfef64f3bede8866b9d927"},
+    "service": {"bytes": 934, "sha256": "e98f1b91d833c6637fad2a902011ce05389097888787c7e5cf7b47f7b38a1256"},
+    "frame_helper": {"bytes": 178, "sha256": "e22d934315295cb2c5735088f04424faed11d5b6b84a6a5ad49449fbfd62a934"},
+    "activity_screenshot": {"bytes": 144622, "sha256": "28b7305067678da2bc88ffcb75bf49b49141cf49c27c59d79df332dcee89e9f8", "visible_content": "bridge triangle, not a Tomb Raider frame"}
+  },
   "reuse": [
     "E034 legacy mapped-memory semantics",
     "E077 strict/shared upload-only mirror eligibility and dirty upload",
@@ -41,7 +60,7 @@
   "recall": "deja query 'BVB vkMapMemory2KHR DXVK Tomb Raider mapped memory transport E099' returned no indexed match",
   "claims": {
     "host_map_memory2": true,
-    "tablet_map_memory2": false,
+    "tablet_map_memory2": true,
     "tomb_raider_frame": false,
     "benchmark": false,
     "fps": false

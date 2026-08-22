@@ -3145,7 +3145,8 @@ static int answer_shared_batch_execute(
 static int serve_connection(int client_fd, const char *loader_path,
                             bool activity_ingress,
                             const struct bvb_activity_status *activity_status,
-                            const char *activity_frame_socket) {
+                            const char *activity_frame_socket,
+                            bool cleanup_vulkan_context) {
     bool negotiated = false;
     struct shared_batch_region shared_region = {0};
     struct bvb_vulkan_batch_context *vulkan_context = NULL;
@@ -3514,8 +3515,21 @@ static int serve_connection(int client_fd, const char *loader_path,
             break;
         }
     }
-    bvb_vulkan_batch_context_destroy(vulkan_context);
-    bvb_vulkan_global_context_destroy(global_context);
+    if (cleanup_vulkan_context) {
+        bvb_vulkan_batch_context_destroy(vulkan_context);
+        bvb_vulkan_global_context_destroy(global_context);
+    } else {
+        /*
+         * Mesa/Turnip can install pthread TLS destructors in modules and
+         * state released by device/instance teardown. A detached worker runs
+         * those callbacks only after this function returns. Keep the complete
+         * Vulkan connection context alive for this bounded per-game service
+         * process; the foreground launcher terminates the process and the OS
+         * reclaims it at session end.
+         */
+        (void)vulkan_context;
+        (void)global_context;
+    }
     if (shared_region.address != NULL) {
         if (munmap((void *)shared_region.address, shared_region.length) != 0 &&
             connection_status == 0) {
@@ -3530,7 +3544,7 @@ static void *serve_connection_worker(void *opaque) {
     int result = serve_connection(worker->client_fd, worker->loader_path,
                                   worker->activity_ingress,
                                   &worker->activity_status,
-                                  worker->activity_frame_socket);
+                                  worker->activity_frame_socket, false);
     (void)close(worker->client_fd);
     if (result != 0) {
         fprintf(stderr, "bvb: connection from pid %ld failed: %s\n",
@@ -3658,7 +3672,7 @@ int main(int argc, char **argv) {
         if (result == 0 && options.once) {
             result = serve_connection(client_fd, options.loader_path,
                                       options.activity_ingress, &activity_status,
-                                      options.activity_frame_socket);
+                                      options.activity_frame_socket, true);
         } else if (result == 0) {
             result = start_connection_worker(
                 client_fd, peer_pid, &options, &activity_status);
