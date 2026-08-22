@@ -125,6 +125,16 @@ struct bvb_game_frame_transport {
     VkSemaphore copy_semaphore;
     VkFence copy_fence;
     uint32_t consumed_sequence;
+    uint64_t profile_ring_wait_ns;
+    uint64_t profile_total_copy_ns;
+    uint64_t profile_previous_fence_wait_ns;
+    uint64_t profile_acquire_ns;
+    uint64_t profile_record_ns;
+    uint64_t profile_submit_ns;
+    uint64_t profile_queue_present_ns;
+    uint64_t profile_completion_wait_ns;
+    uint64_t profile_completion_wait_max_ns;
+    uint32_t profile_frames;
 };
 
 struct bvb_lifecycle_client {
@@ -160,6 +170,7 @@ static struct bvb_visible_ingress *visible_ingress;
 static bool visible_inline_ingress;
 static atomic_bool visible_brokered_ingress;
 static atomic_bool retain_external_renderer;
+static atomic_bool frame_profile_enabled;
 static atomic_uint visible_frame_count = 1U;
 static pthread_mutex_t lifecycle_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t external_memory_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -181,10 +192,37 @@ static struct bvb_external_sync_cache external_image_cache = {
     .memory_fd = -1,
     .semaphore_fd = -1,
 };
+
+static uint64_t frame_profile_monotonic_ns(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0U;
+    return (uint64_t)now.tv_sec * UINT64_C(1000000000) +
+           (uint64_t)now.tv_nsec;
+}
+
+static uint64_t frame_profile_elapsed_ns(uint64_t started_ns,
+                                         uint64_t finished_ns) {
+    return started_ns != 0U && finished_ns >= started_ns
+        ? finished_ns - started_ns : 0U;
+}
+
 static struct bvb_game_frame_transport game_frames = {
     .mutex = PTHREAD_MUTEX_INITIALIZER,
     .condition = PTHREAD_COND_INITIALIZER,
 };
+
+static void frame_profile_reset_activity(void) {
+    game_frames.profile_ring_wait_ns = 0U;
+    game_frames.profile_total_copy_ns = 0U;
+    game_frames.profile_previous_fence_wait_ns = 0U;
+    game_frames.profile_acquire_ns = 0U;
+    game_frames.profile_record_ns = 0U;
+    game_frames.profile_submit_ns = 0U;
+    game_frames.profile_queue_present_ns = 0U;
+    game_frames.profile_completion_wait_ns = 0U;
+    game_frames.profile_completion_wait_max_ns = 0U;
+    game_frames.profile_frames = 0U;
+}
 static atomic_bool activity_resumed;
 static atomic_bool activity_window_present;
 
@@ -1578,6 +1616,7 @@ static void configure_lifecycle(ANativeActivity *activity) {
     }
     memset(&lifecycle, 0, sizeof(lifecycle));
     atomic_store(&retain_external_renderer, false);
+    atomic_store(&frame_profile_enabled, false);
     atomic_store(&visible_frame_count, 1U);
     JNIEnv *env = activity->env;
     jclass activity_class = (*env)->GetObjectClass(env, activity->clazz);
@@ -1612,6 +1651,8 @@ static void configure_lifecycle(ANativeActivity *activity) {
         (*env)->NewStringUTF(env, "bvb_visible_frames");
     jstring retain_external_renderer_key =
         (*env)->NewStringUTF(env, "bvb_retain_external_renderer");
+    jstring frame_profile_key =
+        (*env)->NewStringUTF(env, "bvb_frame_profile");
     jint port = get_int_extra == NULL || port_key == NULL
                     ? 0
                     : (*env)->CallIntMethod(env, intent, get_int_extra, port_key,
@@ -1630,6 +1671,11 @@ static void configure_lifecycle(ANativeActivity *activity) {
             ? 0
             : (*env)->CallIntMethod(env, intent, get_int_extra,
                                     retain_external_renderer_key, 0);
+    jint frame_profile =
+        get_int_extra == NULL || frame_profile_key == NULL
+            ? 0
+            : (*env)->CallIntMethod(env, intent, get_int_extra,
+                                    frame_profile_key, 0);
     jstring token_string = get_string_extra == NULL || token_key == NULL
                                ? NULL
                                : (jstring)(*env)->CallObjectMethod(
@@ -1664,6 +1710,9 @@ static void configure_lifecycle(ANativeActivity *activity) {
     atomic_store(&retain_external_renderer, retain_renderer == 1);
     BVB_LOGI("E041_RETAIN_EXTERNAL_RENDERER enabled=%s",
              atomic_load(&retain_external_renderer) ? "true" : "false");
+    atomic_store(&frame_profile_enabled, frame_profile == 1);
+    BVB_LOGI("E116_FRAME_PROFILE enabled=%s",
+             atomic_load(&frame_profile_enabled) ? "true" : "false");
     if (token_valid && port > 0 && port <= UINT16_MAX) {
         lifecycle.configured = true;
         lifecycle.port = (uint16_t)port;
@@ -1734,6 +1783,9 @@ static void configure_lifecycle(ANativeActivity *activity) {
     }
     if (retain_external_renderer_key != NULL) {
         (*env)->DeleteLocalRef(env, retain_external_renderer_key);
+    }
+    if (frame_profile_key != NULL) {
+        (*env)->DeleteLocalRef(env, frame_profile_key);
     }
     if (token_key != NULL) {
         (*env)->DeleteLocalRef(env, token_key);
@@ -2002,6 +2054,7 @@ static void clear_game_frame_transport_locked(void) {
     game_frames.copy_semaphore = VK_NULL_HANDLE;
     game_frames.copy_fence = VK_NULL_HANDLE;
     game_frames.consumed_sequence = 0U;
+    frame_profile_reset_activity();
 }
 
 static bool game_frame_transport_installed(void) {
@@ -2011,14 +2064,76 @@ static bool game_frame_transport_installed(void) {
     return installed;
 }
 
-static int copy_game_frame_to_window_locked(uint32_t slot) {
+struct bvb_activity_frame_profile_sample {
+    uint64_t total_copy_ns;
+    uint64_t previous_fence_wait_ns;
+    uint64_t acquire_ns;
+    uint64_t record_ns;
+    uint64_t submit_ns;
+    uint64_t queue_present_ns;
+    uint64_t completion_wait_ns;
+};
+
+static void frame_profile_record_activity(
+    uint64_t ring_wait_ns,
+    const struct bvb_activity_frame_profile_sample *sample) {
+    if (!atomic_load(&frame_profile_enabled) || sample == NULL) return;
+    game_frames.profile_ring_wait_ns += ring_wait_ns;
+    game_frames.profile_total_copy_ns += sample->total_copy_ns;
+    game_frames.profile_previous_fence_wait_ns +=
+        sample->previous_fence_wait_ns;
+    game_frames.profile_acquire_ns += sample->acquire_ns;
+    game_frames.profile_record_ns += sample->record_ns;
+    game_frames.profile_submit_ns += sample->submit_ns;
+    game_frames.profile_queue_present_ns += sample->queue_present_ns;
+    game_frames.profile_completion_wait_ns += sample->completion_wait_ns;
+    if (sample->completion_wait_ns >
+        game_frames.profile_completion_wait_max_ns) {
+        game_frames.profile_completion_wait_max_ns =
+            sample->completion_wait_ns;
+    }
+    ++game_frames.profile_frames;
+    if (game_frames.profile_frames < 32U) return;
+    BVB_LOGI(
+        "BVB_E116_WSI_ACTIVITY_PROFILE frames=%u ring_wait_ns=%llu "
+        "copy_total_ns=%llu previous_fence_wait_ns=%llu acquire_ns=%llu "
+        "record_ns=%llu submit_ns=%llu queue_present_ns=%llu "
+        "completion_wait_ns=%llu completion_wait_max_ns=%llu",
+        game_frames.profile_frames,
+        (unsigned long long)game_frames.profile_ring_wait_ns,
+        (unsigned long long)game_frames.profile_total_copy_ns,
+        (unsigned long long)game_frames.profile_previous_fence_wait_ns,
+        (unsigned long long)game_frames.profile_acquire_ns,
+        (unsigned long long)game_frames.profile_record_ns,
+        (unsigned long long)game_frames.profile_submit_ns,
+        (unsigned long long)game_frames.profile_queue_present_ns,
+        (unsigned long long)game_frames.profile_completion_wait_ns,
+        (unsigned long long)game_frames.profile_completion_wait_max_ns);
+    frame_profile_reset_activity();
+}
+
+static int copy_game_frame_to_window_locked(
+    uint32_t slot, struct bvb_activity_frame_profile_sample *profile) {
     if (slot >= game_frames.image_count || state.device == VK_NULL_HANDLE ||
         state.swapchain == VK_NULL_HANDLE || state.queue == VK_NULL_HANDLE) {
         return -ENODEV;
     }
+    if (profile != NULL) memset(profile, 0, sizeof(*profile));
+    const bool profiling = profile != NULL &&
+                           atomic_load(&frame_profile_enabled);
+    const uint64_t total_started_ns =
+        profiling ? frame_profile_monotonic_ns() : 0U;
+    const uint64_t previous_fence_started_ns =
+        profiling ? frame_profile_monotonic_ns() : 0U;
     VkResult result = vkWaitForFences(state.device, 1U,
                                       &game_frames.copy_fence, VK_TRUE,
                                       UINT64_MAX);
+    const uint64_t previous_fence_finished_ns =
+        profiling ? frame_profile_monotonic_ns() : 0U;
+    if (profiling) {
+        profile->previous_fence_wait_ns = frame_profile_elapsed_ns(
+            previous_fence_started_ns, previous_fence_finished_ns);
+    }
     if (result == VK_SUCCESS) {
         result = vkResetFences(state.device, 1U, &game_frames.copy_fence);
     }
@@ -2026,11 +2141,19 @@ static int copy_game_frame_to_window_locked(uint32_t slot) {
         result = vkResetCommandPool(state.device, game_frames.command_pool, 0U);
     }
     uint32_t destination_index = 0U;
+    const uint64_t acquire_started_ns =
+        profiling ? frame_profile_monotonic_ns() : 0U;
     if (result == VK_SUCCESS) {
         result = vkAcquireNextImageKHR(
             state.device, state.swapchain, UINT64_MAX,
             game_frames.acquire_semaphore, VK_NULL_HANDLE,
             &destination_index);
+    }
+    const uint64_t acquire_finished_ns =
+        profiling ? frame_profile_monotonic_ns() : 0U;
+    if (profiling) {
+        profile->acquire_ns = frame_profile_elapsed_ns(
+            acquire_started_ns, acquire_finished_ns);
     }
     if ((result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) ||
         destination_index >= state.swapchain_image_count) {
@@ -2040,6 +2163,8 @@ static int copy_game_frame_to_window_locked(uint32_t slot) {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
     };
+    const uint64_t record_started_ns =
+        profiling ? frame_profile_monotonic_ns() : 0U;
     result = vkBeginCommandBuffer(game_frames.command_buffer, &begin_info);
     if (result != VK_SUCCESS) return -EIO;
     const VkImageSubresourceRange range = {
@@ -2141,6 +2266,12 @@ static int copy_game_frame_to_window_locked(uint32_t slot) {
                          VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0U, 0U, NULL,
                          0U, NULL, 2U, after_copy);
     result = vkEndCommandBuffer(game_frames.command_buffer);
+    const uint64_t record_finished_ns =
+        profiling ? frame_profile_monotonic_ns() : 0U;
+    if (profiling) {
+        profile->record_ns = frame_profile_elapsed_ns(
+            record_started_ns, record_finished_ns);
+    }
     const VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
     const VkSubmitInfo submit = {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -2152,9 +2283,17 @@ static int copy_game_frame_to_window_locked(uint32_t slot) {
         .signalSemaphoreCount = 1U,
         .pSignalSemaphores = &game_frames.copy_semaphore,
     };
+    const uint64_t submit_started_ns =
+        profiling ? frame_profile_monotonic_ns() : 0U;
     if (result == VK_SUCCESS) {
         result = vkQueueSubmit(state.queue, 1U, &submit,
                                game_frames.copy_fence);
+    }
+    const uint64_t submit_finished_ns =
+        profiling ? frame_profile_monotonic_ns() : 0U;
+    if (profiling) {
+        profile->submit_ns = frame_profile_elapsed_ns(
+            submit_started_ns, submit_finished_ns);
     }
     const VkPresentInfoKHR present = {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
@@ -2164,10 +2303,28 @@ static int copy_game_frame_to_window_locked(uint32_t slot) {
         .pSwapchains = &state.swapchain,
         .pImageIndices = &destination_index,
     };
+    const uint64_t present_started_ns =
+        profiling ? frame_profile_monotonic_ns() : 0U;
     if (result == VK_SUCCESS) result = vkQueuePresentKHR(state.queue, &present);
+    const uint64_t present_finished_ns =
+        profiling ? frame_profile_monotonic_ns() : 0U;
+    if (profiling) {
+        profile->queue_present_ns = frame_profile_elapsed_ns(
+            present_started_ns, present_finished_ns);
+    }
+    const uint64_t completion_started_ns =
+        profiling ? frame_profile_monotonic_ns() : 0U;
     if (result == VK_SUCCESS || result == VK_SUBOPTIMAL_KHR) {
         result = vkWaitForFences(state.device, 1U, &game_frames.copy_fence,
                                  VK_TRUE, UINT64_MAX);
+    }
+    const uint64_t completion_finished_ns =
+        profiling ? frame_profile_monotonic_ns() : 0U;
+    if (profiling) {
+        profile->completion_wait_ns = frame_profile_elapsed_ns(
+            completion_started_ns, completion_finished_ns);
+        profile->total_copy_ns = frame_profile_elapsed_ns(
+            total_started_ns, frame_profile_monotonic_ns());
     }
     return result == VK_SUCCESS ? 0 : -EIO;
 }
@@ -2194,19 +2351,26 @@ static void *game_frame_consumer_main(void *unused) {
         int status = ready ? 0 : -EAGAIN;
         uint32_t slot = UINT32_MAX;
         uint32_t sequence = 0U;
+        const uint64_t ring_wait_started_ns =
+            atomic_load(&frame_profile_enabled)
+            ? frame_profile_monotonic_ns() : 0U;
         if (status == 0) {
             status = bvb_wsi_frame_ring_wait_present(
                 ring, after_sequence, 100U, &slot, &sequence);
         }
+        const uint64_t ring_wait_finished_ns =
+            atomic_load(&frame_profile_enabled)
+            ? frame_profile_monotonic_ns() : 0U;
         if (status == 0) {
             if (!atomic_load(&activity_resumed) ||
                 !atomic_load(&activity_window_present)) {
                 status = -EAGAIN;
             }
         }
+        struct bvb_activity_frame_profile_sample profile_sample = {0};
         if (status == 0) {
             (void)pthread_mutex_lock(&queue_mutex);
-            status = copy_game_frame_to_window_locked(slot);
+            status = copy_game_frame_to_window_locked(slot, &profile_sample);
             (void)pthread_mutex_unlock(&queue_mutex);
         }
         if (status == 0) {
@@ -2216,6 +2380,10 @@ static void *game_frame_consumer_main(void *unused) {
             (void)pthread_mutex_lock(&game_frames.mutex);
             game_frames.consumed_sequence = sequence;
             (void)pthread_mutex_unlock(&game_frames.mutex);
+            frame_profile_record_activity(
+                frame_profile_elapsed_ns(ring_wait_started_ns,
+                                         ring_wait_finished_ns),
+                &profile_sample);
             BVB_LOGI("E057_FRAME_PRESENTED generation=%llu sequence=%u slot=%u",
                      (unsigned long long)ring->generation, sequence, slot);
         } else if (status == -EPIPE && after_sequence != 0U) {
@@ -2573,6 +2741,7 @@ static int import_game_frame_transport(
     game_frames.copy_semaphore = imported.copy_semaphore;
     game_frames.copy_fence = imported.copy_fence;
     game_frames.consumed_sequence = 0U;
+    frame_profile_reset_activity();
     game_frames.installed = true;
     status = start_game_frame_consumer_locked();
     if (status == 0) (void)pthread_cond_broadcast(&game_frames.condition);

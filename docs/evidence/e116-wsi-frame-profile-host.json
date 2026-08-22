@@ -1,0 +1,30 @@
+{
+  "gate": "E116",
+  "date": "2026-08-22",
+  "source_base_commit": "7e82625f7259a1a3cd0fcb1b79ee88095d53a904",
+  "trigger": {
+    "target": "Tomb Raider 2013 at 2800x1752",
+    "quiet_first_20_elapsed_seconds": 71.116,
+    "quiet_steady_mean_frame_interval_seconds": 3.4438235294117647,
+    "reason": "quiet logging improved timing but left multi-second presentation intervals"
+  },
+  "implementation": {
+    "selector": "BVB_FRAME_PROFILE=1",
+    "default": "disabled",
+    "summary_window_frames": 32,
+    "client": "times acquire and present request/reply exchanges",
+    "service": "separates ring wait, command recording, queue submit, producer fence wait, and ring publication",
+    "activity": "separates ring wait, Android swapchain acquire, command recording, submit, queue present, and copy fence completion",
+    "wire_change": "none",
+    "per_frame_log_lines": 0,
+    "summary_lines_per_32_frames": 3
+  },
+  "validation": {
+    "source_contract": "passed",
+    "host_suite": "76/76 passed",
+    "tablet_build": "pending exact archive",
+    "tablet_profile": "pending",
+    "speedup_or_fps_claimed": false
+  },
+  "reuse": "The required deja query returned no indexed implementation. E116 reuses E060's typed virtual swapchain, E075's default-off performance selector discipline, and E115's real opaque Tomb Raider frame boundary."
+}

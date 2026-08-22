@@ -433,3 +433,9 @@ The glibc client caches only typed ownership; the Bionic service revalidates
 every image-view/device relationship and reconstructs all native arrays and
 pNext nodes locally. Strict mode retains one immediate-record RPC, while shared
 mode appends the whole rendering command locally with zero recording RPC.
+
+E116 adds a default-off, no-wire-change WSI timing profiler. One summary per
+32 frames splits glibc client request/reply time, Bionic producer ring and GPU
+fence time, and Activity Android-swapchain copy/present time. It emits no
+per-frame profiler lines and exists to select the next performance change from
+measured phase totals rather than Vulkan resolver order.

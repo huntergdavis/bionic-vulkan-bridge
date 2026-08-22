@@ -31,6 +31,7 @@ typedef void (*bvb_ahb_release_fn)(AHardwareBuffer *);
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <linux/memfd.h>
@@ -133,6 +134,22 @@ struct bvb_descriptor_template_metadata {
         entries[BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_ENTRIES];
 };
 
+struct bvb_wsi_profile_state {
+    uint64_t acquire_total_ns;
+    uint64_t acquire_ring_wait_ns;
+    uint64_t acquire_record_ns;
+    uint64_t acquire_submit_ns;
+    uint64_t present_total_ns;
+    uint64_t present_record_ns;
+    uint64_t present_submit_ns;
+    uint64_t present_fence_wait_ns;
+    uint64_t present_fence_wait_max_ns;
+    uint64_t present_ring_publish_ns;
+    uint32_t acquire_calls;
+    uint32_t present_calls;
+    bool enabled;
+};
+
 struct bvb_vulkan_global_context {
     void *loader;
     PFN_vkGetInstanceProcAddr get_instance_proc_addr;
@@ -183,11 +200,54 @@ struct bvb_vulkan_global_context {
         swapchain_metadata[BVB_WSI_FRAME_RING_MAX_SLOTS];
     struct bvb_descriptor_template_metadata descriptor_template_metadata[
         BVB_DESCRIPTOR_TEMPLATE_METADATA_CAPACITY];
+    struct bvb_wsi_profile_state wsi_profile;
 };
 
 static int destroy_swapchain_metadata(
     struct bvb_vulkan_global_context *context,
     struct bvb_swapchain_metadata *metadata);
+
+static uint64_t wsi_profile_monotonic_ns(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0U;
+    return (uint64_t)now.tv_sec * UINT64_C(1000000000) +
+           (uint64_t)now.tv_nsec;
+}
+
+static uint64_t wsi_profile_elapsed_ns(uint64_t started_ns,
+                                       uint64_t finished_ns) {
+    return started_ns != 0U && finished_ns >= started_ns
+        ? finished_ns - started_ns : 0U;
+}
+
+static void wsi_profile_emit_and_reset(
+    struct bvb_wsi_profile_state *profile) {
+    if (profile == NULL || !profile->enabled ||
+        profile->present_calls < 32U) return;
+    fprintf(stderr,
+            "BVB_E116_WSI_SERVICE_PROFILE present_calls=%u "
+            "present_total_ns=%llu present_record_ns=%llu "
+            "present_submit_ns=%llu present_fence_wait_ns=%llu "
+            "present_fence_wait_max_ns=%llu present_ring_publish_ns=%llu "
+            "acquire_calls=%u acquire_total_ns=%llu "
+            "acquire_ring_wait_ns=%llu acquire_record_ns=%llu "
+            "acquire_submit_ns=%llu\n",
+            profile->present_calls,
+            (unsigned long long)profile->present_total_ns,
+            (unsigned long long)profile->present_record_ns,
+            (unsigned long long)profile->present_submit_ns,
+            (unsigned long long)profile->present_fence_wait_ns,
+            (unsigned long long)profile->present_fence_wait_max_ns,
+            (unsigned long long)profile->present_ring_publish_ns,
+            profile->acquire_calls,
+            (unsigned long long)profile->acquire_total_ns,
+            (unsigned long long)profile->acquire_ring_wait_ns,
+            (unsigned long long)profile->acquire_record_ns,
+            (unsigned long long)profile->acquire_submit_ns);
+    const bool enabled = profile->enabled;
+    memset(profile, 0, sizeof(*profile));
+    profile->enabled = enabled;
+}
 static int sync_coherent_memory_mirrors(
     struct bvb_vulkan_global_context *context, uint64_t device_id);
 static struct bvb_memory_mirror_metadata *memory_mirror_slot(
@@ -450,6 +510,15 @@ int bvb_vulkan_global_context_create(
         set_error(error, error_size, "could not allocate global context");
         return -ENOMEM;
     }
+    const char *frame_profile = getenv("BVB_FRAME_PROFILE");
+    if (frame_profile != NULL && strcmp(frame_profile, "0") != 0 &&
+        strcmp(frame_profile, "1") != 0) {
+        set_error(error, error_size, "BVB_FRAME_PROFILE must be 0 or 1");
+        free(context);
+        return -EINVAL;
+    }
+    context->wsi_profile.enabled =
+        frame_profile != NULL && strcmp(frame_profile, "1") == 0;
     context->loader = dlopen(loader_path, RTLD_NOW | RTLD_LOCAL);
     if (context->loader == NULL) {
         set_error(error, error_size, "could not load %s: %s", loader_path,
@@ -9338,6 +9407,9 @@ int bvb_vulkan_global_context_acquire_swapchain_image(
         swapchain_metadata_slot(context, request->swapchain_id);
     if (metadata == NULL || metadata->swapchain_id != request->swapchain_id ||
         metadata->device_id != request->device_id) return -ENOENT;
+    const bool profile_enabled = context->wsi_profile.enabled;
+    const uint64_t profile_total_started_ns =
+        profile_enabled ? wsi_profile_monotonic_ns() : 0U;
     VkSemaphore semaphore = VK_NULL_HANDLE;
     VkFence fence = VK_NULL_HANDLE;
     int status = request->semaphore_id == 0U ? 0 :
@@ -9352,12 +9424,20 @@ int bvb_vulkan_global_context_acquire_swapchain_image(
         return 0;
     }
     uint32_t image_index = 0U;
+    const uint64_t profile_ring_started_ns =
+        profile_enabled ? wsi_profile_monotonic_ns() : 0U;
     status = acquire_ring_slot(metadata->control, request->timeout_ns,
                                &image_index);
+    const uint64_t profile_ring_finished_ns =
+        profile_enabled ? wsi_profile_monotonic_ns() : 0U;
     response->vulkan_result = ring_acquire_result(status);
     if (status != 0) return 0;
+    const uint64_t profile_record_started_ns =
+        profile_enabled ? wsi_profile_monotonic_ns() : 0U;
     VkResult result = record_swapchain_barrier(
         context, metadata, image_index, true);
+    const uint64_t profile_record_finished_ns =
+        profile_enabled ? wsi_profile_monotonic_ns() : 0U;
     PFN_vkQueueSubmit submit =
         (PFN_vkQueueSubmit)context->get_device_proc_addr(
             metadata->device, "vkQueueSubmit");
@@ -9370,8 +9450,12 @@ int bvb_vulkan_global_context_acquire_swapchain_image(
         .signalSemaphoreCount = semaphore == VK_NULL_HANDLE ? 0U : 1U,
         .pSignalSemaphores = semaphore == VK_NULL_HANDLE ? NULL : &semaphore,
     };
+    const uint64_t profile_submit_started_ns =
+        profile_enabled ? wsi_profile_monotonic_ns() : 0U;
     if (result == VK_SUCCESS)
         result = submit(metadata->producer_queue, 1U, &submit_info, fence);
+    const uint64_t profile_submit_finished_ns =
+        profile_enabled ? wsi_profile_monotonic_ns() : 0U;
     if (result != VK_SUCCESS) {
         (void)bvb_wsi_frame_ring_fail_producer(metadata->control, -EIO);
         set_error(error, error_size, "swapchain acquire submit failed: %d",
@@ -9381,6 +9465,18 @@ int bvb_vulkan_global_context_acquire_swapchain_image(
     }
     response->vulkan_result = VK_SUCCESS;
     response->image_index = image_index;
+    if (profile_enabled) {
+        struct bvb_wsi_profile_state *profile = &context->wsi_profile;
+        ++profile->acquire_calls;
+        profile->acquire_total_ns += wsi_profile_elapsed_ns(
+            profile_total_started_ns, wsi_profile_monotonic_ns());
+        profile->acquire_ring_wait_ns += wsi_profile_elapsed_ns(
+            profile_ring_started_ns, profile_ring_finished_ns);
+        profile->acquire_record_ns += wsi_profile_elapsed_ns(
+            profile_record_started_ns, profile_record_finished_ns);
+        profile->acquire_submit_ns += wsi_profile_elapsed_ns(
+            profile_submit_started_ns, profile_submit_finished_ns);
+    }
     return 0;
 }
 
@@ -9399,6 +9495,9 @@ int bvb_vulkan_global_context_present_swapchain_image(
     if (metadata == NULL || metadata->swapchain_id != request->swapchain_id ||
         request->image_index >= metadata->image_count || request->flags != 0U)
         return -ENOENT;
+    const bool profile_enabled = context->wsi_profile.enabled;
+    const uint64_t profile_total_started_ns =
+        profile_enabled ? wsi_profile_monotonic_ns() : 0U;
     VkDevice queue_device = VK_NULL_HANDLE;
     VkQueue queue = VK_NULL_HANDLE;
     int status = resolve_queue(context, request->queue_id, &queue_device,
@@ -9429,8 +9528,12 @@ int bvb_vulkan_global_context_present_swapchain_image(
         }
         wait_stages[index] = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     }
+    const uint64_t profile_record_started_ns =
+        profile_enabled ? wsi_profile_monotonic_ns() : 0U;
     VkResult result = record_swapchain_barrier(
         context, metadata, request->image_index, false);
+    const uint64_t profile_record_finished_ns =
+        profile_enabled ? wsi_profile_monotonic_ns() : 0U;
     PFN_vkResetFences reset =
         (PFN_vkResetFences)context->get_device_proc_addr(
             metadata->device, "vkResetFences");
@@ -9455,18 +9558,30 @@ int bvb_vulkan_global_context_present_swapchain_image(
         .commandBufferCount = 1U,
         .pCommandBuffers = &metadata->present_commands[request->image_index],
     };
+    const uint64_t profile_submit_started_ns =
+        profile_enabled ? wsi_profile_monotonic_ns() : 0U;
     if (result == VK_SUCCESS)
         result = submit(queue, 1U, &submit_info,
                         metadata->present_completion);
+    const uint64_t profile_submit_finished_ns =
+        profile_enabled ? wsi_profile_monotonic_ns() : 0U;
+    const uint64_t profile_wait_started_ns =
+        profile_enabled ? wsi_profile_monotonic_ns() : 0U;
     if (result == VK_SUCCESS)
         result = wait(metadata->device, 1U, &metadata->present_completion,
                       VK_TRUE, UINT64_MAX);
+    const uint64_t profile_wait_finished_ns =
+        profile_enabled ? wsi_profile_monotonic_ns() : 0U;
     uint32_t sequence = 0U;
+    const uint64_t profile_ring_started_ns =
+        profile_enabled ? wsi_profile_monotonic_ns() : 0U;
     if (result == VK_SUCCESS) {
         status = bvb_wsi_frame_ring_present(
             metadata->control, request->image_index, &sequence);
         if (status != 0) result = VK_ERROR_SURFACE_LOST_KHR;
     }
+    const uint64_t profile_ring_finished_ns =
+        profile_enabled ? wsi_profile_monotonic_ns() : 0U;
     if (result != VK_SUCCESS) {
         (void)bvb_wsi_frame_ring_fail_producer(metadata->control, -EIO);
         set_error(error, error_size, "swapchain present failed: %d",
@@ -9477,6 +9592,24 @@ int bvb_vulkan_global_context_present_swapchain_image(
     metadata->presented_once[request->image_index] = true;
     response->vulkan_result = VK_SUCCESS;
     response->sequence = sequence;
+    if (profile_enabled) {
+        struct bvb_wsi_profile_state *profile = &context->wsi_profile;
+        const uint64_t wait_ns = wsi_profile_elapsed_ns(
+            profile_wait_started_ns, profile_wait_finished_ns);
+        ++profile->present_calls;
+        profile->present_total_ns += wsi_profile_elapsed_ns(
+            profile_total_started_ns, wsi_profile_monotonic_ns());
+        profile->present_record_ns += wsi_profile_elapsed_ns(
+            profile_record_started_ns, profile_record_finished_ns);
+        profile->present_submit_ns += wsi_profile_elapsed_ns(
+            profile_submit_started_ns, profile_submit_finished_ns);
+        profile->present_fence_wait_ns += wait_ns;
+        if (wait_ns > profile->present_fence_wait_max_ns)
+            profile->present_fence_wait_max_ns = wait_ns;
+        profile->present_ring_publish_ns += wsi_profile_elapsed_ns(
+            profile_ring_started_ns, profile_ring_finished_ns);
+        wsi_profile_emit_and_reset(profile);
+    }
     return 0;
 }
 

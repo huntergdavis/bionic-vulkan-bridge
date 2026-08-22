@@ -4560,3 +4560,22 @@ transition frame: the Android desktop bleed and alternating transparent rows
 from E114 are absent. A later sample had the same hash even though presentation
 sequences advanced, so this is an opacity correction—not a correctness,
 progress, benchmark, or FPS claim. Exact-PID cleanup preserved Steam and X11.
+
+## E116 — bounded WSI frame profiler (2026-08-22)
+
+The corrected quiet E115 A/B reduced the mean steady presentation interval by
+15.9%, from 4.094 to 3.444 seconds, but that is still orders of magnitude from
+the 60-Hz target. Six consecutive presentation captures had six different
+hashes, so the transport is advancing real game content rather than merely
+re-announcing one image.
+
+E116 adds a strict `BVB_FRAME_PROFILE=1` selector and no wire opcode. Every 32
+successful presents it emits three bounded summaries: glibc acquire/present
+request-reply time; Bionic producer ring wait, command recording, submit, and
+GPU fence wait; and Activity ring wait, Android swapchain acquire, full-image
+copy/blit recording, submit, queue-present, and completion wait. Default runs
+pay no clock or log cost in these paths, and profiling emits no per-frame log
+lines. The required `deja "BVB virtual swapchain per-frame profiling acquire
+present fence activity copy submit replay timing E116"` query returned no
+indexed implementation. E116 reuses E060, E075, and the E115 opaque real-frame
+boundary. Exact-archive tablet timing remains pending; no FPS claim is made.

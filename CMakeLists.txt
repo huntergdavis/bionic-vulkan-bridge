@@ -1286,4 +1286,14 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e115-opaque-android-game-surface-host.json"
       "${CMAKE_CURRENT_SOURCE_DIR}/android/visible-host/native_main.c"
   )
+  add_test(
+    NAME e116-wsi-frame-profile-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e116_wsi_frame_profile_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e116-wsi-frame-profile-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/android/visible-host/native_main.c"
+  )
 endif()

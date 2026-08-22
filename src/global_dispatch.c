@@ -36,6 +36,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
+#include <time.h>
 #include <unistd.h>
 
 #ifndef MAP_FIXED_NOREPLACE
@@ -192,8 +193,15 @@ struct bvb_global_client_state {
     uint64_t command_stream_slots[BVB_COMMAND_STREAM_SLOT_COUNT / 64U];
     atomic_bool command_stream_enabled;
     bool memory_mirror_enabled;
+    bool frame_profile_enabled;
     bool connection_poisoned;
     uint64_t exchange_count;
+    uint64_t frame_profile_acquire_total_ns;
+    uint64_t frame_profile_acquire_max_ns;
+    uint64_t frame_profile_present_total_ns;
+    uint64_t frame_profile_present_max_ns;
+    uint32_t frame_profile_acquire_calls;
+    uint32_t frame_profile_present_calls;
     uint16_t last_opcode;
 };
 
@@ -397,6 +405,63 @@ static int mapped_memory_shared_requested(bool *shared) {
     return -EINVAL;
 }
 
+static int frame_profile_requested(bool *enabled) {
+    if (enabled == NULL) return -EINVAL;
+    const char *value = getenv("BVB_FRAME_PROFILE");
+    if (value == NULL || strcmp(value, "0") == 0) {
+        *enabled = false;
+        return 0;
+    }
+    if (strcmp(value, "1") == 0) {
+        *enabled = true;
+        return 0;
+    }
+    return -EINVAL;
+}
+
+static uint64_t frame_profile_monotonic_ns(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return 0U;
+    return (uint64_t)now.tv_sec * UINT64_C(1000000000) +
+           (uint64_t)now.tv_nsec;
+}
+
+static void frame_profile_record_client_exchange_locked(
+    bool present, uint64_t started_ns, uint64_t finished_ns) {
+    if (!bvb_global_client.frame_profile_enabled || started_ns == 0U ||
+        finished_ns < started_ns) return;
+    const uint64_t elapsed_ns = finished_ns - started_ns;
+    if (present) {
+        ++bvb_global_client.frame_profile_present_calls;
+        bvb_global_client.frame_profile_present_total_ns += elapsed_ns;
+        if (elapsed_ns > bvb_global_client.frame_profile_present_max_ns)
+            bvb_global_client.frame_profile_present_max_ns = elapsed_ns;
+    } else {
+        ++bvb_global_client.frame_profile_acquire_calls;
+        bvb_global_client.frame_profile_acquire_total_ns += elapsed_ns;
+        if (elapsed_ns > bvb_global_client.frame_profile_acquire_max_ns)
+            bvb_global_client.frame_profile_acquire_max_ns = elapsed_ns;
+    }
+    if (!present || bvb_global_client.frame_profile_present_calls < 32U)
+        return;
+    fprintf(stderr,
+            "BVB_E116_WSI_CLIENT_PROFILE present_calls=%u "
+            "present_total_ns=%llu present_max_ns=%llu acquire_calls=%u "
+            "acquire_total_ns=%llu acquire_max_ns=%llu\n",
+            bvb_global_client.frame_profile_present_calls,
+            (unsigned long long)bvb_global_client.frame_profile_present_total_ns,
+            (unsigned long long)bvb_global_client.frame_profile_present_max_ns,
+            bvb_global_client.frame_profile_acquire_calls,
+            (unsigned long long)bvb_global_client.frame_profile_acquire_total_ns,
+            (unsigned long long)bvb_global_client.frame_profile_acquire_max_ns);
+    bvb_global_client.frame_profile_present_calls = 0U;
+    bvb_global_client.frame_profile_present_total_ns = 0U;
+    bvb_global_client.frame_profile_present_max_ns = 0U;
+    bvb_global_client.frame_profile_acquire_calls = 0U;
+    bvb_global_client.frame_profile_acquire_total_ns = 0U;
+    bvb_global_client.frame_profile_acquire_max_ns = 0U;
+}
+
 static int setup_command_stream_locked(void) {
     if (!command_stream_requested()) return 0;
     int memory_fd = -1;
@@ -468,11 +533,16 @@ done:
 static int connect_locked(void) {
     if (bvb_global_client.connection_poisoned) return -EPIPE;
     bool memory_mirror_enabled = false;
+    bool frame_profile_enabled = false;
     int result = mapped_memory_shared_requested(&memory_mirror_enabled);
+    if (result == 0)
+        result = frame_profile_requested(&frame_profile_enabled);
     if (result != 0) return result;
     if (bvb_global_client.socket_fd >= 0) {
         return bvb_global_client.memory_mirror_enabled ==
-                       memory_mirror_enabled
+                       memory_mirror_enabled &&
+                   bvb_global_client.frame_profile_enabled ==
+                       frame_profile_enabled
                    ? 0
                    : -EPROTO;
     }
@@ -541,6 +611,7 @@ static int connect_locked(void) {
     }
     bvb_global_client.service_flags = decoded.service_flags;
     bvb_global_client.memory_mirror_enabled = memory_mirror_enabled;
+    bvb_global_client.frame_profile_enabled = frame_profile_enabled;
     result = setup_command_stream_locked();
     if (result != 0) {
         (void)close(bvb_global_client.socket_fd);
@@ -11180,7 +11251,15 @@ static VkResult VKAPI_CALL bvb_bridge_vkAcquireNextImageKHR(
     };
     if (result == 0) memcpy(request.payload, payload, sizeof(payload));
     struct bvb_protocol_packet response = {0};
+    const uint64_t profile_started_ns =
+        result == 0 && bvb_global_client.frame_profile_enabled
+        ? frame_profile_monotonic_ns() : 0U;
     if (result == 0) result = exchange_locked(&request, &response);
+    const uint64_t profile_finished_ns =
+        bvb_global_client.frame_profile_enabled
+        ? frame_profile_monotonic_ns() : 0U;
+    frame_profile_record_client_exchange_locked(
+        false, profile_started_ns, profile_finished_ns);
     if (result == 0 &&
         (response.header.status != 0 ||
          response.header.payload_length !=
@@ -11280,7 +11359,15 @@ static VkResult VKAPI_CALL bvb_bridge_vkQueuePresentKHR(
     };
     if (result == 0) memcpy(request.payload, payload, payload_length);
     struct bvb_protocol_packet response = {0};
+    const uint64_t profile_started_ns =
+        result == 0 && bvb_global_client.frame_profile_enabled
+        ? frame_profile_monotonic_ns() : 0U;
     if (result == 0) result = exchange_locked(&request, &response);
+    const uint64_t profile_finished_ns =
+        bvb_global_client.frame_profile_enabled
+        ? frame_profile_monotonic_ns() : 0U;
+    frame_profile_record_client_exchange_locked(
+        true, profile_started_ns, profile_finished_ns);
     if (result == 0 &&
         (response.header.status != 0 ||
          response.header.payload_length !=
