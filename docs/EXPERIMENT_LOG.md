@@ -4854,3 +4854,41 @@ benchmark baseline; it is not a performance-improvement claim. Canonical
 screenshot, result text, artifact identities, and log hashes are retained in
 the sibling `steamclienttermux` repository at commit `85e55d6`. The next gate
 must profile this complete workload and target its measured dominant cost.
+
+## E125 — full-benchmark descriptor RPC profile (2026-08-22)
+
+The exact E124 runtime was repeated with its existing bounded E116 WSI and
+E117 RPC profilers enabled. The game again authored a 2.0 FPS result (0.9
+minimum and 3.8 maximum), matching the unprofiled 2.0 FPS average and rejecting
+the profiler itself as the cause. Fifty-two complete 32-present summaries
+cover 1,664 frames. Windows 23-52 cover the actual benchmark scene and average
+1,090 synchronous exchanges plus 286.1 ms blocked per present. The maximum
+window reaches 2,078 exchanges and 469.9 ms per present.
+
+Descriptor traffic is the dominant measured cost. The benchmark scene averages
+529.7 opcode-68 descriptor-set allocations and 529.1 opcode-112 update-template
+calls per present, consuming 162.4 ms. The peak window exceeds 1,000 of each
+and spends 306.6 ms in those two functions alone. Opcodes 105, 83, and 85 add
+about 112.6 ms per benchmark-scene present in shared Submit2, semaphore wait,
+and ordinary Submit2. The complete glibc acquire/present boundary is only 1.50
+ms per present and its Bionic WSI work is 0.97 ms, so WSI is not the 500-ms
+frame-time bottleneck.
+
+Android independently restricts the Termux-owned game and service to CPUs 0-3
+in `/background` and `/moderate`; the separately owned visible Activity is in
+`/top-app`. A ten-second sample measured roughly 246% game CPU, 31% service
+CPU, and 109% for `Raknet-RecvFrom` alone, with no major faults. This scheduler
+state is a meaningful secondary loss, but it cannot manufacture the measured
+hundreds of milliseconds of descriptor and synchronization waits.
+
+The next implementation gate is a bounded pointer-free shared descriptor
+journal: record void update-template payloads locally, preserve call order,
+and validate/replay them at the existing submit boundary. Allocation then
+needs a pool-epoch-aware native descriptor arena or shared request/completion
+ring because it returns handles and cannot be deferred as a no-op. Submission
+and semaphore completion move to shared transport after descriptors, followed
+by an Activity-owned foreground execution path for big-core eligibility.
+GPU profiling follows only after those measured CPU/IPC costs fall. Full
+numbers and caveats are in
+`docs/evidence/e125-full-benchmark-rpc-profile-tablet.json`; the canonical
+game/system evidence remains in the sibling `steamclienttermux` repository.

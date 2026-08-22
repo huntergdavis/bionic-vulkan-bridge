@@ -1,0 +1,77 @@
+{
+  "gate": "E125",
+  "date": "2026-08-22",
+  "source_bridge_commit": "2588c515885963ae8016dd39008da615f1b05825",
+  "run_id": "20260822T172556Z-20121",
+  "target": "Tomb Raider 2013, 2800x1752 Low, fullscreen 60 Hz",
+  "game_authored_result": {
+    "minimum_fps": 0.9,
+    "maximum_fps": 3.8,
+    "average_fps": 2.0,
+    "result_sha256": "61c55dc4dcd927071721fddde29906b72a1d9f16cb0906244dd0e0c4c2831e40",
+    "unprofiled_e124_average_fps": 2.0
+  },
+  "coverage": {
+    "rpc_windows": 52,
+    "presents_per_window": 32,
+    "profiled_presents": 1664,
+    "benchmark_scene_windows": "23-52",
+    "benchmark_scene_presents": 960
+  },
+  "benchmark_scene": {
+    "average_rpc_calls_per_present": 1090.06875,
+    "average_rpc_blocked_ms_per_present": 286.0752816135417,
+    "descriptor_allocate_calls_per_present": 529.6833333333333,
+    "descriptor_allocate_blocked_ms_per_present": 89.50097008125,
+    "descriptor_update_template_calls_per_present": 529.0697916666667,
+    "descriptor_update_template_blocked_ms_per_present": 72.92558455625,
+    "descriptor_combined_blocked_ms_per_present": 162.4265546375,
+    "descriptor_share_of_rpc_percent": 56.77756087088484,
+    "shared_submit_blocked_ms_per_present": 52.64316176875,
+    "semaphore_wait_blocked_ms_per_present": 49.74958257708334,
+    "ordinary_submit_blocked_ms_per_present": 10.236562133333333
+  },
+  "peak_window": {
+    "window": 33,
+    "rpc_calls_per_present": 2078.34375,
+    "rpc_blocked_ms_per_present": 469.86037040625,
+    "descriptor_allocate_calls_per_present": 1022.0625,
+    "descriptor_update_template_calls_per_present": 1020.875,
+    "descriptor_combined_blocked_ms_per_present": 306.57219196875
+  },
+  "wsi": {
+    "client_acquire_plus_present_ms_per_present": 1.4951606688701922,
+    "service_acquire_plus_present_ms_per_present": 0.9683379837740385,
+    "primary_bottleneck": false
+  },
+  "secondary_scheduler_defect": {
+    "game_and_service_allowed_cpus": "0-3",
+    "game_and_service_cgroups": [
+      "/background",
+      "/moderate"
+    ],
+    "activity_cgroup": "/top-app",
+    "activity_and_termux_same_uid": false,
+    "game_cpu_percent_over_10s": 246.0,
+    "service_cpu_percent_over_10s": 31.0,
+    "raknet_receive_cpu_percent_over_10s": 109.4
+  },
+  "conclusion": "The full benchmark is dominated by synchronous descriptor allocation/update traffic, followed by submit/semaphore waits. The bridge reproduces PRoot-like context-switch overhead without PRoot being present in the game Vulkan path. WSI, memory page-in, and service CPU saturation are not the primary loss.",
+  "next_order": [
+    "shared ordered descriptor-update journal",
+    "pool-epoch-aware descriptor-set allocation arena or shared request-completion ring",
+    "shared queue submission/completion ring",
+    "Activity-owned foreground execution path for big-core eligibility",
+    "GPU timestamps after CPU/IPC costs fall"
+  ],
+  "retained_logs": {
+    "direct_sha256": "1f119a2f04bc6b14ea1ff50b3188ea7322d1a1882ddbc12151f7d90fb429a82f",
+    "service_sha256": "bb80ef4768cee01b10d929300d0278cf119ba25813ce73239a36b893de493e83"
+  },
+  "canonical_full_evidence": {
+    "repository": "steamclienttermux",
+    "path": "docs/evidence/tombraider-bvb-e125-full-benchmark-profile-20260822.json",
+    "sha256": "68e95c746c89f1557b46ff5a1e7f7691f9602760980016dad9ee7216a03c977a"
+  },
+  "reuse": "The required deja queries returned no indexed implementation for this exact descriptor storm. E125 reuses E116's bounded WSI profiler, E117's bounded per-opcode histogram, and E124's completed benchmark boundary."
+}
