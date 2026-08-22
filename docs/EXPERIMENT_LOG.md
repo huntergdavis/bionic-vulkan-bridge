@@ -4394,3 +4394,26 @@ the 64-KiB slot, not from the now-160-byte upload alone. The full-screen
 screenshot remained the bridge triangle (`28b73050...e9f8`); exact cleanup
 again preserved Steam/X start ticks. E111 remains a measured size/speed win,
 but it does not claim that the live capacity boundary moved.
+
+## E112 — compact barriers and 256-KiB recording slots (2026-08-21)
+
+E111 proved that compact uploads alone were insufficient: earlier fixed-
+maximum records had already consumed the shared command buffer's 64-KiB slot.
+E112 attacks both causes together without increasing the one-time 16-MiB
+shared mapping. It repartitions that mapping from 256 x 64 KiB to 64 x
+256 KiB. Slots are leased at Begin and released after upload/reset/free, so
+idle command-buffer proxies still consume none; 64 simultaneous recordings
+remain available.
+
+The largest repeated predecessor, synchronization2 barriers, is also made
+count-sized. Its payload is now `16 + 32*M + 64*B + 80*I`; one memory, buffer,
+and image barrier falls from 2,832 to 192 bytes (93.2% smaller), while the
+16/16/16 maximum and typed Bionic validation remain unchanged. Host contracts
+validate count/length mismatches, exact 192-byte reconstruction, new slot
+alignment, and 1,500 one-region transfer records inside one 256-KiB slot.
+
+The required `deja "BVB E112 compact barrier rendering descriptor clear
+records 256 KiB command stream slots Tomb Raider ENOSPC"` query returned no
+indexed implementation. E112 reuses E075/E075a, E080, E107, and E111. Compact
+evidence is `docs/evidence/e112-command-stream-headroom-host.json`; tablet
+pixels and FPS remain pending the next exact-archive run.

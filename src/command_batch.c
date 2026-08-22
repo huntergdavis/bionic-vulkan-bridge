@@ -26,7 +26,8 @@ enum {
     BVB_VULKAN_BUFFER_BARRIER_2_RECORD_SIZE = 64,
     BVB_VULKAN_IMAGE_BARRIER_2_RECORD_SIZE = 80,
     BVB_VULKAN_IMAGE_BARRIER_2_HEADER_SIZE = 16,
-    BVB_VULKAN_IMAGE_BARRIER_2_SIZE = BVB_VULKAN_IMAGE_BARRIER_2_HEADER_SIZE +
+    BVB_VULKAN_IMAGE_BARRIER_2_MAX_SIZE =
+        BVB_VULKAN_IMAGE_BARRIER_2_HEADER_SIZE +
         BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS *
             BVB_VULKAN_MEMORY_BARRIER_2_RECORD_SIZE +
         BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS *
@@ -75,10 +76,32 @@ static uint32_t transfer_payload_size(uint32_t region_count) {
         region_count * BVB_VULKAN_TRANSFER_REGION_SIZE;
 }
 
+static uint32_t barrier_payload_size(uint32_t memory_count,
+                                     uint32_t buffer_count,
+                                     uint32_t image_count) {
+    return BVB_VULKAN_IMAGE_BARRIER_2_HEADER_SIZE +
+        memory_count * BVB_VULKAN_MEMORY_BARRIER_2_RECORD_SIZE +
+        buffer_count * BVB_VULKAN_BUFFER_BARRIER_2_RECORD_SIZE +
+        image_count * BVB_VULKAN_IMAGE_BARRIER_2_RECORD_SIZE;
+}
+
 static int payload_length_is_valid(uint16_t opcode, const uint8_t *payload,
                                    uint32_t payload_length) {
     uint32_t expected = 0U;
     if (expected_payload_size(opcode, &expected) != 0) return 0;
+    if (opcode == BVB_COMMAND_VULKAN_IMAGE_BARRIER_2) {
+        if (payload == NULL ||
+            payload_length < BVB_VULKAN_IMAGE_BARRIER_2_HEADER_SIZE)
+            return 0;
+        const uint32_t memory_count = bvb_wire_get_u32(payload + 4);
+        const uint32_t buffer_count = bvb_wire_get_u32(payload + 8);
+        const uint32_t image_count = bvb_wire_get_u32(payload + 12);
+        return memory_count <= BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS &&
+            buffer_count <= BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS &&
+            image_count <= BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS &&
+            payload_length == barrier_payload_size(
+                memory_count, buffer_count, image_count);
+    }
     if (!transfer_opcode_is_valid(opcode)) return payload_length == expected;
     if (payload == NULL || payload_length < BVB_VULKAN_TRANSFER_HEADER_SIZE)
         return 0;
@@ -547,7 +570,7 @@ int bvb_command_batch_append_vulkan_image_barrier_2(
         command->image_count > BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS) {
         return -EINVAL;
     }
-    uint8_t payload[BVB_VULKAN_IMAGE_BARRIER_2_SIZE];
+    uint8_t payload[BVB_VULKAN_IMAGE_BARRIER_2_MAX_SIZE];
     memset(payload, 0, sizeof(payload));
     bvb_wire_put_u32(payload, command->dependency_flags);
     bvb_wire_put_u32(payload + 4, command->memory_count);
@@ -564,7 +587,7 @@ int bvb_command_batch_append_vulkan_image_barrier_2(
         bvb_wire_put_u64(record + 16, barrier->destination_stage_mask);
         bvb_wire_put_u64(record + 24, barrier->destination_access_mask);
     }
-    base += BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS *
+    base += command->memory_count *
         BVB_VULKAN_MEMORY_BARRIER_2_RECORD_SIZE;
     for (uint32_t index = 0U; index < command->buffer_count; ++index) {
         const struct bvb_vulkan_buffer_barrier_2 *barrier =
@@ -584,7 +607,7 @@ int bvb_command_batch_append_vulkan_image_barrier_2(
         bvb_wire_put_u64(record + 48, barrier->offset);
         bvb_wire_put_u64(record + 56, barrier->size);
     }
-    base += BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS *
+    base += command->buffer_count *
         BVB_VULKAN_BUFFER_BARRIER_2_RECORD_SIZE;
     for (uint32_t index = 0U; index < command->image_count; ++index) {
         const struct bvb_vulkan_image_barrier_2 *barrier =
@@ -609,7 +632,9 @@ int bvb_command_batch_append_vulkan_image_barrier_2(
         encode_image_range(record + 56, &barrier->range);
     }
     return append_record(builder, BVB_COMMAND_VULKAN_IMAGE_BARRIER_2,
-                         payload, sizeof(payload));
+                         payload, barrier_payload_size(
+                             command->memory_count, command->buffer_count,
+                             command->image_count));
 }
 
 int bvb_command_batch_append_vulkan_clear_color_image_general(
@@ -1061,7 +1086,7 @@ static int expected_payload_size(uint16_t opcode, uint32_t *payload_size) {
             *payload_size = BVB_PUSH_ROTATION_SIZE;
             return 0;
         case BVB_COMMAND_VULKAN_IMAGE_BARRIER_2:
-            *payload_size = BVB_VULKAN_IMAGE_BARRIER_2_SIZE;
+            *payload_size = BVB_VULKAN_IMAGE_BARRIER_2_MAX_SIZE;
             return 0;
         case BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE_GENERAL:
             *payload_size = BVB_VULKAN_CLEAR_COLOR_IMAGE_GENERAL_SIZE;
@@ -1247,45 +1272,21 @@ static int validate_payload(uint16_t opcode, const uint8_t *payload) {
                 return -EPROTO;
             }
             size_t base = BVB_VULKAN_IMAGE_BARRIER_2_HEADER_SIZE;
-            for (uint32_t index = 0U;
-                 index < BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS; ++index) {
-                const uint8_t *barrier = payload + base +
-                    index * BVB_VULKAN_MEMORY_BARRIER_2_RECORD_SIZE;
-                if (index >= memory_count &&
-                    !bytes_are_zero(
-                        barrier, BVB_VULKAN_MEMORY_BARRIER_2_RECORD_SIZE))
-                    return -EPROTO;
-            }
-            base += BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS *
+            base += memory_count *
                 BVB_VULKAN_MEMORY_BARRIER_2_RECORD_SIZE;
-            for (uint32_t index = 0U;
-                 index < BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS; ++index) {
+            for (uint32_t index = 0U; index < buffer_count; ++index) {
                 const uint8_t *barrier = payload + base +
                     index * BVB_VULKAN_BUFFER_BARRIER_2_RECORD_SIZE;
-                if (index >= buffer_count) {
-                    if (!bytes_are_zero(
-                            barrier,
-                            BVB_VULKAN_BUFFER_BARRIER_2_RECORD_SIZE))
-                        return -EPROTO;
-                    continue;
-                }
                 if (bvb_handle_expect(bvb_wire_get_u64(barrier + 40),
                                       BVB_OBJECT_BUFFER) != 0 ||
                     bvb_wire_get_u64(barrier + 56) == 0U)
                     return -EPROTO;
             }
-            base += BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS *
+            base += buffer_count *
                 BVB_VULKAN_BUFFER_BARRIER_2_RECORD_SIZE;
-            for (uint32_t index = 0U;
-                 index < BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS; ++index) {
+            for (uint32_t index = 0U; index < image_count; ++index) {
                 const uint8_t *barrier = payload + base +
                     index * BVB_VULKAN_IMAGE_BARRIER_2_RECORD_SIZE;
-                if (index >= image_count) {
-                    if (!bytes_are_zero(
-                            barrier, BVB_VULKAN_IMAGE_BARRIER_2_RECORD_SIZE))
-                        return -EPROTO;
-                    continue;
-                }
                 if (bvb_handle_expect(bvb_wire_get_u64(barrier + 48),
                                       BVB_OBJECT_IMAGE) != 0 ||
                     validate_image_range_wire(barrier + 56) != 0) {
@@ -2107,7 +2108,8 @@ int bvb_command_decode_vulkan_image_barrier_2(
     struct bvb_vulkan_image_barrier_2_command *command) {
     if (record == NULL || command == NULL ||
         record->opcode != BVB_COMMAND_VULKAN_IMAGE_BARRIER_2 ||
-        record->payload_length != BVB_VULKAN_IMAGE_BARRIER_2_SIZE) {
+        !payload_length_is_valid(record->opcode, record->payload,
+                                 record->payload_length)) {
         return -EINVAL;
     }
     memset(command, 0, sizeof(*command));
@@ -2126,7 +2128,7 @@ int bvb_command_decode_vulkan_image_barrier_2(
             .destination_access_mask = bvb_wire_get_u64(input + 24),
         };
     }
-    base += BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS *
+    base += command->memory_count *
         BVB_VULKAN_MEMORY_BARRIER_2_RECORD_SIZE;
     for (uint32_t index = 0U; index < command->buffer_count; ++index) {
         const uint8_t *input = record->payload + base +
@@ -2143,7 +2145,7 @@ int bvb_command_decode_vulkan_image_barrier_2(
             .size = bvb_wire_get_u64(input + 56),
         };
     }
-    base += BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS *
+    base += command->buffer_count *
         BVB_VULKAN_BUFFER_BARRIER_2_RECORD_SIZE;
     for (uint32_t index = 0U; index < command->image_count; ++index) {
         const uint8_t *input = record->payload + base +

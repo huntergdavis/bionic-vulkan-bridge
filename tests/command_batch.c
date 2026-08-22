@@ -729,6 +729,36 @@ static int test_compact_transfer_capacity(void) {
     return 0;
 }
 
+static int test_expanded_stream_slot_capacity(void) {
+    const size_t capacity = 256U * 1024U;
+    uint8_t *bytes = malloc(capacity);
+    CHECK(bytes != NULL);
+    const uint64_t command_buffer =
+        bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 39U);
+    struct bvb_command_batch_builder builder;
+    CHECK(bvb_command_batch_begin(&builder, bytes, capacity,
+                                  command_buffer, 1U) == 0);
+    const struct bvb_vulkan_transfer_command command = {
+        .source_id = bvb_handle_id(BVB_OBJECT_BUFFER, 40U),
+        .destination_id = bvb_handle_id(BVB_OBJECT_BUFFER, 41U),
+        .region_count = 1U,
+        .regions = {{.size = 256U}},
+    };
+    for (uint32_t index = 0U; index < 1500U; ++index)
+        CHECK(bvb_command_batch_append_vulkan_transfer(
+                  &builder, BVB_COMMAND_VULKAN_COPY_BUFFER_2,
+                  &command) == 0);
+    size_t length = 0U;
+    CHECK(bvb_command_batch_finish(&builder, &length) == 0);
+    CHECK(length == BVB_COMMAND_BATCH_HEADER_SIZE +
+                        1500U * (BVB_COMMAND_RECORD_HEADER_SIZE + 160U));
+    struct bvb_command_batch_info info;
+    CHECK(bvb_command_batch_validate(bytes, length, &info) == 0);
+    CHECK(info.command_count == 1500U);
+    free(bytes);
+    return 0;
+}
+
 static int test_vulkan_command_stream(void) {
     uint8_t bytes[8192];
     const uint64_t command_buffer =
@@ -883,6 +913,7 @@ static int test_vulkan_command_stream(void) {
     CHECK(bvb_command_batch_next(&iterator, &record) == 0);
     const size_t rich_barrier_payload_offset =
         (size_t)(record.payload - bytes);
+    CHECK(record.payload_length == 192U);
     struct bvb_vulkan_image_barrier_2_command rich_barrier;
     CHECK(bvb_command_decode_vulkan_image_barrier_2(&record, &rich_barrier) ==
           0);
@@ -952,19 +983,13 @@ static int test_vulkan_command_stream(void) {
                      UINT32_C(0x10));
     CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
     memcpy(corrupted, bytes, length);
-    bvb_wire_put_u64(corrupted + rich_barrier_payload_offset + 16U + 32U,
-                     1U);
+    bvb_wire_put_u32(corrupted + rich_barrier_payload_offset + 4U, 2U);
     CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
     memcpy(corrupted, bytes, length);
-    bvb_wire_put_u64(corrupted + rich_barrier_payload_offset + 16U +
-                         16U * 32U + 64U,
-                     1U);
+    bvb_wire_put_u32(corrupted + rich_barrier_payload_offset + 8U, 2U);
     CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
     memcpy(corrupted, bytes, length);
-    /* The second fixed barrier slot must remain an all-zero inactive slot. */
-    bvb_wire_put_u64(corrupted + rich_barrier_payload_offset + 16U +
-                         16U * 32U + 16U * 64U + 80U,
-                     1U);
+    bvb_wire_put_u32(corrupted + rich_barrier_payload_offset + 12U, 2U);
     CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
     memcpy(corrupted, bytes, length);
     /* The third fixed clear range must remain an all-zero inactive slot. */
@@ -1054,6 +1079,7 @@ int main(void) {
     CHECK(test_transfer_batch() == 0);
     CHECK(test_vulkan_transfer_family() == 0);
     CHECK(test_compact_transfer_capacity() == 0);
+    CHECK(test_expanded_stream_slot_capacity() == 0);
     CHECK(test_vulkan_command_stream() == 0);
     puts("PASS: proxy handles and triangle command batch");
     return 0;

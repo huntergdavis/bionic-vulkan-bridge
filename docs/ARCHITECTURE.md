@@ -416,6 +416,16 @@ the exact length from the canonical count before decoding. This preserves the
 same Bionic ownership/reconstruction boundary and zero-RPC shared recording,
 but prevents valid upload-heavy command buffers from exhausting their 64-KiB
 recording slot on unused region entries.
+
+E112 keeps the one-time shared command region at 16 MiB but repartitions it
+from 256 x 64-KiB slots to 64 x 256-KiB slots. Slots are still leased only
+while a command buffer is actively recording, so idle Vulkan command-buffer
+proxies consume no slot. Sixty-four simultaneous recordings remain available,
+while each upload-heavy recording has four times the headroom. E112 also
+compacts synchronization2 barriers to `16 + 32*M + 64*B + 80*I` bytes. A
+common one-memory/one-buffer/one-image record falls from 2,832 to 192 bytes;
+the existing counts, typed IDs, Bionic validation, and maximum bounds remain
+unchanged.
 One fixed 600-byte, pointer-free record carries up to eight color attachments,
 optional depth and stencil attachments, resolve image views, clear-value bits,
 render flags/area/multiview, and terminal attachment-feedback-loop metadata.

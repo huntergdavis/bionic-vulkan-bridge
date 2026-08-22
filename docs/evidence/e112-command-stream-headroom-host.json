@@ -1,0 +1,49 @@
+{
+  "gate": "E112",
+  "date": "2026-08-21",
+  "source_base_commit": "63fb8ecdafd61ca068423911959e23a717abcfbb",
+  "trigger": {
+    "run_id": "20260822T064041Z-9299",
+    "e111_compact_transfer": "active on tablet",
+    "rejection_entry": "vkCmdCopyBufferToImage2",
+    "rejection_result": -28,
+    "diagnosis": "earlier fixed-maximum records exhausted a 64 KiB recording slot",
+    "visible_game_frame": false
+  },
+  "implementation": {
+    "shared_region_total_bytes": 16777216,
+    "slot_count_before": 256,
+    "slot_bytes_before": 65536,
+    "slot_count_after": 64,
+    "slot_bytes_after": 262144,
+    "simultaneous_recording_capacity": 64,
+    "live_unrecorded_command_buffers_consume_slots": false,
+    "barrier_record_formula": "16 + 32 * memory_count + 64 * buffer_count + 80 * image_count",
+    "one_each_barrier_before_bytes": 2832,
+    "one_each_barrier_after_bytes": 192,
+    "one_each_barrier_reduction_percent": 93.220339,
+    "maximum_barrier_bytes": 2832,
+    "pointer_free": true,
+    "strict_and_shared_wire_identical": true
+  },
+  "validation": {
+    "barrier_count_length_consistency": "passed",
+    "one_each_barrier_payload_exactly_192_bytes": "passed",
+    "fifteen_hundred_one_region_records_in_256k": "passed",
+    "protocol_offset_alignment_tracks_new_slot_size": "passed",
+    "strict_recording_rpcs": 43,
+    "shared_recording_rpcs": 0,
+    "dispatch_policy": {
+      "executable": 151,
+      "required_unimplemented": 289,
+      "probed_null": 302
+    },
+    "host_suite": "72/72 passed",
+    "tablet_runtime": {
+      "status": "pending exact-archive deployment",
+      "visible_game_frame": false,
+      "benchmark_or_fps": false
+    }
+  },
+  "reuse": "The required deja query found no indexed E112 implementation. E112 reuses E075/E075a's fixed shared-region lifecycle, E080 typed ownership, E107's bounded synchronization2 family, E111 compact variable-length validation, and E111's live residual-capacity result."
+}
