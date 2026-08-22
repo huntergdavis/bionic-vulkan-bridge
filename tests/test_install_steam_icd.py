@@ -59,7 +59,14 @@ def main() -> int:
             b"#!/bin/sh\n"
             b"case \"$1\" in\n"
             b"  -h) echo 'Machine: AArch64';;\n"
-            b"  -l) case \"$2\" in *bvb-bridge-service) echo '/system/bin/linker64';; esac;;\n"
+            b"  -l) case \"$2\" in\n"
+            b"    *bvb-bridge-service)\n"
+            b"      echo '/system/bin/linker64'\n"
+            b"      # Keep writing after the match. Under pipefail, grep -q can close\n"
+            b"      # this pipe early and falsely reject a valid Bionic executable.\n"
+            b"      awk 'BEGIN { for (i = 0; i < 8192; i++) print \"program header padding\" }'\n"
+            b"      ;;\n"
+            b"  esac;;\n"
             b"esac\n",
         )
         env = os.environ.copy()

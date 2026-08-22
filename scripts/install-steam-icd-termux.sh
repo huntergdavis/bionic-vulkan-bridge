@@ -336,11 +336,11 @@ fi
     fail "glibc ICD is unavailable or unsafe: $source_library"
 [[ -x $source_service && ! -L $source_service ]] ||
     fail "Bionic service is unavailable or unsafe: $source_service"
-readelf -h "$source_library" | grep -Fq 'AArch64' ||
+readelf -h "$source_library" | grep -F 'AArch64' >/dev/null ||
     fail 'glibc ICD is not AArch64'
-readelf -l "$source_library" | grep -Fq '/lib/ld-linux-aarch64.so.1' &&
+readelf -l "$source_library" | grep -F '/lib/ld-linux-aarch64.so.1' >/dev/null &&
     fail 'glibc ICD unexpectedly has a program interpreter'
-readelf -l "$source_service" | grep -Fq '/system/bin/linker64' ||
+readelf -l "$source_service" | grep -F '/system/bin/linker64' >/dev/null ||
     fail 'bridge service is not Android Bionic'
 
 current_count=0
