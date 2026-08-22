@@ -5237,3 +5237,26 @@ successes, published extras, and capacity fallbacks. Focused contracts passed
 pending, so this entry makes no game, hit-rate, ANR, or FPS claim. Exact
 boundaries are retained in
 `docs/evidence/e132-live-descriptor-signature-batches-host.json`.
+
+### E132 tablet result: cold-signature over-prefetch exhausted the pool
+
+The exact E132 pair passed 92/92 Termux contracts and the glibc ICD self-test,
+then failed before a game swapchain. Screenshot inspection found the unchanged
+Activity triangle and a tiny hidden X11 **Tomb Raider Error** window. The
+diagnostic rerun recorded an incidental Zink `vkCreateDevice` rejection, then
+the fatal Tomb Raider/DXVK boundary: `vkAllocateDescriptorSets` returned
+`VK_ERROR_OUT_OF_POOL_MEMORY` after the normal retry.
+
+This rejects E132's eager maximum batch for cold signatures. Every unseen
+pool/layout shape consumed up to sixteen real sets even if it was never reused;
+those unused sets remained allocated until reset and exhausted finite native
+descriptor capacity. No game frame, benchmark result, hit-rate, or FPS claim
+is made. Steam and X11 retained their start ticks and all owned game/bridge
+children were removed after the bounded run.
+
+E133 must start at two repetitions—one request plus one speculative extra—and
+grow only after the client drains that bank and a later miss proves the exact
+signature is hot. Reset must invalidate the banks and restore cold state, not
+prefill them. Exact identities and the visual/fatal boundary are retained in
+`docs/evidence/e132-tombraider-pool-exhaustion-tablet.json`; canonical logs and
+screenshots remain in sibling `steamclienttermux` commit `017045b`.

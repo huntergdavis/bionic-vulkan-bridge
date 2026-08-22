@@ -1,0 +1,42 @@
+{
+  "gate": "E132",
+  "date": "2026-08-22",
+  "result": "failed_runtime_gate",
+  "source_commit": "03260cd9a14ad93f3f04e67d9d33fa4cc9f41cd5",
+  "target": "Tomb Raider (2013), 2800x1752 Low, 60 Hz, Samsung Galaxy Tab S8+ SM-X808U",
+  "validation": {
+    "host_contracts": "94/94 passed",
+    "termux_contracts": "92/92 passed",
+    "glibc_icd_selftest": "passed"
+  },
+  "installed_artifacts": {
+    "glibc_icd_sha256": "d12e38069002d3b342ed38d2f6fcdeb34d60f6a693830502509f00707f876bc7",
+    "bionic_service_sha256": "7f27cad35ef2898f1f6c195a2d719592c03873a7b7e7a178624b59565219d77e"
+  },
+  "runs": {
+    "profile": "20260822T231953Z-29881",
+    "diagnostic": "20260822T233507Z-18084"
+  },
+  "fatal_boundary": {
+    "entry": "vkAllocateDescriptorSets",
+    "result": -1000069000,
+    "symbolic_result": "VK_ERROR_OUT_OF_POOL_MEMORY",
+    "reason": "negative_vkresult_after_retry",
+    "game_swapchain_created": false,
+    "game_frame_presented": false,
+    "fps_claim": false
+  },
+  "visual_boundary": {
+    "activity_triangle_unchanged": true,
+    "hidden_x11_window": "Tomb Raider Error",
+    "x11_screenshot_sha256": "6646b273faa87b84bcfc5160ab5893570545da278d27ecb5b88df3f5eb58eecf"
+  },
+  "diagnosis": "Allocating sixteen repetitions for every previously unseen signature consumed finite real pool descriptors on cold signatures. The later exact retry could not recover the unused speculative capacity.",
+  "next_gate": "E133 starts each signature at two repetitions, doubles only after a fully drained bank proves demand, removes reset-time prefill, and preserves exact fallback and reset/destroy invalidation.",
+  "post_run": {
+    "owned_children_remaining": 0,
+    "steam_and_x11_start_ticks_unchanged": true,
+    "maximum_thermal_zone_c_after_teardown": 39.0
+  },
+  "reuse": "The required E132 and E133 deja queries returned no indexed implementation. Runtime validation reused E131's paired-ADB Activity handoff, ANR-Wait watchdog, screenshot inspection, first-rejection diagnostic, and protected-process checks."
+}
