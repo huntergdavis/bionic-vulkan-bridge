@@ -37,8 +37,21 @@
     },
     "host_suite": "70/70 passed",
     "tablet_runtime": {
-      "status": "pending exact-archive deployment",
+      "status": "passed_to_texture_upload_boundary",
+      "run_id": "20260822T062443Z-32616",
+      "tablet_suite": "68/68 passed",
+      "glibc_icd_selftest": "passed",
+      "installed_icd_sha256": "1e3a6f203bd021e979e7e1700e7ccd251ad75f957e9e69cbe74cccdc7bb2752a",
+      "installed_service_sha256": "9e86b8d7a3092eddc2ca7f1df0a07fa679d0b1623d65eb2277da18001b79448d",
+      "screenshot_sha256": "28b7305067678da2bc88ffcb75bf49b49141cf49c27c59d79df332dcee89e9f8",
+      "activity_focused": true,
+      "activity_fullscreen": true,
       "visible_game_frame": false,
+      "next_rejection_entry": "vkCmdCopyBufferToImage2",
+      "next_rejection_reason": "ownership_or_transfer_append_rejected",
+      "next_rejection_command_sequence": 18,
+      "rollback_snapshot": "install-pre-5JVPKVue",
+      "steam_and_x_preserved": true,
       "benchmark_or_fps": false
     }
   },

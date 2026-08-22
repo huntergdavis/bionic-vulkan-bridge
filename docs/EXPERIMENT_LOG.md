@@ -4344,3 +4344,18 @@ vkCmdClearAttachments image clear family E110 DXVK"` query returned no
 indexed implementation. Reuse comes from E075/E075a, E076, E080, E101, E105,
 and E109. Visibility and FPS remain unclaimed until exact-archive tablet
 deployment, bounded Tomb Raider execution, and automatic screenshot review.
+
+The exact E110 archive then passed 68/68 Termux contracts and the optimized
+glibc ICD self-test. Transactional install retained rollback
+`install-pre-5JVPKVue` and installed ICD/service SHA-256 identities
+`1e3a6f20...2752a` and `9e86b8d7...448d`. Bounded run
+`20260822T062443Z-32616` passed both clear commands and reached texture upload:
+the next command poison is `vkCmdCopyBufferToImage2` at sequence 18 with
+`ownership_or_transfer_append_rejected`. This is an implemented entry whose
+current bounded transfer shape is too narrow, not a missing resolver.
+
+Automatic screenshot SHA-256 `28b73050...e9f8` and direct visual inspection
+prove a true 2800x1752 full-screen Activity, but pixels remain the bridge
+gradient triangle rather than Tomb Raider. Cleanup removed only exact run
+children and the Activity, while preserving Steam PID 14565/start 121864440
+and X11 PID 13643/start 121863492. No game frame or FPS is claimed.
