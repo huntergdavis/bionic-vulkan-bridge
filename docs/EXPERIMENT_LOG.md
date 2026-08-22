@@ -4513,3 +4513,23 @@ failure (`VK_ERROR_INITIALIZATION_FAILED`), so the next game command remains
 unknown rather than guessed. The run was stopped through its exact probe PID;
 cleanup removed only run-owned children and preserved Steam PID 14565/start
 121864440 and X11 PID 13643/start 121863492.
+
+## E115 — opaque Android game surface (2026-08-22)
+
+E114's first real Tomb Raider screenshot showed a distinctive compositor
+failure: alternating game rows exposed the live Android Settings and Termux
+windows underneath. The Activity explicitly requested an RGBA NativeWindow,
+so SurfaceFlinger was allowed to treat the Windows game's arbitrary
+backbuffer alpha as desktop-compositor alpha.
+
+E115 changes only that Android layer contract to `WINDOW_FORMAT_RGBX_8888`.
+The storage remains four bytes per pixel and the retained Activity Vulkan
+copy/blit path is unchanged, but SurfaceFlinger must treat the X channel as
+opaque. A bounded runtime marker records the actual NativeWindow format plus
+the surface's supported and selected Vulkan composite-alpha flags. The
+required `deja "BVB E114 Tomb Raider horizontal scanline corruption
+transparent alpha Android background Activity frame consumer blit present"`
+query returned no indexed implementation. E115 reuses E057 and E114; exact-
+APK before/after screenshot proof remains pending. The complete host suite
+passes 75/75, including the source contract that rejects an RGBA Activity
+window and preserves opaque-first Vulkan composite-alpha selection.

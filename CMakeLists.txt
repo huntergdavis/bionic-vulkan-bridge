@@ -1278,4 +1278,12 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/global_dispatch.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/config/e069-init-image-commands-dispatch.txt"
   )
+  add_test(
+    NAME e115-opaque-android-game-surface-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e115_opaque_surface_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e115-opaque-android-game-surface-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/android/visible-host/native_main.c"
+  )
 endif()

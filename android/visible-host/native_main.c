@@ -3885,6 +3885,11 @@ static bool create_renderer(ANativeWindow *window) {
         BVB_LOGE("E008_FAIL composite_alpha");
         return false;
     }
+    BVB_LOGI("E115_SURFACE_OPACITY window_format=%d supported_alpha=0x%x "
+             "selected_alpha=0x%x",
+             ANativeWindow_getFormat(window),
+             (unsigned int)capabilities.supportedCompositeAlpha,
+             (unsigned int)composite_alpha);
 
     uint32_t format_count = 0;
     result = vkGetPhysicalDeviceSurfaceFormatsKHR(
@@ -4786,7 +4791,13 @@ ANativeActivity_onCreate(ANativeActivity *activity, void *saved_state,
     activity->callbacks->onNativeWindowRedrawNeeded = on_window_redraw_needed;
     activity->callbacks->onNativeWindowDestroyed = on_window_destroyed;
     activity->callbacks->onWindowFocusChanged = on_window_focus_changed;
-    ANativeActivity_setWindowFormat(activity, WINDOW_FORMAT_RGBA_8888);
+    /*
+     * A D3D backbuffer's alpha channel is not desktop-compositor content.
+     * Advertising the NativeActivity layer as RGBA lets SurfaceFlinger blend
+     * arbitrary game alpha over the Android desktop.  RGBX retains the same
+     * four-byte Vulkan-compatible storage while making the layer opaque.
+     */
+    ANativeActivity_setWindowFormat(activity, WINDOW_FORMAT_RGBX_8888);
     ANativeActivity_setWindowFlags(
         activity, AWINDOW_FLAG_FULLSCREEN | AWINDOW_FLAG_KEEP_SCREEN_ON, 0);
     apply_immersive_mode(activity);
