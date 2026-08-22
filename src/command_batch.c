@@ -6,7 +6,11 @@
 #include <string.h>
 
 enum {
-    BVB_BEGIN_RENDERING_SIZE = 48,
+    BVB_RENDERING_ATTACHMENT_SIZE = 56,
+    BVB_BEGIN_RENDERING_HEADER_SIZE = 40,
+    BVB_BEGIN_RENDERING_SIZE = BVB_BEGIN_RENDERING_HEADER_SIZE +
+        (BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS + 2) *
+            BVB_RENDERING_ATTACHMENT_SIZE,
     BVB_BIND_GRAPHICS_PIPELINE_SIZE = 16,
     BVB_PUSH_ROTATION_SIZE = 16,
     BVB_SET_VIEWPORT_SIZE = 24,
@@ -64,6 +68,58 @@ static int image_range_is_valid(
     const struct bvb_vulkan_image_subresource_range *range) {
     return range != NULL && range->aspect_mask != 0U &&
            range->level_count != 0U && range->layer_count != 0U;
+}
+
+static int rendering_attachment_is_valid(
+    const struct bvb_vulkan_rendering_attachment *attachment,
+    bool required) {
+    if (attachment == NULL || attachment->feedback_loop_enable > 1U)
+        return 0;
+    if (attachment->image_view_id == 0U)
+        return !required && attachment->resolve_image_view_id == 0U &&
+               attachment->resolve_mode == 0U;
+    if (bvb_handle_expect(attachment->image_view_id,
+                          BVB_OBJECT_IMAGE_VIEW) != 0 ||
+        attachment->image_layout == 0U) return 0;
+    if (attachment->resolve_mode == 0U)
+        return attachment->resolve_image_view_id == 0U;
+    return bvb_handle_expect(attachment->resolve_image_view_id,
+                             BVB_OBJECT_IMAGE_VIEW) == 0 &&
+           attachment->resolve_image_layout != 0U;
+}
+
+static void encode_rendering_attachment(
+    uint8_t output[BVB_RENDERING_ATTACHMENT_SIZE],
+    const struct bvb_vulkan_rendering_attachment *attachment) {
+    bvb_wire_put_u64(output, attachment->image_view_id);
+    bvb_wire_put_u64(output + 8, attachment->resolve_image_view_id);
+    bvb_wire_put_u32(output + 16, attachment->image_layout);
+    bvb_wire_put_u32(output + 20, attachment->resolve_mode);
+    bvb_wire_put_u32(output + 24, attachment->resolve_image_layout);
+    bvb_wire_put_u32(output + 28, attachment->load_op);
+    bvb_wire_put_u32(output + 32, attachment->store_op);
+    bvb_wire_put_u32(output + 36, attachment->feedback_loop_enable);
+    for (uint32_t index = 0U; index < 4U; ++index)
+        bvb_wire_put_u32(output + 40U + index * sizeof(uint32_t),
+                         attachment->clear_words[index]);
+}
+
+static struct bvb_vulkan_rendering_attachment decode_rendering_attachment(
+    const uint8_t input[BVB_RENDERING_ATTACHMENT_SIZE]) {
+    struct bvb_vulkan_rendering_attachment attachment = {
+        .image_view_id = bvb_wire_get_u64(input),
+        .resolve_image_view_id = bvb_wire_get_u64(input + 8),
+        .image_layout = bvb_wire_get_u32(input + 16),
+        .resolve_mode = bvb_wire_get_u32(input + 20),
+        .resolve_image_layout = bvb_wire_get_u32(input + 24),
+        .load_op = bvb_wire_get_u32(input + 28),
+        .store_op = bvb_wire_get_u32(input + 32),
+        .feedback_loop_enable = bvb_wire_get_u32(input + 36),
+    };
+    for (uint32_t index = 0U; index < 4U; ++index)
+        attachment.clear_words[index] =
+            bvb_wire_get_u32(input + 40U + index * sizeof(uint32_t));
+    return attachment;
 }
 
 static void encode_image_range(
@@ -196,24 +252,54 @@ int bvb_command_batch_append_begin_rendering(
     const struct bvb_begin_rendering_command *command) {
     if (command == NULL || command->width == 0U || command->height == 0U ||
         command->layer_count == 0U ||
-        bvb_handle_expect(command->color_image_view_id,
-                          BVB_OBJECT_IMAGE_VIEW) != 0) {
+        command->color_attachment_count >
+            BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS ||
+        command->has_depth_attachment > 1U ||
+        command->has_stencil_attachment > 1U ||
+        (command->color_attachment_count == 0U &&
+         command->has_depth_attachment == 0U &&
+         command->has_stencil_attachment == 0U)) {
         return -EINVAL;
     }
     uint8_t payload[BVB_BEGIN_RENDERING_SIZE];
-    bvb_wire_put_u64(payload, command->color_image_view_id);
-    bvb_wire_put_u32(payload + 8, command->width);
-    bvb_wire_put_u32(payload + 12, command->height);
-    bvb_wire_put_u32(payload + 16, command->image_layout);
-    bvb_wire_put_u32(payload + 20, command->load_op);
-    bvb_wire_put_u32(payload + 24, command->store_op);
-    bvb_wire_put_u32(payload + 28, command->layer_count);
-    for (size_t index = 0; index < 4U; ++index) {
-        put_float(payload + 32U + index * 4U, command->clear_color[index]);
-        if (!float_bits_are_finite(payload + 32U + index * 4U)) {
-            return -EINVAL;
-        }
+    memset(payload, 0, sizeof(payload));
+    bvb_wire_put_u32(payload, command->flags);
+    bvb_wire_put_u32(payload + 4, (uint32_t)command->render_offset_x);
+    bvb_wire_put_u32(payload + 8, (uint32_t)command->render_offset_y);
+    bvb_wire_put_u32(payload + 12, command->width);
+    bvb_wire_put_u32(payload + 16, command->height);
+    bvb_wire_put_u32(payload + 20, command->layer_count);
+    bvb_wire_put_u32(payload + 24, command->view_mask);
+    bvb_wire_put_u32(payload + 28, command->color_attachment_count);
+    bvb_wire_put_u32(payload + 32, command->has_depth_attachment);
+    bvb_wire_put_u32(payload + 36, command->has_stencil_attachment);
+    for (uint32_t index = 0U; index < command->color_attachment_count;
+         ++index) {
+        if (!rendering_attachment_is_valid(
+                &command->color_attachments[index], false)) return -EINVAL;
+        encode_rendering_attachment(
+            payload + BVB_BEGIN_RENDERING_HEADER_SIZE +
+                index * BVB_RENDERING_ATTACHMENT_SIZE,
+            &command->color_attachments[index]);
     }
+    if (command->has_depth_attachment != 0U &&
+        !rendering_attachment_is_valid(&command->depth_attachment, true))
+        return -EINVAL;
+    if (command->has_stencil_attachment != 0U &&
+        !rendering_attachment_is_valid(&command->stencil_attachment, true))
+        return -EINVAL;
+    if (command->has_depth_attachment != 0U)
+        encode_rendering_attachment(
+            payload + BVB_BEGIN_RENDERING_HEADER_SIZE +
+                BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS *
+                    BVB_RENDERING_ATTACHMENT_SIZE,
+            &command->depth_attachment);
+    if (command->has_stencil_attachment != 0U)
+        encode_rendering_attachment(
+            payload + BVB_BEGIN_RENDERING_HEADER_SIZE +
+                (BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS + 1U) *
+                    BVB_RENDERING_ATTACHMENT_SIZE,
+            &command->stencil_attachment);
     return append_record(builder, BVB_COMMAND_BEGIN_RENDERING, payload,
                          sizeof(payload));
 }
@@ -718,19 +804,53 @@ static int expected_payload_size(uint16_t opcode, uint32_t *payload_size) {
 static int validate_payload(uint16_t opcode, const uint8_t *payload) {
     switch (opcode) {
         case BVB_COMMAND_BEGIN_RENDERING:
-            if (bvb_handle_expect(bvb_wire_get_u64(payload),
-                                  BVB_OBJECT_IMAGE_VIEW) != 0 ||
-                bvb_wire_get_u32(payload + 8) == 0U ||
-                bvb_wire_get_u32(payload + 12) == 0U ||
-                bvb_wire_get_u32(payload + 28) == 0U) {
+        {
+            const uint32_t color_count = bvb_wire_get_u32(payload + 28);
+            const uint32_t has_depth = bvb_wire_get_u32(payload + 32);
+            const uint32_t has_stencil = bvb_wire_get_u32(payload + 36);
+            if (bvb_wire_get_u32(payload + 12) == 0U ||
+                bvb_wire_get_u32(payload + 16) == 0U ||
+                bvb_wire_get_u32(payload + 20) == 0U ||
+                color_count > BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS ||
+                has_depth > 1U || has_stencil > 1U ||
+                (color_count == 0U && has_depth == 0U && has_stencil == 0U))
                 return -EPROTO;
-            }
-            for (size_t index = 0; index < 4U; ++index) {
-                if (!float_bits_are_finite(payload + 32U + index * 4U)) {
-                    return -EPROTO;
+            for (uint32_t index = 0U;
+                 index < BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS; ++index) {
+                const uint8_t *wire = payload +
+                    BVB_BEGIN_RENDERING_HEADER_SIZE +
+                    index * BVB_RENDERING_ATTACHMENT_SIZE;
+                if (index >= color_count) {
+                    if (!bytes_are_zero(wire, BVB_RENDERING_ATTACHMENT_SIZE))
+                        return -EPROTO;
+                    continue;
                 }
+                const struct bvb_vulkan_rendering_attachment attachment =
+                    decode_rendering_attachment(wire);
+                if (!rendering_attachment_is_valid(&attachment, false))
+                    return -EPROTO;
             }
+            const uint8_t *depth = payload + BVB_BEGIN_RENDERING_HEADER_SIZE +
+                BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS *
+                    BVB_RENDERING_ATTACHMENT_SIZE;
+            const uint8_t *stencil = depth + BVB_RENDERING_ATTACHMENT_SIZE;
+            if (has_depth != 0U) {
+                const struct bvb_vulkan_rendering_attachment attachment =
+                    decode_rendering_attachment(depth);
+                if (!rendering_attachment_is_valid(&attachment, true))
+                    return -EPROTO;
+            } else if (!bytes_are_zero(depth, BVB_RENDERING_ATTACHMENT_SIZE))
+                return -EPROTO;
+            if (has_stencil != 0U) {
+                const struct bvb_vulkan_rendering_attachment attachment =
+                    decode_rendering_attachment(stencil);
+                if (!rendering_attachment_is_valid(&attachment, true))
+                    return -EPROTO;
+            } else if (!bytes_are_zero(stencil,
+                                       BVB_RENDERING_ATTACHMENT_SIZE))
+                return -EPROTO;
             return 0;
+        }
         case BVB_COMMAND_BIND_GRAPHICS_PIPELINE:
             if (bvb_handle_expect(bvb_wire_get_u64(payload),
                                   BVB_OBJECT_PIPELINE) != 0 ||
@@ -1204,19 +1324,34 @@ int bvb_command_decode_begin_rendering(
         record->payload_length != BVB_BEGIN_RENDERING_SIZE) {
         return -EINVAL;
     }
+    memset(command, 0, sizeof(*command));
     *command = (struct bvb_begin_rendering_command){
-        .color_image_view_id = bvb_wire_get_u64(record->payload),
-        .width = bvb_wire_get_u32(record->payload + 8),
-        .height = bvb_wire_get_u32(record->payload + 12),
-        .image_layout = bvb_wire_get_u32(record->payload + 16),
-        .load_op = bvb_wire_get_u32(record->payload + 20),
-        .store_op = bvb_wire_get_u32(record->payload + 24),
-        .layer_count = bvb_wire_get_u32(record->payload + 28),
+        .flags = bvb_wire_get_u32(record->payload),
+        .render_offset_x = (int32_t)bvb_wire_get_u32(record->payload + 4),
+        .render_offset_y = (int32_t)bvb_wire_get_u32(record->payload + 8),
+        .width = bvb_wire_get_u32(record->payload + 12),
+        .height = bvb_wire_get_u32(record->payload + 16),
+        .layer_count = bvb_wire_get_u32(record->payload + 20),
+        .view_mask = bvb_wire_get_u32(record->payload + 24),
+        .color_attachment_count = bvb_wire_get_u32(record->payload + 28),
+        .has_depth_attachment = bvb_wire_get_u32(record->payload + 32),
+        .has_stencil_attachment = bvb_wire_get_u32(record->payload + 36),
     };
-    for (size_t index = 0; index < 4U; ++index) {
-        command->clear_color[index] =
-            get_float(record->payload + 32U + index * 4U);
-    }
+    for (uint32_t index = 0U; index < command->color_attachment_count;
+         ++index)
+        command->color_attachments[index] = decode_rendering_attachment(
+            record->payload + BVB_BEGIN_RENDERING_HEADER_SIZE +
+            index * BVB_RENDERING_ATTACHMENT_SIZE);
+    if (command->has_depth_attachment != 0U)
+        command->depth_attachment = decode_rendering_attachment(
+            record->payload + BVB_BEGIN_RENDERING_HEADER_SIZE +
+            BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS *
+                BVB_RENDERING_ATTACHMENT_SIZE);
+    if (command->has_stencil_attachment != 0U)
+        command->stencil_attachment = decode_rendering_attachment(
+            record->payload + BVB_BEGIN_RENDERING_HEADER_SIZE +
+            (BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS + 1U) *
+                BVB_RENDERING_ATTACHMENT_SIZE);
     return 0;
 }
 

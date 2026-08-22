@@ -43,17 +43,36 @@ enum {
     BVB_COMMAND_VULKAN_MAX_DYNAMIC_OFFSETS = 32,
     BVB_COMMAND_VULKAN_MAX_PUSH_CONSTANT_BYTES = 256,
     BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS = 16,
+    BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS = 8,
+};
+
+struct bvb_vulkan_rendering_attachment {
+    uint64_t image_view_id;
+    uint64_t resolve_image_view_id;
+    uint32_t image_layout;
+    uint32_t resolve_mode;
+    uint32_t resolve_image_layout;
+    uint32_t load_op;
+    uint32_t store_op;
+    uint32_t feedback_loop_enable;
+    uint32_t clear_words[4];
 };
 
 struct bvb_begin_rendering_command {
-    uint64_t color_image_view_id;
+    uint32_t flags;
+    int32_t render_offset_x;
+    int32_t render_offset_y;
     uint32_t width;
     uint32_t height;
-    uint32_t image_layout;
-    uint32_t load_op;
-    uint32_t store_op;
     uint32_t layer_count;
-    float clear_color[4];
+    uint32_t view_mask;
+    uint32_t color_attachment_count;
+    uint32_t has_depth_attachment;
+    uint32_t has_stencil_attachment;
+    struct bvb_vulkan_rendering_attachment
+        color_attachments[BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS];
+    struct bvb_vulkan_rendering_attachment depth_attachment;
+    struct bvb_vulkan_rendering_attachment stencil_attachment;
 };
 
 struct bvb_bind_graphics_pipeline_command {

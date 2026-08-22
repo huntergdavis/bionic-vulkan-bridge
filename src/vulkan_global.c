@@ -5962,13 +5962,35 @@ static int validate_render_command_record(
         struct bvb_begin_rendering_command command;
         int result = bvb_command_decode_begin_rendering(record, &command);
         if (result == 0 && *rendering) result = -EPROTO;
-        if (result == 0 &&
-            command.image_layout != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL &&
-            command.image_layout != VK_IMAGE_LAYOUT_ATTACHMENT_OPTIMAL)
-            result = -EPROTO;
-        if (result == 0)
+        for (uint32_t index = 0U;
+             result == 0 && index < command.color_attachment_count; ++index) {
+            const struct bvb_vulkan_rendering_attachment *attachment =
+                &command.color_attachments[index];
+            if (attachment->image_view_id != 0U)
+                result = command_stream_image_view_matches_device(
+                    context, attachment->image_view_id, expected_device_id);
+            if (result == 0 && attachment->resolve_image_view_id != 0U)
+                result = command_stream_image_view_matches_device(
+                    context, attachment->resolve_image_view_id,
+                    expected_device_id);
+        }
+        const struct bvb_vulkan_rendering_attachment *depth_stencil[2] = {
+            command.has_depth_attachment != 0U
+                ? &command.depth_attachment : NULL,
+            command.has_stencil_attachment != 0U
+                ? &command.stencil_attachment : NULL,
+        };
+        for (uint32_t index = 0U; result == 0 && index < 2U; ++index) {
+            const struct bvb_vulkan_rendering_attachment *attachment =
+                depth_stencil[index];
+            if (attachment == NULL) continue;
             result = command_stream_image_view_matches_device(
-                context, command.color_image_view_id, expected_device_id);
+                context, attachment->image_view_id, expected_device_id);
+            if (result == 0 && attachment->resolve_image_view_id != 0U)
+                result = command_stream_image_view_matches_device(
+                    context, attachment->resolve_image_view_id,
+                    expected_device_id);
+        }
         if (result == 0) *rendering = true;
         return result;
     }
@@ -6012,6 +6034,46 @@ static int validate_render_command_record(
     return -EPROTO;
 }
 
+static int rendering_attachment_from_command(
+    const struct bvb_vulkan_global_context *context, uint64_t device_id,
+    const struct bvb_vulkan_rendering_attachment *command,
+    VkRenderingAttachmentInfo *attachment,
+    VkAttachmentFeedbackLoopInfoEXT *feedback) {
+    if (context == NULL || command == NULL || attachment == NULL ||
+        feedback == NULL) return -EINVAL;
+    *attachment = (VkRenderingAttachmentInfo){
+        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .imageLayout = (VkImageLayout)command->image_layout,
+        .resolveMode = (VkResolveModeFlagBits)command->resolve_mode,
+        .resolveImageLayout =
+            (VkImageLayout)command->resolve_image_layout,
+        .loadOp = (VkAttachmentLoadOp)command->load_op,
+        .storeOp = (VkAttachmentStoreOp)command->store_op,
+    };
+    memcpy(&attachment->clearValue, command->clear_words,
+           sizeof(command->clear_words));
+    if (command->image_view_id != 0U) {
+        int result = descriptor_template_resolve_image_view(
+            context, command->image_view_id, device_id,
+            &attachment->imageView);
+        if (result != 0) return result;
+    }
+    if (command->resolve_image_view_id != 0U) {
+        int result = descriptor_template_resolve_image_view(
+            context, command->resolve_image_view_id, device_id,
+            &attachment->resolveImageView);
+        if (result != 0) return result;
+    }
+    if (command->feedback_loop_enable != 0U) {
+        *feedback = (VkAttachmentFeedbackLoopInfoEXT){
+            .sType = VK_STRUCTURE_TYPE_ATTACHMENT_FEEDBACK_LOOP_INFO_EXT,
+            .feedbackLoopEnable = VK_TRUE,
+        };
+        attachment->pNext = feedback;
+    }
+    return 0;
+}
+
 static int replay_render_command_record(
     const struct bvb_vulkan_global_context *context,
     uint64_t command_buffer_id, const struct bvb_command_record *record) {
@@ -6025,11 +6087,25 @@ static int replay_render_command_record(
     if (result != 0) return result;
     if (record->opcode == BVB_COMMAND_BEGIN_RENDERING) {
         struct bvb_begin_rendering_command command;
-        VkImageView image_view = VK_NULL_HANDLE;
         result = bvb_command_decode_begin_rendering(record, &command);
-        if (result == 0)
-            result = descriptor_template_resolve_image_view(
-                context, command.color_image_view_id, device_id, &image_view);
+        VkRenderingAttachmentInfo
+            colors[BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS] = {{0}};
+        VkRenderingAttachmentInfo depth = {0}, stencil = {0};
+        VkAttachmentFeedbackLoopInfoEXT
+            feedback[BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS + 2] = {{0}};
+        for (uint32_t index = 0U;
+             result == 0 && index < command.color_attachment_count; ++index)
+            result = rendering_attachment_from_command(
+                context, device_id, &command.color_attachments[index],
+                &colors[index], &feedback[index]);
+        if (result == 0 && command.has_depth_attachment != 0U)
+            result = rendering_attachment_from_command(
+                context, device_id, &command.depth_attachment, &depth,
+                &feedback[BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS]);
+        if (result == 0 && command.has_stencil_attachment != 0U)
+            result = rendering_attachment_from_command(
+                context, device_id, &command.stencil_attachment, &stencil,
+                &feedback[BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS + 1U]);
         PFN_vkCmdBeginRendering begin = result == 0
             ? (PFN_vkCmdBeginRendering)context->get_device_proc_addr(
                   device, "vkCmdBeginRendering") : NULL;
@@ -6037,24 +6113,21 @@ static int replay_render_command_record(
             begin = (PFN_vkCmdBeginRendering)context->get_device_proc_addr(
                 device, "vkCmdBeginRenderingKHR");
         if (result != 0 || begin == NULL) return result != 0 ? result : -ENOSYS;
-        const VkRenderingAttachmentInfo color = {
-            .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .imageView = image_view,
-            .imageLayout = (VkImageLayout)command.image_layout,
-            .resolveMode = VK_RESOLVE_MODE_NONE,
-            .loadOp = (VkAttachmentLoadOp)command.load_op,
-            .storeOp = (VkAttachmentStoreOp)command.store_op,
-            .clearValue = {.color.float32 = {
-                command.clear_color[0], command.clear_color[1],
-                command.clear_color[2], command.clear_color[3]}},
-        };
         const VkRenderingInfo rendering = {
             .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-            .renderArea = {.offset = {0, 0},
+            .flags = (VkRenderingFlags)command.flags,
+            .renderArea = {.offset = {command.render_offset_x,
+                                      command.render_offset_y},
                            .extent = {command.width, command.height}},
             .layerCount = command.layer_count,
-            .colorAttachmentCount = 1U,
-            .pColorAttachments = &color,
+            .viewMask = command.view_mask,
+            .colorAttachmentCount = command.color_attachment_count,
+            .pColorAttachments = command.color_attachment_count == 0U
+                                     ? NULL : colors,
+            .pDepthAttachment = command.has_depth_attachment == 0U
+                                    ? NULL : &depth,
+            .pStencilAttachment = command.has_stencil_attachment == 0U
+                                      ? NULL : &stencil,
         };
         begin(command_buffer, &rendering);
         return 0;

@@ -124,7 +124,7 @@ def run_contract(relay_path: str, frames: int, ring_slots: int) -> None:
                     token = payload[:32]
                     execute = struct.unpack("<QIIQ", payload[32:])
                     assert token == TOKEN
-                    assert execute == (1, offset, 224, sequence)
+                    assert execute == (1, offset, 776, sequence)
                     batch_header = struct.unpack(
                         "<IHHIIQQ", region[offset:offset + 32]
                     )
@@ -132,7 +132,7 @@ def run_contract(relay_path: str, frames: int, ring_slots: int) -> None:
                         0x43425642,
                         1,
                         0,
-                        224,
+                        776,
                         7,
                         0x0B00000000000001,
                         sequence,
@@ -158,7 +158,7 @@ def run_contract(relay_path: str, frames: int, ring_slots: int) -> None:
         )
         assert document["region_bytes"] == 4096
         assert document["batch_offset"] == 64
-        assert document["batch_bytes"] == 224
+        assert document["batch_bytes"] == 776
         assert document["commands"] == 7
         assert document["sequence"] == frames
         assert document["frames"] == frames

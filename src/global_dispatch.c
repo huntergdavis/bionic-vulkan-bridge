@@ -7945,6 +7945,83 @@ static int finish_single_render_record(
         command_state, bytes, length, entry, shape);
 }
 
+static int rendering_attachment_to_command(
+    const VkRenderingAttachmentInfo *attachment, bool required,
+    struct bvb_vulkan_rendering_attachment *command) {
+    if (command == NULL || (required && attachment == NULL)) return -EINVAL;
+    memset(command, 0, sizeof(*command));
+    if (attachment == NULL) return 0;
+    if (attachment->sType != VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO)
+        return -ENOTSUP;
+    if (attachment->pNext != NULL) {
+        const VkAttachmentFeedbackLoopInfoEXT *feedback =
+            (const VkAttachmentFeedbackLoopInfoEXT *)attachment->pNext;
+        if (feedback->sType !=
+                VK_STRUCTURE_TYPE_ATTACHMENT_FEEDBACK_LOOP_INFO_EXT ||
+            feedback->pNext != NULL || feedback->feedbackLoopEnable > 1U)
+            return -ENOTSUP;
+        command->feedback_loop_enable = feedback->feedbackLoopEnable;
+    }
+    if (attachment->imageView == VK_NULL_HANDLE) {
+        return !required && attachment->resolveMode == VK_RESOLVE_MODE_NONE &&
+                       attachment->resolveImageView == VK_NULL_HANDLE
+                   ? 0
+                   : -EINVAL;
+    }
+    if (!command_image_layout_supported(attachment->imageLayout))
+        return -ENOTSUP;
+    command->image_view_id = non_dispatchable_wire_id(
+        &attachment->imageView, sizeof(attachment->imageView));
+    command->image_layout = (uint32_t)attachment->imageLayout;
+    command->resolve_mode = (uint32_t)attachment->resolveMode;
+    command->load_op = (uint32_t)attachment->loadOp;
+    command->store_op = (uint32_t)attachment->storeOp;
+    if (attachment->resolveMode == VK_RESOLVE_MODE_NONE) {
+        if (attachment->resolveImageView != VK_NULL_HANDLE) return -EINVAL;
+    } else {
+        if (attachment->resolveImageView == VK_NULL_HANDLE ||
+            !command_image_layout_supported(attachment->resolveImageLayout))
+            return -EINVAL;
+        command->resolve_image_view_id = non_dispatchable_wire_id(
+            &attachment->resolveImageView,
+            sizeof(attachment->resolveImageView));
+        command->resolve_image_layout =
+            (uint32_t)attachment->resolveImageLayout;
+    }
+    memcpy(command->clear_words, &attachment->clearValue,
+           sizeof(command->clear_words));
+    return 0;
+}
+
+static int rendering_command_ownership_locked(
+    struct bvb_command_buffer_proxy *state,
+    const struct bvb_begin_rendering_command *command) {
+    const uint32_t attachment_count = command->color_attachment_count +
+        command->has_depth_attachment + command->has_stencil_attachment;
+    for (uint32_t index = 0U; index < attachment_count; ++index) {
+        const struct bvb_vulkan_rendering_attachment *attachment =
+            index < command->color_attachment_count
+                ? &command->color_attachments[index]
+                : index == command->color_attachment_count
+                          ? (command->has_depth_attachment != 0U
+                                 ? &command->depth_attachment
+                                 : &command->stencil_attachment)
+                          : &command->stencil_attachment;
+        if (attachment->image_view_id != 0U) {
+            const int owned = shared_object_owned_by_device_cached_locked(
+                state, attachment->image_view_id, BVB_OBJECT_IMAGE_VIEW);
+            if (owned <= 0) return owned;
+        }
+        if (attachment->resolve_image_view_id != 0U) {
+            const int owned = shared_object_owned_by_device_cached_locked(
+                state, attachment->resolve_image_view_id,
+                BVB_OBJECT_IMAGE_VIEW);
+            if (owned <= 0) return owned;
+        }
+    }
+    return 1;
+}
+
 static void VKAPI_CALL bvb_bridge_vkCmdBeginRendering(
     VkCommandBuffer command_buffer, const VkRenderingInfo *rendering_info) {
     struct bvb_command_buffer_proxy *state =
@@ -7952,40 +8029,71 @@ static void VKAPI_CALL bvb_bridge_vkCmdBeginRendering(
     const char *shape = "VkRenderingInfo_ptr";
     if (state == NULL || rendering_info == NULL ||
         rendering_info->sType != VK_STRUCTURE_TYPE_RENDERING_INFO ||
-        rendering_info->pNext != NULL || rendering_info->flags != 0U ||
-        rendering_info->renderArea.offset.x != 0 ||
-        rendering_info->renderArea.offset.y != 0 ||
+        rendering_info->pNext != NULL ||
         rendering_info->renderArea.extent.width == 0U ||
         rendering_info->renderArea.extent.height == 0U ||
         rendering_info->layerCount == 0U ||
-        rendering_info->viewMask != 0U ||
-        rendering_info->colorAttachmentCount != 1U ||
-        rendering_info->pColorAttachments == NULL ||
-        rendering_info->pDepthAttachment != NULL ||
-        rendering_info->pStencilAttachment != NULL) {
+        rendering_info->colorAttachmentCount >
+            BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS ||
+        (rendering_info->colorAttachmentCount != 0U &&
+         rendering_info->pColorAttachments == NULL) ||
+        (rendering_info->colorAttachmentCount == 0U &&
+         rendering_info->pDepthAttachment == NULL &&
+         rendering_info->pStencilAttachment == NULL)) {
         poison_shared_command_stream(state, "vkCmdBeginRendering",
                                      "unsupported_rendering_shape",
                                      shape, -ENOTSUP);
         return;
     }
-    const VkRenderingAttachmentInfo *attachment =
-        rendering_info->pColorAttachments;
-    if (attachment->sType !=
-            VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO ||
-        attachment->pNext != NULL || attachment->imageView == VK_NULL_HANDLE ||
-        attachment->resolveMode != VK_RESOLVE_MODE_NONE ||
-        attachment->resolveImageView != VK_NULL_HANDLE) {
+    struct bvb_begin_rendering_command command = {
+        .flags = rendering_info->flags,
+        .render_offset_x = rendering_info->renderArea.offset.x,
+        .render_offset_y = rendering_info->renderArea.offset.y,
+        .width = rendering_info->renderArea.extent.width,
+        .height = rendering_info->renderArea.extent.height,
+        .layer_count = rendering_info->layerCount,
+        .view_mask = rendering_info->viewMask,
+        .color_attachment_count = rendering_info->colorAttachmentCount,
+        .has_depth_attachment =
+            rendering_info->pDepthAttachment == NULL ? 0U : 1U,
+        .has_stencil_attachment =
+            rendering_info->pStencilAttachment == NULL ? 0U : 1U,
+    };
+    int result = 0;
+    for (uint32_t index = 0U;
+         result == 0 && index < command.color_attachment_count; ++index)
+        result = rendering_attachment_to_command(
+            &rendering_info->pColorAttachments[index], false,
+            &command.color_attachments[index]);
+    if (result == 0 && command.has_depth_attachment != 0U)
+        result = rendering_attachment_to_command(
+            rendering_info->pDepthAttachment, true,
+            &command.depth_attachment);
+    if (result == 0 && command.has_stencil_attachment != 0U)
+        result = rendering_attachment_to_command(
+            rendering_info->pStencilAttachment, true,
+            &command.stencil_attachment);
+    if (getenv("BVB_ICD_DIAGNOSTICS") != NULL) {
+        fprintf(stderr,
+                "BVB_ICD_BEGIN_RENDERING flags=%u offset=%d,%d "
+                "extent=%ux%u layers=%u view_mask=%u colors=%u "
+                "depth=%u stencil=%u shape_status=%d\n",
+                command.flags, command.render_offset_x,
+                command.render_offset_y, command.width, command.height,
+                command.layer_count, command.view_mask,
+                command.color_attachment_count,
+                command.has_depth_attachment,
+                command.has_stencil_attachment, result);
+    }
+    if (result != 0) {
         poison_shared_command_stream(state, "vkCmdBeginRendering",
-                                     "unsupported_color_attachment",
-                                     shape, -ENOTSUP);
+                                     "unsupported_rendering_attachment",
+                                     shape, result);
         return;
     }
-    const uint64_t image_view_id = non_dispatchable_wire_id(
-        &attachment->imageView, sizeof(attachment->imageView));
     if (command_stream_is_enabled()) {
         if (pthread_mutex_lock(&state->stream_mutex) != 0) return;
-        const int owned = shared_object_owned_by_device_cached_locked(
-            state, image_view_id, BVB_OBJECT_IMAGE_VIEW);
+        const int owned = rendering_command_ownership_locked(state, &command);
         if (owned < 0) return;
         (void)pthread_mutex_unlock(&state->stream_mutex);
         if (owned <= 0) {
@@ -7995,20 +8103,9 @@ static void VKAPI_CALL bvb_bridge_vkCmdBeginRendering(
             return;
         }
     }
-    struct bvb_begin_rendering_command command = {
-        .color_image_view_id = image_view_id,
-        .width = rendering_info->renderArea.extent.width,
-        .height = rendering_info->renderArea.extent.height,
-        .image_layout = attachment->imageLayout,
-        .load_op = attachment->loadOp,
-        .store_op = attachment->storeOp,
-        .layer_count = rendering_info->layerCount,
-    };
-    memcpy(command.clear_color, attachment->clearValue.color.float32,
-           sizeof(command.clear_color));
     uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
     struct bvb_command_batch_builder builder;
-    int result = begin_single_render_record(state, bytes, &builder);
+    result = begin_single_render_record(state, bytes, &builder);
     if (result == 0)
         result = bvb_command_batch_append_begin_rendering(&builder, &command);
     if (result == 0)

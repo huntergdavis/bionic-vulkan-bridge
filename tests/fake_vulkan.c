@@ -1460,23 +1460,46 @@ static void VKAPI_CALL fake_cmd_bind_descriptor_sets(
 
 static void VKAPI_CALL fake_cmd_begin_rendering(
     VkCommandBuffer command_buffer, const VkRenderingInfo *info) {
-    const VkRenderingAttachmentInfo *color = info == NULL
+    const VkRenderingAttachmentInfo *colors = info == NULL
         ? NULL : info->pColorAttachments;
+    const VkAttachmentFeedbackLoopInfoEXT *feedback =
+        colors == NULL ? NULL
+                       : (const VkAttachmentFeedbackLoopInfoEXT *)colors[0].pNext;
+    const VkRenderingAttachmentInfo *depth = info == NULL
+        ? NULL : info->pDepthAttachment;
+    const VkRenderingAttachmentInfo *stencil = info == NULL
+        ? NULL : info->pStencilAttachment;
     if (fake_render_bundle_step == 0U && command_buffer != VK_NULL_HANDLE &&
         info != NULL && info->sType == VK_STRUCTURE_TYPE_RENDERING_INFO &&
         info->pNext == NULL && info->flags == 0U &&
-        info->renderArea.offset.x == 0 && info->renderArea.offset.y == 0 &&
+        info->renderArea.offset.x == 3 && info->renderArea.offset.y == 4 &&
         info->renderArea.extent.width == 64U &&
         info->renderArea.extent.height == 64U && info->layerCount == 1U &&
-        info->viewMask == 0U && info->colorAttachmentCount == 1U &&
-        color != NULL &&
-        color->sType == VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO &&
-        color->pNext == NULL && color->imageView != VK_NULL_HANDLE &&
-        color->imageLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL &&
-        color->resolveMode == VK_RESOLVE_MODE_NONE &&
-        color->resolveImageView == VK_NULL_HANDLE &&
-        color->loadOp == VK_ATTACHMENT_LOAD_OP_DONT_CARE &&
-        color->storeOp == VK_ATTACHMENT_STORE_OP_STORE) {
+        info->viewMask == 3U && info->colorAttachmentCount == 2U &&
+        colors != NULL &&
+        colors[0].sType == VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO &&
+        feedback != NULL && feedback->sType ==
+            VK_STRUCTURE_TYPE_ATTACHMENT_FEEDBACK_LOOP_INFO_EXT &&
+        feedback->pNext == NULL && feedback->feedbackLoopEnable == VK_TRUE &&
+        colors[0].imageView != VK_NULL_HANDLE &&
+        colors[0].imageLayout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL &&
+        colors[0].resolveMode == VK_RESOLVE_MODE_AVERAGE_BIT &&
+        colors[0].resolveImageView == colors[0].imageView &&
+        colors[0].resolveImageLayout ==
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL &&
+        colors[0].loadOp == VK_ATTACHMENT_LOAD_OP_DONT_CARE &&
+        colors[0].storeOp == VK_ATTACHMENT_STORE_OP_STORE &&
+        colors[1].sType == VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO &&
+        colors[1].pNext == NULL && colors[1].imageView == VK_NULL_HANDLE &&
+        depth != NULL && stencil != NULL && depth != stencil &&
+        depth->sType == VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO &&
+        depth->imageView == colors[0].imageView &&
+        depth->imageLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL &&
+        depth->loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR &&
+        depth->storeOp == VK_ATTACHMENT_STORE_OP_STORE &&
+        depth->clearValue.depthStencil.depth == 0.5F &&
+        depth->clearValue.depthStencil.stencil == 7U &&
+        memcmp(depth, stencil, sizeof(*depth)) == 0) {
         fake_render_bundle_step = 1U;
     } else {
         fake_render_bundle_violation = 1;

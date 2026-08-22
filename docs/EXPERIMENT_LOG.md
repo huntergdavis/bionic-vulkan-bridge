@@ -4167,3 +4167,33 @@ implementation. E105 reuses E075/E075a's command-stream transaction, E076's
 bounded records, E101's strict immediate fallback, and E104's exact tablet
 diagnostic. The full host suite passed 65/65. No game pixel, benchmark, or FPS claim is made before deployment
 and the next screenshot-checked run.
+
+## E106 — general DXVK dynamic rendering (2026-08-21)
+
+The exact E105 tablet run `20260822T035951Z-15565` passed the complete transfer
+family and moved the first game-process command failure to
+`vkCmdBeginRendering`, sequence 11, with `unsupported_rendering_shape`. The
+automatically captured full-screen image remained the bridge triangle, so this
+is a command-coverage boundary rather than a visible game-frame claim.
+
+E106 replaces E101's one-color, origin-zero rendering record with a fixed,
+pointer-free representation of pinned DXVK's whole dynamic-rendering shape:
+up to eight color attachments, optional depth and stencil, resolve views,
+arbitrary render area/flags/view mask, raw clear values, and terminal
+`VkAttachmentFeedbackLoopInfoEXT`. Strict mode uses one immediate-record RPC;
+shared mode appends locally with zero recording RPC. Both sides validate typed
+same-device image-view ownership, and only the Bionic service reconstructs
+native attachment arrays and pNext nodes.
+
+The rich fake-native contract deliberately covers two color slots, a resolve,
+feedback loop, depth, stencil, nonzero offset, and multiview in one call.
+Compact evidence is `docs/evidence/e106-general-dynamic-rendering-host.json`.
+The required `deja "BVB Tomb Raider vkCmdBeginRendering
+unsupported_rendering_shape multiple color depth stencil resolve dynamic
+rendering E106"` query returned no indexed implementation. E106 reuses
+E075/E075a's immutable stream, E076's bounded record ABI, E080's ownership
+cache, E101's strict/shared rendering transport, and the pinned DXVK source
+shape. No game pixel, benchmark, or FPS claim is made before the next
+screenshot-checked tablet run.
+
+The final host suite passed 66/66 contracts.

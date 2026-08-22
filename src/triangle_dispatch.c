@@ -101,21 +101,21 @@ static void VKAPI_CALL bvb_bridge_vkCmdBeginRendering(
                       "VkRenderingAttachmentInfo_ptr");
         return;
     }
-    const struct bvb_begin_rendering_command command = {
-        .color_image_view_id = image_view,
+    struct bvb_begin_rendering_command command = {
         .width = rendering_info->renderArea.extent.width,
         .height = rendering_info->renderArea.extent.height,
-        .image_layout = (uint32_t)attachment->imageLayout,
-        .load_op = (uint32_t)attachment->loadOp,
-        .store_op = (uint32_t)attachment->storeOp,
         .layer_count = rendering_info->layerCount,
-        .clear_color = {
-            attachment->clearValue.color.float32[0],
-            attachment->clearValue.color.float32[1],
-            attachment->clearValue.color.float32[2],
-            attachment->clearValue.color.float32[3],
-        },
+        .color_attachment_count = 1U,
+        .color_attachments = {{
+            .image_view_id = image_view,
+            .image_layout = (uint32_t)attachment->imageLayout,
+            .load_op = (uint32_t)attachment->loadOp,
+            .store_op = (uint32_t)attachment->storeOp,
+        }},
     };
+    memcpy(command.color_attachments[0].clear_words,
+           &attachment->clearValue,
+           sizeof(command.color_attachments[0].clear_words));
     record_status(state, command_buffer,
                   bvb_command_batch_append_begin_rendering(
                       &state->builder, &command),

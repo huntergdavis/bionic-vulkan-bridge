@@ -1,0 +1,38 @@
+{
+  "gate": "E106",
+  "date": "2026-08-21",
+  "source_base_commit": "b543f83b145721bd97766d628aebfc01e094d990",
+  "trigger": {
+    "run_id": "20260822T035951Z-15565",
+    "e105_transfer_family": "passed",
+    "first_rejection_entry": "vkCmdBeginRendering",
+    "first_rejection_reason": "unsupported_rendering_shape",
+    "command_sequence": 11,
+    "visible_game_frame": false,
+    "fullscreen_screenshot_sha256": "7709045bdfe701095fb112ebe1e5b4b04fafd32f46ecf0fa5fc16b58b940e40a"
+  },
+  "implementation": {
+    "maximum_color_attachments": 8,
+    "optional_depth_attachment": true,
+    "optional_stencil_attachment": true,
+    "resolve_attachments": true,
+    "attachment_feedback_loop_info": true,
+    "arbitrary_render_area_flags_and_view_mask": true,
+    "encoded_payload_bytes": 600,
+    "pointer_free": true,
+    "strict_transport": "one immediate-record RPC",
+    "shared_transport": "local append with zero recording RPC",
+    "native_boundary": "typed same-device image-view validation followed by Bionic-local attachment and pNext reconstruction"
+  },
+  "validation": {
+    "rich_codec_round_trip": "passed",
+    "inactive_attachment_canonicalization": "passed",
+    "strict_and_shared_native_reconstruction": "passed",
+    "rich_fake_shape": "two color slots, resolve, feedback loop, depth, stencil, nonzero offset, and multiview",
+    "host_suite": "66/66 passed",
+    "tablet_runtime": "pending",
+    "visible_game_frame": false,
+    "benchmark_or_fps": false
+  },
+  "reuse": "The required deja query found no indexed implementation. E106 reuses E075/E075a immutable shared command streams, E076 bounded pointer-free command records, E080 typed ownership caching, E101 strict/shared render recording, and pinned DXVK's eight-color plus depth/stencil/resolve/feedback-loop construction."
+}

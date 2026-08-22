@@ -2782,20 +2782,46 @@ int main(void) {
         bvb_global_dispatch_exchange_count();
     CHECK(exchanges_before_recording != UINT64_MAX);
     CHECK(begin_command_buffer(command_buffer, &begin_info) == VK_SUCCESS);
-    const VkRenderingAttachmentInfo render_attachment = {
+    const VkAttachmentFeedbackLoopInfoEXT render_feedback = {
+        .sType = VK_STRUCTURE_TYPE_ATTACHMENT_FEEDBACK_LOOP_INFO_EXT,
+        .feedbackLoopEnable = VK_TRUE,
+    };
+    const VkRenderingAttachmentInfo render_attachments[2] = {{
         .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .pNext = &render_feedback,
         .imageView = image_view,
         .imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .resolveMode = VK_RESOLVE_MODE_NONE,
+        .resolveMode = VK_RESOLVE_MODE_AVERAGE_BIT,
+        .resolveImageView = image_view,
+        .resolveImageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
         .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
         .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+    }, {
+        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .imageView = VK_NULL_HANDLE,
+        .imageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .resolveMode = VK_RESOLVE_MODE_NONE,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+    }};
+    const VkRenderingAttachmentInfo depth_attachment = {
+        .sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+        .imageView = image_view,
+        .imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+        .resolveMode = VK_RESOLVE_MODE_NONE,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .clearValue.depthStencil = {.depth = 0.5F, .stencil = 7U},
     };
     const VkRenderingInfo render_info = {
         .sType = VK_STRUCTURE_TYPE_RENDERING_INFO,
-        .renderArea = {.offset = {0, 0}, .extent = {64U, 64U}},
+        .renderArea = {.offset = {3, 4}, .extent = {64U, 64U}},
         .layerCount = 1U,
-        .colorAttachmentCount = 1U,
-        .pColorAttachments = &render_attachment,
+        .viewMask = 3U,
+        .colorAttachmentCount = 2U,
+        .pColorAttachments = render_attachments,
+        .pDepthAttachment = &depth_attachment,
+        .pStencilAttachment = &depth_attachment,
     };
     cmd_begin_rendering(command_buffer, &render_info);
     cmd_bind_pipeline(command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS,

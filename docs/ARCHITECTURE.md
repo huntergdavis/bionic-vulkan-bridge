@@ -374,3 +374,12 @@ sealed blob, covered by an ABI-size header field, validated on the private
 service snapshot, and reconstructed as a Bionic-local pNext chain. Other
 rasterization extension state remains fail-closed, and the pipeline still
 costs one setup transaction rather than one transaction per nested struct.
+
+E106 generalizes dynamic rendering without changing the hot-path transport.
+One fixed 600-byte, pointer-free record carries up to eight color attachments,
+optional depth and stencil attachments, resolve image views, clear-value bits,
+render flags/area/multiview, and terminal attachment-feedback-loop metadata.
+The glibc client caches only typed ownership; the Bionic service revalidates
+every image-view/device relationship and reconstructs all native arrays and
+pNext nodes locally. Strict mode retains one immediate-record RPC, while shared
+mode appends the whole rendering command locally with zero recording RPC.

@@ -65,10 +65,13 @@ static int test_handles(void) {
 }
 
 static int test_batch(void) {
-    uint8_t bytes[512];
+    uint8_t bytes[1024];
     const uint64_t command_buffer =
         bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 3U);
     const uint64_t image_view = bvb_handle_id(BVB_OBJECT_IMAGE_VIEW, 4U);
+    const uint64_t resolve_view = bvb_handle_id(BVB_OBJECT_IMAGE_VIEW, 7U);
+    const uint64_t depth_view = bvb_handle_id(BVB_OBJECT_IMAGE_VIEW, 8U);
+    const uint64_t stencil_view = bvb_handle_id(BVB_OBJECT_IMAGE_VIEW, 9U);
     const uint64_t pipeline = bvb_handle_id(BVB_OBJECT_PIPELINE, 5U);
     const uint64_t pipeline_layout =
         bvb_handle_id(BVB_OBJECT_PIPELINE_LAYOUT, 6U);
@@ -78,14 +81,41 @@ static int test_batch(void) {
     CHECK(bvb_command_batch_append_begin_rendering(
               &builder,
               &(const struct bvb_begin_rendering_command){
-                  .color_image_view_id = image_view,
+                  .flags = 5U,
+                  .render_offset_x = -2,
+                  .render_offset_y = 3,
                   .width = 1280U,
                   .height = 720U,
-                  .image_layout = 2U,
-                  .load_op = 1U,
-                  .store_op = 0U,
                   .layer_count = 1U,
-                  .clear_color = {0.0F, 0.0F, 0.0F, 1.0F},
+                  .view_mask = 3U,
+                  .color_attachment_count = 2U,
+                  .has_depth_attachment = 1U,
+                  .has_stencil_attachment = 1U,
+                  .color_attachments = {{
+                      .image_view_id = image_view,
+                      .resolve_image_view_id = resolve_view,
+                      .image_layout = 2U,
+                      .resolve_mode = 2U,
+                      .resolve_image_layout = 2U,
+                      .load_op = 1U,
+                      .store_op = 0U,
+                      .feedback_loop_enable = 1U,
+                      .clear_words = {0U, 0U, 0U, UINT32_C(0x3f800000)},
+                  }, {0}},
+                  .depth_attachment = {
+                      .image_view_id = depth_view,
+                      .image_layout = 3U,
+                      .load_op = 1U,
+                      .store_op = 0U,
+                      .clear_words = {UINT32_C(0x3f000000), 7U},
+                  },
+                  .stencil_attachment = {
+                      .image_view_id = stencil_view,
+                      .image_layout = 3U,
+                      .load_op = 1U,
+                      .store_op = 0U,
+                      .clear_words = {UINT32_C(0x3f000000), 7U},
+                  },
               }) == 0);
     CHECK(bvb_command_batch_append_bind_graphics_pipeline(
               &builder,
@@ -135,7 +165,7 @@ static int test_batch(void) {
     CHECK(info.command_buffer_id == command_buffer);
     CHECK(info.sequence == 11U);
     CHECK(info.command_count == 7U);
-    CHECK(info.byte_length == 224U);
+    CHECK(info.byte_length == 776U);
     CHECK(info.byte_length == length);
 
     struct bvb_command_batch_iterator iterator;
@@ -144,9 +174,20 @@ static int test_batch(void) {
     struct bvb_begin_rendering_command begin;
     CHECK(bvb_command_batch_next(&iterator, &record) == 0);
     CHECK(bvb_command_decode_begin_rendering(&record, &begin) == 0);
-    CHECK(begin.color_image_view_id == image_view);
+    CHECK(begin.flags == 5U && begin.render_offset_x == -2 &&
+          begin.render_offset_y == 3 && begin.view_mask == 3U);
+    CHECK(begin.color_attachment_count == 2U);
+    CHECK(begin.color_attachments[0].image_view_id == image_view);
+    CHECK(begin.color_attachments[0].resolve_image_view_id == resolve_view);
+    CHECK(begin.color_attachments[0].feedback_loop_enable == 1U);
+    CHECK(begin.color_attachments[1].image_view_id == 0U);
+    CHECK(begin.has_depth_attachment == 1U &&
+          begin.depth_attachment.image_view_id == depth_view);
+    CHECK(begin.has_stencil_attachment == 1U &&
+          begin.stencil_attachment.image_view_id == stencil_view);
     CHECK(begin.width == 1280U && begin.height == 720U);
-    CHECK(begin.clear_color[3] == 1.0F);
+    CHECK(begin.color_attachments[0].clear_words[3] ==
+          UINT32_C(0x3f800000));
 
     struct bvb_bind_graphics_pipeline_command bind;
     CHECK(bvb_command_batch_next(&iterator, &record) == 0);

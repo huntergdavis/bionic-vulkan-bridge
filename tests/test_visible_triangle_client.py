@@ -105,7 +105,7 @@ def decode_batch(mapping: mmap.mmap, offset: int, length: int) -> None:
     assert magic == 0x43425642
     assert version == 1
     assert reserved == 0
-    assert byte_length == length == 224
+    assert byte_length == length == 776
     assert command_count == 7
     assert command_buffer_id == (11 << 56) | 1
     assert sequence == 1
@@ -124,7 +124,7 @@ def decode_batch(mapping: mmap.mmap, offset: int, length: int) -> None:
         record_offset = payload_end
     assert record_offset == len(batch)
     assert [(opcode, len(payload)) for opcode, payload in records] == [
-        (1, 48),
+        (1, 600),
         (2, 16),
         (9, 16),
         (3, 24),
@@ -134,10 +134,14 @@ def decode_batch(mapping: mmap.mmap, offset: int, length: int) -> None:
     ]
 
     begin = records[0][1]
-    image_view_id, width, height = struct.unpack_from("<QII", begin)
+    flags, offset_x, offset_y, width, height = struct.unpack_from(
+        "<IiiII", begin
+    )
+    image_view_id = struct.unpack_from("<Q", begin, 40)[0]
+    assert (flags, offset_x, offset_y) == (0, 0, 0)
     assert image_view_id == (8 << 56) | 1
     assert (width, height) == (WIDTH, HEIGHT)
-    assert struct.unpack_from("<ffff", begin, 32) == (
+    assert struct.unpack_from("<ffff", begin, 80) == (
         0.25,
         0.019999999552965164,
         0.019999999552965164,
@@ -231,7 +235,7 @@ def main() -> int:
         assert document["height"] == HEIGHT
         assert document["region_bytes"] == 4096
         assert document["batch_offset"] == 64
-        assert document["batch_bytes"] == 224
+        assert document["batch_bytes"] == 776
         assert document["commands"] == 7
         assert document["sequence"] == 1
         assert document["setup_packet_bytes"] == 72

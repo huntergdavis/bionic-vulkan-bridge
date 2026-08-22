@@ -23,7 +23,7 @@
 enum {
     BROKERED_REGION_BYTES = 4096,
     BROKERED_BATCH_OFFSET = 64,
-    BROKERED_BATCH_STRIDE = 256,
+    BROKERED_BATCH_STRIDE = 960,
     BROKERED_RING_FRAMES = 2,
 };
 
@@ -63,9 +63,12 @@ static int validate_triangle(const uint8_t *batch, size_t batch_length,
         if (index == 0U) {
             struct bvb_begin_rendering_command begin;
             result = bvb_command_decode_begin_rendering(&record, &begin);
+            float clear[4];
+            memcpy(clear, begin.color_attachments[0].clear_words,
+                   sizeof(clear));
             if (result != 0 || begin.width != width ||
-                begin.height != height || begin.clear_color[0] != 0.25F ||
-                begin.clear_color[3] != 1.0F) {
+                begin.height != height || begin.color_attachment_count != 1U ||
+                clear[0] != 0.25F || clear[3] != 1.0F) {
                 return result != 0 ? result : -EPROTO;
             }
         } else if (index == 2U) {
@@ -150,7 +153,7 @@ int main(int argc, char **argv) {
                 region_mapping + offset, BROKERED_REGION_BYTES - offset,
                 (uint32_t)width_value, (uint32_t)height_value, index + 1U,
                 &encoded_length);
-            if (result == 0 && encoded_length != 224U) {
+            if (result == 0 && encoded_length != 776U) {
                 result = -EPROTO;
             }
         }

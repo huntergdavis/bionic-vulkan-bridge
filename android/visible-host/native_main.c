@@ -3265,18 +3265,23 @@ static int build_triangle_batch(uint8_t *batch, size_t capacity,
     int result = bvb_command_batch_begin(&builder, batch, capacity,
                                          command_buffer_id, sequence);
     if (result == 0) {
-        result = bvb_command_batch_append_begin_rendering(
-            &builder,
-            &(const struct bvb_begin_rendering_command){
-                .color_image_view_id = image_view_id,
-                .width = extent.width,
-                .height = extent.height,
+        struct bvb_begin_rendering_command rendering = {
+            .width = extent.width,
+            .height = extent.height,
+            .layer_count = 1U,
+            .color_attachment_count = 1U,
+            .color_attachments = {{
+                .image_view_id = image_view_id,
                 .image_layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                 .load_op = VK_ATTACHMENT_LOAD_OP_CLEAR,
                 .store_op = VK_ATTACHMENT_STORE_OP_STORE,
-                .layer_count = 1U,
-                .clear_color = {0.015F, 0.02F, 0.06F, 1.0F},
-            });
+            }},
+        };
+        const float clear[4] = {0.015F, 0.02F, 0.06F, 1.0F};
+        memcpy(rendering.color_attachments[0].clear_words, clear,
+               sizeof(clear));
+        result = bvb_command_batch_append_begin_rendering(
+            &builder, &rendering);
     }
     if (result == 0) {
         result = bvb_command_batch_append_bind_graphics_pipeline(
@@ -3403,29 +3408,30 @@ static int replay_triangle_batch(
             struct bvb_begin_rendering_command command;
             uint64_t image_view_bits = 0U;
             result = bvb_command_decode_begin_rendering(&record, &command);
+            const struct bvb_vulkan_rendering_attachment *attachment =
+                &command.color_attachments[0];
             if (result == 0) {
                 result = bvb_handle_table_lookup(
-                    &handles, command.color_image_view_id,
+                    &handles, attachment->image_view_id,
                     BVB_OBJECT_IMAGE_VIEW, NULL, &image_view_bits);
             }
             if (result != 0) {
                 return result;
             }
             if (image_view_from_bits(image_view_bits) != image_view ||
-                command.image_layout !=
+                command.color_attachment_count != 1U ||
+                attachment->image_layout !=
                     (uint32_t)VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL ||
-                command.load_op != (uint32_t)VK_ATTACHMENT_LOAD_OP_CLEAR ||
-                command.store_op != (uint32_t)VK_ATTACHMENT_STORE_OP_STORE ||
+                attachment->load_op != (uint32_t)VK_ATTACHMENT_LOAD_OP_CLEAR ||
+                attachment->store_op !=
+                    (uint32_t)VK_ATTACHMENT_STORE_OP_STORE ||
                 command.layer_count != 1U || command.width != extent.width ||
                 command.height != extent.height) {
                 return -ENOTSUP;
             }
-            const VkClearValue clear_value = {
-                .color.float32 = {
-                    command.clear_color[0], command.clear_color[1],
-                    command.clear_color[2], command.clear_color[3],
-                },
-            };
+            VkClearValue clear_value;
+            memcpy(&clear_value, attachment->clear_words,
+                   sizeof(attachment->clear_words));
             const VkRenderPassBeginInfo render_pass_begin = {
                 .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
                 .renderPass = render_pass,

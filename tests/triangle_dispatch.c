@@ -255,7 +255,7 @@ int main(void) {
           vkGetDeviceProcAddr(VK_NULL_HANDLE, "vkCmdEndRendering"));
     CHECK(vkGetDeviceProcAddr(VK_NULL_HANDLE, "vkCmdDispatch") == NULL);
 
-    uint8_t batch[512];
+    uint8_t batch[1024];
     const uint64_t command_buffer_id =
         bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 3U);
     const uint64_t image_view_id =
@@ -316,7 +316,7 @@ int main(void) {
     CHECK(info.command_buffer_id == command_buffer_id);
     CHECK(info.sequence == 11U);
     CHECK(info.command_count == 7U);
-    CHECK(info.byte_length == 224U);
+    CHECK(info.byte_length == 776U);
 
     struct bvb_command_batch_iterator iterator;
     struct bvb_command_record record;
@@ -324,9 +324,13 @@ int main(void) {
     CHECK(bvb_command_batch_next(&iterator, &record) == 0);
     struct bvb_begin_rendering_command begin;
     CHECK(bvb_command_decode_begin_rendering(&record, &begin) == 0);
-    CHECK(begin.color_image_view_id == image_view_id);
+    CHECK(begin.color_attachment_count == 1U);
+    CHECK(begin.color_attachments[0].image_view_id == image_view_id);
     CHECK(begin.width == 1280U && begin.height == 720U);
-    CHECK(begin.clear_color[0] == 0.1F && begin.clear_color[3] == 1.0F);
+    float begin_clear[4];
+    memcpy(begin_clear, begin.color_attachments[0].clear_words,
+           sizeof(begin_clear));
+    CHECK(begin_clear[0] == 0.1F && begin_clear[3] == 1.0F);
     CHECK(bvb_command_batch_next(&iterator, &record) == 0);
     struct bvb_bind_graphics_pipeline_command bind;
     CHECK(bvb_command_decode_bind_graphics_pipeline(&record, &bind) == 0);
