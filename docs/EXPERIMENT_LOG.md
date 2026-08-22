@@ -4610,5 +4610,21 @@ The required `deja "E117 per-opcode RPC histogram between Vulkan presents
 exchange_locked command submission bottleneck"` query returned no indexed
 implementation. E117 reuses E116's strict selector and 32-present window and
 E075's bounded, default-off performance-instrumentation discipline. Host and
-source validation passed with the complete 77/77 suite; exact-archive tablet
-validation remains pending. No speedup, benchmark, or FPS claim is made.
+source validation passed with the complete 77/77 suite. At that checkpoint,
+exact-archive tablet validation remained pending and no speedup, benchmark, or
+FPS claim was made.
+
+The exact `8183533` glibc ICD then built and passed its dispatch self-test on
+the tablet. One real native-resolution 32-present window reported 491,762
+synchronous exchanges totaling 92.795 seconds, or 15,367.6 calls and 2.900
+seconds of summed RPC wait per present. Opcode 48 (`VULKAN_MEMORY_WRITE`) alone
+accounted for 481,200 calls and 89.533 seconds: 15,037.5 writes and 2.798
+seconds per present, or 96.484% of measured RPC blocking time.
+
+This localizes the performance problem much more sharply than resolver/API
+breadth: the game is already rendering visible Nixxes/Eidos content, but mapped
+upload fallback splits it into roughly fifteen thousand synchronous small
+writes per frame. E118 should eliminate or batch that opcode-48 fan-out before
+adding unrelated Vulkan families. Exact-PID cleanup preserved the original
+Steam and X start times. This diagnosis is not yet a speedup or benchmark/FPS
+result.

@@ -31,9 +31,51 @@
   "validation": {
     "source_contract": "passed",
     "host_suite": "77/77 passed",
-    "tablet_build": "pending exact archive",
-    "tablet_profile": "pending",
+    "tablet_build": "exact 8183533 archive glibc build and dispatch self-test passed",
+    "tablet_profile": "passed: one complete post-first-present 32-present window",
     "speedup_or_fps_claimed": false
+  },
+  "tablet_artifacts": {
+    "source_commit": "8183533",
+    "source_archive_sha256": "c92433d28d874cdf3a28049a2982983e67276e18bc03c7f7591ee58e7a3953ed",
+    "glibc_build_log_sha256": "e2da1ace53a90659061b16c39e8f555228974e5fd3cad564faf201448f4cb76b",
+    "installed_glibc_icd_sha256": "7dd5afb09afdd0c2b12a2b777f14561c65ccae048ecf72f5e3178be5ef0ac36f",
+    "unchanged_service_sha256": "012a905031d2d71b0607f84ea540282305140fce6666a17c3722e0a45e31f146",
+    "unchanged_private_turnip_sha256": "8ac6ef78c3c92998aa46c59fd0081edcba82756f5bad561d1b24a57684874a45",
+    "transaction_record_sha256": "8082b296ce314023a4018154737748bca33443deaa79a2acfd60dc82f9cbb6d7"
+  },
+  "tablet_sample": {
+    "run_id": "20260822T095617Z-21844",
+    "resolution": "2800x1752",
+    "present_calls": 32,
+    "total_rpc_calls": 491762,
+    "total_rpc_ns": 92795457820,
+    "rpc_calls_per_present": 15367.5625,
+    "rpc_seconds_per_present": 2.899858056875,
+    "memory_write_opcode": 48,
+    "memory_write_calls": 481200,
+    "memory_write_total_ns": 89533050703,
+    "memory_write_calls_per_present": 15037.5,
+    "memory_write_seconds_per_present": 2.79790783446875,
+    "memory_write_percent_of_rpc_ns": 96.484,
+    "ranked_opcodes": [
+      {"opcode": 48, "name": "VULKAN_MEMORY_WRITE", "calls": 481200, "total_ns": 89533050703, "max_ns": 12787604},
+      {"opcode": 49, "name": "VULKAN_MEMORY_READ", "calls": 6182, "total_ns": 1628409812, "max_ns": 3302239},
+      {"opcode": 83, "name": "VULKAN_SEMAPHORE_WAIT", "calls": 65, "total_ns": 491538591, "max_ns": 22680000},
+      {"opcode": 101, "name": "VULKAN_SWAPCHAIN_PRESENT", "calls": 32, "total_ns": 181413699, "max_ns": 9390208},
+      {"opcode": 56, "name": "VULKAN_IMAGE_FORMAT_PROPERTIES", "calls": 1046, "total_ns": 173686257, "max_ns": 6073802},
+      {"opcode": 105, "name": "VULKAN_QUEUE_SUBMIT_2_STREAM", "calls": 66, "total_ns": 127806299, "max_ns": 9868385},
+      {"opcode": 68, "name": "VULKAN_DESCRIPTOR_SET_ALLOCATE", "calls": 601, "total_ns": 111895053, "max_ns": 2227083},
+      {"opcode": 112, "name": "VULKAN_DESCRIPTOR_UPDATE_TEMPLATE", "calls": 600, "total_ns": 107107763, "max_ns": 6318437}
+    ],
+    "conclusion": "Tiny synchronous opcode-48 writes are the dominant measured bottleneck. They account for 96.484 percent of all RPC blocking time and approximately 2.798 seconds per present. API breadth is not the immediate problem; E118 must eliminate or batch this upload fan-out."
+  },
+  "retained_evidence": {
+    "direct_log_sha256": "cb60d71273eed227d35c93da70e425d18aff19cda552925e1d30b2bead327b7f",
+    "service_log_sha256": "ddce9d14a6f978545bdbe81b4acdf87774c4d4584c2900b8b1a8c88a00df3744",
+    "probe_log_sha256": "81dacf4ad3a3321045852a856f7177f04fdd1e08b1dfb5af91cfa5bf5c85e231",
+    "screenshot": "docs/evidence/tombraider-bvb-e117-rpc-profile-frame.png",
+    "screenshot_sha256": "4e19854cdc2adb82fe9913e0326cbe99a04ed76436c55dafc0daf28ce60858ed"
   },
   "reuse": "The required deja query returned no indexed E117 implementation. E117 reuses E116's strict default-off selector and 32-present aggregation window plus E075's bounded performance-instrumentation discipline."
 }
