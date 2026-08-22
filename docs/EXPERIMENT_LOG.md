@@ -4269,3 +4269,15 @@ E075/E075a immutable streams, E076 fixed records, E080 ownership caching,
 E101 immediate records, E105 family bundling, and E107's live tablet boundary.
 The host suite passes 68/68; tablet pixels and FPS remain unclaimed pending the
 next automatic screenshot-checked run.
+
+The exact E108 tablet archive then passed 66/66 contracts and the optimized
+glibc ICD self-test. Transactional install retained rollback
+`install-pre-7Cx6PpJ1` and installed ICD/service SHA-256 identities
+`9b9fe441...e0ac3` and `e8ad2051...f91c7`. Bounded run
+`20260822T052535Z-14537` passed the whole vertex/index/indirect family and moved
+the first command poison to `vkCmdSetCullMode`, still at sequence 11. Automatic
+screen inspection caught an early Samsung freeform transition, waited for the
+focused top-fullscreen Activity, and then captured the exact 2800x1752 image;
+its SHA-256 remains `28b73050...e9f8` and it still depicts only the bridge
+triangle. Exact-PID cleanup removed every run child and preserved Steam PID
+14565/start 121864440 plus X11 PID 13643/start 121863492.

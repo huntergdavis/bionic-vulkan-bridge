@@ -54,7 +54,20 @@
       "probed_null": 302
     },
     "host_suite": "68/68 passed",
-    "tablet_runtime": "pending",
+    "tablet_runtime": {
+      "status": "passed",
+      "run_id": "20260822T052535Z-14537",
+      "tablet_suite": "66/66 passed",
+      "glibc_icd_selftest": "passed",
+      "installed_icd_sha256": "9b9fe441cea064a556ded56db303b5d4f9d495247bea2ea538f61e036c9e0ac3",
+      "installed_service_sha256": "e8ad20512c41b92f9d79d4e809db9a56daec2dda82627c70c1417927876f91c7",
+      "fullscreen_screenshot_sha256": "28b7305067678da2bc88ffcb75bf49b49141cf49c27c59d79df332dcee89e9f8",
+      "next_rejection_entry": "vkCmdSetCullMode",
+      "next_rejection_reason": "diagnostic_stub_invoked",
+      "next_rejection_command_sequence": 11,
+      "rollback_snapshot": "install-pre-7Cx6PpJ1",
+      "steam_and_x_preserved": true
+    },
     "visible_game_frame": false,
     "benchmark_or_fps": false
   },
