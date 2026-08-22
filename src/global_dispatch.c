@@ -8620,6 +8620,222 @@ static void VKAPI_CALL bvb_bridge_vkCmdDrawIndexedIndirectCount(
         "vkCmdDrawIndexedIndirectCount");
 }
 
+static uint32_t dynamic_float_word(float value) {
+    uint32_t word = 0U;
+    memcpy(&word, &value, sizeof(word));
+    return word;
+}
+
+static void submit_dynamic_state_command(
+    VkCommandBuffer command_buffer, uint32_t kind, uint32_t value_count,
+    const uint32_t *values, const char *entry, const char *shape) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    if (state == NULL || value_count == 0U ||
+        value_count > BVB_COMMAND_VULKAN_MAX_DYNAMIC_STATE_VALUES ||
+        values == NULL) {
+        poison_shared_command_stream(
+            state, entry, "unsupported_dynamic_state_shape", shape,
+            -ENOTSUP);
+        return;
+    }
+    struct bvb_vulkan_dynamic_state_command command = {
+        .kind = kind, .value_count = value_count,
+    };
+    memcpy(command.values, values, value_count * sizeof(values[0]));
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    int result = begin_single_render_record(state, bytes, &builder);
+    if (result == 0)
+        result = bvb_command_batch_append_vulkan_dynamic_state(
+            &builder, &command);
+    if (result == 0)
+        result = finish_single_render_record(
+            state, bytes, &builder, entry, shape);
+    if (result != 0)
+        poison_shared_command_stream(
+            state, entry, "dynamic_state_record_rejected", shape, result);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetCullMode(
+    VkCommandBuffer command_buffer, VkCullModeFlags cull_mode) {
+    const uint32_t value = cull_mode;
+    submit_dynamic_state_command(
+        command_buffer, BVB_VULKAN_DYNAMIC_STATE_CULL_MODE, 1U, &value,
+        "vkCmdSetCullMode", "VkCullModeFlags_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetFrontFace(
+    VkCommandBuffer command_buffer, VkFrontFace front_face) {
+    const uint32_t value = (uint32_t)front_face;
+    submit_dynamic_state_command(
+        command_buffer, BVB_VULKAN_DYNAMIC_STATE_FRONT_FACE, 1U, &value,
+        "vkCmdSetFrontFace", "VkFrontFace_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetPrimitiveTopology(
+    VkCommandBuffer command_buffer, VkPrimitiveTopology topology) {
+    const uint32_t value = (uint32_t)topology;
+    submit_dynamic_state_command(
+        command_buffer, BVB_VULKAN_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY, 1U,
+        &value, "vkCmdSetPrimitiveTopology", "VkPrimitiveTopology_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetDepthTestEnable(
+    VkCommandBuffer command_buffer, VkBool32 enable) {
+    submit_dynamic_state_command(
+        command_buffer, BVB_VULKAN_DYNAMIC_STATE_DEPTH_TEST_ENABLE, 1U,
+        &enable, "vkCmdSetDepthTestEnable", "VkBool32_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetDepthWriteEnable(
+    VkCommandBuffer command_buffer, VkBool32 enable) {
+    submit_dynamic_state_command(
+        command_buffer, BVB_VULKAN_DYNAMIC_STATE_DEPTH_WRITE_ENABLE, 1U,
+        &enable, "vkCmdSetDepthWriteEnable", "VkBool32_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetDepthCompareOp(
+    VkCommandBuffer command_buffer, VkCompareOp compare_op) {
+    const uint32_t value = (uint32_t)compare_op;
+    submit_dynamic_state_command(
+        command_buffer, BVB_VULKAN_DYNAMIC_STATE_DEPTH_COMPARE_OP, 1U,
+        &value, "vkCmdSetDepthCompareOp", "VkCompareOp_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetDepthBoundsTestEnable(
+    VkCommandBuffer command_buffer, VkBool32 enable) {
+    submit_dynamic_state_command(
+        command_buffer,
+        BVB_VULKAN_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE, 1U, &enable,
+        "vkCmdSetDepthBoundsTestEnable", "VkBool32_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetStencilTestEnable(
+    VkCommandBuffer command_buffer, VkBool32 enable) {
+    submit_dynamic_state_command(
+        command_buffer, BVB_VULKAN_DYNAMIC_STATE_STENCIL_TEST_ENABLE, 1U,
+        &enable, "vkCmdSetStencilTestEnable", "VkBool32_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetStencilOp(
+    VkCommandBuffer command_buffer, VkStencilFaceFlags face_mask,
+    VkStencilOp fail_op, VkStencilOp pass_op,
+    VkStencilOp depth_fail_op, VkCompareOp compare_op) {
+    const uint32_t values[5] = {
+        face_mask, (uint32_t)fail_op, (uint32_t)pass_op,
+        (uint32_t)depth_fail_op, (uint32_t)compare_op,
+    };
+    submit_dynamic_state_command(
+        command_buffer, BVB_VULKAN_DYNAMIC_STATE_STENCIL_OP, 5U, values,
+        "vkCmdSetStencilOp",
+        "VkStencilFaceFlags_value,VkStencilOp_value,VkStencilOp_value,VkStencilOp_value,VkCompareOp_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetRasterizerDiscardEnable(
+    VkCommandBuffer command_buffer, VkBool32 enable) {
+    submit_dynamic_state_command(
+        command_buffer,
+        BVB_VULKAN_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE, 1U, &enable,
+        "vkCmdSetRasterizerDiscardEnable", "VkBool32_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetDepthBiasEnable(
+    VkCommandBuffer command_buffer, VkBool32 enable) {
+    submit_dynamic_state_command(
+        command_buffer, BVB_VULKAN_DYNAMIC_STATE_DEPTH_BIAS_ENABLE, 1U,
+        &enable, "vkCmdSetDepthBiasEnable", "VkBool32_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetPrimitiveRestartEnable(
+    VkCommandBuffer command_buffer, VkBool32 enable) {
+    submit_dynamic_state_command(
+        command_buffer,
+        BVB_VULKAN_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE, 1U, &enable,
+        "vkCmdSetPrimitiveRestartEnable", "VkBool32_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetDepthBias(
+    VkCommandBuffer command_buffer, float constant_factor,
+    float clamp, float slope_factor) {
+    const uint32_t values[3] = {
+        dynamic_float_word(constant_factor), dynamic_float_word(clamp),
+        dynamic_float_word(slope_factor),
+    };
+    submit_dynamic_state_command(
+        command_buffer, BVB_VULKAN_DYNAMIC_STATE_DEPTH_BIAS, 3U, values,
+        "vkCmdSetDepthBias", "float_value,float_value,float_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetDepthBounds(
+    VkCommandBuffer command_buffer, float minimum, float maximum) {
+    const uint32_t values[2] = {
+        dynamic_float_word(minimum), dynamic_float_word(maximum),
+    };
+    submit_dynamic_state_command(
+        command_buffer, BVB_VULKAN_DYNAMIC_STATE_DEPTH_BOUNDS, 2U, values,
+        "vkCmdSetDepthBounds", "float_value,float_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetStencilCompareMask(
+    VkCommandBuffer command_buffer, VkStencilFaceFlags face_mask,
+    uint32_t compare_mask) {
+    const uint32_t values[2] = {face_mask, compare_mask};
+    submit_dynamic_state_command(
+        command_buffer, BVB_VULKAN_DYNAMIC_STATE_STENCIL_COMPARE_MASK, 2U,
+        values, "vkCmdSetStencilCompareMask",
+        "VkStencilFaceFlags_value,uint32_t_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetStencilWriteMask(
+    VkCommandBuffer command_buffer, VkStencilFaceFlags face_mask,
+    uint32_t write_mask) {
+    const uint32_t values[2] = {face_mask, write_mask};
+    submit_dynamic_state_command(
+        command_buffer, BVB_VULKAN_DYNAMIC_STATE_STENCIL_WRITE_MASK, 2U,
+        values, "vkCmdSetStencilWriteMask",
+        "VkStencilFaceFlags_value,uint32_t_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetStencilReference(
+    VkCommandBuffer command_buffer, VkStencilFaceFlags face_mask,
+    uint32_t reference) {
+    const uint32_t values[2] = {face_mask, reference};
+    submit_dynamic_state_command(
+        command_buffer, BVB_VULKAN_DYNAMIC_STATE_STENCIL_REFERENCE, 2U,
+        values, "vkCmdSetStencilReference",
+        "VkStencilFaceFlags_value,uint32_t_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetLineWidth(
+    VkCommandBuffer command_buffer, float line_width) {
+    const uint32_t value = dynamic_float_word(line_width);
+    submit_dynamic_state_command(
+        command_buffer, BVB_VULKAN_DYNAMIC_STATE_LINE_WIDTH, 1U, &value,
+        "vkCmdSetLineWidth", "float_value");
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdSetBlendConstants(
+    VkCommandBuffer command_buffer, const float blend_constants[4]) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    if (blend_constants == NULL) {
+        poison_shared_command_stream(
+            state, "vkCmdSetBlendConstants",
+            "unsupported_dynamic_state_shape", "float_ptr", -ENOTSUP);
+        return;
+    }
+    const uint32_t values[4] = {
+        dynamic_float_word(blend_constants[0]),
+        dynamic_float_word(blend_constants[1]),
+        dynamic_float_word(blend_constants[2]),
+        dynamic_float_word(blend_constants[3]),
+    };
+    submit_dynamic_state_command(
+        command_buffer, BVB_VULKAN_DYNAMIC_STATE_BLEND_CONSTANTS, 4U,
+        values, "vkCmdSetBlendConstants", "float_ptr");
+}
+
 static struct bvb_vulkan_image_subresource_layers
 transfer_image_layers(const VkImageSubresourceLayers *layers) {
     return (struct bvb_vulkan_image_subresource_layers){
@@ -10867,6 +11083,59 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
                      bvb_bridge_vkCmdDrawIndexedIndirectCount)
     BVB_DEVICE_MATCH("vkCmdDrawIndexedIndirectCountKHR",
                      bvb_bridge_vkCmdDrawIndexedIndirectCount)
+    BVB_DEVICE_MATCH("vkCmdSetCullMode", bvb_bridge_vkCmdSetCullMode)
+    BVB_DEVICE_MATCH("vkCmdSetCullModeEXT", bvb_bridge_vkCmdSetCullMode)
+    BVB_DEVICE_MATCH("vkCmdSetFrontFace", bvb_bridge_vkCmdSetFrontFace)
+    BVB_DEVICE_MATCH("vkCmdSetFrontFaceEXT", bvb_bridge_vkCmdSetFrontFace)
+    BVB_DEVICE_MATCH("vkCmdSetPrimitiveTopology",
+                     bvb_bridge_vkCmdSetPrimitiveTopology)
+    BVB_DEVICE_MATCH("vkCmdSetPrimitiveTopologyEXT",
+                     bvb_bridge_vkCmdSetPrimitiveTopology)
+    BVB_DEVICE_MATCH("vkCmdSetDepthTestEnable",
+                     bvb_bridge_vkCmdSetDepthTestEnable)
+    BVB_DEVICE_MATCH("vkCmdSetDepthTestEnableEXT",
+                     bvb_bridge_vkCmdSetDepthTestEnable)
+    BVB_DEVICE_MATCH("vkCmdSetDepthWriteEnable",
+                     bvb_bridge_vkCmdSetDepthWriteEnable)
+    BVB_DEVICE_MATCH("vkCmdSetDepthWriteEnableEXT",
+                     bvb_bridge_vkCmdSetDepthWriteEnable)
+    BVB_DEVICE_MATCH("vkCmdSetDepthCompareOp",
+                     bvb_bridge_vkCmdSetDepthCompareOp)
+    BVB_DEVICE_MATCH("vkCmdSetDepthCompareOpEXT",
+                     bvb_bridge_vkCmdSetDepthCompareOp)
+    BVB_DEVICE_MATCH("vkCmdSetDepthBoundsTestEnable",
+                     bvb_bridge_vkCmdSetDepthBoundsTestEnable)
+    BVB_DEVICE_MATCH("vkCmdSetDepthBoundsTestEnableEXT",
+                     bvb_bridge_vkCmdSetDepthBoundsTestEnable)
+    BVB_DEVICE_MATCH("vkCmdSetStencilTestEnable",
+                     bvb_bridge_vkCmdSetStencilTestEnable)
+    BVB_DEVICE_MATCH("vkCmdSetStencilTestEnableEXT",
+                     bvb_bridge_vkCmdSetStencilTestEnable)
+    BVB_DEVICE_MATCH("vkCmdSetStencilOp", bvb_bridge_vkCmdSetStencilOp)
+    BVB_DEVICE_MATCH("vkCmdSetStencilOpEXT", bvb_bridge_vkCmdSetStencilOp)
+    BVB_DEVICE_MATCH("vkCmdSetRasterizerDiscardEnable",
+                     bvb_bridge_vkCmdSetRasterizerDiscardEnable)
+    BVB_DEVICE_MATCH("vkCmdSetRasterizerDiscardEnableEXT",
+                     bvb_bridge_vkCmdSetRasterizerDiscardEnable)
+    BVB_DEVICE_MATCH("vkCmdSetDepthBiasEnable",
+                     bvb_bridge_vkCmdSetDepthBiasEnable)
+    BVB_DEVICE_MATCH("vkCmdSetDepthBiasEnableEXT",
+                     bvb_bridge_vkCmdSetDepthBiasEnable)
+    BVB_DEVICE_MATCH("vkCmdSetPrimitiveRestartEnable",
+                     bvb_bridge_vkCmdSetPrimitiveRestartEnable)
+    BVB_DEVICE_MATCH("vkCmdSetPrimitiveRestartEnableEXT",
+                     bvb_bridge_vkCmdSetPrimitiveRestartEnable)
+    BVB_DEVICE_MATCH("vkCmdSetDepthBias", bvb_bridge_vkCmdSetDepthBias)
+    BVB_DEVICE_MATCH("vkCmdSetDepthBounds", bvb_bridge_vkCmdSetDepthBounds)
+    BVB_DEVICE_MATCH("vkCmdSetStencilCompareMask",
+                     bvb_bridge_vkCmdSetStencilCompareMask)
+    BVB_DEVICE_MATCH("vkCmdSetStencilWriteMask",
+                     bvb_bridge_vkCmdSetStencilWriteMask)
+    BVB_DEVICE_MATCH("vkCmdSetStencilReference",
+                     bvb_bridge_vkCmdSetStencilReference)
+    BVB_DEVICE_MATCH("vkCmdSetLineWidth", bvb_bridge_vkCmdSetLineWidth)
+    BVB_DEVICE_MATCH("vkCmdSetBlendConstants",
+                     bvb_bridge_vkCmdSetBlendConstants)
     BVB_DEVICE_MATCH("vkCmdCopyBuffer2", bvb_bridge_vkCmdCopyBuffer2)
     BVB_DEVICE_MATCH("vkCmdCopyBufferToImage2",
                      bvb_bridge_vkCmdCopyBufferToImage2)

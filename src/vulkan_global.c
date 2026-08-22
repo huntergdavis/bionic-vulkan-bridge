@@ -6128,6 +6128,10 @@ static int validate_render_command_record(
                 expected_device_id);
         return result;
     }
+    if (record->opcode == BVB_COMMAND_VULKAN_DYNAMIC_STATE) {
+        struct bvb_vulkan_dynamic_state_command command;
+        return bvb_command_decode_vulkan_dynamic_state(record, &command);
+    }
     if (command_stream_transfer_opcode(record->opcode))
         return validate_transfer_command_record(
             context, record, expected_device_id);
@@ -6379,6 +6383,190 @@ static int replay_render_command_record(
                  buffer_from_bits(count_bits), command.count_buffer_offset,
                  command.maximum_draw_count, command.stride);
         }
+        return 0;
+    }
+    if (record->opcode == BVB_COMMAND_VULKAN_DYNAMIC_STATE) {
+        struct bvb_vulkan_dynamic_state_command command;
+        result = bvb_command_decode_vulkan_dynamic_state(record, &command);
+        if (result != 0) return result;
+        float values[4] = {0.0F, 0.0F, 0.0F, 0.0F};
+        for (uint32_t index = 0U;
+             index < command.value_count && index < 4U; ++index)
+            memcpy(&values[index], &command.values[index], sizeof(float));
+#define BVB_RESOLVE_DYNAMIC_CORE(type, core_name, alias_name)                 \
+    type call = (type)context->get_device_proc_addr(device, (core_name));    \
+    if (call == NULL)                                                        \
+        call = (type)context->get_device_proc_addr(device, (alias_name));    \
+    if (call == NULL) return -ENOSYS
+        switch (command.kind) {
+            case BVB_VULKAN_DYNAMIC_STATE_CULL_MODE: {
+                BVB_RESOLVE_DYNAMIC_CORE(
+                    PFN_vkCmdSetCullMode, "vkCmdSetCullMode",
+                    "vkCmdSetCullModeEXT");
+                call(command_buffer, (VkCullModeFlags)command.values[0]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_FRONT_FACE: {
+                BVB_RESOLVE_DYNAMIC_CORE(
+                    PFN_vkCmdSetFrontFace, "vkCmdSetFrontFace",
+                    "vkCmdSetFrontFaceEXT");
+                call(command_buffer, (VkFrontFace)command.values[0]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY: {
+                BVB_RESOLVE_DYNAMIC_CORE(
+                    PFN_vkCmdSetPrimitiveTopology,
+                    "vkCmdSetPrimitiveTopology",
+                    "vkCmdSetPrimitiveTopologyEXT");
+                call(command_buffer,
+                     (VkPrimitiveTopology)command.values[0]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_DEPTH_TEST_ENABLE: {
+                BVB_RESOLVE_DYNAMIC_CORE(
+                    PFN_vkCmdSetDepthTestEnable,
+                    "vkCmdSetDepthTestEnable",
+                    "vkCmdSetDepthTestEnableEXT");
+                call(command_buffer, (VkBool32)command.values[0]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_DEPTH_WRITE_ENABLE: {
+                BVB_RESOLVE_DYNAMIC_CORE(
+                    PFN_vkCmdSetDepthWriteEnable,
+                    "vkCmdSetDepthWriteEnable",
+                    "vkCmdSetDepthWriteEnableEXT");
+                call(command_buffer, (VkBool32)command.values[0]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_DEPTH_COMPARE_OP: {
+                BVB_RESOLVE_DYNAMIC_CORE(
+                    PFN_vkCmdSetDepthCompareOp,
+                    "vkCmdSetDepthCompareOp",
+                    "vkCmdSetDepthCompareOpEXT");
+                call(command_buffer, (VkCompareOp)command.values[0]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE: {
+                BVB_RESOLVE_DYNAMIC_CORE(
+                    PFN_vkCmdSetDepthBoundsTestEnable,
+                    "vkCmdSetDepthBoundsTestEnable",
+                    "vkCmdSetDepthBoundsTestEnableEXT");
+                call(command_buffer, (VkBool32)command.values[0]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_STENCIL_TEST_ENABLE: {
+                BVB_RESOLVE_DYNAMIC_CORE(
+                    PFN_vkCmdSetStencilTestEnable,
+                    "vkCmdSetStencilTestEnable",
+                    "vkCmdSetStencilTestEnableEXT");
+                call(command_buffer, (VkBool32)command.values[0]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_STENCIL_OP: {
+                BVB_RESOLVE_DYNAMIC_CORE(
+                    PFN_vkCmdSetStencilOp, "vkCmdSetStencilOp",
+                    "vkCmdSetStencilOpEXT");
+                call(command_buffer, (VkStencilFaceFlags)command.values[0],
+                     (VkStencilOp)command.values[1],
+                     (VkStencilOp)command.values[2],
+                     (VkStencilOp)command.values[3],
+                     (VkCompareOp)command.values[4]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE: {
+                BVB_RESOLVE_DYNAMIC_CORE(
+                    PFN_vkCmdSetRasterizerDiscardEnable,
+                    "vkCmdSetRasterizerDiscardEnable",
+                    "vkCmdSetRasterizerDiscardEnableEXT");
+                call(command_buffer, (VkBool32)command.values[0]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_DEPTH_BIAS_ENABLE: {
+                BVB_RESOLVE_DYNAMIC_CORE(
+                    PFN_vkCmdSetDepthBiasEnable,
+                    "vkCmdSetDepthBiasEnable",
+                    "vkCmdSetDepthBiasEnableEXT");
+                call(command_buffer, (VkBool32)command.values[0]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE: {
+                BVB_RESOLVE_DYNAMIC_CORE(
+                    PFN_vkCmdSetPrimitiveRestartEnable,
+                    "vkCmdSetPrimitiveRestartEnable",
+                    "vkCmdSetPrimitiveRestartEnableEXT");
+                call(command_buffer, (VkBool32)command.values[0]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_DEPTH_BIAS: {
+                PFN_vkCmdSetDepthBias call =
+                    (PFN_vkCmdSetDepthBias)context->get_device_proc_addr(
+                        device, "vkCmdSetDepthBias");
+                if (call == NULL) return -ENOSYS;
+                call(command_buffer, values[0], values[1], values[2]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_DEPTH_BOUNDS: {
+                PFN_vkCmdSetDepthBounds call =
+                    (PFN_vkCmdSetDepthBounds)context->get_device_proc_addr(
+                        device, "vkCmdSetDepthBounds");
+                if (call == NULL) return -ENOSYS;
+                call(command_buffer, values[0], values[1]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_STENCIL_COMPARE_MASK: {
+                PFN_vkCmdSetStencilCompareMask call =
+                    (PFN_vkCmdSetStencilCompareMask)
+                        context->get_device_proc_addr(
+                            device, "vkCmdSetStencilCompareMask");
+                if (call == NULL) return -ENOSYS;
+                call(command_buffer,
+                     (VkStencilFaceFlags)command.values[0],
+                     command.values[1]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_STENCIL_WRITE_MASK: {
+                PFN_vkCmdSetStencilWriteMask call =
+                    (PFN_vkCmdSetStencilWriteMask)
+                        context->get_device_proc_addr(
+                            device, "vkCmdSetStencilWriteMask");
+                if (call == NULL) return -ENOSYS;
+                call(command_buffer,
+                     (VkStencilFaceFlags)command.values[0],
+                     command.values[1]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_STENCIL_REFERENCE: {
+                PFN_vkCmdSetStencilReference call =
+                    (PFN_vkCmdSetStencilReference)
+                        context->get_device_proc_addr(
+                            device, "vkCmdSetStencilReference");
+                if (call == NULL) return -ENOSYS;
+                call(command_buffer,
+                     (VkStencilFaceFlags)command.values[0],
+                     command.values[1]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_LINE_WIDTH: {
+                PFN_vkCmdSetLineWidth call =
+                    (PFN_vkCmdSetLineWidth)context->get_device_proc_addr(
+                        device, "vkCmdSetLineWidth");
+                if (call == NULL) return -ENOSYS;
+                call(command_buffer, values[0]);
+                break;
+            }
+            case BVB_VULKAN_DYNAMIC_STATE_BLEND_CONSTANTS: {
+                PFN_vkCmdSetBlendConstants call =
+                    (PFN_vkCmdSetBlendConstants)
+                        context->get_device_proc_addr(
+                            device, "vkCmdSetBlendConstants");
+                if (call == NULL) return -ENOSYS;
+                call(command_buffer, values);
+                break;
+            }
+            default:
+                return -EPROTO;
+        }
+#undef BVB_RESOLVE_DYNAMIC_CORE
         return 0;
     }
     if (record->opcode == BVB_COMMAND_BEGIN_RENDERING) {
@@ -6993,8 +7181,7 @@ int bvb_vulkan_global_context_validate_command_stream(
                 context, &record, expected_device_id, &rendering);
         } else if (record.opcode >=
                        BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS &&
-                   record.opcode <=
-                       BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT_COUNT) {
+                   record.opcode <= BVB_COMMAND_VULKAN_DYNAMIC_STATE) {
             result = validate_render_command_record(
                 context, &record, expected_device_id, &rendering);
         } else if (command_stream_transfer_opcode(record.opcode)) {
@@ -7144,8 +7331,7 @@ int bvb_vulkan_global_context_replay_command_stream(
                    record.opcode == BVB_COMMAND_VULKAN_PUSH_CONSTANTS ||
                    (record.opcode >=
                         BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS &&
-                    record.opcode <=
-                        BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT_COUNT) ||
+                    record.opcode <= BVB_COMMAND_VULKAN_DYNAMIC_STATE) ||
                    command_stream_transfer_opcode(record.opcode)) {
             result = replay_render_command_record(
                 context, info.command_buffer_id, &record);

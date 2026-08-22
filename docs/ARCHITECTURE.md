@@ -390,6 +390,15 @@ checks same-device ancestry and reconstructs native handles and arrays. Null
 vertex/index slots remain representable for the enabled maintenance/null-
 descriptor feature set, while malformed or cross-device streams poison the
 whole command buffer before native replay.
+
+E109 similarly groups the scalar graphics dynamic-state surface rather than
+advancing one resolver name at a time. Thirty-one core/EXT public names map to
+nineteen canonical kinds in fixed command record 33. The record contains only
+an enum, a bounded value count, and raw scalar/IEEE-754 words; NaN, infinity,
+invalid enums, invalid booleans, and noncanonical inactive slots fail closed.
+Shared recording appends locally with no socket exchange, while the strict
+path sends one immediate record and the Bionic service reconstructs each
+native command call after resolving the owning command buffer.
 One fixed 600-byte, pointer-free record carries up to eight color attachments,
 optional depth and stencil attachments, resolve image views, clear-value bits,
 render flags/area/multiview, and terminal attachment-feedback-loop metadata.

@@ -51,6 +51,8 @@ enum {
     BVB_VULKAN_DRAW_INDEXED_SIZE = 24,
     BVB_VULKAN_DRAW_INDIRECT_SIZE = 32,
     BVB_VULKAN_DRAW_INDIRECT_COUNT_SIZE = 48,
+    BVB_VULKAN_DYNAMIC_STATE_SIZE = 8 +
+        BVB_COMMAND_VULKAN_MAX_DYNAMIC_STATE_VALUES * sizeof(uint32_t),
 };
 
 _Static_assert(sizeof(float) == sizeof(uint32_t),
@@ -70,6 +72,10 @@ static float get_float(const uint8_t *input) {
     float value;
     memcpy(&value, &bits, sizeof(value));
     return value;
+}
+
+static bool float_word_is_finite(uint32_t word) {
+    return (word & UINT32_C(0x7f800000)) != UINT32_C(0x7f800000);
 }
 
 static int float_bits_are_finite(const uint8_t *input) {
@@ -862,6 +868,24 @@ int bvb_command_batch_append_vulkan_draw_indirect_count(
     return append_record(builder, opcode, payload, sizeof(payload));
 }
 
+int bvb_command_batch_append_vulkan_dynamic_state(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_dynamic_state_command *command) {
+    if (command == NULL ||
+        command->value_count > BVB_COMMAND_VULKAN_MAX_DYNAMIC_STATE_VALUES)
+        return -EINVAL;
+    uint8_t payload[BVB_VULKAN_DYNAMIC_STATE_SIZE] = {0};
+    bvb_wire_put_u32(payload, command->kind);
+    bvb_wire_put_u32(payload + 4, command->value_count);
+    for (uint32_t index = 0U; index < command->value_count; ++index)
+        bvb_wire_put_u32(payload + 8U + index * sizeof(uint32_t),
+                         command->values[index]);
+    if (validate_payload(BVB_COMMAND_VULKAN_DYNAMIC_STATE, payload) != 0)
+        return -EINVAL;
+    return append_record(builder, BVB_COMMAND_VULKAN_DYNAMIC_STATE,
+                         payload, sizeof(payload));
+}
+
 int bvb_command_batch_append_record(
     struct bvb_command_batch_builder *builder,
     const struct bvb_command_record *record) {
@@ -971,6 +995,9 @@ static int expected_payload_size(uint16_t opcode, uint32_t *payload_size) {
         case BVB_COMMAND_VULKAN_DRAW_INDIRECT_COUNT:
         case BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT_COUNT:
             *payload_size = BVB_VULKAN_DRAW_INDIRECT_COUNT_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_DYNAMIC_STATE:
+            *payload_size = BVB_VULKAN_DYNAMIC_STATE_SIZE;
             return 0;
         case BVB_COMMAND_VULKAN_BEGIN:
             *payload_size = BVB_VULKAN_BEGIN_SIZE;
@@ -1368,6 +1395,104 @@ static int validate_payload(uint16_t opcode, const uint8_t *payload) {
                            (count > 1U && stride < minimum) ||
                            bvb_wire_get_u64(payload + 40) != 0U
                        ? -EPROTO : 0;
+        }
+        case BVB_COMMAND_VULKAN_DYNAMIC_STATE: {
+            const uint32_t kind = bvb_wire_get_u32(payload);
+            const uint32_t count = bvb_wire_get_u32(payload + 4);
+            uint32_t expected = 0U;
+            switch (kind) {
+                case BVB_VULKAN_DYNAMIC_STATE_CULL_MODE:
+                case BVB_VULKAN_DYNAMIC_STATE_FRONT_FACE:
+                case BVB_VULKAN_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY:
+                case BVB_VULKAN_DYNAMIC_STATE_DEPTH_TEST_ENABLE:
+                case BVB_VULKAN_DYNAMIC_STATE_DEPTH_WRITE_ENABLE:
+                case BVB_VULKAN_DYNAMIC_STATE_DEPTH_COMPARE_OP:
+                case BVB_VULKAN_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE:
+                case BVB_VULKAN_DYNAMIC_STATE_STENCIL_TEST_ENABLE:
+                case BVB_VULKAN_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE:
+                case BVB_VULKAN_DYNAMIC_STATE_DEPTH_BIAS_ENABLE:
+                case BVB_VULKAN_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE:
+                case BVB_VULKAN_DYNAMIC_STATE_LINE_WIDTH:
+                    expected = 1U;
+                    break;
+                case BVB_VULKAN_DYNAMIC_STATE_DEPTH_BOUNDS:
+                case BVB_VULKAN_DYNAMIC_STATE_STENCIL_COMPARE_MASK:
+                case BVB_VULKAN_DYNAMIC_STATE_STENCIL_WRITE_MASK:
+                case BVB_VULKAN_DYNAMIC_STATE_STENCIL_REFERENCE:
+                    expected = 2U;
+                    break;
+                case BVB_VULKAN_DYNAMIC_STATE_DEPTH_BIAS:
+                    expected = 3U;
+                    break;
+                case BVB_VULKAN_DYNAMIC_STATE_BLEND_CONSTANTS:
+                    expected = 4U;
+                    break;
+                case BVB_VULKAN_DYNAMIC_STATE_STENCIL_OP:
+                    expected = 5U;
+                    break;
+                default:
+                    return -EPROTO;
+            }
+            if (count != expected) return -EPROTO;
+            uint32_t values[BVB_COMMAND_VULKAN_MAX_DYNAMIC_STATE_VALUES] = {0};
+            for (uint32_t index = 0U;
+                 index < BVB_COMMAND_VULKAN_MAX_DYNAMIC_STATE_VALUES;
+                 ++index) {
+                values[index] = bvb_wire_get_u32(
+                    payload + 8U + index * sizeof(uint32_t));
+                if (index >= count && values[index] != 0U) return -EPROTO;
+            }
+            if ((kind == BVB_VULKAN_DYNAMIC_STATE_CULL_MODE &&
+                 (values[0] & ~UINT32_C(3)) != 0U) ||
+                (kind == BVB_VULKAN_DYNAMIC_STATE_FRONT_FACE &&
+                 values[0] > 1U) ||
+                (kind == BVB_VULKAN_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY &&
+                 values[0] > 14U) ||
+                (kind == BVB_VULKAN_DYNAMIC_STATE_DEPTH_COMPARE_OP &&
+                 values[0] > 7U))
+                return -EPROTO;
+            if ((kind == BVB_VULKAN_DYNAMIC_STATE_DEPTH_TEST_ENABLE ||
+                 kind == BVB_VULKAN_DYNAMIC_STATE_DEPTH_WRITE_ENABLE ||
+                 kind ==
+                     BVB_VULKAN_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE ||
+                 kind == BVB_VULKAN_DYNAMIC_STATE_STENCIL_TEST_ENABLE ||
+                 kind ==
+                     BVB_VULKAN_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE ||
+                 kind == BVB_VULKAN_DYNAMIC_STATE_DEPTH_BIAS_ENABLE ||
+                 kind ==
+                     BVB_VULKAN_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE) &&
+                values[0] > 1U)
+                return -EPROTO;
+            if (kind == BVB_VULKAN_DYNAMIC_STATE_STENCIL_OP &&
+                ((values[0] & ~UINT32_C(3)) != 0U || values[0] == 0U ||
+                 values[1] > 7U || values[2] > 7U || values[3] > 7U ||
+                 values[4] > 7U))
+                return -EPROTO;
+            if ((kind == BVB_VULKAN_DYNAMIC_STATE_STENCIL_COMPARE_MASK ||
+                 kind == BVB_VULKAN_DYNAMIC_STATE_STENCIL_WRITE_MASK ||
+                 kind == BVB_VULKAN_DYNAMIC_STATE_STENCIL_REFERENCE) &&
+                ((values[0] & ~UINT32_C(3)) != 0U || values[0] == 0U))
+                return -EPROTO;
+            if ((kind == BVB_VULKAN_DYNAMIC_STATE_DEPTH_BIAS ||
+                 kind == BVB_VULKAN_DYNAMIC_STATE_DEPTH_BOUNDS ||
+                 kind == BVB_VULKAN_DYNAMIC_STATE_LINE_WIDTH ||
+                 kind == BVB_VULKAN_DYNAMIC_STATE_BLEND_CONSTANTS)) {
+                for (uint32_t index = 0U; index < count; ++index) {
+                    if (!float_word_is_finite(values[index]))
+                        return -EPROTO;
+                }
+            }
+            if (kind == BVB_VULKAN_DYNAMIC_STATE_DEPTH_BOUNDS &&
+                (get_float(payload + 8) < 0.0F ||
+                 get_float(payload + 8) > 1.0F ||
+                 get_float(payload + 12) < 0.0F ||
+                 get_float(payload + 12) > 1.0F ||
+                 get_float(payload + 8) > get_float(payload + 12)))
+                return -EPROTO;
+            if (kind == BVB_VULKAN_DYNAMIC_STATE_LINE_WIDTH &&
+                get_float(payload + 8) <= 0.0F)
+                return -EPROTO;
+            return 0;
         }
         case BVB_COMMAND_VULKAN_BEGIN:
             return (bvb_wire_get_u32(payload) & ~1U) != 0U ||
@@ -2094,5 +2219,23 @@ int bvb_command_decode_vulkan_draw_indirect_count(
         .maximum_draw_count = bvb_wire_get_u32(record->payload + 32),
         .stride = bvb_wire_get_u32(record->payload + 36),
     };
+    return 0;
+}
+
+int bvb_command_decode_vulkan_dynamic_state(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_dynamic_state_command *command) {
+    if (record == NULL || command == NULL ||
+        record->opcode != BVB_COMMAND_VULKAN_DYNAMIC_STATE ||
+        record->payload_length != BVB_VULKAN_DYNAMIC_STATE_SIZE)
+        return -EINVAL;
+    memset(command, 0, sizeof(*command));
+    command->kind = bvb_wire_get_u32(record->payload);
+    command->value_count = bvb_wire_get_u32(record->payload + 4);
+    if (command->value_count > BVB_COMMAND_VULKAN_MAX_DYNAMIC_STATE_VALUES)
+        return -EPROTO;
+    for (uint32_t index = 0U; index < command->value_count; ++index)
+        command->values[index] = bvb_wire_get_u32(
+            record->payload + 8U + index * sizeof(uint32_t));
     return 0;
 }

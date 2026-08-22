@@ -46,6 +46,7 @@ enum {
     BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT = 30,
     BVB_COMMAND_VULKAN_DRAW_INDIRECT_COUNT = 31,
     BVB_COMMAND_VULKAN_DRAW_INDEXED_INDIRECT_COUNT = 32,
+    BVB_COMMAND_VULKAN_DYNAMIC_STATE = 33,
     BVB_COMMAND_VULKAN_MAX_INIT_IMAGE_BARRIERS = 4,
     BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS = 16,
     BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS = 16,
@@ -57,6 +58,29 @@ enum {
     BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS = 16,
     BVB_COMMAND_VULKAN_MAX_COLOR_ATTACHMENTS = 8,
     BVB_COMMAND_VULKAN_MAX_VERTEX_BINDINGS = 16,
+    BVB_COMMAND_VULKAN_MAX_DYNAMIC_STATE_VALUES = 8,
+};
+
+enum bvb_vulkan_dynamic_state_kind {
+    BVB_VULKAN_DYNAMIC_STATE_CULL_MODE = 1,
+    BVB_VULKAN_DYNAMIC_STATE_FRONT_FACE = 2,
+    BVB_VULKAN_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY = 3,
+    BVB_VULKAN_DYNAMIC_STATE_DEPTH_TEST_ENABLE = 4,
+    BVB_VULKAN_DYNAMIC_STATE_DEPTH_WRITE_ENABLE = 5,
+    BVB_VULKAN_DYNAMIC_STATE_DEPTH_COMPARE_OP = 6,
+    BVB_VULKAN_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE = 7,
+    BVB_VULKAN_DYNAMIC_STATE_STENCIL_TEST_ENABLE = 8,
+    BVB_VULKAN_DYNAMIC_STATE_STENCIL_OP = 9,
+    BVB_VULKAN_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE = 10,
+    BVB_VULKAN_DYNAMIC_STATE_DEPTH_BIAS_ENABLE = 11,
+    BVB_VULKAN_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE = 12,
+    BVB_VULKAN_DYNAMIC_STATE_DEPTH_BIAS = 13,
+    BVB_VULKAN_DYNAMIC_STATE_DEPTH_BOUNDS = 14,
+    BVB_VULKAN_DYNAMIC_STATE_STENCIL_COMPARE_MASK = 15,
+    BVB_VULKAN_DYNAMIC_STATE_STENCIL_WRITE_MASK = 16,
+    BVB_VULKAN_DYNAMIC_STATE_STENCIL_REFERENCE = 17,
+    BVB_VULKAN_DYNAMIC_STATE_LINE_WIDTH = 18,
+    BVB_VULKAN_DYNAMIC_STATE_BLEND_CONSTANTS = 19,
 };
 
 struct bvb_vulkan_rendering_attachment {
@@ -313,6 +337,12 @@ struct bvb_vulkan_draw_indirect_count_command {
     uint32_t stride;
 };
 
+struct bvb_vulkan_dynamic_state_command {
+    uint32_t kind;
+    uint32_t value_count;
+    uint32_t values[BVB_COMMAND_VULKAN_MAX_DYNAMIC_STATE_VALUES];
+};
+
 struct bvb_command_batch_builder {
     uint8_t *bytes;
     size_t capacity;
@@ -425,6 +455,9 @@ int bvb_command_batch_append_vulkan_draw_indirect(
 int bvb_command_batch_append_vulkan_draw_indirect_count(
     struct bvb_command_batch_builder *builder, uint16_t opcode,
     const struct bvb_vulkan_draw_indirect_count_command *command);
+int bvb_command_batch_append_vulkan_dynamic_state(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_dynamic_state_command *command);
 int bvb_command_batch_append_record(
     struct bvb_command_batch_builder *builder,
     const struct bvb_command_record *record);
@@ -512,5 +545,8 @@ int bvb_command_decode_vulkan_draw_indirect(
 int bvb_command_decode_vulkan_draw_indirect_count(
     const struct bvb_command_record *record,
     struct bvb_vulkan_draw_indirect_count_command *command);
+int bvb_command_decode_vulkan_dynamic_state(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_dynamic_state_command *command);
 
 #endif

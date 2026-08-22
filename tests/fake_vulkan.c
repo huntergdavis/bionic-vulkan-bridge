@@ -1677,9 +1677,157 @@ static void VKAPI_CALL fake_cmd_draw_indexed_indirect_count(
         fake_render_bundle_violation = 1;
 }
 
+static void fake_dynamic_state_step(uint32_t expected_step, bool valid) {
+    if (fake_render_bundle_step == expected_step && valid)
+        fake_render_bundle_step = expected_step + 1U;
+    else
+        fake_render_bundle_violation = 1;
+}
+
+static void VKAPI_CALL fake_cmd_set_cull_mode(
+    VkCommandBuffer command_buffer, VkCullModeFlags cull_mode) {
+    fake_dynamic_state_step(
+        16U, command_buffer != VK_NULL_HANDLE &&
+                 cull_mode == VK_CULL_MODE_BACK_BIT);
+}
+
+static void VKAPI_CALL fake_cmd_set_front_face(
+    VkCommandBuffer command_buffer, VkFrontFace front_face) {
+    fake_dynamic_state_step(
+        17U, command_buffer != VK_NULL_HANDLE &&
+                 front_face == VK_FRONT_FACE_CLOCKWISE);
+}
+
+static void VKAPI_CALL fake_cmd_set_primitive_topology(
+    VkCommandBuffer command_buffer, VkPrimitiveTopology topology) {
+    fake_dynamic_state_step(
+        18U, command_buffer != VK_NULL_HANDLE &&
+                 topology == VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
+}
+
+static void VKAPI_CALL fake_cmd_set_depth_test_enable(
+    VkCommandBuffer command_buffer, VkBool32 enable) {
+    fake_dynamic_state_step(
+        19U, command_buffer != VK_NULL_HANDLE && enable == VK_TRUE);
+}
+
+static void VKAPI_CALL fake_cmd_set_depth_write_enable(
+    VkCommandBuffer command_buffer, VkBool32 enable) {
+    fake_dynamic_state_step(
+        20U, command_buffer != VK_NULL_HANDLE && enable == VK_FALSE);
+}
+
+static void VKAPI_CALL fake_cmd_set_depth_compare_op(
+    VkCommandBuffer command_buffer, VkCompareOp compare_op) {
+    fake_dynamic_state_step(
+        21U, command_buffer != VK_NULL_HANDLE &&
+                 compare_op == VK_COMPARE_OP_LESS_OR_EQUAL);
+}
+
+static void VKAPI_CALL fake_cmd_set_depth_bounds_test_enable(
+    VkCommandBuffer command_buffer, VkBool32 enable) {
+    fake_dynamic_state_step(
+        22U, command_buffer != VK_NULL_HANDLE && enable == VK_TRUE);
+}
+
+static void VKAPI_CALL fake_cmd_set_stencil_test_enable(
+    VkCommandBuffer command_buffer, VkBool32 enable) {
+    fake_dynamic_state_step(
+        23U, command_buffer != VK_NULL_HANDLE && enable == VK_TRUE);
+}
+
+static void VKAPI_CALL fake_cmd_set_stencil_op(
+    VkCommandBuffer command_buffer, VkStencilFaceFlags face_mask,
+    VkStencilOp fail_op, VkStencilOp pass_op, VkStencilOp depth_fail_op,
+    VkCompareOp compare_op) {
+    fake_dynamic_state_step(
+        24U, command_buffer != VK_NULL_HANDLE &&
+                 face_mask == VK_STENCIL_FACE_FRONT_AND_BACK &&
+                 fail_op == VK_STENCIL_OP_REPLACE &&
+                 pass_op == VK_STENCIL_OP_KEEP &&
+                 depth_fail_op == VK_STENCIL_OP_INCREMENT_AND_CLAMP &&
+                 compare_op == VK_COMPARE_OP_ALWAYS);
+}
+
+static void VKAPI_CALL fake_cmd_set_rasterizer_discard_enable(
+    VkCommandBuffer command_buffer, VkBool32 enable) {
+    fake_dynamic_state_step(
+        25U, command_buffer != VK_NULL_HANDLE && enable == VK_FALSE);
+}
+
+static void VKAPI_CALL fake_cmd_set_depth_bias_enable(
+    VkCommandBuffer command_buffer, VkBool32 enable) {
+    fake_dynamic_state_step(
+        26U, command_buffer != VK_NULL_HANDLE && enable == VK_TRUE);
+}
+
+static void VKAPI_CALL fake_cmd_set_primitive_restart_enable(
+    VkCommandBuffer command_buffer, VkBool32 enable) {
+    fake_dynamic_state_step(
+        27U, command_buffer != VK_NULL_HANDLE && enable == VK_TRUE);
+}
+
+static void VKAPI_CALL fake_cmd_set_depth_bias(
+    VkCommandBuffer command_buffer, float constant_factor, float clamp,
+    float slope_factor) {
+    fake_dynamic_state_step(
+        28U, command_buffer != VK_NULL_HANDLE && constant_factor == 1.25F &&
+                 clamp == 0.5F && slope_factor == 2.0F);
+}
+
+static void VKAPI_CALL fake_cmd_set_depth_bounds(
+    VkCommandBuffer command_buffer, float minimum, float maximum) {
+    fake_dynamic_state_step(
+        29U, command_buffer != VK_NULL_HANDLE && minimum == 0.25F &&
+                 maximum == 0.75F);
+}
+
+static void VKAPI_CALL fake_cmd_set_stencil_compare_mask(
+    VkCommandBuffer command_buffer, VkStencilFaceFlags face_mask,
+    uint32_t compare_mask) {
+    fake_dynamic_state_step(
+        30U, command_buffer != VK_NULL_HANDLE &&
+                 face_mask == VK_STENCIL_FACE_FRONT_BIT &&
+                 compare_mask == 0xffU);
+}
+
+static void VKAPI_CALL fake_cmd_set_stencil_write_mask(
+    VkCommandBuffer command_buffer, VkStencilFaceFlags face_mask,
+    uint32_t write_mask) {
+    fake_dynamic_state_step(
+        31U, command_buffer != VK_NULL_HANDLE &&
+                 face_mask == VK_STENCIL_FACE_BACK_BIT &&
+                 write_mask == 0x0fU);
+}
+
+static void VKAPI_CALL fake_cmd_set_stencil_reference(
+    VkCommandBuffer command_buffer, VkStencilFaceFlags face_mask,
+    uint32_t reference) {
+    fake_dynamic_state_step(
+        32U, command_buffer != VK_NULL_HANDLE &&
+                 face_mask == VK_STENCIL_FACE_FRONT_AND_BACK &&
+                 reference == 7U);
+}
+
+static void VKAPI_CALL fake_cmd_set_line_width(
+    VkCommandBuffer command_buffer, float line_width) {
+    fake_dynamic_state_step(
+        33U, command_buffer != VK_NULL_HANDLE && line_width == 1.5F);
+}
+
+static void VKAPI_CALL fake_cmd_set_blend_constants(
+    VkCommandBuffer command_buffer, const float blend_constants[4]) {
+    fake_dynamic_state_step(
+        34U, command_buffer != VK_NULL_HANDLE && blend_constants != NULL &&
+                 blend_constants[0] == 0.125F &&
+                 blend_constants[1] == 0.25F &&
+                 blend_constants[2] == 0.5F &&
+                 blend_constants[3] == 1.0F);
+}
+
 static void VKAPI_CALL fake_cmd_end_rendering(VkCommandBuffer command_buffer) {
-    if (fake_render_bundle_step == 16U && command_buffer != VK_NULL_HANDLE)
-        fake_render_bundle_step = 17U;
+    if (fake_render_bundle_step == 35U && command_buffer != VK_NULL_HANDLE)
+        fake_render_bundle_step = 36U;
     else fake_render_bundle_violation = 1;
 }
 
@@ -2915,7 +3063,7 @@ static VkResult VKAPI_CALL fake_begin_command_buffer(
 static VkResult VKAPI_CALL fake_end_command_buffer(
     VkCommandBuffer command_buffer) {
     if (fake_render_bundle_step != 0U) {
-        if (fake_render_bundle_step != 17U || fake_render_bundle_violation != 0)
+        if (fake_render_bundle_step != 36U || fake_render_bundle_violation != 0)
             return VK_ERROR_INITIALIZATION_FAILED;
         fake_render_bundle_step = 0U;
     }
@@ -3676,6 +3824,58 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
                      fake_cmd_draw_indexed_indirect_count)
     BVB_DEVICE_MATCH("vkCmdDrawIndexedIndirectCountKHR",
                      fake_cmd_draw_indexed_indirect_count)
+    BVB_DEVICE_MATCH("vkCmdSetCullMode", fake_cmd_set_cull_mode)
+    BVB_DEVICE_MATCH("vkCmdSetCullModeEXT", fake_cmd_set_cull_mode)
+    BVB_DEVICE_MATCH("vkCmdSetFrontFace", fake_cmd_set_front_face)
+    BVB_DEVICE_MATCH("vkCmdSetFrontFaceEXT", fake_cmd_set_front_face)
+    BVB_DEVICE_MATCH("vkCmdSetPrimitiveTopology",
+                     fake_cmd_set_primitive_topology)
+    BVB_DEVICE_MATCH("vkCmdSetPrimitiveTopologyEXT",
+                     fake_cmd_set_primitive_topology)
+    BVB_DEVICE_MATCH("vkCmdSetDepthTestEnable",
+                     fake_cmd_set_depth_test_enable)
+    BVB_DEVICE_MATCH("vkCmdSetDepthTestEnableEXT",
+                     fake_cmd_set_depth_test_enable)
+    BVB_DEVICE_MATCH("vkCmdSetDepthWriteEnable",
+                     fake_cmd_set_depth_write_enable)
+    BVB_DEVICE_MATCH("vkCmdSetDepthWriteEnableEXT",
+                     fake_cmd_set_depth_write_enable)
+    BVB_DEVICE_MATCH("vkCmdSetDepthCompareOp", fake_cmd_set_depth_compare_op)
+    BVB_DEVICE_MATCH("vkCmdSetDepthCompareOpEXT",
+                     fake_cmd_set_depth_compare_op)
+    BVB_DEVICE_MATCH("vkCmdSetDepthBoundsTestEnable",
+                     fake_cmd_set_depth_bounds_test_enable)
+    BVB_DEVICE_MATCH("vkCmdSetDepthBoundsTestEnableEXT",
+                     fake_cmd_set_depth_bounds_test_enable)
+    BVB_DEVICE_MATCH("vkCmdSetStencilTestEnable",
+                     fake_cmd_set_stencil_test_enable)
+    BVB_DEVICE_MATCH("vkCmdSetStencilTestEnableEXT",
+                     fake_cmd_set_stencil_test_enable)
+    BVB_DEVICE_MATCH("vkCmdSetStencilOp", fake_cmd_set_stencil_op)
+    BVB_DEVICE_MATCH("vkCmdSetStencilOpEXT", fake_cmd_set_stencil_op)
+    BVB_DEVICE_MATCH("vkCmdSetRasterizerDiscardEnable",
+                     fake_cmd_set_rasterizer_discard_enable)
+    BVB_DEVICE_MATCH("vkCmdSetRasterizerDiscardEnableEXT",
+                     fake_cmd_set_rasterizer_discard_enable)
+    BVB_DEVICE_MATCH("vkCmdSetDepthBiasEnable",
+                     fake_cmd_set_depth_bias_enable)
+    BVB_DEVICE_MATCH("vkCmdSetDepthBiasEnableEXT",
+                     fake_cmd_set_depth_bias_enable)
+    BVB_DEVICE_MATCH("vkCmdSetPrimitiveRestartEnable",
+                     fake_cmd_set_primitive_restart_enable)
+    BVB_DEVICE_MATCH("vkCmdSetPrimitiveRestartEnableEXT",
+                     fake_cmd_set_primitive_restart_enable)
+    BVB_DEVICE_MATCH("vkCmdSetDepthBias", fake_cmd_set_depth_bias)
+    BVB_DEVICE_MATCH("vkCmdSetDepthBounds", fake_cmd_set_depth_bounds)
+    BVB_DEVICE_MATCH("vkCmdSetStencilCompareMask",
+                     fake_cmd_set_stencil_compare_mask)
+    BVB_DEVICE_MATCH("vkCmdSetStencilWriteMask",
+                     fake_cmd_set_stencil_write_mask)
+    BVB_DEVICE_MATCH("vkCmdSetStencilReference",
+                     fake_cmd_set_stencil_reference)
+    BVB_DEVICE_MATCH("vkCmdSetLineWidth", fake_cmd_set_line_width)
+    BVB_DEVICE_MATCH("vkCmdSetBlendConstants",
+                     fake_cmd_set_blend_constants)
     BVB_DEVICE_MATCH("vkCreatePipelineLayout", fake_create_pipeline_layout)
     BVB_DEVICE_MATCH("vkDestroyPipelineLayout", fake_destroy_pipeline_layout)
     BVB_DEVICE_MATCH("vkCreateGraphicsPipelines", fake_create_graphics_pipelines)

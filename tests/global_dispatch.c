@@ -932,6 +932,26 @@ int main(void) {
     PFN_vkCmdDrawIndexedIndirect cmd_draw_indexed_indirect = NULL;
     PFN_vkCmdDrawIndirectCount cmd_draw_indirect_count = NULL;
     PFN_vkCmdDrawIndexedIndirectCount cmd_draw_indexed_indirect_count = NULL;
+    PFN_vkCmdSetCullMode cmd_set_cull_mode = NULL;
+    PFN_vkCmdSetFrontFace cmd_set_front_face = NULL;
+    PFN_vkCmdSetPrimitiveTopology cmd_set_primitive_topology = NULL;
+    PFN_vkCmdSetDepthTestEnable cmd_set_depth_test_enable = NULL;
+    PFN_vkCmdSetDepthWriteEnable cmd_set_depth_write_enable = NULL;
+    PFN_vkCmdSetDepthCompareOp cmd_set_depth_compare_op = NULL;
+    PFN_vkCmdSetDepthBoundsTestEnable cmd_set_depth_bounds_test_enable = NULL;
+    PFN_vkCmdSetStencilTestEnable cmd_set_stencil_test_enable = NULL;
+    PFN_vkCmdSetStencilOp cmd_set_stencil_op = NULL;
+    PFN_vkCmdSetRasterizerDiscardEnable
+        cmd_set_rasterizer_discard_enable = NULL;
+    PFN_vkCmdSetDepthBiasEnable cmd_set_depth_bias_enable = NULL;
+    PFN_vkCmdSetPrimitiveRestartEnable cmd_set_primitive_restart_enable = NULL;
+    PFN_vkCmdSetDepthBias cmd_set_depth_bias = NULL;
+    PFN_vkCmdSetDepthBounds cmd_set_depth_bounds = NULL;
+    PFN_vkCmdSetStencilCompareMask cmd_set_stencil_compare_mask = NULL;
+    PFN_vkCmdSetStencilWriteMask cmd_set_stencil_write_mask = NULL;
+    PFN_vkCmdSetStencilReference cmd_set_stencil_reference = NULL;
+    PFN_vkCmdSetLineWidth cmd_set_line_width = NULL;
+    PFN_vkCmdSetBlendConstants cmd_set_blend_constants = NULL;
     PFN_vkCreatePipelineLayout create_pipeline_layout = NULL;
     PFN_vkDestroyPipelineLayout destroy_pipeline_layout = NULL;
     PFN_vkCreateGraphicsPipelines create_graphics_pipelines = NULL;
@@ -1159,6 +1179,49 @@ int main(void) {
                        cmd_draw_indexed_indirect_count);
     CHECK(vkGetDeviceProcAddr(
               device, "vkCmdDrawIndexedIndirectCountKHR") == erased);
+    RESOLVE_DESCRIPTOR(vkCmdSetCullMode, cmd_set_cull_mode);
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdSetCullModeEXT") == erased);
+    RESOLVE_DESCRIPTOR(vkCmdSetFrontFace, cmd_set_front_face);
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdSetFrontFaceEXT") == erased);
+    RESOLVE_DESCRIPTOR(vkCmdSetPrimitiveTopology, cmd_set_primitive_topology);
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdSetPrimitiveTopologyEXT") ==
+          erased);
+    RESOLVE_DESCRIPTOR(vkCmdSetDepthTestEnable, cmd_set_depth_test_enable);
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdSetDepthTestEnableEXT") ==
+          erased);
+    RESOLVE_DESCRIPTOR(vkCmdSetDepthWriteEnable, cmd_set_depth_write_enable);
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdSetDepthWriteEnableEXT") ==
+          erased);
+    RESOLVE_DESCRIPTOR(vkCmdSetDepthCompareOp, cmd_set_depth_compare_op);
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdSetDepthCompareOpEXT") == erased);
+    RESOLVE_DESCRIPTOR(vkCmdSetDepthBoundsTestEnable,
+                       cmd_set_depth_bounds_test_enable);
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdSetDepthBoundsTestEnableEXT") ==
+          erased);
+    RESOLVE_DESCRIPTOR(vkCmdSetStencilTestEnable, cmd_set_stencil_test_enable);
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdSetStencilTestEnableEXT") ==
+          erased);
+    RESOLVE_DESCRIPTOR(vkCmdSetStencilOp, cmd_set_stencil_op);
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdSetStencilOpEXT") == erased);
+    RESOLVE_DESCRIPTOR(vkCmdSetRasterizerDiscardEnable,
+                       cmd_set_rasterizer_discard_enable);
+    CHECK(vkGetDeviceProcAddr(
+              device, "vkCmdSetRasterizerDiscardEnableEXT") == erased);
+    RESOLVE_DESCRIPTOR(vkCmdSetDepthBiasEnable, cmd_set_depth_bias_enable);
+    CHECK(vkGetDeviceProcAddr(device, "vkCmdSetDepthBiasEnableEXT") ==
+          erased);
+    RESOLVE_DESCRIPTOR(vkCmdSetPrimitiveRestartEnable,
+                       cmd_set_primitive_restart_enable);
+    CHECK(vkGetDeviceProcAddr(
+              device, "vkCmdSetPrimitiveRestartEnableEXT") == erased);
+    RESOLVE_DESCRIPTOR(vkCmdSetDepthBias, cmd_set_depth_bias);
+    RESOLVE_DESCRIPTOR(vkCmdSetDepthBounds, cmd_set_depth_bounds);
+    RESOLVE_DESCRIPTOR(vkCmdSetStencilCompareMask,
+                       cmd_set_stencil_compare_mask);
+    RESOLVE_DESCRIPTOR(vkCmdSetStencilWriteMask, cmd_set_stencil_write_mask);
+    RESOLVE_DESCRIPTOR(vkCmdSetStencilReference, cmd_set_stencil_reference);
+    RESOLVE_DESCRIPTOR(vkCmdSetLineWidth, cmd_set_line_width);
+    RESOLVE_DESCRIPTOR(vkCmdSetBlendConstants, cmd_set_blend_constants);
     RESOLVE_DESCRIPTOR(vkCreatePipelineLayout, create_pipeline_layout);
     RESOLVE_DESCRIPTOR(vkDestroyPipelineLayout, destroy_pipeline_layout);
     RESOLVE_DESCRIPTOR(vkCreateGraphicsPipelines, create_graphics_pipelines);
@@ -2889,6 +2952,33 @@ int main(void) {
         command_buffer, buffer, 384U, buffer, 12U, 4U, 16U);
     cmd_draw_indexed_indirect_count(
         command_buffer, buffer, 512U, buffer, 16U, 5U, 20U);
+    cmd_set_cull_mode(command_buffer, VK_CULL_MODE_BACK_BIT);
+    cmd_set_front_face(command_buffer, VK_FRONT_FACE_CLOCKWISE);
+    cmd_set_primitive_topology(
+        command_buffer, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP);
+    cmd_set_depth_test_enable(command_buffer, VK_TRUE);
+    cmd_set_depth_write_enable(command_buffer, VK_FALSE);
+    cmd_set_depth_compare_op(command_buffer, VK_COMPARE_OP_LESS_OR_EQUAL);
+    cmd_set_depth_bounds_test_enable(command_buffer, VK_TRUE);
+    cmd_set_stencil_test_enable(command_buffer, VK_TRUE);
+    cmd_set_stencil_op(
+        command_buffer, VK_STENCIL_FACE_FRONT_AND_BACK,
+        VK_STENCIL_OP_REPLACE, VK_STENCIL_OP_KEEP,
+        VK_STENCIL_OP_INCREMENT_AND_CLAMP, VK_COMPARE_OP_ALWAYS);
+    cmd_set_rasterizer_discard_enable(command_buffer, VK_FALSE);
+    cmd_set_depth_bias_enable(command_buffer, VK_TRUE);
+    cmd_set_primitive_restart_enable(command_buffer, VK_TRUE);
+    cmd_set_depth_bias(command_buffer, 1.25F, 0.5F, 2.0F);
+    cmd_set_depth_bounds(command_buffer, 0.25F, 0.75F);
+    cmd_set_stencil_compare_mask(
+        command_buffer, VK_STENCIL_FACE_FRONT_BIT, 0xffU);
+    cmd_set_stencil_write_mask(
+        command_buffer, VK_STENCIL_FACE_BACK_BIT, 0x0fU);
+    cmd_set_stencil_reference(
+        command_buffer, VK_STENCIL_FACE_FRONT_AND_BACK, 7U);
+    cmd_set_line_width(command_buffer, 1.5F);
+    const float blend_constants[4] = {0.125F, 0.25F, 0.5F, 1.0F};
+    cmd_set_blend_constants(command_buffer, blend_constants);
     cmd_end_rendering(command_buffer);
     cmd_fill_buffer(command_buffer, buffer, 0U, 4096U, UINT32_C(0xa5c3f00d));
     const VkImageSubresourceRange init_image_range = {
@@ -2964,7 +3054,7 @@ int main(void) {
     CHECK(exchanges_after_recording >= exchanges_before_recording);
     const uint64_t recording_rtts =
         exchanges_after_recording - exchanges_before_recording;
-    CHECK(recording_rtts == (shared_command_stream ? 0U : 22U));
+    CHECK(recording_rtts == (shared_command_stream ? 0U : 41U));
     if (shared_mapped_memory) mapped[0] = UINT8_C(0x7b);
     const uint64_t exchanges_before_submit =
         bvb_global_dispatch_exchange_count();

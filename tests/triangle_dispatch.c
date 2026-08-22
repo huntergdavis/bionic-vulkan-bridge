@@ -222,6 +222,54 @@ int main(void) {
                                "vkCmdDrawIndexedIndirectCount") == 0 ||
                         strcmp(entry->name,
                                "vkCmdDrawIndexedIndirectCountKHR") == 0 ||
+                        strcmp(entry->name, "vkCmdSetBlendConstants") == 0 ||
+                        strcmp(entry->name, "vkCmdSetCullMode") == 0 ||
+                        strcmp(entry->name, "vkCmdSetCullModeEXT") == 0 ||
+                        strcmp(entry->name, "vkCmdSetDepthBias") == 0 ||
+                        strcmp(entry->name, "vkCmdSetDepthBiasEnable") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdSetDepthBiasEnableEXT") == 0 ||
+                        strcmp(entry->name, "vkCmdSetDepthBounds") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdSetDepthBoundsTestEnable") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdSetDepthBoundsTestEnableEXT") == 0 ||
+                        strcmp(entry->name, "vkCmdSetDepthCompareOp") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdSetDepthCompareOpEXT") == 0 ||
+                        strcmp(entry->name, "vkCmdSetDepthTestEnable") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdSetDepthTestEnableEXT") == 0 ||
+                        strcmp(entry->name, "vkCmdSetDepthWriteEnable") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdSetDepthWriteEnableEXT") == 0 ||
+                        strcmp(entry->name, "vkCmdSetFrontFace") == 0 ||
+                        strcmp(entry->name, "vkCmdSetFrontFaceEXT") == 0 ||
+                        strcmp(entry->name, "vkCmdSetLineWidth") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdSetPrimitiveRestartEnable") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdSetPrimitiveRestartEnableEXT") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdSetPrimitiveTopology") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdSetPrimitiveTopologyEXT") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdSetRasterizerDiscardEnable") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdSetRasterizerDiscardEnableEXT") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdSetStencilCompareMask") == 0 ||
+                        strcmp(entry->name, "vkCmdSetStencilOp") == 0 ||
+                        strcmp(entry->name, "vkCmdSetStencilOpEXT") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdSetStencilReference") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdSetStencilTestEnable") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdSetStencilTestEnableEXT") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdSetStencilWriteMask") == 0 ||
                         strcmp(entry->name,
                                "vkUpdateDescriptorSetWithTemplate") == 0 ||
                         strcmp(entry->name,
@@ -245,8 +293,8 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 118U);
-    CHECK(required_count == 322U);
+    CHECK(executable_count == 149U);
+    CHECK(required_count == 291U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");

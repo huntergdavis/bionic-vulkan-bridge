@@ -161,6 +161,98 @@ static int test_vertex_index_draw_family(void) {
     return 0;
 }
 
+static int test_dynamic_state_family(void) {
+    uint8_t bytes[2048];
+    const uint64_t command_buffer =
+        bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 43U);
+    const struct bvb_vulkan_dynamic_state_command commands[] = {
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_CULL_MODE,
+         .value_count = 1U, .values = {2U}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_FRONT_FACE,
+         .value_count = 1U, .values = {1U}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY,
+         .value_count = 1U, .values = {4U}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
+         .value_count = 1U, .values = {1U}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+         .value_count = 1U, .values = {0U}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_DEPTH_COMPARE_OP,
+         .value_count = 1U, .values = {3U}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_DEPTH_BOUNDS_TEST_ENABLE,
+         .value_count = 1U, .values = {1U}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_STENCIL_TEST_ENABLE,
+         .value_count = 1U, .values = {1U}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_STENCIL_OP,
+         .value_count = 5U, .values = {3U, 2U, 0U, 3U, 7U}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_RASTERIZER_DISCARD_ENABLE,
+         .value_count = 1U, .values = {0U}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_DEPTH_BIAS_ENABLE,
+         .value_count = 1U, .values = {1U}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE,
+         .value_count = 1U, .values = {1U}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_DEPTH_BIAS,
+         .value_count = 3U,
+         .values = {UINT32_C(0x3fa00000), UINT32_C(0x3f000000),
+                    UINT32_C(0x40000000)}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_DEPTH_BOUNDS,
+         .value_count = 2U,
+         .values = {UINT32_C(0x3e800000), UINT32_C(0x3f400000)}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_STENCIL_COMPARE_MASK,
+         .value_count = 2U, .values = {1U, 0xffU}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_STENCIL_WRITE_MASK,
+         .value_count = 2U, .values = {2U, 0x0fU}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_STENCIL_REFERENCE,
+         .value_count = 2U, .values = {3U, 7U}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_LINE_WIDTH,
+         .value_count = 1U, .values = {UINT32_C(0x3fc00000)}},
+        {.kind = BVB_VULKAN_DYNAMIC_STATE_BLEND_CONSTANTS,
+         .value_count = 4U,
+         .values = {UINT32_C(0x3e000000), UINT32_C(0x3e800000),
+                    UINT32_C(0x3f000000), UINT32_C(0x3f800000)}},
+    };
+    struct bvb_command_batch_builder builder;
+    CHECK(bvb_command_batch_begin(
+              &builder, bytes, sizeof(bytes), command_buffer, 23U) == 0);
+    for (size_t index = 0U;
+         index < sizeof(commands) / sizeof(commands[0]); ++index)
+        CHECK(bvb_command_batch_append_vulkan_dynamic_state(
+                  &builder, &commands[index]) == 0);
+    size_t length = 0U;
+    CHECK(bvb_command_batch_finish(&builder, &length) == 0);
+    struct bvb_command_batch_info info;
+    CHECK(bvb_command_batch_validate(bytes, length, &info) == 0);
+    CHECK(info.command_buffer_id == command_buffer && info.sequence == 23U &&
+          info.command_count == 19U);
+    struct bvb_command_batch_iterator iterator;
+    struct bvb_command_record record;
+    CHECK(bvb_command_batch_iterator_init(&iterator, bytes, length) == 0);
+    for (size_t index = 0U;
+         index < sizeof(commands) / sizeof(commands[0]); ++index) {
+        CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+        struct bvb_vulkan_dynamic_state_command decoded;
+        CHECK(bvb_command_decode_vulkan_dynamic_state(&record, &decoded) ==
+              0);
+        CHECK(decoded.kind == commands[index].kind &&
+              decoded.value_count == commands[index].value_count &&
+              memcmp(decoded.values, commands[index].values,
+                     sizeof(decoded.values)) == 0);
+    }
+    CHECK(bvb_command_batch_next(&iterator, &record) == 1);
+
+    uint8_t corrupted[sizeof(bytes)];
+    const size_t first_payload = BVB_COMMAND_BATCH_HEADER_SIZE +
+        BVB_COMMAND_RECORD_HEADER_SIZE;
+    memcpy(corrupted, bytes, length);
+    bvb_wire_put_u32(corrupted + first_payload + 12U, 1U);
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+    memcpy(corrupted, bytes, length);
+    const size_t depth_bias_payload = first_payload + 12U * 48U;
+    bvb_wire_put_u32(corrupted + depth_bias_payload + 8U,
+                     UINT32_C(0x7fc00000));
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+    return 0;
+}
+
 static int test_handles(void) {
     const uint64_t device = bvb_handle_id(BVB_OBJECT_DEVICE, 1U);
     const uint64_t pipeline = bvb_handle_id(BVB_OBJECT_PIPELINE, 9U);
@@ -845,6 +937,7 @@ static int test_vulkan_command_stream(void) {
 int main(void) {
     CHECK(test_handles() == 0);
     CHECK(test_vertex_index_draw_family() == 0);
+    CHECK(test_dynamic_state_family() == 0);
     CHECK(test_batch() == 0);
     CHECK(test_transfer_batch() == 0);
     CHECK(test_vulkan_transfer_family() == 0);

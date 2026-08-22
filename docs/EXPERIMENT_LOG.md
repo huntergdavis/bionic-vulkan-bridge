@@ -4281,3 +4281,30 @@ focused top-fullscreen Activity, and then captured the exact 2800x1752 image;
 its SHA-256 remains `28b73050...e9f8` and it still depicts only the bridge
 triangle. Exact-PID cleanup removed every run child and preserved Steam PID
 14565/start 121864440 plus X11 PID 13643/start 121863492.
+
+## E109 — scalar graphics dynamic-state family (2026-08-21)
+
+The screenshot-checked E108 run passed the complete vertex/index/indirect
+family and identified `vkCmdSetCullMode` as the first actually invoked missing
+command. E109 takes the adjacent family as one gate: 31 core/EXT names for 19
+canonical scalar dynamic states, including cull/front/topology, depth and
+stencil state, rasterizer/depth-bias/primitive-restart toggles, legacy depth
+bias and bounds, stencil masks/reference, line width, and blend constants.
+
+All names share fixed record ID 33. Its 40-byte payload contains a kind, a
+bounded count, and eight canonical 32-bit words. The codec rejects invalid
+enums/booleans/face masks, noncanonical tail values, non-finite floats, invalid
+depth bounds, and nonpositive line width. Shared mode appends locally with zero
+recording RPC; strict mode uses one immediate record. The Bionic service
+rebuilds the exact scalar arguments and resolves core/EXT aliases locally.
+
+The cross-process fake-native test requires all 19 calls in exact order and
+checks every argument, while the standalone codec round-trips all 19 kinds and
+corrupts both an inactive slot and a NaN. Policy coverage becomes 149
+executable / 291 required-unimplemented / 302 probed-null; the expanded strict
+test records 41 RPCs while shared remains zero. Compact evidence is
+`docs/evidence/e109-dynamic-state-family-host.json`. The required
+`deja "BVB Tomb Raider vkCmdSetCullMode dynamic graphics state family E109
+DXVK"` query returned no indexed implementation. Reuse comes from E075/E075a,
+E076, E080, E101, E105, and E108. Tablet visibility and FPS remain unclaimed
+until the exact archive is deployed and automatically screenshot-checked.
