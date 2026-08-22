@@ -48,7 +48,10 @@
 #define BVB_LOGE(...)                                                           \
     ((void)__android_log_print(ANDROID_LOG_ERROR, BVB_LOG_TAG, __VA_ARGS__))
 
-enum { BVB_MAX_IMAGES = 64 };
+enum {
+    BVB_MAX_IMAGES = 64,
+    BVB_ACTIVITY_TRIANGLE_BATCH_BYTES = 4096,
+};
 
 enum {
     BVB_SYSTEM_UI_FLAG_HIDE_NAVIGATION = 0x00000002,
@@ -4296,7 +4299,7 @@ static bool create_renderer(ANativeWindow *window) {
         BVB_LOGE("E016_FAIL framebuffer=%d", (int)result);
         return false;
     }
-    uint8_t triangle_batch[512];
+    uint8_t triangle_batch[BVB_ACTIVITY_TRIANGLE_BATCH_BYTES];
     size_t triangle_batch_length = 0U;
     int batch_status = build_triangle_batch(
         triangle_batch, sizeof(triangle_batch), extent, 1U,
@@ -4486,7 +4489,7 @@ static int animate_local_heartbeat(uint64_t generation,
     uint32_t measured_frames = 0U;
     BVB_LOGI("E033_HEARTBEAT_BEGIN pacing=fifo_display target_hz=60_or_120");
     while (renderer_generation_current(generation, window)) {
-        uint8_t triangle_batch[512];
+        uint8_t triangle_batch[BVB_ACTIVITY_TRIANGLE_BATCH_BYTES];
         size_t triangle_batch_length = 0U;
         int status = build_triangle_batch(
             triangle_batch, sizeof(triangle_batch), state.swapchain_extent,

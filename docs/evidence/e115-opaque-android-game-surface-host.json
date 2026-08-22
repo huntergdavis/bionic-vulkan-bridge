@@ -12,6 +12,8 @@
     "native_window_format_before": "WINDOW_FORMAT_RGBA_8888",
     "native_window_format_after": "WINDOW_FORMAT_RGBX_8888",
     "storage_bytes_per_pixel_unchanged": 4,
+    "activity_triangle_batch_capacity_before": 512,
+    "activity_triangle_batch_capacity_after": 4096,
     "game_alpha_is_compositor_content": false,
     "vulkan_composite_alpha_preference": "OPAQUE then PRE then POST then INHERIT",
     "runtime_log": "E115_SURFACE_OPACITY records the actual NativeWindow format, supported alpha flags, and selected swapchain alpha"
@@ -19,7 +21,7 @@
   "validation": {
     "source_contract": "passed",
     "host_suite": "75/75 passed",
-    "apk_build_install": "pending exact archive",
+    "apk_build_install": "first exact APK exposed and then corrected obsolete 512-byte Activity triangle capacity; replacement pending",
     "tablet_before_after_screenshot": "pending",
     "visible_game_frame": true,
     "correct_game_frame": false,

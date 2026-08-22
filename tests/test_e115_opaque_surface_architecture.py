@@ -25,6 +25,16 @@ def main() -> int:
         raise AssertionError("NativeActivity still advertises a blended RGBA layer")
     require(native, "VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR", "opaque alpha preference")
     require(native, "E115_SURFACE_OPACITY", "runtime surface diagnostic")
+    require(
+        native,
+        "BVB_ACTIVITY_TRIANGLE_BATCH_BYTES = 4096",
+        "bounded current-record triangle capacity",
+    )
+    assert native.count(
+        "uint8_t triangle_batch[BVB_ACTIVITY_TRIANGLE_BATCH_BYTES]"
+    ) == 2
+    if "uint8_t triangle_batch[512]" in native:
+        raise AssertionError("Activity still uses the obsolete 512-byte batch")
     print("PASS: E115 opaque Android game-surface architecture")
     return 0
 

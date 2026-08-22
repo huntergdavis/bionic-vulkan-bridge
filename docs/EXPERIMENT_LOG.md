@@ -4533,3 +4533,13 @@ query returned no indexed implementation. E115 reuses E057 and E114; exact-
 APK before/after screenshot proof remains pending. The complete host suite
 passes 75/75, including the source contract that rejects an RGBA Activity
 window and preserves opaque-first Vulkan composite-alpha selection.
+
+The first exact E115 APK did not reach the RGBX A/B test. Its current command
+records no longer fit the Activity's historical 512-byte local triangle
+scratch buffer, so both the initial freeform surface and the launcher-resized
+`2800x1752` surface reported `E016_FAIL batch_build=-28`. E115 raises both
+bounded local triangle buffers to 4096 bytes, still far below the global
+16-MiB batch ceiling. The required `deja "BVB E016 batch_build ENOSPC
+triangle_batch 512 Android Activity current command records"` query returned
+no indexed implementation; the fix reuses the existing bounded triangle
+builder and changes no wire format or game-frame transport.
