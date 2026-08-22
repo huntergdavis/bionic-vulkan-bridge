@@ -1870,6 +1870,32 @@ static int answer_vulkan_descriptor_update(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_descriptor_template_update(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_descriptor_template_update_request decoded;
+    int result =
+        bvb_protocol_decode_vulkan_descriptor_template_update_request(
+            request->payload, request->header.payload_length, &decoded);
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result =
+            bvb_vulkan_global_context_update_descriptor_set_with_template(
+                context, &decoded, diagnostic, sizeof(diagnostic));
+    if (result != 0) {
+        fprintf(stderr, "bvb: descriptor template update failed: %s\n",
+                diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
 static int answer_vulkan_buffer_requirements(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context) {
@@ -2202,6 +2228,31 @@ static int answer_vulkan_command_buffer_clear_color_image(
             context, &decoded, diagnostic, sizeof(diagnostic));
     if (result != 0) {
         fprintf(stderr, "bvb: command-buffer clear color image failed: %s\n",
+                diagnostic);
+        response.header.status = result;
+    }
+    return bvb_transport_send(client_fd, &response);
+}
+
+static int answer_vulkan_command_buffer_bind_descriptor_sets(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_bind_descriptor_sets_request decoded;
+    int result = bvb_protocol_decode_vulkan_bind_descriptor_sets_request(
+        request->payload, request->header.payload_length, &decoded);
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result =
+            bvb_vulkan_global_context_command_buffer_bind_descriptor_sets(
+                context, &decoded, diagnostic, sizeof(diagnostic));
+    if (result != 0) {
+        fprintf(stderr, "bvb: command-buffer descriptor bind failed: %s\n",
                 diagnostic);
         response.header.status = result;
     }
@@ -3385,6 +3436,10 @@ static int serve_connection(int client_fd, const char *loader_path,
             result = answer_vulkan_descriptor_update(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_DESCRIPTOR_UPDATE_TEMPLATE) {
+            result = answer_vulkan_descriptor_template_update(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_BUFFER_REQUIREMENTS) {
             result = answer_vulkan_buffer_requirements(
                 client_fd, &request, negotiated, global_context);
@@ -3425,6 +3480,10 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_COMMAND_BUFFER_CLEAR_COLOR_IMAGE) {
             result = answer_vulkan_command_buffer_clear_color_image(
+                client_fd, &request, negotiated, global_context);
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_COMMAND_BUFFER_BIND_DESCRIPTOR_SETS) {
+            result = answer_vulkan_command_buffer_bind_descriptor_sets(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_MEMORY_VERIFY_FILL) {

@@ -1,0 +1,57 @@
+{
+  "schema": 1,
+  "gate": "E100",
+  "date": "2026-08-21",
+  "source_base_commit": "0b13af8",
+  "status": "host_pass_tablet_pending",
+  "objective": "advance the exact E099 Tomb Raider descriptor-update boundary and the immediately following DXVK descriptor-set bind as one coherent batch",
+  "trigger": {
+    "actual_invocation": "vkUpdateDescriptorSetWithTemplate",
+    "source": "E099 bounded tablet run 20260822T001532Z-8551",
+    "pinned_dxvk": "a6764047e587178283fcde4073ae6e1410af594f"
+  },
+  "pinned_dxvk_sequence": {
+    "source": "src/dxvk/dxvk_context.cpp updateDescriptorSetsBindings",
+    "host_shape": "32-bit Wine selects descriptor update templates",
+    "descriptor_storage": "24-byte DxvkLegacyDescriptor union of VkDescriptorBufferInfo, VkDescriptorImageInfo, and VkBufferView",
+    "calls": ["vkUpdateDescriptorSetWithTemplate", "vkCmdBindDescriptorSets"]
+  },
+  "implementation": {
+    "opcodes": {"descriptor_update_template": 112, "strict_command_bind_descriptor_sets": 113},
+    "shared_command_record": 12,
+    "template_metadata": "authoritative create-time entry metadata retained on both sides; application data becomes bounded canonical typed descriptor values",
+    "maximum_template_values": 64,
+    "maximum_bound_sets": 8,
+    "maximum_dynamic_offsets": 32,
+    "native_reconstruction": "Bionic-owned descriptor records, descriptor-set arrays, and dynamic-offset arrays",
+    "ownership": "device -> pool -> set, device -> template/layout, image view -> image -> device",
+    "core_khr_template_alias_same_client_pfn": true,
+    "strict_default_preserved": true,
+    "shared_recording_socket_round_trips_for_bind": 0
+  },
+  "cross_process_contract": {
+    "template_entries": ["storage buffer", "storage buffer", "uniform texel buffer", "sampled image"],
+    "template_offsets": [0, 24, 48, 72],
+    "native_update_required": true,
+    "strict_native_bind_required": true,
+    "shared_snapshot_transactional_replay_required": true,
+    "strict_recording_round_trips": 6,
+    "shared_recording_round_trips": 0
+  },
+  "dispatch_policy": {"total": 742, "executable": 95, "required_unimplemented": 345, "probed_null": 302},
+  "validation": {
+    "protocol_codec": "pass",
+    "command_batch_codec": "pass",
+    "strict_cross_process": "pass",
+    "shared_cross_process": "pass",
+    "full_host_suite": "60/60 passed"
+  },
+  "recall": "The required deja query 'BVB vkUpdateDescriptorSetWithTemplate DXVK Tomb Raider E100 descriptor template data' returned no indexed implementation.",
+  "reuse": [
+    "E096 create-time template metadata and measured 24-byte layout",
+    "E056 typed descriptor pool/set ownership and Bionic-local reconstruction",
+    "E075/E075a/E076 immutable shared command streams and transactional replay",
+    "pinned DXVK a6764047 exact update-then-bind control flow"
+  ],
+  "claims": {"host_descriptor_update": true, "host_descriptor_bind": true, "tablet_runtime": false, "tomb_raider_frame": false, "benchmark": false, "fps": false}
+}

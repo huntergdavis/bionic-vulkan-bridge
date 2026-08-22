@@ -24,6 +24,12 @@ enum {
     BVB_VULKAN_DESCRIPTOR_UPDATE_TEMPLATE_ENTRY_SIZE = 32,
     BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_ENTRIES = 32,
     BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_DATA_SIZE = 1U << 20,
+    BVB_VULKAN_DESCRIPTOR_TEMPLATE_UPDATE_PREFIX_SIZE = 32,
+    BVB_VULKAN_DESCRIPTOR_TEMPLATE_VALUE_SIZE = 40,
+    BVB_VULKAN_MAX_DESCRIPTOR_TEMPLATE_VALUES = 64,
+    BVB_VULKAN_BIND_DESCRIPTOR_SETS_PREFIX_SIZE = 32,
+    BVB_VULKAN_MAX_BOUND_DESCRIPTOR_SETS = 8,
+    BVB_VULKAN_MAX_DYNAMIC_OFFSETS = 32,
 };
 
 struct bvb_vulkan_descriptor_layout_binding {
@@ -129,6 +135,35 @@ struct bvb_vulkan_descriptor_update_template_create_request {
         entries[BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_ENTRIES];
 };
 
+struct bvb_vulkan_descriptor_template_value {
+    uint32_t descriptor_type;
+    uint32_t image_layout;
+    uint64_t object_id;
+    uint64_t auxiliary_object_id;
+    uint64_t offset;
+    uint64_t range;
+};
+
+struct bvb_vulkan_descriptor_template_update_request {
+    uint64_t device_id;
+    uint64_t descriptor_set_id;
+    uint64_t descriptor_update_template_id;
+    uint32_t value_count;
+    struct bvb_vulkan_descriptor_template_value
+        values[BVB_VULKAN_MAX_DESCRIPTOR_TEMPLATE_VALUES];
+};
+
+struct bvb_vulkan_bind_descriptor_sets_request {
+    uint64_t command_buffer_id;
+    uint64_t pipeline_layout_id;
+    uint32_t pipeline_bind_point;
+    uint32_t first_set;
+    uint32_t descriptor_set_count;
+    uint32_t dynamic_offset_count;
+    uint64_t descriptor_set_ids[BVB_VULKAN_MAX_BOUND_DESCRIPTOR_SETS];
+    uint32_t dynamic_offsets[BVB_VULKAN_MAX_DYNAMIC_OFFSETS];
+};
+
 int bvb_protocol_encode_vulkan_descriptor_set_layout_create_request(
     uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
     const struct bvb_vulkan_descriptor_set_layout_create_request *request,
@@ -177,5 +212,19 @@ int bvb_protocol_encode_vulkan_descriptor_update_template_create_request(
 int bvb_protocol_decode_vulkan_descriptor_update_template_create_request(
     const uint8_t *input, uint32_t input_length,
     struct bvb_vulkan_descriptor_update_template_create_request *request);
+int bvb_protocol_encode_vulkan_descriptor_template_update_request(
+    uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
+    const struct bvb_vulkan_descriptor_template_update_request *request,
+    uint32_t *output_length);
+int bvb_protocol_decode_vulkan_descriptor_template_update_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_descriptor_template_update_request *request);
+int bvb_protocol_encode_vulkan_bind_descriptor_sets_request(
+    uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
+    const struct bvb_vulkan_bind_descriptor_sets_request *request,
+    uint32_t *output_length);
+int bvb_protocol_decode_vulkan_bind_descriptor_sets_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_bind_descriptor_sets_request *request);
 
 #endif

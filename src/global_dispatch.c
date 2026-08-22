@@ -123,6 +123,12 @@ struct bvb_command_buffer_proxy {
     struct bvb_command_buffer_proxy *next;
 };
 
+struct bvb_descriptor_template_client_metadata {
+    uint32_t entry_count;
+    struct bvb_vulkan_descriptor_update_template_entry
+        entries[BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_ENTRIES];
+};
+
 struct bvb_resource_proxy {
     uint64_t wire_id;
     uint64_t parent_id;
@@ -134,6 +140,7 @@ struct bvb_resource_proxy {
     uint8_t *mapped_bytes;
     uint32_t buffer_usage;
     uint32_t subtype;
+    struct bvb_descriptor_template_client_metadata *descriptor_template;
     enum bvb_object_type type;
     bool memory_bound;
     bool mapped_shared;
@@ -857,7 +864,9 @@ static int shared_object_owned_by_device_cached_locked(
     struct bvb_command_buffer_proxy *command_state, uint64_t wire_id,
     enum bvb_object_type type) {
     if (command_state == NULL ||
-        (type != BVB_OBJECT_BUFFER && type != BVB_OBJECT_IMAGE) ||
+        (type != BVB_OBJECT_BUFFER && type != BVB_OBJECT_IMAGE &&
+         type != BVB_OBJECT_PIPELINE_LAYOUT &&
+         type != BVB_OBJECT_DESCRIPTOR_SET) ||
         bvb_handle_expect(wire_id, type) != 0) {
         return 0;
     }
@@ -879,6 +888,14 @@ static int shared_object_owned_by_device_cached_locked(
         if (type == BVB_OBJECT_IMAGE) {
             owned = image_owned_by_device_locked(
                 wire_id, command_state->device_id);
+        } else if (type == BVB_OBJECT_DESCRIPTOR_SET) {
+            const struct bvb_resource_proxy *set =
+                resource_proxy_locked(wire_id, type);
+            const struct bvb_resource_proxy *pool = set == NULL ? NULL :
+                resource_proxy_locked(set->parent_id,
+                                      BVB_OBJECT_DESCRIPTOR_POOL);
+            owned = pool != NULL &&
+                pool->parent_id == command_state->device_id;
         } else {
             const struct bvb_resource_proxy *proxy =
                 resource_proxy_locked(wire_id, type);
@@ -1211,6 +1228,12 @@ static void release_mapped_shadow_locked(struct bvb_resource_proxy *proxy) {
     proxy->mapped_shared = false;
 }
 
+static void release_resource_metadata(struct bvb_resource_proxy *proxy) {
+    if (proxy == NULL) return;
+    free(proxy->descriptor_template);
+    proxy->descriptor_template = NULL;
+}
+
 static void remove_resource_proxy_locked(struct bvb_resource_proxy *target) {
     struct bvb_resource_proxy **cursor = &bvb_global_client.resources;
     while (*cursor != NULL) {
@@ -1218,6 +1241,7 @@ static void remove_resource_proxy_locked(struct bvb_resource_proxy *target) {
         if (proxy == target) {
             *cursor = proxy->next;
             release_mapped_shadow_locked(proxy);
+            release_resource_metadata(proxy);
             free(proxy);
             return;
         }
@@ -1232,6 +1256,7 @@ static void remove_descriptor_sets_for_pool_locked(uint64_t pool_id) {
         if (proxy->type == BVB_OBJECT_DESCRIPTOR_SET &&
             proxy->parent_id == pool_id) {
             *cursor = proxy->next;
+            release_resource_metadata(proxy);
             free(proxy);
         } else {
             cursor = &proxy->next;
@@ -1254,6 +1279,7 @@ static void remove_resources_for_device_locked(uint64_t parent_id) {
         if (proxy->parent_id == parent_id) {
             *cursor = proxy->next;
             release_mapped_shadow_locked(proxy);
+            release_resource_metadata(proxy);
             free(proxy);
         } else {
             cursor = &proxy->next;
@@ -4812,7 +4838,17 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDescriptorUpdateTemplate(
             payload, &decoded, &payload_length);
     struct bvb_resource_proxy *state = calloc(1, sizeof(*state));
     if (state == NULL) return VK_ERROR_OUT_OF_HOST_MEMORY;
+    state->descriptor_template = calloc(
+        1U, sizeof(*state->descriptor_template));
+    if (state->descriptor_template == NULL) {
+        free(state);
+        return VK_ERROR_OUT_OF_HOST_MEMORY;
+    }
+    state->descriptor_template->entry_count = decoded.entry_count;
+    memcpy(state->descriptor_template->entries, decoded.entries,
+           decoded.entry_count * sizeof(decoded.entries[0]));
     if (result != 0 || pthread_mutex_lock(&bvb_global_client.mutex) != 0) {
+        release_resource_metadata(state);
         free(state);
         return VK_ERROR_FEATURE_NOT_PRESENT;
     }
@@ -4841,6 +4877,7 @@ static VkResult VKAPI_CALL bvb_bridge_vkCreateDescriptorUpdateTemplate(
                 (int)vulkan_result);
     }
     if (vulkan_result != VK_SUCCESS) {
+        release_resource_metadata(state);
         free(state);
         return vulkan_result;
     }
@@ -4858,6 +4895,170 @@ static void VKAPI_CALL bvb_bridge_vkDestroyDescriptorUpdateTemplate(
             &descriptor_update_template, sizeof(descriptor_update_template)),
         BVB_OBJECT_DESCRIPTOR_UPDATE_TEMPLATE,
         BVB_OPCODE_VULKAN_DESCRIPTOR_OBJECT_DESTROY, allocator);
+}
+
+static void VKAPI_CALL bvb_bridge_vkUpdateDescriptorSetWithTemplate(
+    VkDevice device, VkDescriptorSet descriptor_set,
+    VkDescriptorUpdateTemplate descriptor_update_template,
+    const void *data) {
+    struct bvb_device_proxy *device_state = device_proxy(device);
+    if (device_state == NULL || data == NULL ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) return;
+    const uint64_t set_id = non_dispatchable_wire_id(
+        &descriptor_set, sizeof(descriptor_set));
+    const uint64_t template_id = non_dispatchable_wire_id(
+        &descriptor_update_template, sizeof(descriptor_update_template));
+    struct bvb_resource_proxy *set_state = resource_proxy_locked(
+        set_id, BVB_OBJECT_DESCRIPTOR_SET);
+    struct bvb_resource_proxy *pool_state = set_state == NULL ? NULL :
+        resource_proxy_locked(set_state->parent_id,
+                              BVB_OBJECT_DESCRIPTOR_POOL);
+    struct bvb_resource_proxy *template_state = resource_proxy_locked(
+        template_id, BVB_OBJECT_DESCRIPTOR_UPDATE_TEMPLATE);
+    struct bvb_descriptor_template_client_metadata *metadata =
+        template_state == NULL ? NULL : template_state->descriptor_template;
+    int result = pool_state != NULL && template_state != NULL &&
+            pool_state->parent_id == device_state->wire_id &&
+            template_state->parent_id == device_state->wire_id &&
+            metadata != NULL
+        ? 0 : -EINVAL;
+    struct bvb_vulkan_descriptor_template_update_request decoded = {
+        .device_id = device_state->wire_id,
+        .descriptor_set_id = set_id,
+        .descriptor_update_template_id = template_id,
+    };
+    const uint8_t *input = data;
+    for (uint32_t entry_index = 0U; result == 0 &&
+         entry_index < metadata->entry_count; ++entry_index) {
+        const struct bvb_vulkan_descriptor_update_template_entry *entry =
+            &metadata->entries[entry_index];
+        if (entry->descriptor_count >
+            BVB_VULKAN_MAX_DESCRIPTOR_TEMPLATE_VALUES - decoded.value_count) {
+            result = -E2BIG;
+            break;
+        }
+        for (uint32_t descriptor = 0U;
+             result == 0 && descriptor < entry->descriptor_count;
+             ++descriptor) {
+            const uint8_t *source = input + entry->offset +
+                (uint64_t)descriptor * entry->stride;
+            struct bvb_vulkan_descriptor_template_value *value =
+                &decoded.values[decoded.value_count++];
+            value->descriptor_type = entry->descriptor_type;
+            switch ((VkDescriptorType)entry->descriptor_type) {
+            case VK_DESCRIPTOR_TYPE_SAMPLER:
+            case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+            case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+            case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+            case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT: {
+                VkDescriptorImageInfo info;
+                memcpy(&info, source, sizeof(info));
+                value->image_layout = info.imageLayout;
+                if (entry->descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLER) {
+                    value->object_id = non_dispatchable_wire_id(
+                        &info.sampler, sizeof(info.sampler));
+                } else {
+                    value->object_id = non_dispatchable_wire_id(
+                        &info.imageView, sizeof(info.imageView));
+                    if (entry->descriptor_type ==
+                        VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
+                        value->auxiliary_object_id =
+                            non_dispatchable_wire_id(
+                                &info.sampler, sizeof(info.sampler));
+                    } else if (info.sampler != VK_NULL_HANDLE) {
+                        result = -EPROTO;
+                    }
+                }
+                break;
+            }
+            case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+            case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER: {
+                VkBufferView view = VK_NULL_HANDLE;
+                memcpy(&view, source, sizeof(view));
+                if (view != VK_NULL_HANDLE) result = -ENOTSUP;
+                break;
+            }
+            case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+            case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+            case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+            case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC: {
+                VkDescriptorBufferInfo info;
+                memcpy(&info, source, sizeof(info));
+                value->object_id = non_dispatchable_wire_id(
+                    &info.buffer, sizeof(info.buffer));
+                value->offset = info.offset;
+                value->range = info.range;
+                break;
+            }
+            default:
+                result = -ENOTSUP;
+                break;
+            }
+        }
+    }
+    for (uint32_t index = 0U; result == 0 &&
+         index < decoded.value_count; ++index) {
+        const struct bvb_vulkan_descriptor_template_value *value =
+            &decoded.values[index];
+        if (value->object_id != 0U) {
+            enum bvb_object_type type = BVB_OBJECT_INVALID;
+            if (value->descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLER)
+                type = BVB_OBJECT_SAMPLER;
+            else if (value->descriptor_type ==
+                         VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER ||
+                     value->descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE ||
+                     value->descriptor_type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE ||
+                     value->descriptor_type == VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT)
+                type = BVB_OBJECT_IMAGE_VIEW;
+            else if (value->descriptor_type >= VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER &&
+                     value->descriptor_type <=
+                         VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC)
+                type = BVB_OBJECT_BUFFER;
+            struct bvb_resource_proxy *object =
+                resource_proxy_locked(value->object_id, type);
+            if (object == NULL) {
+                result = -EINVAL;
+            } else if (type == BVB_OBJECT_IMAGE_VIEW) {
+                struct bvb_resource_proxy *image = resource_proxy_locked(
+                    object->parent_id, BVB_OBJECT_IMAGE);
+                if (image == NULL ||
+                    image->parent_id != device_state->wire_id)
+                    result = -EINVAL;
+            } else if (object->parent_id != device_state->wire_id) {
+                result = -EINVAL;
+            }
+        }
+        if (result == 0 && value->auxiliary_object_id != 0U) {
+            struct bvb_resource_proxy *sampler = resource_proxy_locked(
+                value->auxiliary_object_id, BVB_OBJECT_SAMPLER);
+            if (sampler == NULL ||
+                sampler->parent_id != device_state->wire_id) result = -EINVAL;
+        }
+    }
+    uint8_t payload[BVB_PROTOCOL_MAX_PAYLOAD];
+    uint32_t payload_length = 0U;
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_descriptor_template_update_request(
+            payload, &decoded, &payload_length);
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_DESCRIPTOR_UPDATE_TEMPLATE,
+        .request_id = next_request_id_locked(),
+        .payload_length = payload_length,
+    };
+    if (result == 0) memcpy(request.payload, payload, payload_length);
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) result = connect_locked();
+    if (result == 0) result = exchange_locked(&request, &response);
+    if (result == 0 &&
+        (response.header.status != 0 || response.header.payload_length != 0U))
+        result = -EPROTO;
+    if (result != 0 && getenv("BVB_ICD_DIAGNOSTICS") != NULL)
+        fprintf(stderr, "BVB_ICD_DESCRIPTOR_TEMPLATE_UPDATE result=%d\n",
+                result);
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
 }
 
 static VkResult VKAPI_CALL bvb_bridge_vkCreatePipelineLayout(
@@ -7045,6 +7246,133 @@ static struct bvb_vulkan_image_subresource_range command_image_range(
     };
 }
 
+static void VKAPI_CALL bvb_bridge_vkCmdBindDescriptorSets(
+    VkCommandBuffer command_buffer, VkPipelineBindPoint pipeline_bind_point,
+    VkPipelineLayout layout, uint32_t first_set,
+    uint32_t descriptor_set_count, const VkDescriptorSet *descriptor_sets,
+    uint32_t dynamic_offset_count, const uint32_t *dynamic_offsets) {
+    struct bvb_command_buffer_proxy *command_state =
+        command_buffer_proxy(command_buffer);
+    if (command_state == NULL ||
+        (pipeline_bind_point != VK_PIPELINE_BIND_POINT_GRAPHICS &&
+         pipeline_bind_point != VK_PIPELINE_BIND_POINT_COMPUTE) ||
+        layout == VK_NULL_HANDLE || descriptor_set_count == 0U ||
+        descriptor_set_count > BVB_VULKAN_MAX_BOUND_DESCRIPTOR_SETS ||
+        descriptor_sets == NULL ||
+        dynamic_offset_count > BVB_VULKAN_MAX_DYNAMIC_OFFSETS ||
+        (dynamic_offset_count != 0U && dynamic_offsets == NULL)) {
+        poison_shared_command_stream(
+            command_state, "vkCmdBindDescriptorSets",
+            "unsupported_descriptor_bind_shape",
+            "VkPipelineBindPoint_value,VkPipelineLayout_value,uint32_t_value,uint32_t_value,VkDescriptorSet_ptr,uint32_t_value,uint32_t_ptr",
+            -ENOTSUP);
+        return;
+    }
+    struct bvb_vulkan_bind_descriptor_sets_request decoded = {
+        .command_buffer_id = command_state->wire_id,
+        .pipeline_layout_id = non_dispatchable_wire_id(
+            &layout, sizeof(layout)),
+        .pipeline_bind_point = pipeline_bind_point,
+        .first_set = first_set,
+        .descriptor_set_count = descriptor_set_count,
+        .dynamic_offset_count = dynamic_offset_count,
+    };
+    for (uint32_t index = 0U; index < descriptor_set_count; ++index)
+        decoded.descriptor_set_ids[index] = non_dispatchable_wire_id(
+            &descriptor_sets[index], sizeof(descriptor_sets[index]));
+    if (dynamic_offset_count != 0U)
+        memcpy(decoded.dynamic_offsets, dynamic_offsets,
+               dynamic_offset_count * sizeof(dynamic_offsets[0]));
+    if (command_stream_is_enabled()) {
+        if (pthread_mutex_lock(&command_state->stream_mutex) != 0) return;
+        int owned = shared_object_owned_by_device_cached_locked(
+            command_state, decoded.pipeline_layout_id,
+            BVB_OBJECT_PIPELINE_LAYOUT);
+        if (owned < 0) return;
+        int result = owned > 0 ? 0 : -EINVAL;
+        for (uint32_t index = 0U; result == 0 &&
+             index < descriptor_set_count; ++index) {
+            owned = shared_object_owned_by_device_cached_locked(
+                command_state, decoded.descriptor_set_ids[index],
+                BVB_OBJECT_DESCRIPTOR_SET);
+            if (owned < 0) return;
+            if (owned <= 0) result = -EINVAL;
+        }
+        if (result == 0 && command_state->stream_recording &&
+            !command_state->stream_error) {
+            struct bvb_vulkan_bind_descriptor_sets_command command = {
+                .pipeline_layout_id = decoded.pipeline_layout_id,
+                .pipeline_bind_point = decoded.pipeline_bind_point,
+                .first_set = decoded.first_set,
+                .descriptor_set_count = decoded.descriptor_set_count,
+                .dynamic_offset_count = decoded.dynamic_offset_count,
+            };
+            memcpy(command.descriptor_set_ids, decoded.descriptor_set_ids,
+                   descriptor_set_count * sizeof(decoded.descriptor_set_ids[0]));
+            memcpy(command.dynamic_offsets, decoded.dynamic_offsets,
+                   dynamic_offset_count * sizeof(decoded.dynamic_offsets[0]));
+            result = bvb_command_batch_append_vulkan_bind_descriptor_sets(
+                &command_state->stream_builder, &command);
+        } else if (result == 0) {
+            result = -EINVAL;
+        }
+        if (result != 0) {
+            store_command_diagnostic_locked(
+                command_state, "vkCmdBindDescriptorSets",
+                "ownership_or_stream_append_rejected",
+                "VkPipelineBindPoint_value,VkPipelineLayout_value,uint32_t_value,uint32_t_value,VkDescriptorSet_ptr,uint32_t_value,uint32_t_ptr",
+                result);
+            command_state->stream_error = true;
+            command_state->stream_sealed = false;
+        }
+        (void)pthread_mutex_unlock(&command_state->stream_mutex);
+        return;
+    }
+    uint8_t payload[BVB_PROTOCOL_MAX_PAYLOAD];
+    uint32_t payload_length = 0U;
+    int result =
+        bvb_protocol_encode_vulkan_bind_descriptor_sets_request(
+            payload, &decoded, &payload_length);
+    if (result != 0 ||
+        pthread_mutex_lock(&bvb_global_client.mutex) != 0) return;
+    struct bvb_resource_proxy *layout_state = resource_proxy_locked(
+        decoded.pipeline_layout_id, BVB_OBJECT_PIPELINE_LAYOUT);
+    if (layout_state == NULL ||
+        layout_state->parent_id != command_state->device_id) result = -EINVAL;
+    for (uint32_t index = 0U; result == 0 &&
+         index < descriptor_set_count; ++index) {
+        struct bvb_resource_proxy *set_state = resource_proxy_locked(
+            decoded.descriptor_set_ids[index], BVB_OBJECT_DESCRIPTOR_SET);
+        struct bvb_resource_proxy *pool_state = set_state == NULL ? NULL :
+            resource_proxy_locked(set_state->parent_id,
+                                  BVB_OBJECT_DESCRIPTOR_POOL);
+        if (pool_state == NULL ||
+            pool_state->parent_id != command_state->device_id) result = -EINVAL;
+    }
+    struct bvb_protocol_packet request = {0};
+    request.header = (struct bvb_protocol_header){
+        .version = BVB_PROTOCOL_VERSION,
+        .kind = BVB_PROTOCOL_REQUEST,
+        .opcode = BVB_OPCODE_VULKAN_COMMAND_BUFFER_BIND_DESCRIPTOR_SETS,
+        .request_id = next_request_id_locked(),
+        .payload_length = payload_length,
+    };
+    if (result == 0) memcpy(request.payload, payload, payload_length);
+    struct bvb_protocol_packet response = {0};
+    if (result == 0) result = connect_locked();
+    if (result == 0) result = exchange_locked(&request, &response);
+    if (result == 0 &&
+        (response.header.status != 0 || response.header.payload_length != 0U))
+        result = -EPROTO;
+    if (result != 0)
+        store_command_diagnostic_locked(
+            command_state, "vkCmdBindDescriptorSets",
+            "strict_transport_rejected",
+            "VkPipelineBindPoint_value,VkPipelineLayout_value,uint32_t_value,uint32_t_value,VkDescriptorSet_ptr,uint32_t_value,uint32_t_ptr",
+            result);
+    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+}
+
 static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
     VkCommandBuffer command_buffer, const VkDependencyInfo *dependency_info) {
     struct bvb_command_buffer_proxy *command_state =
@@ -8667,6 +8995,10 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
                      bvb_bridge_vkCreateDescriptorUpdateTemplate)
     BVB_DEVICE_MATCH("vkDestroyDescriptorUpdateTemplate",
                      bvb_bridge_vkDestroyDescriptorUpdateTemplate)
+    BVB_DEVICE_MATCH("vkUpdateDescriptorSetWithTemplate",
+                     bvb_bridge_vkUpdateDescriptorSetWithTemplate)
+    BVB_DEVICE_MATCH("vkUpdateDescriptorSetWithTemplateKHR",
+                     bvb_bridge_vkUpdateDescriptorSetWithTemplate)
     BVB_DEVICE_MATCH("vkCreatePipelineLayout",
                      bvb_bridge_vkCreatePipelineLayout)
     BVB_DEVICE_MATCH("vkDestroyPipelineLayout",
@@ -8709,6 +9041,8 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
     BVB_DEVICE_MATCH("vkCmdClearColorImage",
                      bvb_bridge_vkCmdClearColorImage)
     BVB_DEVICE_MATCH("vkCmdFillBuffer", bvb_bridge_vkCmdFillBuffer)
+    BVB_DEVICE_MATCH("vkCmdBindDescriptorSets",
+                     bvb_bridge_vkCmdBindDescriptorSets)
     BVB_DEVICE_MATCH("vkCreateFence", bvb_bridge_vkCreateFence)
     BVB_DEVICE_MATCH("vkDestroyFence", bvb_bridge_vkDestroyFence)
     BVB_DEVICE_MATCH("vkGetFenceStatus", bvb_bridge_vkGetFenceStatus)

@@ -327,3 +327,12 @@ level, so the adapter treats `EAGAIN` as a bounded readiness/retry condition;
 other native-handle errors still fail immediately. Non-Android hosts retain the
 original DMA-BUF/FD contracts; no production transport selector or runtime
 fallback is added.
+
+E100 carries descriptor template updates as canonical typed values, never as
+the application's pointer-shaped template blob. Template creation retains the
+bounded entry layout independently on the glibc client and Bionic service. The
+client translates each 24-byte DXVK legacy descriptor into typed bridge IDs;
+the service verifies its own metadata and reconstructs native Vulkan records in
+Bionic-owned storage. Descriptor-set binding is a strict RPC or local shared
+command record, preserving zero recording socket round trips in shared mode
+and authoritative whole-stream validation at Submit2.

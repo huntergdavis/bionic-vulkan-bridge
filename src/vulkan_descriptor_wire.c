@@ -567,3 +567,199 @@ int bvb_protocol_decode_vulkan_descriptor_update_template_create_request(
     *request = decoded;
     return 0;
 }
+
+static int descriptor_template_value_is_canonical(
+    const struct bvb_vulkan_descriptor_template_value *value) {
+    if (value == NULL || value->descriptor_type > 10U) return 0;
+    switch (value->descriptor_type) {
+    case 0U:
+        return (value->object_id == 0U ||
+                wire_id_is(value->object_id, BVB_OBJECT_SAMPLER)) &&
+            value->auxiliary_object_id == 0U && value->image_layout == 0U &&
+            value->offset == 0U && value->range == 0U;
+    case 1U:
+        return (value->object_id == 0U ||
+                wire_id_is(value->object_id, BVB_OBJECT_IMAGE_VIEW)) &&
+            (value->auxiliary_object_id == 0U ||
+             wire_id_is(value->auxiliary_object_id, BVB_OBJECT_SAMPLER)) &&
+            value->offset == 0U && value->range == 0U;
+    case 2U:
+    case 3U:
+    case 10U:
+        return (value->object_id == 0U ||
+                wire_id_is(value->object_id, BVB_OBJECT_IMAGE_VIEW)) &&
+            value->auxiliary_object_id == 0U && value->offset == 0U &&
+            value->range == 0U;
+    case 4U:
+    case 5U:
+        return value->object_id == 0U && value->auxiliary_object_id == 0U &&
+            value->image_layout == 0U && value->offset == 0U &&
+            value->range == 0U;
+    case 6U:
+    case 7U:
+    case 8U:
+    case 9U:
+        return (value->object_id == 0U ||
+                wire_id_is(value->object_id, BVB_OBJECT_BUFFER)) &&
+            value->auxiliary_object_id == 0U && value->image_layout == 0U;
+    default:
+        return 0;
+    }
+}
+
+int bvb_protocol_encode_vulkan_descriptor_template_update_request(
+    uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
+    const struct bvb_vulkan_descriptor_template_update_request *request,
+    uint32_t *output_length) {
+    if (output == NULL || request == NULL || output_length == NULL ||
+        !wire_id_is(request->device_id, BVB_OBJECT_DEVICE) ||
+        !wire_id_is(request->descriptor_set_id, BVB_OBJECT_DESCRIPTOR_SET) ||
+        !wire_id_is(request->descriptor_update_template_id,
+                    BVB_OBJECT_DESCRIPTOR_UPDATE_TEMPLATE) ||
+        request->value_count == 0U ||
+        request->value_count > BVB_VULKAN_MAX_DESCRIPTOR_TEMPLATE_VALUES) {
+        return -EINVAL;
+    }
+    const uint32_t length = BVB_VULKAN_DESCRIPTOR_TEMPLATE_UPDATE_PREFIX_SIZE +
+        request->value_count * BVB_VULKAN_DESCRIPTOR_TEMPLATE_VALUE_SIZE;
+    memset(output, 0, length);
+    bvb_wire_put_u64(output, request->device_id);
+    bvb_wire_put_u64(output + 8, request->descriptor_set_id);
+    bvb_wire_put_u64(output + 16,
+                     request->descriptor_update_template_id);
+    bvb_wire_put_u32(output + 24, request->value_count);
+    uint32_t cursor = BVB_VULKAN_DESCRIPTOR_TEMPLATE_UPDATE_PREFIX_SIZE;
+    for (uint32_t index = 0U; index < request->value_count; ++index) {
+        const struct bvb_vulkan_descriptor_template_value *value =
+            &request->values[index];
+        if (!descriptor_template_value_is_canonical(value)) return -EINVAL;
+        bvb_wire_put_u32(output + cursor, value->descriptor_type);
+        bvb_wire_put_u32(output + cursor + 4, value->image_layout);
+        bvb_wire_put_u64(output + cursor + 8, value->object_id);
+        bvb_wire_put_u64(output + cursor + 16, value->auxiliary_object_id);
+        bvb_wire_put_u64(output + cursor + 24, value->offset);
+        bvb_wire_put_u64(output + cursor + 32, value->range);
+        cursor += BVB_VULKAN_DESCRIPTOR_TEMPLATE_VALUE_SIZE;
+    }
+    *output_length = length;
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_descriptor_template_update_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_descriptor_template_update_request *request) {
+    if (input == NULL || request == NULL ||
+        input_length < BVB_VULKAN_DESCRIPTOR_TEMPLATE_UPDATE_PREFIX_SIZE ||
+        bvb_wire_get_u32(input + 28) != 0U) return -EINVAL;
+    struct bvb_vulkan_descriptor_template_update_request decoded = {
+        .device_id = bvb_wire_get_u64(input),
+        .descriptor_set_id = bvb_wire_get_u64(input + 8),
+        .descriptor_update_template_id = bvb_wire_get_u64(input + 16),
+        .value_count = bvb_wire_get_u32(input + 24),
+    };
+    if (decoded.value_count == 0U ||
+        decoded.value_count > BVB_VULKAN_MAX_DESCRIPTOR_TEMPLATE_VALUES ||
+        input_length != BVB_VULKAN_DESCRIPTOR_TEMPLATE_UPDATE_PREFIX_SIZE +
+            decoded.value_count * BVB_VULKAN_DESCRIPTOR_TEMPLATE_VALUE_SIZE) {
+        return -EPROTO;
+    }
+    uint32_t cursor = BVB_VULKAN_DESCRIPTOR_TEMPLATE_UPDATE_PREFIX_SIZE;
+    for (uint32_t index = 0U; index < decoded.value_count; ++index) {
+        decoded.values[index] =
+            (struct bvb_vulkan_descriptor_template_value){
+                .descriptor_type = bvb_wire_get_u32(input + cursor),
+                .image_layout = bvb_wire_get_u32(input + cursor + 4),
+                .object_id = bvb_wire_get_u64(input + cursor + 8),
+                .auxiliary_object_id = bvb_wire_get_u64(input + cursor + 16),
+                .offset = bvb_wire_get_u64(input + cursor + 24),
+                .range = bvb_wire_get_u64(input + cursor + 32),
+            };
+        cursor += BVB_VULKAN_DESCRIPTOR_TEMPLATE_VALUE_SIZE;
+    }
+    uint8_t validation[BVB_PROTOCOL_MAX_PAYLOAD];
+    uint32_t validation_length = 0U;
+    if (bvb_protocol_encode_vulkan_descriptor_template_update_request(
+            validation, &decoded, &validation_length) != 0 ||
+        validation_length != input_length ||
+        memcmp(validation, input, input_length) != 0) return -EPROTO;
+    *request = decoded;
+    return 0;
+}
+
+int bvb_protocol_encode_vulkan_bind_descriptor_sets_request(
+    uint8_t output[BVB_PROTOCOL_MAX_PAYLOAD],
+    const struct bvb_vulkan_bind_descriptor_sets_request *request,
+    uint32_t *output_length) {
+    if (output == NULL || request == NULL || output_length == NULL ||
+        !wire_id_is(request->command_buffer_id, BVB_OBJECT_COMMAND_BUFFER) ||
+        !wire_id_is(request->pipeline_layout_id, BVB_OBJECT_PIPELINE_LAYOUT) ||
+        request->pipeline_bind_point > 1U ||
+        request->descriptor_set_count == 0U ||
+        request->descriptor_set_count > BVB_VULKAN_MAX_BOUND_DESCRIPTOR_SETS ||
+        request->dynamic_offset_count > BVB_VULKAN_MAX_DYNAMIC_OFFSETS) {
+        return -EINVAL;
+    }
+    const uint32_t length = BVB_VULKAN_BIND_DESCRIPTOR_SETS_PREFIX_SIZE +
+        request->descriptor_set_count * sizeof(uint64_t) +
+        request->dynamic_offset_count * sizeof(uint32_t);
+    memset(output, 0, length);
+    bvb_wire_put_u64(output, request->command_buffer_id);
+    bvb_wire_put_u64(output + 8, request->pipeline_layout_id);
+    bvb_wire_put_u32(output + 16, request->pipeline_bind_point);
+    bvb_wire_put_u32(output + 20, request->first_set);
+    bvb_wire_put_u32(output + 24, request->descriptor_set_count);
+    bvb_wire_put_u32(output + 28, request->dynamic_offset_count);
+    uint32_t cursor = BVB_VULKAN_BIND_DESCRIPTOR_SETS_PREFIX_SIZE;
+    for (uint32_t index = 0U; index < request->descriptor_set_count; ++index) {
+        if (!wire_id_is(request->descriptor_set_ids[index],
+                        BVB_OBJECT_DESCRIPTOR_SET)) return -EINVAL;
+        bvb_wire_put_u64(output + cursor, request->descriptor_set_ids[index]);
+        cursor += sizeof(uint64_t);
+    }
+    for (uint32_t index = 0U; index < request->dynamic_offset_count; ++index) {
+        bvb_wire_put_u32(output + cursor, request->dynamic_offsets[index]);
+        cursor += sizeof(uint32_t);
+    }
+    *output_length = length;
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_bind_descriptor_sets_request(
+    const uint8_t *input, uint32_t input_length,
+    struct bvb_vulkan_bind_descriptor_sets_request *request) {
+    if (input == NULL || request == NULL ||
+        input_length < BVB_VULKAN_BIND_DESCRIPTOR_SETS_PREFIX_SIZE) {
+        return -EINVAL;
+    }
+    struct bvb_vulkan_bind_descriptor_sets_request decoded = {
+        .command_buffer_id = bvb_wire_get_u64(input),
+        .pipeline_layout_id = bvb_wire_get_u64(input + 8),
+        .pipeline_bind_point = bvb_wire_get_u32(input + 16),
+        .first_set = bvb_wire_get_u32(input + 20),
+        .descriptor_set_count = bvb_wire_get_u32(input + 24),
+        .dynamic_offset_count = bvb_wire_get_u32(input + 28),
+    };
+    if (decoded.descriptor_set_count == 0U ||
+        decoded.descriptor_set_count > BVB_VULKAN_MAX_BOUND_DESCRIPTOR_SETS ||
+        decoded.dynamic_offset_count > BVB_VULKAN_MAX_DYNAMIC_OFFSETS ||
+        input_length != BVB_VULKAN_BIND_DESCRIPTOR_SETS_PREFIX_SIZE +
+            decoded.descriptor_set_count * sizeof(uint64_t) +
+            decoded.dynamic_offset_count * sizeof(uint32_t)) return -EPROTO;
+    uint32_t cursor = BVB_VULKAN_BIND_DESCRIPTOR_SETS_PREFIX_SIZE;
+    for (uint32_t index = 0U; index < decoded.descriptor_set_count; ++index) {
+        decoded.descriptor_set_ids[index] = bvb_wire_get_u64(input + cursor);
+        cursor += sizeof(uint64_t);
+    }
+    for (uint32_t index = 0U; index < decoded.dynamic_offset_count; ++index) {
+        decoded.dynamic_offsets[index] = bvb_wire_get_u32(input + cursor);
+        cursor += sizeof(uint32_t);
+    }
+    uint8_t validation[BVB_PROTOCOL_MAX_PAYLOAD];
+    uint32_t validation_length = 0U;
+    if (bvb_protocol_encode_vulkan_bind_descriptor_sets_request(
+            validation, &decoded, &validation_length) != 0 ||
+        validation_length != input_length ||
+        memcmp(validation, input, input_length) != 0) return -EPROTO;
+    *request = decoded;
+    return 0;
+}

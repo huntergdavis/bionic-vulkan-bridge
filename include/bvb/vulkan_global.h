@@ -137,6 +137,10 @@ int bvb_vulkan_global_context_update_descriptors(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_descriptor_update_request *request,
     char *error, size_t error_size);
+int bvb_vulkan_global_context_update_descriptor_set_with_template(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_descriptor_template_update_request *request,
+    char *error, size_t error_size);
 int bvb_vulkan_global_context_create_pipeline_layout(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_pipeline_layout_create_request *request,
@@ -288,6 +292,10 @@ int bvb_vulkan_global_context_command_buffer_image_barrier(
 int bvb_vulkan_global_context_command_buffer_clear_color_image(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_command_buffer_clear_color_image_request *request,
+    char *error, size_t error_size);
+int bvb_vulkan_global_context_command_buffer_bind_descriptor_sets(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_bind_descriptor_sets_request *request,
     char *error, size_t error_size);
 int bvb_vulkan_global_context_validate_queue_submit_2(
     const struct bvb_vulkan_global_context *context,

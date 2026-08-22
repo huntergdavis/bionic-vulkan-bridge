@@ -903,6 +903,9 @@ int main(void) {
         NULL;
     PFN_vkDestroyDescriptorUpdateTemplate destroy_descriptor_update_template =
         NULL;
+    PFN_vkUpdateDescriptorSetWithTemplate
+        update_descriptor_set_with_template = NULL;
+    PFN_vkCmdBindDescriptorSets cmd_bind_descriptor_sets = NULL;
     PFN_vkCreatePipelineLayout create_pipeline_layout = NULL;
     PFN_vkDestroyPipelineLayout destroy_pipeline_layout = NULL;
     PFN_vkCreateGraphicsPipelines create_graphics_pipelines = NULL;
@@ -1094,6 +1097,12 @@ int main(void) {
                        create_descriptor_update_template);
     RESOLVE_DESCRIPTOR(vkDestroyDescriptorUpdateTemplate,
                        destroy_descriptor_update_template);
+    RESOLVE_DESCRIPTOR(vkUpdateDescriptorSetWithTemplate,
+                       update_descriptor_set_with_template);
+    CHECK(vkGetDeviceProcAddr(device,
+                              "vkUpdateDescriptorSetWithTemplateKHR") ==
+          erased);
+    RESOLVE_DESCRIPTOR(vkCmdBindDescriptorSets, cmd_bind_descriptor_sets);
     RESOLVE_DESCRIPTOR(vkCreatePipelineLayout, create_pipeline_layout);
     RESOLVE_DESCRIPTOR(vkDestroyPipelineLayout, destroy_pipeline_layout);
     RESOLVE_DESCRIPTOR(vkCreateGraphicsPipelines, create_graphics_pipelines);
@@ -1526,6 +1535,46 @@ int main(void) {
     memcpy(&dxvk_template_id, &dxvk_template, sizeof(dxvk_template));
     CHECK(bvb_handle_type(dxvk_template_id) ==
           BVB_OBJECT_DESCRIPTOR_UPDATE_TEMPLATE);
+    const VkDescriptorPoolSize dxvk_template_pool_sizes[3] = {
+        {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 2U},
+        {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1U},
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1U},
+    };
+    const VkDescriptorPoolCreateInfo dxvk_template_pool_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .maxSets = 1U,
+        .poolSizeCount = 3U,
+        .pPoolSizes = dxvk_template_pool_sizes,
+    };
+    VkDescriptorPool dxvk_template_pool = VK_NULL_HANDLE;
+    CHECK(create_descriptor_pool(
+              device, &dxvk_template_pool_info, NULL,
+              &dxvk_template_pool) == VK_SUCCESS);
+    const VkDescriptorSetAllocateInfo dxvk_template_allocate_info = {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+        .descriptorPool = dxvk_template_pool,
+        .descriptorSetCount = 1U,
+        .pSetLayouts = &dxvk_template_layout,
+    };
+    VkDescriptorSet dxvk_template_set = VK_NULL_HANDLE;
+    CHECK(allocate_descriptor_sets(
+              device, &dxvk_template_allocate_info,
+              &dxvk_template_set) == VK_SUCCESS);
+    uint8_t dxvk_template_data[96] = {0};
+    for (uint32_t index = 0U; index < 2U; ++index) {
+        const VkDescriptorBufferInfo null_buffer = {
+            .range = VK_WHOLE_SIZE,
+        };
+        memcpy(dxvk_template_data + index * 24U, &null_buffer,
+               sizeof(null_buffer));
+    }
+    const VkDescriptorImageInfo null_image = {
+        .imageLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+    };
+    memcpy(dxvk_template_data + 72U, &null_image, sizeof(null_image));
+    update_descriptor_set_with_template(
+        device, dxvk_template_set, dxvk_template, dxvk_template_data);
+    destroy_descriptor_pool(device, dxvk_template_pool, NULL);
     /* Pinned DXVK destroys the layout before its update template. */
     destroy_descriptor_set_layout(device, dxvk_template_layout, NULL);
     destroy_descriptor_update_template(device, dxvk_template, NULL);
@@ -1908,12 +1957,6 @@ int main(void) {
     CHECK(bvb_handle_type(builtin_pipeline_id) == BVB_OBJECT_PIPELINE);
     CHECK(builtin_pipeline_id != graphics_pipeline_id);
     destroy_pipeline(device, builtin_pipeline, NULL);
-    destroy_pipeline_layout(device, pipeline_layout, NULL);
-    destroy_descriptor_set_layout(device, empty_layout, NULL);
-    destroy_sampler(device, sampler, NULL);
-    destroy_descriptor_pool(device, descriptor_pool, NULL);
-    destroy_descriptor_set_layout(device, descriptor_layout, NULL);
-    CHECK(device_wait_idle(device) == VK_SUCCESS);
 
     const VkCommandPoolCreateInfo pool_create_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -2581,6 +2624,9 @@ int main(void) {
         bvb_global_dispatch_exchange_count();
     CHECK(exchanges_before_recording != UINT64_MAX);
     CHECK(begin_command_buffer(command_buffer, &begin_info) == VK_SUCCESS);
+    cmd_bind_descriptor_sets(
+        command_buffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,
+        0U, 1U, &descriptor_set, 0U, NULL);
     cmd_fill_buffer(command_buffer, buffer, 0U, 4096U, UINT32_C(0xa5c3f00d));
     const VkImageSubresourceRange init_image_range = {
         .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -2632,14 +2678,14 @@ int main(void) {
     CHECK(end_command_buffer(command_buffer) == VK_SUCCESS);
     if (shared_command_stream) {
         CHECK(bvb_command_buffer_ownership_registry_reads(command_buffer) ==
-              2U);
+              4U);
     }
     const uint64_t exchanges_after_recording =
         bvb_global_dispatch_exchange_count();
     CHECK(exchanges_after_recording >= exchanges_before_recording);
     const uint64_t recording_rtts =
         exchanges_after_recording - exchanges_before_recording;
-    CHECK(recording_rtts == (shared_command_stream ? 0U : 5U));
+    CHECK(recording_rtts == (shared_command_stream ? 0U : 6U));
     if (shared_mapped_memory) mapped[0] = UINT8_C(0x7b);
     const uint64_t exchanges_before_submit =
         bvb_global_dispatch_exchange_count();
@@ -2982,6 +3028,12 @@ int main(void) {
                                  VK_NULL_HANDLE) == VK_SUCCESS);
         }
     }
+    destroy_pipeline_layout(device, pipeline_layout, NULL);
+    destroy_descriptor_set_layout(device, empty_layout, NULL);
+    destroy_sampler(device, sampler, NULL);
+    destroy_descriptor_pool(device, descriptor_pool, NULL);
+    destroy_descriptor_set_layout(device, descriptor_layout, NULL);
+    CHECK(device_wait_idle(device) == VK_SUCCESS);
     destroy_semaphore(device, timeline, NULL);
     destroy_image_view(device, image_view, NULL);
     CHECK(bvb_image_view_proxy_id(image_view) == 0U);

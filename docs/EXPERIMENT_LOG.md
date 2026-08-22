@@ -3948,3 +3948,34 @@ pixel. The run also proved that retaining only the Turnip module mapping did
 not cure the worker-exit crash; the complete-context lifetime correction above
 is host-validated and awaits the next tablet run. No game-frame, benchmark, or
 FPS claim is made.
+
+## E100 — DXVK descriptor update and bind batch (2026-08-21)
+
+Status: host implementation complete; tablet runtime pending. E099's actual
+`vkUpdateDescriptorSetWithTemplate` boundary is implemented together with the
+immediately following `vkCmdBindDescriptorSets` call proven by pinned DXVK
+`a6764047`. On a 32-bit Wine host DXVK writes a 24-byte
+`DxvkLegacyDescriptor` union for each binding, updates each dirty set through
+its create-time template, then binds consecutive dirty sets.
+
+Opcode 112 carries a bounded canonical descriptor-value vector. The client
+uses the exact metadata retained when the template was created; the Bionic
+service independently uses its own authoritative metadata to rebuild native
+image, buffer, and texel-view records. Typed ancestry is checked through
+device/pool/set, device/template, and image-view/image/device chains. Core and
+KHR template-update aliases resolve to the same client implementation. Non-null
+texel-buffer views remain fail-closed until a real `vkCreateBufferView` gate.
+
+Descriptor binding uses opcode 113 in strict mode and command-stream record 12
+in shared mode. Shared Begin/Bind/Fill/Clear/Barrier/End recording remains at
+zero socket round trips; the service snapshots and validates the entire stream
+before native replay. The generated policy is now 95 executable, 345
+required-unimplemented, and 302 probed-null names. Compact evidence is
+`docs/evidence/e100-dxvk-descriptor-update-bind-host.json`.
+
+The required `deja "BVB vkUpdateDescriptorSetWithTemplate DXVK Tomb Raider
+E100 descriptor template data"` query returned no indexed implementation.
+E100 reuses E096's create-time template metadata and measured layout, E056's
+typed descriptor ownership, E075/E075a/E076's transactional command stream,
+and pinned DXVK's exact update-then-bind sequence. No tablet frame, benchmark,
+or FPS result is claimed before the bounded runtime rerun.

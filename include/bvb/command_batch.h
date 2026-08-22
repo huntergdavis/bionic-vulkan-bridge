@@ -25,12 +25,15 @@ enum {
     BVB_COMMAND_PUSH_ROTATION = 9,
     BVB_COMMAND_VULKAN_IMAGE_BARRIER_2 = 10,
     BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE_GENERAL = 11,
+    BVB_COMMAND_VULKAN_BIND_DESCRIPTOR_SETS = 12,
     BVB_COMMAND_VULKAN_BEGIN = 20,
     BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE = 21,
     BVB_COMMAND_VULKAN_INIT_IMAGE_BARRIER = 22,
     BVB_COMMAND_VULKAN_END = 23,
     BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS = 4,
     BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES = 4,
+    BVB_COMMAND_VULKAN_MAX_BOUND_DESCRIPTOR_SETS = 8,
+    BVB_COMMAND_VULKAN_MAX_DYNAMIC_OFFSETS = 32,
 };
 
 struct bvb_begin_rendering_command {
@@ -140,6 +143,17 @@ struct bvb_vulkan_clear_color_image_general_command {
         ranges[BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES];
 };
 
+struct bvb_vulkan_bind_descriptor_sets_command {
+    uint64_t pipeline_layout_id;
+    uint32_t pipeline_bind_point;
+    uint32_t first_set;
+    uint32_t descriptor_set_count;
+    uint32_t dynamic_offset_count;
+    uint64_t descriptor_set_ids[
+        BVB_COMMAND_VULKAN_MAX_BOUND_DESCRIPTOR_SETS];
+    uint32_t dynamic_offsets[BVB_COMMAND_VULKAN_MAX_DYNAMIC_OFFSETS];
+};
+
 struct bvb_command_batch_builder {
     uint8_t *bytes;
     size_t capacity;
@@ -228,6 +242,9 @@ int bvb_command_batch_append_vulkan_image_barrier_2(
 int bvb_command_batch_append_vulkan_clear_color_image_general(
     struct bvb_command_batch_builder *builder,
     const struct bvb_vulkan_clear_color_image_general_command *command);
+int bvb_command_batch_append_vulkan_bind_descriptor_sets(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_bind_descriptor_sets_command *command);
 int bvb_command_batch_finish(struct bvb_command_batch_builder *builder,
                              size_t *output_length);
 
@@ -288,5 +305,8 @@ int bvb_command_decode_vulkan_image_barrier_2(
 int bvb_command_decode_vulkan_clear_color_image_general(
     const struct bvb_command_record *record,
     struct bvb_vulkan_clear_color_image_general_command *command);
+int bvb_command_decode_vulkan_bind_descriptor_sets(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_bind_descriptor_sets_command *command);
 
 #endif

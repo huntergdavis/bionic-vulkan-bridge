@@ -104,8 +104,9 @@ int main(void) {
     CHECK(BVB_OPCODE_VULKAN_MEMORY_MIRROR_UNMAP == 109);
     CHECK(BVB_OPCODE_VULKAN_DESCRIPTOR_UPDATE_TEMPLATE_CREATE == 110);
     CHECK(BVB_OPCODE_VULKAN_BUILTIN_GRAPHICS_PIPELINE_CREATE == 111);
-    CHECK(decoded.opcode ==
-          BVB_OPCODE_VULKAN_BUILTIN_GRAPHICS_PIPELINE_CREATE);
+    CHECK(BVB_OPCODE_VULKAN_DESCRIPTOR_UPDATE_TEMPLATE == 112);
+    CHECK(BVB_OPCODE_VULKAN_COMMAND_BUFFER_BIND_DESCRIPTOR_SETS == 113);
+    CHECK(decoded.opcode == BVB_OPCODE_LAST);
 
     const struct bvb_hello_request hello = {
         .minimum_version = 1,
@@ -2159,6 +2160,63 @@ int main(void) {
         bvb_protocol_decode_vulkan_descriptor_update_template_create_request(
             descriptor_wire, descriptor_wire_length,
             &template_decoded) == -EINVAL);
+
+    const struct bvb_vulkan_descriptor_template_update_request
+        template_update_request = {
+            .device_id = UINT64_C(0x0300000000000001),
+            .descriptor_set_id = UINT64_C(0x1600000000000001),
+            .descriptor_update_template_id = UINT64_C(0x1800000000000001),
+            .value_count = 4U,
+            .values = {
+                {.descriptor_type = 7U, .range = UINT64_MAX},
+                {.descriptor_type = 7U, .range = UINT64_MAX},
+                {.descriptor_type = 4U},
+                {.descriptor_type = 2U},
+            },
+        };
+    CHECK(bvb_protocol_encode_vulkan_descriptor_template_update_request(
+              descriptor_wire, &template_update_request,
+              &descriptor_wire_length) == 0);
+    CHECK(descriptor_wire_length ==
+          BVB_VULKAN_DESCRIPTOR_TEMPLATE_UPDATE_PREFIX_SIZE +
+              4U * BVB_VULKAN_DESCRIPTOR_TEMPLATE_VALUE_SIZE);
+    struct bvb_vulkan_descriptor_template_update_request
+        template_update_decoded;
+    CHECK(bvb_protocol_decode_vulkan_descriptor_template_update_request(
+              descriptor_wire, descriptor_wire_length,
+              &template_update_decoded) == 0);
+    CHECK(template_update_decoded.values[1].range == UINT64_MAX);
+    descriptor_wire[28U] = 1U;
+    CHECK(bvb_protocol_decode_vulkan_descriptor_template_update_request(
+              descriptor_wire, descriptor_wire_length,
+              &template_update_decoded) == -EINVAL);
+
+    const struct bvb_vulkan_bind_descriptor_sets_request bind_request = {
+        .command_buffer_id = UINT64_C(0x0b00000000000001),
+        .pipeline_layout_id = UINT64_C(0x0f00000000000001),
+        .pipeline_bind_point = 0U,
+        .first_set = 1U,
+        .descriptor_set_count = 2U,
+        .dynamic_offset_count = 3U,
+        .descriptor_set_ids = {UINT64_C(0x1600000000000001),
+                               UINT64_C(0x1600000000000002)},
+        .dynamic_offsets = {16U, 32U, 64U},
+    };
+    CHECK(bvb_protocol_encode_vulkan_bind_descriptor_sets_request(
+              descriptor_wire, &bind_request,
+              &descriptor_wire_length) == 0);
+    struct bvb_vulkan_bind_descriptor_sets_request bind_decoded;
+    CHECK(bvb_protocol_decode_vulkan_bind_descriptor_sets_request(
+              descriptor_wire, descriptor_wire_length, &bind_decoded) == 0);
+    CHECK(bind_decoded.descriptor_set_ids[1] ==
+          UINT64_C(0x1600000000000002));
+    CHECK(bind_decoded.dynamic_offsets[2] == 64U);
+    bvb_wire_put_u64(
+        descriptor_wire + BVB_VULKAN_BIND_DESCRIPTOR_SETS_PREFIX_SIZE,
+        UINT64_C(0x1700000000000001));
+    CHECK(bvb_protocol_decode_vulkan_bind_descriptor_sets_request(
+              descriptor_wire, descriptor_wire_length, &bind_decoded) ==
+          -EPROTO);
 
     const struct bvb_vulkan_pipeline_layout_create_request
         pipeline_layout_request = {

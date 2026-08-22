@@ -5,6 +5,7 @@ vkBeginCommandBuffer
 vkBindBufferMemory
 vkBindImageMemory
 vkCmdClearColorImage
+vkCmdBindDescriptorSets
 vkCmdFillBuffer
 vkCmdPipelineBarrier2
 vkCreateBuffer
@@ -78,6 +79,8 @@ vkSignalSemaphore
 vkSignalSemaphoreKHR
 vkUnmapMemory
 vkUpdateDescriptorSets
+vkUpdateDescriptorSetWithTemplate
+vkUpdateDescriptorSetWithTemplateKHR
 vkWaitForFences
 vkWaitSemaphores
 vkWaitSemaphoresKHR

@@ -255,6 +255,12 @@ static int test_vulkan_command_stream(void) {
     const uint64_t buffer = bvb_handle_id(BVB_OBJECT_BUFFER, 8U);
     const uint64_t image_one = bvb_handle_id(BVB_OBJECT_IMAGE, 9U);
     const uint64_t image_two = bvb_handle_id(BVB_OBJECT_IMAGE, 10U);
+    const uint64_t pipeline_layout =
+        bvb_handle_id(BVB_OBJECT_PIPELINE_LAYOUT, 11U);
+    const uint64_t descriptor_set_one =
+        bvb_handle_id(BVB_OBJECT_DESCRIPTOR_SET, 12U);
+    const uint64_t descriptor_set_two =
+        bvb_handle_id(BVB_OBJECT_DESCRIPTOR_SET, 13U);
     struct bvb_command_batch_builder builder;
     CHECK(bvb_command_batch_begin(&builder, bytes, sizeof(bytes), command_buffer,
                                   17U) == 0);
@@ -320,12 +326,24 @@ static int test_vulkan_command_stream(void) {
                                  .layer_count = 1U,
                              }},
               }) == 0);
+    CHECK(bvb_command_batch_append_vulkan_bind_descriptor_sets(
+              &builder,
+              &(const struct bvb_vulkan_bind_descriptor_sets_command){
+                  .pipeline_layout_id = pipeline_layout,
+                  .pipeline_bind_point = 1U,
+                  .first_set = 2U,
+                  .descriptor_set_count = 2U,
+                  .dynamic_offset_count = 2U,
+                  .descriptor_set_ids = {descriptor_set_one,
+                                         descriptor_set_two},
+                  .dynamic_offsets = {64U, 128U},
+              }) == 0);
     CHECK(bvb_command_batch_append_vulkan_end(&builder) == 0);
     size_t length = 0U;
     CHECK(bvb_command_batch_finish(&builder, &length) == 0);
     struct bvb_command_batch_info info;
     CHECK(bvb_command_batch_validate(bytes, length, &info) == 0);
-    CHECK(info.command_count == 7U);
+    CHECK(info.command_count == 8U);
     CHECK(info.command_buffer_id == command_buffer);
     CHECK(info.sequence == 17U);
 
@@ -374,6 +392,13 @@ static int test_vulkan_command_stream(void) {
     CHECK(rich_clear.color_words[3] == UINT32_C(0x3f800000));
     CHECK(rich_clear.range_count == 2U);
     CHECK(rich_clear.ranges[1].base_mip_level == 1U);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    struct bvb_vulkan_bind_descriptor_sets_command bind_descriptor_sets;
+    CHECK(bvb_command_decode_vulkan_bind_descriptor_sets(
+              &record, &bind_descriptor_sets) == 0);
+    CHECK(bind_descriptor_sets.pipeline_layout_id == pipeline_layout);
+    CHECK(bind_descriptor_sets.descriptor_set_ids[1] == descriptor_set_two);
+    CHECK(bind_descriptor_sets.dynamic_offsets[1] == 128U);
     CHECK(bvb_command_batch_next(&iterator, &record) == 0);
     CHECK(record.opcode == BVB_COMMAND_VULKAN_END);
     CHECK(bvb_command_batch_next(&iterator, &record) == 1);

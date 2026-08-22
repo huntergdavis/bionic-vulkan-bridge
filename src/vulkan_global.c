@@ -37,6 +37,7 @@ typedef void (*bvb_ahb_release_fn)(AHardwareBuffer *);
 
 enum {
     BVB_GLOBAL_OBJECT_CAPACITY = 4096,
+    BVB_DESCRIPTOR_TEMPLATE_METADATA_CAPACITY = 256,
     BVB_EXPOSED_INSTANCE_EXTENSION_CAPACITY = 3,
 };
 
@@ -124,6 +125,14 @@ struct bvb_swapchain_metadata {
     struct bvb_wsi_frame_ring *control;
 };
 
+struct bvb_descriptor_template_metadata {
+    uint64_t template_id;
+    uint64_t device_id;
+    uint32_t entry_count;
+    struct bvb_vulkan_descriptor_update_template_entry
+        entries[BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_ENTRIES];
+};
+
 struct bvb_vulkan_global_context {
     void *loader;
     PFN_vkGetInstanceProcAddr get_instance_proc_addr;
@@ -172,6 +181,8 @@ struct bvb_vulkan_global_context {
     struct bvb_image_metadata image_metadata[BVB_GLOBAL_OBJECT_CAPACITY];
     struct bvb_swapchain_metadata
         swapchain_metadata[BVB_WSI_FRAME_RING_MAX_SLOTS];
+    struct bvb_descriptor_template_metadata descriptor_template_metadata[
+        BVB_DESCRIPTOR_TEMPLATE_METADATA_CAPACITY];
 };
 
 static int destroy_swapchain_metadata(
@@ -2778,6 +2789,40 @@ int bvb_vulkan_global_context_destroy_descriptor_set_layout(
     return result;
 }
 
+static struct bvb_descriptor_template_metadata *descriptor_template_slot(
+    struct bvb_vulkan_global_context *context, uint64_t template_id) {
+    struct bvb_descriptor_template_metadata *empty = NULL;
+    for (size_t index = 0U;
+         index < BVB_DESCRIPTOR_TEMPLATE_METADATA_CAPACITY; ++index) {
+        struct bvb_descriptor_template_metadata *metadata =
+            &context->descriptor_template_metadata[index];
+        if (metadata->template_id == template_id) return metadata;
+        if (metadata->template_id == 0U && empty == NULL) empty = metadata;
+    }
+    return empty;
+}
+
+static size_t descriptor_template_data_size(uint32_t descriptor_type) {
+    switch ((VkDescriptorType)descriptor_type) {
+    case VK_DESCRIPTOR_TYPE_SAMPLER:
+    case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+    case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+    case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+    case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+        return sizeof(VkDescriptorImageInfo);
+    case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+    case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+        return sizeof(VkBufferView);
+    case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+    case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+    case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+    case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
+        return sizeof(VkDescriptorBufferInfo);
+    default:
+        return 0U;
+    }
+}
+
 int bvb_vulkan_global_context_create_descriptor_update_template(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_descriptor_update_template_create_request *request,
@@ -2817,16 +2862,22 @@ int bvb_vulkan_global_context_create_descriptor_update_template(
     for (uint32_t index = 0U; index < request->entry_count; ++index) {
         const struct bvb_vulkan_descriptor_update_template_entry *wire =
             &request->entries[index];
+        const size_t value_size =
+            descriptor_template_data_size(wire->descriptor_type);
         if (!core_descriptor_type_supported(wire->descriptor_type) ||
+            value_size == 0U ||
             wire->descriptor_count == 0U ||
             wire->descriptor_count > (1U << 20) || wire->stride == 0U ||
             wire->offset >=
                 BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_DATA_SIZE ||
+            wire->offset >
+                BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_DATA_SIZE -
+                    value_size ||
             wire->stride >
                 BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_DATA_SIZE ||
             (uint64_t)(wire->descriptor_count - 1U) >
-                (BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_DATA_SIZE - 1U -
-                 wire->offset) / wire->stride) {
+                (BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_DATA_SIZE -
+                 value_size - wire->offset) / wire->stride) {
             response->vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
             return 0;
         }
@@ -2875,6 +2926,23 @@ int bvb_vulkan_global_context_create_descriptor_update_template(
         response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
         return 0;
     }
+    struct bvb_descriptor_template_metadata *metadata =
+        descriptor_template_slot(context, 0U);
+    if (metadata == NULL) {
+        (void)bvb_handle_table_remove(
+            &context->objects, wire_id,
+            BVB_OBJECT_DESCRIPTOR_UPDATE_TEMPLATE, NULL);
+        destroy_template(device, descriptor_template, NULL);
+        response->vulkan_result = VK_ERROR_TOO_MANY_OBJECTS;
+        return 0;
+    }
+    *metadata = (struct bvb_descriptor_template_metadata){
+        .template_id = wire_id,
+        .device_id = request->device_id,
+        .entry_count = request->entry_count,
+    };
+    memcpy(metadata->entries, request->entries,
+           request->entry_count * sizeof(request->entries[0]));
     response->object_id = wire_id;
     return 0;
 }
@@ -2898,9 +2966,212 @@ int bvb_vulkan_global_context_destroy_descriptor_update_template(
         &context->objects, template_id,
         BVB_OBJECT_DESCRIPTOR_UPDATE_TEMPLATE, NULL);
     if (result == 0) {
+        struct bvb_descriptor_template_metadata *metadata =
+            descriptor_template_slot(context, template_id);
+        if (metadata != NULL && metadata->template_id == template_id)
+            *metadata = (struct bvb_descriptor_template_metadata){0};
         destroy_template(device,
             descriptor_update_template_from_bits(template_bits), NULL);
     }
+    return result;
+}
+
+static int descriptor_template_resolve_image_view(
+    const struct bvb_vulkan_global_context *context, uint64_t image_view_id,
+    uint64_t expected_device_id, VkImageView *image_view) {
+    if (image_view_id == 0U) {
+        *image_view = VK_NULL_HANDLE;
+        return 0;
+    }
+    uint64_t image_id = 0U, view_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, image_view_id, BVB_OBJECT_IMAGE_VIEW,
+        &image_id, &view_bits);
+    uint64_t image_device_id = 0U;
+    if (result == 0) {
+        result = bvb_handle_table_lookup(
+            &context->objects, image_id, BVB_OBJECT_IMAGE,
+            &image_device_id, NULL);
+    }
+    if (result != 0 || image_device_id != expected_device_id)
+        return result != 0 ? result : -EPROTO;
+    *image_view = image_view_from_bits(view_bits);
+    return 0;
+}
+
+int bvb_vulkan_global_context_update_descriptor_set_with_template(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_descriptor_template_update_request *request,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL) return -EINVAL;
+    uint64_t device_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, request->device_id, BVB_OBJECT_DEVICE, NULL,
+        &device_bits);
+    uint64_t pool_id = 0U, set_bits = 0U, pool_device_id = 0U;
+    uint64_t pool_bits = 0U;
+    if (result == 0) {
+        result = bvb_handle_table_lookup(
+            &context->objects, request->descriptor_set_id,
+            BVB_OBJECT_DESCRIPTOR_SET, &pool_id, &set_bits);
+    }
+    if (result == 0) {
+        result = bvb_handle_table_lookup(
+            &context->objects, pool_id, BVB_OBJECT_DESCRIPTOR_POOL,
+            &pool_device_id, &pool_bits);
+    }
+    uint64_t template_device_id = 0U, template_bits = 0U;
+    if (result == 0) {
+        result = bvb_handle_table_lookup(
+            &context->objects, request->descriptor_update_template_id,
+            BVB_OBJECT_DESCRIPTOR_UPDATE_TEMPLATE, &template_device_id,
+            &template_bits);
+    }
+    struct bvb_descriptor_template_metadata *metadata =
+        descriptor_template_slot(
+            context, request->descriptor_update_template_id);
+    if (result != 0 || pool_device_id != request->device_id ||
+        template_device_id != request->device_id || metadata == NULL ||
+        metadata->template_id != request->descriptor_update_template_id ||
+        metadata->device_id != request->device_id) {
+        set_error(error, error_size,
+                  "descriptor template update lineage failed: lookup=%d "
+                  "device=%#llx set=%#llx pool=%#llx pool-device=%#llx "
+                  "template=%#llx template-device=%#llx metadata=%#llx",
+                  result, (unsigned long long)request->device_id,
+                  (unsigned long long)request->descriptor_set_id,
+                  (unsigned long long)pool_id,
+                  (unsigned long long)pool_device_id,
+                  (unsigned long long)
+                      request->descriptor_update_template_id,
+                  (unsigned long long)template_device_id,
+                  (unsigned long long)
+                      (metadata == NULL ? 0U : metadata->template_id));
+        return result != 0 ? result : -EPROTO;
+    }
+    uint32_t expected_values = 0U;
+    size_t data_size = 0U;
+    for (uint32_t entry_index = 0U;
+         entry_index < metadata->entry_count; ++entry_index) {
+        const struct bvb_vulkan_descriptor_update_template_entry *entry =
+            &metadata->entries[entry_index];
+        if (entry->descriptor_count >
+            BVB_VULKAN_MAX_DESCRIPTOR_TEMPLATE_VALUES - expected_values)
+            return -E2BIG;
+        expected_values += entry->descriptor_count;
+        const size_t value_size =
+            descriptor_template_data_size(entry->descriptor_type);
+        const uint64_t end = entry->offset +
+            (uint64_t)(entry->descriptor_count - 1U) * entry->stride +
+            value_size;
+        if (value_size == 0U || end > SIZE_MAX ||
+            end > BVB_VULKAN_MAX_DESCRIPTOR_UPDATE_TEMPLATE_DATA_SIZE)
+            return -EPROTO;
+        if ((size_t)end > data_size) data_size = (size_t)end;
+    }
+    if (request->value_count != expected_values) return -EPROTO;
+    uint8_t *data = calloc(1U, data_size);
+    if (data == NULL) return -ENOMEM;
+    uint32_t value_index = 0U;
+    for (uint32_t entry_index = 0U; result == 0 &&
+         entry_index < metadata->entry_count; ++entry_index) {
+        const struct bvb_vulkan_descriptor_update_template_entry *entry =
+            &metadata->entries[entry_index];
+        for (uint32_t descriptor = 0U;
+             result == 0 && descriptor < entry->descriptor_count;
+             ++descriptor, ++value_index) {
+            const struct bvb_vulkan_descriptor_template_value *value =
+                &request->values[value_index];
+            uint8_t *destination = data + entry->offset +
+                (uint64_t)descriptor * entry->stride;
+            if (value->descriptor_type != entry->descriptor_type) {
+                result = -EPROTO;
+                break;
+            }
+            switch ((VkDescriptorType)entry->descriptor_type) {
+            case VK_DESCRIPTOR_TYPE_SAMPLER:
+            case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
+            case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+            case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+            case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT: {
+                VkDescriptorImageInfo info = {
+                    .imageLayout = (VkImageLayout)value->image_layout,
+                };
+                const uint64_t sampler_id = entry->descriptor_type ==
+                        VK_DESCRIPTOR_TYPE_SAMPLER
+                    ? value->object_id : value->auxiliary_object_id;
+                uint64_t sampler_bits = 0U, sampler_device_id = 0U;
+                if (sampler_id != 0U) {
+                    result = bvb_handle_table_lookup(
+                        &context->objects, sampler_id,
+                        BVB_OBJECT_SAMPLER, &sampler_device_id,
+                        &sampler_bits);
+                    if (result == 0 &&
+                        sampler_device_id != request->device_id)
+                        result = -EPROTO;
+                    info.sampler = sampler_from_bits(sampler_bits);
+                }
+                if (entry->descriptor_type == VK_DESCRIPTOR_TYPE_SAMPLER) {
+                    if (value->auxiliary_object_id != 0U)
+                        result = -EPROTO;
+                } else if (result == 0) {
+                    result = descriptor_template_resolve_image_view(
+                        context, value->object_id, request->device_id,
+                        &info.imageView);
+                }
+                if (result == 0) memcpy(destination, &info, sizeof(info));
+                break;
+            }
+            case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+            case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER: {
+                if (value->object_id != 0U) result = -ENOTSUP;
+                const VkBufferView view = VK_NULL_HANDLE;
+                if (result == 0) memcpy(destination, &view, sizeof(view));
+                break;
+            }
+            case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+            case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+            case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
+            case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC: {
+                uint64_t buffer_bits = 0U, buffer_device_id = 0U;
+                if (value->object_id != 0U) {
+                    result = bvb_handle_table_lookup(
+                        &context->objects, value->object_id,
+                        BVB_OBJECT_BUFFER, &buffer_device_id, &buffer_bits);
+                    if (result == 0 &&
+                        buffer_device_id != request->device_id)
+                        result = -EPROTO;
+                }
+                const VkDescriptorBufferInfo info = {
+                    .buffer = buffer_from_bits(buffer_bits),
+                    .offset = value->offset,
+                    .range = value->range,
+                };
+                if (result == 0) memcpy(destination, &info, sizeof(info));
+                break;
+            }
+            default:
+                result = -ENOTSUP;
+                break;
+            }
+        }
+    }
+    if (result == 0) {
+        const VkDevice device = device_from_bits(device_bits);
+        PFN_vkUpdateDescriptorSetWithTemplate update =
+            (PFN_vkUpdateDescriptorSetWithTemplate)
+                context->get_device_proc_addr(
+                    device, "vkUpdateDescriptorSetWithTemplate");
+        if (update == NULL) result = -ENOSYS;
+        else update(device, descriptor_set_from_bits(set_bits),
+                    descriptor_update_template_from_bits(template_bits), data);
+    }
+    free(data);
+    if (result != 0)
+        set_error(error, error_size,
+                  "descriptor template value translation failed: %d",
+                  result);
     return result;
 }
 
@@ -4848,6 +5119,68 @@ int bvb_vulkan_global_context_command_buffer_clear_color_image(
     return 0;
 }
 
+int bvb_vulkan_global_context_command_buffer_bind_descriptor_sets(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_bind_descriptor_sets_request *request,
+    char *error, size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL ||
+        request->pipeline_bind_point > VK_PIPELINE_BIND_POINT_COMPUTE ||
+        request->descriptor_set_count == 0U ||
+        request->descriptor_set_count > BVB_VULKAN_MAX_BOUND_DESCRIPTOR_SETS ||
+        request->dynamic_offset_count > BVB_VULKAN_MAX_DYNAMIC_OFFSETS) {
+        return -EINVAL;
+    }
+    uint64_t device_id = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
+    VkCommandBuffer command_buffer = VK_NULL_HANDLE;
+    int result = resolve_command_buffer(
+        context, request->command_buffer_id, &device_id, &device,
+        &command_pool, &command_buffer);
+    uint64_t layout_device_id = 0U, layout_bits = 0U;
+    if (result == 0) {
+        result = bvb_handle_table_lookup(
+            &context->objects, request->pipeline_layout_id,
+            BVB_OBJECT_PIPELINE_LAYOUT, &layout_device_id, &layout_bits);
+    }
+    if (result == 0 && layout_device_id != device_id) result = -EPROTO;
+    VkDescriptorSet sets[BVB_VULKAN_MAX_BOUND_DESCRIPTOR_SETS] = {0};
+    for (uint32_t index = 0U;
+         result == 0 && index < request->descriptor_set_count; ++index) {
+        uint64_t pool_id = 0U, set_bits = 0U, pool_device_id = 0U;
+        uint64_t pool_bits = 0U;
+        result = bvb_handle_table_lookup(
+            &context->objects, request->descriptor_set_ids[index],
+            BVB_OBJECT_DESCRIPTOR_SET, &pool_id, &set_bits);
+        if (result == 0) {
+            result = bvb_handle_table_lookup(
+                &context->objects, pool_id, BVB_OBJECT_DESCRIPTOR_POOL,
+                &pool_device_id, &pool_bits);
+        }
+        if (result == 0 && pool_device_id != device_id) result = -EPROTO;
+        sets[index] = descriptor_set_from_bits(set_bits);
+    }
+    if (result == 0) {
+        PFN_vkCmdBindDescriptorSets bind =
+            (PFN_vkCmdBindDescriptorSets)context->get_device_proc_addr(
+                device, "vkCmdBindDescriptorSets");
+        if (bind == NULL) result = -ENOSYS;
+        else bind(command_buffer,
+                  (VkPipelineBindPoint)request->pipeline_bind_point,
+                  pipeline_layout_from_bits(layout_bits), request->first_set,
+                  request->descriptor_set_count, sets,
+                  request->dynamic_offset_count,
+                  request->dynamic_offset_count == 0U
+                      ? NULL : request->dynamic_offsets);
+    }
+    if (result != 0)
+        set_error(error, error_size,
+                  "bind descriptor sets lineage or native call failed: %d",
+                  result);
+    return result;
+}
+
 static int replay_command_stream_image_barrier_2(
     const struct bvb_vulkan_global_context *context,
     uint64_t command_buffer_id,
@@ -5061,6 +5394,22 @@ static int command_stream_child_matches_device(
                        : child_device_id == expected_device_id ? 0 : -EPROTO;
 }
 
+static int command_stream_descriptor_set_matches_device(
+    const struct bvb_vulkan_global_context *context, uint64_t set_id,
+    uint64_t expected_device_id) {
+    uint64_t pool_id = 0U, set_bits = 0U;
+    int result = bvb_handle_table_lookup(
+        &context->objects, set_id, BVB_OBJECT_DESCRIPTOR_SET,
+        &pool_id, &set_bits);
+    uint64_t pool_device_id = 0U, pool_bits = 0U;
+    if (result == 0)
+        result = bvb_handle_table_lookup(
+            &context->objects, pool_id, BVB_OBJECT_DESCRIPTOR_POOL,
+            &pool_device_id, &pool_bits);
+    return result != 0 ? result
+                       : pool_device_id == expected_device_id ? 0 : -EPROTO;
+}
+
 static int command_stream_image_barrier_range_supported(
     const struct bvb_vulkan_image_subresource_range *range) {
     const VkImageAspectFlags supported_aspects =
@@ -5237,6 +5586,21 @@ int bvb_vulkan_global_context_validate_command_stream(
                     context, barrier.image_ids[image], BVB_OBJECT_IMAGE,
                     expected_device_id);
             }
+        } else if (record.opcode ==
+                   BVB_COMMAND_VULKAN_BIND_DESCRIPTOR_SETS) {
+            struct bvb_vulkan_bind_descriptor_sets_command bind;
+            result = bvb_command_decode_vulkan_bind_descriptor_sets(
+                &record, &bind);
+            if (result == 0)
+                result = command_stream_child_matches_device(
+                    context, bind.pipeline_layout_id,
+                    BVB_OBJECT_PIPELINE_LAYOUT, expected_device_id);
+            for (uint32_t set = 0U;
+                 result == 0 && set < bind.descriptor_set_count; ++set) {
+                result = command_stream_descriptor_set_matches_device(
+                    context, bind.descriptor_set_ids[set],
+                    expected_device_id);
+            }
         } else {
             result = -EPROTO;
         }
@@ -5351,6 +5715,30 @@ int bvb_vulkan_global_context_replay_command_stream(
                     bvb_vulkan_global_context_command_buffer_image_barrier(
                         context, &request, error, error_size);
             }
+        } else if (record.opcode ==
+                   BVB_COMMAND_VULKAN_BIND_DESCRIPTOR_SETS) {
+            struct bvb_vulkan_bind_descriptor_sets_command bind;
+            result = bvb_command_decode_vulkan_bind_descriptor_sets(
+                &record, &bind);
+            const struct bvb_vulkan_bind_descriptor_sets_request request = {
+                .command_buffer_id = info.command_buffer_id,
+                .pipeline_layout_id = bind.pipeline_layout_id,
+                .pipeline_bind_point = bind.pipeline_bind_point,
+                .first_set = bind.first_set,
+                .descriptor_set_count = bind.descriptor_set_count,
+                .dynamic_offset_count = bind.dynamic_offset_count,
+            };
+            struct bvb_vulkan_bind_descriptor_sets_request mutable_request =
+                request;
+            memcpy(mutable_request.descriptor_set_ids,
+                   bind.descriptor_set_ids,
+                   bind.descriptor_set_count * sizeof(bind.descriptor_set_ids[0]));
+            memcpy(mutable_request.dynamic_offsets, bind.dynamic_offsets,
+                   bind.dynamic_offset_count * sizeof(bind.dynamic_offsets[0]));
+            if (result == 0)
+                result =
+                    bvb_vulkan_global_context_command_buffer_bind_descriptor_sets(
+                        context, &mutable_request, error, error_size);
         } else if (record.opcode == BVB_COMMAND_VULKAN_END) {
             int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
             result = bvb_vulkan_global_context_end_command_buffer(
