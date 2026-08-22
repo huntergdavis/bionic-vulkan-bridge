@@ -889,6 +889,7 @@ int main(void) {
     PFN_vkFlushMappedMemoryRanges flush_mapped_memory_ranges = NULL;
     PFN_vkInvalidateMappedMemoryRanges invalidate_mapped_memory_ranges = NULL;
     PFN_vkCmdFillBuffer cmd_fill_buffer = NULL;
+    PFN_vkCmdUpdateBuffer cmd_update_buffer = NULL;
     PFN_vkCmdClearColorImage cmd_clear_color_image = NULL;
     PFN_vkCmdPipelineBarrier2 cmd_pipeline_barrier_2 = NULL;
     PFN_vkCreateFence create_fence = NULL;
@@ -1083,6 +1084,9 @@ int main(void) {
     erased = vkGetDeviceProcAddr(device, "vkCmdFillBuffer");
     CHECK(erased != NULL);
     memcpy(&cmd_fill_buffer, &erased, sizeof(cmd_fill_buffer));
+    erased = vkGetDeviceProcAddr(device, "vkCmdUpdateBuffer");
+    CHECK(erased != NULL);
+    memcpy(&cmd_update_buffer, &erased, sizeof(cmd_update_buffer));
     erased = vkGetDeviceProcAddr(device, "vkCmdClearColorImage");
     CHECK(erased != NULL);
     memcpy(&cmd_clear_color_image, &erased, sizeof(cmd_clear_color_image));
@@ -3020,6 +3024,12 @@ int main(void) {
     cmd_clear_depth_stencil_image(
         command_buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         &depth_stencil, 2U, depth_ranges);
+    const uint32_t updated_words[4] = {
+        UINT32_C(0x10203040), UINT32_C(0x50607080),
+        UINT32_C(0x90a0b0c0), UINT32_C(0xd0e0f000),
+    };
+    cmd_update_buffer(command_buffer, buffer, 64U,
+                      sizeof(updated_words), updated_words);
     cmd_fill_buffer(command_buffer, buffer, 0U, 4096U, UINT32_C(0xa5c3f00d));
     const VkImageSubresourceRange init_image_range = {
         .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
@@ -3094,7 +3104,7 @@ int main(void) {
     CHECK(exchanges_after_recording >= exchanges_before_recording);
     const uint64_t recording_rtts =
         exchanges_after_recording - exchanges_before_recording;
-    CHECK(recording_rtts == (shared_command_stream ? 0U : 43U));
+    CHECK(recording_rtts == (shared_command_stream ? 0U : 44U));
     if (shared_mapped_memory) mapped[0] = UINT8_C(0x7b);
     const uint64_t exchanges_before_submit =
         bvb_global_dispatch_exchange_count();

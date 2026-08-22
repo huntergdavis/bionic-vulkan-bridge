@@ -37,7 +37,7 @@ def main() -> int:
     require(native, "replay_render_command_record", "native replay")
     require(native, "descriptor_template_resolve_image_view",
             "image-view lineage")
-    require(test, "recording_rtts == (shared_command_stream ? 0U : 43U)",
+    require(test, "recording_rtts == (shared_command_stream ? 0U : 44U)",
             "strict/shared A/B")
     require(test, "VK_ATTACHMENT_LOAD_OP_DONT_CARE",
             "pinned swapchain attachment shape")

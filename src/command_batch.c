@@ -62,6 +62,9 @@ enum {
         BVB_COMMAND_VULKAN_MAX_CLEAR_ATTACHMENTS *
             BVB_VULKAN_CLEAR_ATTACHMENT_SIZE +
         BVB_COMMAND_VULKAN_MAX_CLEAR_RECTS * BVB_VULKAN_CLEAR_RECT_SIZE,
+    BVB_VULKAN_UPDATE_BUFFER_HEADER_SIZE = 24,
+    BVB_VULKAN_UPDATE_BUFFER_MAX_SIZE = BVB_VULKAN_UPDATE_BUFFER_HEADER_SIZE +
+        BVB_COMMAND_VULKAN_MAX_UPDATE_BUFFER_BYTES,
 };
 
 _Static_assert(sizeof(float) == sizeof(uint32_t),
@@ -105,6 +108,17 @@ static int payload_length_is_valid(uint16_t opcode, const uint8_t *payload,
             image_count <= BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS &&
             payload_length == barrier_payload_size(
                 memory_count, buffer_count, image_count);
+    }
+    if (opcode == BVB_COMMAND_VULKAN_UPDATE_BUFFER) {
+        if (payload == NULL ||
+            payload_length < BVB_VULKAN_UPDATE_BUFFER_HEADER_SIZE)
+            return 0;
+        const uint32_t data_size = bvb_wire_get_u32(payload + 16);
+        return data_size != 0U &&
+            data_size <= BVB_COMMAND_VULKAN_MAX_UPDATE_BUFFER_BYTES &&
+            (data_size & 3U) == 0U &&
+            payload_length == BVB_VULKAN_UPDATE_BUFFER_HEADER_SIZE +
+                                  data_size;
     }
     if (!transfer_opcode_is_valid(opcode)) return payload_length == expected;
     if (payload == NULL || payload_length < BVB_VULKAN_TRANSFER_HEADER_SIZE)
@@ -1019,6 +1033,27 @@ int bvb_command_batch_append_vulkan_clear_attachments(
         payload, sizeof(payload));
 }
 
+int bvb_command_batch_append_vulkan_update_buffer(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_update_buffer_command *command) {
+    if (command == NULL ||
+        bvb_handle_expect(command->buffer_id, BVB_OBJECT_BUFFER) != 0 ||
+        command->data_size == 0U ||
+        command->data_size > BVB_COMMAND_VULKAN_MAX_UPDATE_BUFFER_BYTES ||
+        (command->offset & 3U) != 0U || (command->data_size & 3U) != 0U)
+        return -EINVAL;
+    uint8_t payload[BVB_VULKAN_UPDATE_BUFFER_MAX_SIZE];
+    bvb_wire_put_u64(payload, command->buffer_id);
+    bvb_wire_put_u64(payload + 8, command->offset);
+    bvb_wire_put_u32(payload + 16, command->data_size);
+    bvb_wire_put_u32(payload + 20, 0U);
+    memcpy(payload + BVB_VULKAN_UPDATE_BUFFER_HEADER_SIZE,
+           command->data, command->data_size);
+    return append_record(builder, BVB_COMMAND_VULKAN_UPDATE_BUFFER,
+                         payload, BVB_VULKAN_UPDATE_BUFFER_HEADER_SIZE +
+                                      command->data_size);
+}
+
 int bvb_command_batch_append_record(
     struct bvb_command_batch_builder *builder,
     const struct bvb_command_record *record) {
@@ -1136,6 +1171,9 @@ static int expected_payload_size(uint16_t opcode, uint32_t *payload_size) {
             return 0;
         case BVB_COMMAND_VULKAN_CLEAR_ATTACHMENTS:
             *payload_size = BVB_VULKAN_CLEAR_ATTACHMENTS_SIZE;
+            return 0;
+        case BVB_COMMAND_VULKAN_UPDATE_BUFFER:
+            *payload_size = BVB_VULKAN_UPDATE_BUFFER_MAX_SIZE;
             return 0;
         case BVB_COMMAND_VULKAN_BEGIN:
             *payload_size = BVB_VULKAN_BEGIN_SIZE;
@@ -1666,6 +1704,17 @@ static int validate_payload(uint16_t opcode, const uint8_t *payload) {
             }
             return 0;
         }
+        case BVB_COMMAND_VULKAN_UPDATE_BUFFER:
+            return bvb_handle_expect(bvb_wire_get_u64(payload),
+                                     BVB_OBJECT_BUFFER) != 0 ||
+                           (bvb_wire_get_u64(payload + 8) & 3U) != 0U ||
+                           bvb_wire_get_u32(payload + 16) == 0U ||
+                           bvb_wire_get_u32(payload + 16) >
+                               BVB_COMMAND_VULKAN_MAX_UPDATE_BUFFER_BYTES ||
+                           (bvb_wire_get_u32(payload + 16) & 3U) != 0U ||
+                           bvb_wire_get_u32(payload + 20) != 0U
+                       ? -EPROTO
+                       : 0;
         case BVB_COMMAND_VULKAN_BEGIN:
             return (bvb_wire_get_u32(payload) & ~1U) != 0U ||
                            bvb_wire_get_u32(payload + 4) != 0U
@@ -2473,5 +2522,23 @@ int bvb_command_decode_vulkan_clear_attachments(
             .layer_count = bvb_wire_get_u32(input + 20),
         };
     }
+    return 0;
+}
+
+int bvb_command_decode_vulkan_update_buffer(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_update_buffer_command *command) {
+    if (record == NULL || command == NULL ||
+        record->opcode != BVB_COMMAND_VULKAN_UPDATE_BUFFER ||
+        !payload_length_is_valid(record->opcode, record->payload,
+                                 record->payload_length))
+        return -EINVAL;
+    memset(command, 0, sizeof(*command));
+    command->buffer_id = bvb_wire_get_u64(record->payload);
+    command->offset = bvb_wire_get_u64(record->payload + 8);
+    command->data_size = bvb_wire_get_u32(record->payload + 16);
+    memcpy(command->data,
+           record->payload + BVB_VULKAN_UPDATE_BUFFER_HEADER_SIZE,
+           command->data_size);
     return 0;
 }

@@ -45,10 +45,15 @@ vkCmdBindIndexBuffer2KHR
 vkCmdBindVertexBuffers
 vkCmdBindVertexBuffers2
 vkCmdBindVertexBuffers2EXT
+vkCmdBlitImage
 vkCmdBlitImage2
+vkCmdCopyBuffer
 vkCmdCopyBuffer2
+vkCmdCopyBufferToImage
 vkCmdCopyBufferToImage2
+vkCmdCopyImage
 vkCmdCopyImage2
+vkCmdCopyImageToBuffer
 vkCmdCopyImageToBuffer2
 vkCmdFillBuffer
 vkCmdDrawIndexed
@@ -59,7 +64,9 @@ vkCmdDrawIndirect
 vkCmdDrawIndirectCount
 vkCmdDrawIndirectCountKHR
 vkCmdPipelineBarrier2
+vkCmdResolveImage
 vkCmdResolveImage2
+vkCmdUpdateBuffer
 vkCmdSetScissorWithCount
 vkCmdSetScissorWithCountEXT
 vkCmdSetViewportWithCount

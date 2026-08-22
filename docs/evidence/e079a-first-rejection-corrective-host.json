@@ -26,19 +26,19 @@
     "maximum_shape_bytes_excluding_nul": 384,
     "exact_signature_source": "pinned Vulkan-Headers vk.xml",
     "resolved_name_source": "E011 Tomb Raider dispatch manifest",
-    "active_executable_source": "generated triangle dispatch plus the current cumulative active configuration through E110",
+    "active_executable_source": "generated triangle dispatch plus the current cumulative active configuration through E114",
     "generator_sha256": "11b2d58e16de8a773ab052f0029f07aaf19ad0550fe6d0b9a949ec2646eb5258",
-    "generated_include_sha256": "065dc55ec6b8939cb42325f0e3f9ac1110610ed848f2e05db966e96aeb4d9511",
+    "generated_include_sha256": "ac571ccfd1a7b2bab09a9b50b41b3b92b1f03c9f6ff227d605ec4eb097af296f",
     "vk_xml_sha256": "80e7394d0e787d6ec78b67aa324add6f96129fdd042ba640cc336a5481a208ee",
     "e011_manifest_sha256": "6a78ddd1f1b34773e4123d3612233fab2270ed0ff418d01204ad41af1cab8afc",
     "triangle_dispatch_sha256": "20185caa17fbe85cea88699ba43b3a98d2b162de67cd748e69349620b8b7bd3e",
-    "active_config_sha256": "c6b377dc2410b1274c8f32b326594ad84237fe68d8ec7b0d20650ee5e8b417b1"
+    "active_config_sha256": "203b218792105ebfb952a298f79a5ec64a2a5e7862a4d040da94a2cb982dab10"
   },
   "policy_unchanged": {
-    "executable": 151,
-    "required_unimplemented": 289,
+    "executable": 158,
+    "required_unimplemented": 282,
     "probed_null": 302,
-    "generated_policy_sha256": "987d23da6c8dfaa4e3f7d1cf6332390aabe6452d6d00a262986cf84d285de1dd"
+    "generated_policy_sha256": "e554ed08bce8613a9b676adf2444cd6d72b7afd0e9042b63fd40266a456c2ea1"
   },
   "winner_and_output": {
     "selection": "one mutex-protected first-winner snapshot and counters",
@@ -75,7 +75,7 @@
     "protected_wsi_negative": "service-backed vkCreateXlibSurfaceKHR negative result emits one implemented-rejection record",
     "private_and_probed_null": "wine private name and public probed-null alias stay null",
     "standalone_glibc_builder": "includes generated dispatch and first_rejection.c",
-    "full_host_suite": "57/57 contracts passed"
+    "full_host_suite": "74/74 contracts passed"
   },
   "reuse": "The required deja query returned no indexed implementation. E079a reuses E011's canonical resolved-name and generated policy inventory, E075a's poison/End boundary, E077's exact selector and strict/shared isolation discipline, and E078's command-buffer locking.",
   "next_visible_boundary": "after integration and deployment, run one selector-scoped Tomb Raider process and use its sole End-context or fail-closed rejection record to choose the next Vulkan implementation gate",

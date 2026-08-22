@@ -698,6 +698,66 @@ static int test_vulkan_transfer_family(void) {
     return 0;
 }
 
+static int test_vulkan_update_buffer(void) {
+    const size_t capacity = 96U * 1024U;
+    uint8_t *bytes = malloc(capacity);
+    uint8_t *corrupted = malloc(capacity);
+    struct bvb_vulkan_update_buffer_command *command =
+        calloc(1U, sizeof(*command));
+    struct bvb_vulkan_update_buffer_command *decoded =
+        calloc(1U, sizeof(*decoded));
+    CHECK(bytes != NULL && corrupted != NULL && command != NULL &&
+          decoded != NULL);
+    command->buffer_id = bvb_handle_id(BVB_OBJECT_BUFFER, 36U);
+    command->offset = 64U;
+    command->data_size = BVB_COMMAND_VULKAN_MAX_UPDATE_BUFFER_BYTES;
+    for (uint32_t index = 0U; index < command->data_size; ++index)
+        command->data[index] = (uint8_t)(index * 37U);
+    struct bvb_command_batch_builder builder;
+    CHECK(bvb_command_batch_begin(
+              &builder, bytes, capacity,
+              bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 37U), 1U) == 0);
+    CHECK(bvb_command_batch_append_vulkan_update_buffer(
+              &builder, command) == 0);
+    size_t length = 0U;
+    CHECK(bvb_command_batch_finish(&builder, &length) == 0);
+    CHECK(length == BVB_COMMAND_BATCH_HEADER_SIZE +
+                        BVB_COMMAND_RECORD_HEADER_SIZE + 24U +
+                        BVB_COMMAND_VULKAN_MAX_UPDATE_BUFFER_BYTES);
+    struct bvb_command_batch_info info;
+    CHECK(bvb_command_batch_validate(bytes, length, &info) == 0);
+    struct bvb_command_batch_iterator iterator;
+    struct bvb_command_record record;
+    CHECK(bvb_command_batch_iterator_init(&iterator, bytes, length) == 0);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 0);
+    CHECK(bvb_command_decode_vulkan_update_buffer(&record, decoded) == 0);
+    CHECK(decoded->buffer_id == command->buffer_id);
+    CHECK(decoded->offset == command->offset);
+    CHECK(decoded->data_size == command->data_size);
+    CHECK(memcmp(decoded->data, command->data, command->data_size) == 0);
+    CHECK(bvb_command_batch_next(&iterator, &record) == 1);
+
+    const size_t payload = BVB_COMMAND_BATCH_HEADER_SIZE +
+        BVB_COMMAND_RECORD_HEADER_SIZE;
+    memcpy(corrupted, bytes, length);
+    bvb_wire_put_u32(corrupted + payload + 20U, 1U);
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+    memcpy(corrupted, bytes, length);
+    bvb_wire_put_u32(corrupted + payload + 16U,
+                     BVB_COMMAND_VULKAN_MAX_UPDATE_BUFFER_BYTES - 2U);
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+    memcpy(corrupted, bytes, length);
+    bvb_wire_put_u64(corrupted + payload,
+                     bvb_handle_id(BVB_OBJECT_IMAGE, 36U));
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+
+    free(decoded);
+    free(command);
+    free(corrupted);
+    free(bytes);
+    return 0;
+}
+
 static int test_compact_transfer_capacity(void) {
     uint8_t bytes[64U * 1024U];
     const uint64_t command_buffer =
@@ -1128,6 +1188,7 @@ int main(void) {
     CHECK(test_batch() == 0);
     CHECK(test_transfer_batch() == 0);
     CHECK(test_vulkan_transfer_family() == 0);
+    CHECK(test_vulkan_update_buffer() == 0);
     CHECK(test_compact_transfer_capacity() == 0);
     CHECK(test_expanded_stream_slot_capacity() == 0);
     CHECK(test_large_image_barrier_batch() == 0);

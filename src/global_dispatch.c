@@ -9372,6 +9372,259 @@ static void VKAPI_CALL bvb_bridge_vkCmdResolveImage2(
                             &command, "vkCmdResolveImage2", shape);
 }
 
+static void VKAPI_CALL bvb_bridge_vkCmdUpdateBuffer(
+    VkCommandBuffer command_buffer, VkBuffer destination_buffer,
+    VkDeviceSize destination_offset, VkDeviceSize data_size,
+    const void *data) {
+    struct bvb_command_buffer_proxy *state =
+        command_buffer_proxy(command_buffer);
+    const char *shape =
+        "VkBuffer_value,VkDeviceSize_value,VkDeviceSize_value,void_ptr";
+    if (state == NULL || destination_buffer == VK_NULL_HANDLE || data == NULL ||
+        data_size == 0U ||
+        data_size > BVB_COMMAND_VULKAN_MAX_UPDATE_BUFFER_BYTES ||
+        (destination_offset & 3U) != 0U || (data_size & 3U) != 0U) {
+        poison_shared_command_stream(state, "vkCmdUpdateBuffer",
+                                     "unsupported_update_shape", shape,
+                                     -ENOTSUP);
+        return;
+    }
+    struct bvb_vulkan_update_buffer_command command = {
+        .buffer_id = non_dispatchable_wire_id(
+            &destination_buffer, sizeof(destination_buffer)),
+        .offset = destination_offset,
+        .data_size = (uint32_t)data_size,
+    };
+    memcpy(command.data, data, (size_t)data_size);
+    if (command_stream_is_enabled()) {
+        if (pthread_mutex_lock(&state->stream_mutex) != 0) return;
+        int result = state->stream_recording && !state->stream_error
+                         ? 0 : -EINVAL;
+        if (result == 0) {
+            const int owned = shared_object_owned_by_device_cached_locked(
+                state, command.buffer_id, BVB_OBJECT_BUFFER);
+            result = owned > 0 ? 0 : owned < 0 ? owned : -EINVAL;
+        }
+        if (result == 0)
+            result = bvb_command_batch_append_vulkan_update_buffer(
+                &state->stream_builder, &command);
+        if (result != 0) {
+            store_command_diagnostic_locked(
+                state, "vkCmdUpdateBuffer",
+                "ownership_or_update_append_rejected", shape, result);
+            state->stream_error = true;
+            state->stream_sealed = false;
+        }
+        (void)pthread_mutex_unlock(&state->stream_mutex);
+        return;
+    }
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    int result = begin_single_render_record(state, bytes, &builder);
+    if (result == 0)
+        result = bvb_command_batch_append_vulkan_update_buffer(
+            &builder, &command);
+    if (result == 0)
+        result = finish_single_render_record(
+            state, bytes, &builder, "vkCmdUpdateBuffer", shape);
+    if (result != 0)
+        poison_shared_command_stream(
+            state, "vkCmdUpdateBuffer", "update_record_rejected", shape,
+            result);
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdCopyBuffer(
+    VkCommandBuffer command_buffer, VkBuffer source, VkBuffer destination,
+    uint32_t region_count, const VkBufferCopy *regions) {
+    VkBufferCopy2 converted[BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS];
+    if (region_count == 0U ||
+        region_count > BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS ||
+        regions == NULL) {
+        poison_shared_command_stream(command_buffer_proxy(command_buffer),
+                                     "vkCmdCopyBuffer",
+                                     "unsupported_transfer_shape",
+                                     "VkBuffer_value,VkBuffer_value,uint32_t_value,VkBufferCopy_ptr",
+                                     -ENOTSUP);
+        return;
+    }
+    for (uint32_t index = 0U; index < region_count; ++index)
+        converted[index] = (VkBufferCopy2){
+            .sType = VK_STRUCTURE_TYPE_BUFFER_COPY_2,
+            .srcOffset = regions[index].srcOffset,
+            .dstOffset = regions[index].dstOffset,
+            .size = regions[index].size,
+        };
+    bvb_bridge_vkCmdCopyBuffer2(command_buffer, &(const VkCopyBufferInfo2){
+        .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_INFO_2,
+        .srcBuffer = source, .dstBuffer = destination,
+        .regionCount = region_count, .pRegions = converted});
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdCopyBufferToImage(
+    VkCommandBuffer command_buffer, VkBuffer source, VkImage destination,
+    VkImageLayout layout, uint32_t region_count,
+    const VkBufferImageCopy *regions) {
+    VkBufferImageCopy2 converted[BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS];
+    if (region_count == 0U ||
+        region_count > BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS ||
+        regions == NULL) {
+        poison_shared_command_stream(command_buffer_proxy(command_buffer),
+                                     "vkCmdCopyBufferToImage",
+                                     "unsupported_transfer_shape",
+                                     "VkBuffer_value,VkImage_value,VkImageLayout_value,uint32_t_value,VkBufferImageCopy_ptr",
+                                     -ENOTSUP);
+        return;
+    }
+    for (uint32_t index = 0U; index < region_count; ++index)
+        converted[index] = (VkBufferImageCopy2){
+            .sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
+            .bufferOffset = regions[index].bufferOffset,
+            .bufferRowLength = regions[index].bufferRowLength,
+            .bufferImageHeight = regions[index].bufferImageHeight,
+            .imageSubresource = regions[index].imageSubresource,
+            .imageOffset = regions[index].imageOffset,
+            .imageExtent = regions[index].imageExtent,
+        };
+    bvb_bridge_vkCmdCopyBufferToImage2(
+        command_buffer, &(const VkCopyBufferToImageInfo2){
+            .sType = VK_STRUCTURE_TYPE_COPY_BUFFER_TO_IMAGE_INFO_2,
+            .srcBuffer = source, .dstImage = destination,
+            .dstImageLayout = layout, .regionCount = region_count,
+            .pRegions = converted});
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdCopyImageToBuffer(
+    VkCommandBuffer command_buffer, VkImage source, VkImageLayout layout,
+    VkBuffer destination, uint32_t region_count,
+    const VkBufferImageCopy *regions) {
+    VkBufferImageCopy2 converted[BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS];
+    if (region_count == 0U ||
+        region_count > BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS ||
+        regions == NULL) {
+        poison_shared_command_stream(command_buffer_proxy(command_buffer),
+                                     "vkCmdCopyImageToBuffer",
+                                     "unsupported_transfer_shape",
+                                     "VkImage_value,VkImageLayout_value,VkBuffer_value,uint32_t_value,VkBufferImageCopy_ptr",
+                                     -ENOTSUP);
+        return;
+    }
+    for (uint32_t index = 0U; index < region_count; ++index)
+        converted[index] = (VkBufferImageCopy2){
+            .sType = VK_STRUCTURE_TYPE_BUFFER_IMAGE_COPY_2,
+            .bufferOffset = regions[index].bufferOffset,
+            .bufferRowLength = regions[index].bufferRowLength,
+            .bufferImageHeight = regions[index].bufferImageHeight,
+            .imageSubresource = regions[index].imageSubresource,
+            .imageOffset = regions[index].imageOffset,
+            .imageExtent = regions[index].imageExtent,
+        };
+    bvb_bridge_vkCmdCopyImageToBuffer2(
+        command_buffer, &(const VkCopyImageToBufferInfo2){
+            .sType = VK_STRUCTURE_TYPE_COPY_IMAGE_TO_BUFFER_INFO_2,
+            .srcImage = source, .srcImageLayout = layout,
+            .dstBuffer = destination, .regionCount = region_count,
+            .pRegions = converted});
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdCopyImage(
+    VkCommandBuffer command_buffer, VkImage source,
+    VkImageLayout source_layout, VkImage destination,
+    VkImageLayout destination_layout, uint32_t region_count,
+    const VkImageCopy *regions) {
+    VkImageCopy2 converted[BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS];
+    if (region_count == 0U ||
+        region_count > BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS ||
+        regions == NULL) {
+        poison_shared_command_stream(command_buffer_proxy(command_buffer),
+                                     "vkCmdCopyImage",
+                                     "unsupported_transfer_shape",
+                                     "VkImage_value,VkImageLayout_value,VkImage_value,VkImageLayout_value,uint32_t_value,VkImageCopy_ptr",
+                                     -ENOTSUP);
+        return;
+    }
+    for (uint32_t index = 0U; index < region_count; ++index)
+        converted[index] = (VkImageCopy2){
+            .sType = VK_STRUCTURE_TYPE_IMAGE_COPY_2,
+            .srcSubresource = regions[index].srcSubresource,
+            .srcOffset = regions[index].srcOffset,
+            .dstSubresource = regions[index].dstSubresource,
+            .dstOffset = regions[index].dstOffset,
+            .extent = regions[index].extent,
+        };
+    bvb_bridge_vkCmdCopyImage2(command_buffer, &(const VkCopyImageInfo2){
+        .sType = VK_STRUCTURE_TYPE_COPY_IMAGE_INFO_2,
+        .srcImage = source, .srcImageLayout = source_layout,
+        .dstImage = destination, .dstImageLayout = destination_layout,
+        .regionCount = region_count, .pRegions = converted});
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdBlitImage(
+    VkCommandBuffer command_buffer, VkImage source,
+    VkImageLayout source_layout, VkImage destination,
+    VkImageLayout destination_layout, uint32_t region_count,
+    const VkImageBlit *regions, VkFilter filter) {
+    VkImageBlit2 converted[BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS];
+    if (region_count == 0U ||
+        region_count > BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS ||
+        regions == NULL) {
+        poison_shared_command_stream(command_buffer_proxy(command_buffer),
+                                     "vkCmdBlitImage",
+                                     "unsupported_transfer_shape",
+                                     "VkImage_value,VkImageLayout_value,VkImage_value,VkImageLayout_value,uint32_t_value,VkImageBlit_ptr,VkFilter_value",
+                                     -ENOTSUP);
+        return;
+    }
+    for (uint32_t index = 0U; index < region_count; ++index) {
+        converted[index] = (VkImageBlit2){
+            .sType = VK_STRUCTURE_TYPE_IMAGE_BLIT_2,
+            .srcSubresource = regions[index].srcSubresource,
+            .dstSubresource = regions[index].dstSubresource,
+        };
+        memcpy(converted[index].srcOffsets, regions[index].srcOffsets,
+               sizeof(converted[index].srcOffsets));
+        memcpy(converted[index].dstOffsets, regions[index].dstOffsets,
+               sizeof(converted[index].dstOffsets));
+    }
+    bvb_bridge_vkCmdBlitImage2(command_buffer, &(const VkBlitImageInfo2){
+        .sType = VK_STRUCTURE_TYPE_BLIT_IMAGE_INFO_2,
+        .srcImage = source, .srcImageLayout = source_layout,
+        .dstImage = destination, .dstImageLayout = destination_layout,
+        .regionCount = region_count, .pRegions = converted, .filter = filter});
+}
+
+static void VKAPI_CALL bvb_bridge_vkCmdResolveImage(
+    VkCommandBuffer command_buffer, VkImage source,
+    VkImageLayout source_layout, VkImage destination,
+    VkImageLayout destination_layout, uint32_t region_count,
+    const VkImageResolve *regions) {
+    VkImageResolve2 converted[BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS];
+    if (region_count == 0U ||
+        region_count > BVB_COMMAND_VULKAN_MAX_TRANSFER_REGIONS ||
+        regions == NULL) {
+        poison_shared_command_stream(command_buffer_proxy(command_buffer),
+                                     "vkCmdResolveImage",
+                                     "unsupported_transfer_shape",
+                                     "VkImage_value,VkImageLayout_value,VkImage_value,VkImageLayout_value,uint32_t_value,VkImageResolve_ptr",
+                                     -ENOTSUP);
+        return;
+    }
+    for (uint32_t index = 0U; index < region_count; ++index)
+        converted[index] = (VkImageResolve2){
+            .sType = VK_STRUCTURE_TYPE_IMAGE_RESOLVE_2,
+            .srcSubresource = regions[index].srcSubresource,
+            .srcOffset = regions[index].srcOffset,
+            .dstSubresource = regions[index].dstSubresource,
+            .dstOffset = regions[index].dstOffset,
+            .extent = regions[index].extent,
+        };
+    bvb_bridge_vkCmdResolveImage2(command_buffer,
+        &(const VkResolveImageInfo2){
+            .sType = VK_STRUCTURE_TYPE_RESOLVE_IMAGE_INFO_2,
+            .srcImage = source, .srcImageLayout = source_layout,
+            .dstImage = destination, .dstImageLayout = destination_layout,
+            .regionCount = region_count, .pRegions = converted});
+}
+
 static void VKAPI_CALL bvb_bridge_vkCmdBindDescriptorSets(
     VkCommandBuffer command_buffer, VkPipelineBindPoint pipeline_bind_point,
     VkPipelineLayout layout, uint32_t first_set,
@@ -11279,6 +11532,15 @@ PFN_vkVoidFunction bvb_global_device_proc_addr(
                      bvb_bridge_vkCmdClearDepthStencilImage)
     BVB_DEVICE_MATCH("vkCmdClearAttachments",
                      bvb_bridge_vkCmdClearAttachments)
+    BVB_DEVICE_MATCH("vkCmdUpdateBuffer", bvb_bridge_vkCmdUpdateBuffer)
+    BVB_DEVICE_MATCH("vkCmdCopyBuffer", bvb_bridge_vkCmdCopyBuffer)
+    BVB_DEVICE_MATCH("vkCmdCopyBufferToImage",
+                     bvb_bridge_vkCmdCopyBufferToImage)
+    BVB_DEVICE_MATCH("vkCmdCopyImageToBuffer",
+                     bvb_bridge_vkCmdCopyImageToBuffer)
+    BVB_DEVICE_MATCH("vkCmdCopyImage", bvb_bridge_vkCmdCopyImage)
+    BVB_DEVICE_MATCH("vkCmdBlitImage", bvb_bridge_vkCmdBlitImage)
+    BVB_DEVICE_MATCH("vkCmdResolveImage", bvb_bridge_vkCmdResolveImage)
     BVB_DEVICE_MATCH("vkCmdCopyBuffer2", bvb_bridge_vkCmdCopyBuffer2)
     BVB_DEVICE_MATCH("vkCmdCopyBufferToImage2",
                      bvb_bridge_vkCmdCopyBufferToImage2)

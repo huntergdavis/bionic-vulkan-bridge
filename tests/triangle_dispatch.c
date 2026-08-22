@@ -187,14 +187,23 @@ int main(void) {
                                "vkCmdClearColorImage") == 0 ||
                         strcmp(entry->name,
                                "vkCmdBindDescriptorSets") == 0 ||
+                        strcmp(entry->name, "vkCmdBlitImage") == 0 ||
                         strcmp(entry->name, "vkCmdBlitImage2") == 0 ||
+                        strcmp(entry->name, "vkCmdCopyBuffer") == 0 ||
                         strcmp(entry->name, "vkCmdCopyBuffer2") == 0 ||
+                        strcmp(entry->name,
+                               "vkCmdCopyBufferToImage") == 0 ||
                         strcmp(entry->name,
                                "vkCmdCopyBufferToImage2") == 0 ||
                         strcmp(entry->name,
+                               "vkCmdCopyImageToBuffer") == 0 ||
+                        strcmp(entry->name,
                                "vkCmdCopyImageToBuffer2") == 0 ||
+                        strcmp(entry->name, "vkCmdCopyImage") == 0 ||
                         strcmp(entry->name, "vkCmdCopyImage2") == 0 ||
+                        strcmp(entry->name, "vkCmdResolveImage") == 0 ||
                         strcmp(entry->name, "vkCmdResolveImage2") == 0 ||
+                        strcmp(entry->name, "vkCmdUpdateBuffer") == 0 ||
                         strcmp(entry->name,
                                "vkCmdSetViewportWithCount") == 0 ||
                         strcmp(entry->name,
@@ -296,8 +305,8 @@ int main(void) {
     CHECK(bvb_dxvk_dispatch_policy_at(742U) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup(NULL) == NULL);
     CHECK(bvb_dxvk_dispatch_policy_lookup("vkNotARealCommand") == NULL);
-    CHECK(executable_count == 151U);
-    CHECK(required_count == 289U);
+    CHECK(executable_count == 158U);
+    CHECK(required_count == 282U);
     CHECK(probed_null_count == 302U);
     const struct bvb_dxvk_dispatch_policy_entry *create_instance =
         bvb_dxvk_dispatch_policy_lookup("vkCreateInstance");

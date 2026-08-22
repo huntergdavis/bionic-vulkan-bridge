@@ -49,6 +49,7 @@ enum {
     BVB_COMMAND_VULKAN_DYNAMIC_STATE = 33,
     BVB_COMMAND_VULKAN_CLEAR_DEPTH_STENCIL_IMAGE = 34,
     BVB_COMMAND_VULKAN_CLEAR_ATTACHMENTS = 35,
+    BVB_COMMAND_VULKAN_UPDATE_BUFFER = 36,
     BVB_COMMAND_VULKAN_MAX_INIT_IMAGE_BARRIERS = 4,
     BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS = 64,
     BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS = 256,
@@ -63,6 +64,7 @@ enum {
     BVB_COMMAND_VULKAN_MAX_DYNAMIC_STATE_VALUES = 8,
     BVB_COMMAND_VULKAN_MAX_CLEAR_ATTACHMENTS = 8,
     BVB_COMMAND_VULKAN_MAX_CLEAR_RECTS = 8,
+    BVB_COMMAND_VULKAN_MAX_UPDATE_BUFFER_BYTES = 64 * 1024,
 };
 
 enum bvb_vulkan_dynamic_state_kind {
@@ -380,6 +382,13 @@ struct bvb_vulkan_clear_attachments_command {
     struct bvb_vulkan_clear_rect rects[BVB_COMMAND_VULKAN_MAX_CLEAR_RECTS];
 };
 
+struct bvb_vulkan_update_buffer_command {
+    uint64_t buffer_id;
+    uint64_t offset;
+    uint32_t data_size;
+    uint8_t data[BVB_COMMAND_VULKAN_MAX_UPDATE_BUFFER_BYTES];
+};
+
 struct bvb_command_batch_builder {
     uint8_t *bytes;
     size_t capacity;
@@ -501,6 +510,9 @@ int bvb_command_batch_append_vulkan_clear_depth_stencil_image(
 int bvb_command_batch_append_vulkan_clear_attachments(
     struct bvb_command_batch_builder *builder,
     const struct bvb_vulkan_clear_attachments_command *command);
+int bvb_command_batch_append_vulkan_update_buffer(
+    struct bvb_command_batch_builder *builder,
+    const struct bvb_vulkan_update_buffer_command *command);
 int bvb_command_batch_append_record(
     struct bvb_command_batch_builder *builder,
     const struct bvb_command_record *record);
@@ -597,5 +609,8 @@ int bvb_command_decode_vulkan_clear_depth_stencil_image(
 int bvb_command_decode_vulkan_clear_attachments(
     const struct bvb_command_record *record,
     struct bvb_vulkan_clear_attachments_command *command);
+int bvb_command_decode_vulkan_update_buffer(
+    const struct bvb_command_record *record,
+    struct bvb_vulkan_update_buffer_command *command);
 
 #endif

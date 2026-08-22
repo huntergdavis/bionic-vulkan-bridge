@@ -4469,3 +4469,26 @@ stub before native replay.
 Automatic screenshot SHA-256 `28b73050...e9f8` still shows the bridge
 gradient triangle, not a Tomb Raider frame. Exact cleanup preserved Steam PID
 14565/start 121864440 and X11 PID 13643/start 121863492. No FPS is claimed.
+
+## E114 — upload and legacy copy command family (2026-08-22)
+
+E113 cleared the enlarged synchronization2 batch and exposed the next actual
+missing game command, `vkCmdUpdateBuffer`, at command sequence 27. E114 adds a
+bounded, pointer-free variable-length update record carrying up to 64 KiB of
+four-byte-aligned data. Shared mode appends it locally with zero recording
+RPCs; the Bionic service revalidates typed buffer ownership, reconstructs the
+native handle, and invokes Turnip's `vkCmdUpdateBuffer`.
+
+This gate also takes a broader adjacent-family swipe. The six legacy transfer
+commands—buffer copy, both buffer/image directions, image copy, blit, and
+resolve—convert their legacy region arrays into the already validated E105/
+E111 synchronization2 transfer records. This promotes seven names in one
+gate without duplicating six wire protocols. Policy becomes 158 executable /
+282 required-unimplemented / 302 probed-null; the expanded strict fake test
+uses 44 recording RPCs while shared remains zero.
+
+The required `deja "BVB Tomb Raider vkCmdUpdateBuffer legacy copy buffer image
+blit resolve E114 command stream"` query returned no indexed implementation.
+E114 reuses E075/E075a, E080, E105, and E111. Compact evidence is
+`docs/evidence/e114-upload-copy-command-family-host.json`; tablet pixels and
+FPS remain pending exact-archive deployment and automatic screenshot review.

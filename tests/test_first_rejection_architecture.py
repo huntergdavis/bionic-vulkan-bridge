@@ -197,7 +197,7 @@ def main() -> int:
         raise AssertionError("E079a evidence must not promote resolver order")
     if evidence["claims"]["next_real_entry_known"]:
         raise AssertionError("host-only E079 cannot claim the real next entry")
-    if evidence["verification"]["full_host_suite"] != "57/57 contracts passed":
+    if evidence["verification"]["full_host_suite"] != "74/74 contracts passed":
         raise AssertionError("full-suite evidence count is stale")
     print("PASS: E079a fail-closed atomic diagnostic architecture")
     return 0

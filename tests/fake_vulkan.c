@@ -3142,6 +3142,17 @@ static void VKAPI_CALL fake_cmd_fill_buffer(
     }
 }
 
+static void VKAPI_CALL fake_cmd_update_buffer(
+    VkCommandBuffer command_buffer, VkBuffer buffer,
+    VkDeviceSize destination_offset, VkDeviceSize data_size,
+    const void *data) {
+    (void)command_buffer;
+    (void)buffer;
+    if (fake_bound_memory == VK_NULL_HANDLE || data == NULL) return;
+    memcpy((uint8_t *)(uintptr_t)fake_bound_memory + destination_offset,
+           data, (size_t)data_size);
+}
+
 static void VKAPI_CALL fake_cmd_pipeline_barrier(
     VkCommandBuffer command_buffer,
     VkPipelineStageFlags source_stage_mask,
@@ -3958,6 +3969,7 @@ static PFN_vkVoidFunction VKAPI_CALL fake_get_device_proc_addr(
     BVB_DEVICE_MATCH("vkBeginCommandBuffer", fake_begin_command_buffer)
     BVB_DEVICE_MATCH("vkEndCommandBuffer", fake_end_command_buffer)
     BVB_DEVICE_MATCH("vkCmdFillBuffer", fake_cmd_fill_buffer)
+    BVB_DEVICE_MATCH("vkCmdUpdateBuffer", fake_cmd_update_buffer)
     BVB_DEVICE_MATCH("vkCmdPipelineBarrier", fake_cmd_pipeline_barrier)
     BVB_DEVICE_MATCH("vkCmdPipelineBarrier2", fake_cmd_pipeline_barrier_2)
     BVB_DEVICE_MATCH("vkCmdClearColorImage", fake_cmd_clear_color_image)

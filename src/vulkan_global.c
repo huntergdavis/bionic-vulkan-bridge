@@ -6232,6 +6232,14 @@ static int validate_render_command_record(
         struct bvb_vulkan_clear_attachments_command command;
         return bvb_command_decode_vulkan_clear_attachments(record, &command);
     }
+    if (record->opcode == BVB_COMMAND_VULKAN_UPDATE_BUFFER) {
+        struct bvb_vulkan_update_buffer_command command;
+        int result = bvb_command_decode_vulkan_update_buffer(
+            record, &command);
+        return result != 0 ? result : command_stream_child_matches_device(
+            context, command.buffer_id, BVB_OBJECT_BUFFER,
+            expected_device_id);
+    }
     if (command_stream_transfer_opcode(record->opcode))
         return validate_transfer_command_record(
             context, record, expected_device_id);
@@ -6366,6 +6374,27 @@ static int replay_render_command_record(
         return result != 0 ? result :
             replay_command_stream_clear_attachments(
                 context, command_buffer_id, &command);
+    }
+    if (record->opcode == BVB_COMMAND_VULKAN_UPDATE_BUFFER) {
+        struct bvb_vulkan_update_buffer_command command;
+        uint64_t child_device_id = 0U, buffer_bits = 0U;
+        VkDevice child_device = VK_NULL_HANDLE;
+        result = bvb_command_decode_vulkan_update_buffer(record, &command);
+        if (result == 0)
+            result = resolve_device_child(
+                context, command.buffer_id, BVB_OBJECT_BUFFER,
+                &child_device_id, &child_device, &buffer_bits);
+        if (result == 0 &&
+            (child_device_id != device_id || child_device != device))
+            result = -EPROTO;
+        PFN_vkCmdUpdateBuffer update = result == 0
+            ? (PFN_vkCmdUpdateBuffer)context->get_device_proc_addr(
+                  device, "vkCmdUpdateBuffer") : NULL;
+        if (result != 0 || update == NULL)
+            return result != 0 ? result : -ENOSYS;
+        update(command_buffer, buffer_from_bits(buffer_bits), command.offset,
+               command.data_size, command.data);
+        return 0;
     }
     if (record->opcode == BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER ||
         record->opcode == BVB_COMMAND_VULKAN_BIND_INDEX_BUFFER_2) {
@@ -7297,7 +7326,7 @@ int bvb_vulkan_global_context_validate_command_stream(
                 context, &record, expected_device_id, &rendering);
         } else if (record.opcode >=
                        BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS &&
-                   record.opcode <= BVB_COMMAND_VULKAN_CLEAR_ATTACHMENTS) {
+                   record.opcode <= BVB_COMMAND_VULKAN_UPDATE_BUFFER) {
             result = validate_render_command_record(
                 context, &record, expected_device_id, &rendering);
         } else if (command_stream_transfer_opcode(record.opcode)) {
@@ -7447,7 +7476,7 @@ int bvb_vulkan_global_context_replay_command_stream(
                    record.opcode == BVB_COMMAND_VULKAN_PUSH_CONSTANTS ||
                    (record.opcode >=
                         BVB_COMMAND_VULKAN_BIND_VERTEX_BUFFERS &&
-                    record.opcode <= BVB_COMMAND_VULKAN_CLEAR_ATTACHMENTS) ||
+                    record.opcode <= BVB_COMMAND_VULKAN_UPDATE_BUFFER) ||
                    command_stream_transfer_opcode(record.opcode)) {
             result = replay_render_command_record(
                 context, info.command_buffer_id, &record);
