@@ -630,13 +630,23 @@ int main(void) {
     };
     get_properties2(physical_device, &properties2);
     CHECK(properties2.properties.vendorID == properties.vendorID);
+    VkFormatProperties3 format_properties3 = {
+        .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3,
+    };
     VkFormatProperties2 format_properties2 = {
         .sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2,
+        .pNext = &format_properties3,
     };
     get_format_properties2(
         physical_device, VK_FORMAT_R8G8B8A8_UNORM, &format_properties2);
     CHECK(format_properties2.formatProperties.optimalTilingFeatures ==
           format_properties.optimalTilingFeatures);
+    CHECK((format_properties3.linearTilingFeatures &
+           (UINT64_C(1) << 40U)) != 0U);
+    CHECK((format_properties3.optimalTilingFeatures &
+           (UINT64_C(1) << 41U)) != 0U);
+    CHECK((format_properties3.bufferFeatures &
+           (UINT64_C(1) << 42U)) != 0U);
     const VkPhysicalDeviceImageFormatInfo2 image_info2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
         .format = VK_FORMAT_R8G8B8A8_UNORM,
@@ -1983,6 +1993,115 @@ int main(void) {
     CHECK(bvb_handle_type(builtin_pipeline_id) == BVB_OBJECT_PIPELINE);
     CHECK(builtin_pipeline_id != graphics_pipeline_id);
 
+    const VkShaderModuleCreateInfo general_modules[2] = {
+        {
+            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize = sizeof(test_dxvk_dummy_frag),
+            .pCode = test_dxvk_dummy_frag,
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .codeSize = sizeof(test_dxvk_dummy_frag),
+            .pCode = test_dxvk_dummy_frag,
+        },
+    };
+    const VkPipelineShaderStageCreateInfo general_stages[2] = {
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .pNext = &general_modules[0],
+            .stage = VK_SHADER_STAGE_VERTEX_BIT,
+            .pName = "main",
+        },
+        {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .pNext = &general_modules[1],
+            .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+            .pName = "main",
+        },
+    };
+    const VkVertexInputBindingDescription general_binding = {
+        .binding = 0U,
+        .stride = 20U,
+        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+    };
+    const VkVertexInputAttributeDescription general_attributes[3] = {
+        {.location = 0U, .binding = 0U, .format = VK_FORMAT_R32G32_SFLOAT,
+         .offset = 0U},
+        {.location = 1U, .binding = 0U, .format = VK_FORMAT_R32G32_SFLOAT,
+         .offset = 8U},
+        {.location = 2U, .binding = 0U, .format = VK_FORMAT_R32_SFLOAT,
+         .offset = 16U},
+    };
+    const VkPipelineVertexInputStateCreateInfo general_vertex_input = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .vertexBindingDescriptionCount = 1U,
+        .pVertexBindingDescriptions = &general_binding,
+        .vertexAttributeDescriptionCount = 3U,
+        .pVertexAttributeDescriptions = general_attributes,
+    };
+    const VkPipelineInputAssemblyStateCreateInfo general_assembly = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP,
+        .primitiveRestartEnable = VK_TRUE,
+    };
+    const VkPipelineRasterizationStateCreateInfo general_raster = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .depthClampEnable = VK_TRUE,
+        .polygonMode = VK_POLYGON_MODE_FILL,
+        .cullMode = VK_CULL_MODE_NONE,
+        .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+        .lineWidth = 1.0F,
+    };
+    const VkPipelineDepthStencilStateCreateInfo general_depth = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+    };
+    const VkPipelineColorBlendStateCreateInfo general_blend = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .logicOp = (VkLogicOp)5,
+    };
+    const VkDynamicState general_dynamic_states[7] = {
+        VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT,
+        VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT,
+        VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE,
+        VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
+        VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+        VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
+        VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE,
+    };
+    const VkPipelineDynamicStateCreateInfo general_dynamic = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .dynamicStateCount = 7U,
+        .pDynamicStates = general_dynamic_states,
+    };
+    const VkPipelineRenderingCreateInfo general_rendering = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+    };
+    const VkGraphicsPipelineCreateInfo general_pipeline_info = {
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext = &general_rendering,
+        .stageCount = 2U,
+        .pStages = general_stages,
+        .pVertexInputState = &general_vertex_input,
+        .pInputAssemblyState = &general_assembly,
+        .pViewportState = &builtin_viewport,
+        .pRasterizationState = &general_raster,
+        .pMultisampleState = &builtin_multisample,
+        .pDepthStencilState = &general_depth,
+        .pColorBlendState = &general_blend,
+        .pDynamicState = &general_dynamic,
+        .layout = pipeline_layout,
+        .basePipelineIndex = -1,
+    };
+    VkPipeline general_pipeline = VK_NULL_HANDLE;
+    CHECK(create_graphics_pipelines(
+              device, VK_NULL_HANDLE, 1U, &general_pipeline_info, NULL,
+              &general_pipeline) == VK_SUCCESS);
+    uint64_t general_pipeline_id = 0U;
+    memcpy(&general_pipeline_id, &general_pipeline,
+           sizeof(general_pipeline_id));
+    CHECK(bvb_handle_type(general_pipeline_id) == BVB_OBJECT_PIPELINE);
+    CHECK(general_pipeline_id != builtin_pipeline_id);
+
     const VkCommandPoolCreateInfo pool_create_info = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
@@ -3093,6 +3212,7 @@ int main(void) {
                                  VK_NULL_HANDLE) == VK_SUCCESS);
         }
     }
+    destroy_pipeline(device, general_pipeline, NULL);
     destroy_pipeline(device, builtin_pipeline, NULL);
     destroy_pipeline_layout(device, pipeline_layout, NULL);
     destroy_descriptor_set_layout(device, empty_layout, NULL);

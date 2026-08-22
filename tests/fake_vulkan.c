@@ -127,6 +127,8 @@ static const VkPipeline fake_graphics_pipeline =
     (VkPipeline)(uintptr_t)UINT64_C(0xa700);
 static const VkPipeline fake_builtin_graphics_pipeline =
     (VkPipeline)(uintptr_t)UINT64_C(0xa701);
+static const VkPipeline fake_general_graphics_pipeline =
+    (VkPipeline)(uintptr_t)UINT64_C(0xa702);
 static const VkDescriptorSetLayout fake_core_descriptor_layout =
     (VkDescriptorSetLayout)(uintptr_t)UINT64_C(0xa800);
 static const VkDescriptorPool fake_core_descriptor_pool =
@@ -541,6 +543,31 @@ static void VKAPI_CALL fake_get_format_properties(
             VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
         properties->bufferFeatures =
             VK_FORMAT_FEATURE_UNIFORM_TEXEL_BUFFER_BIT;
+    }
+}
+
+static void VKAPI_CALL fake_get_format_properties_2(
+    VkPhysicalDevice device, VkFormat format,
+    VkFormatProperties2 *properties) {
+    if (properties == NULL ||
+        properties->sType != VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2) {
+        return;
+    }
+    fake_get_format_properties(device, format, &properties->formatProperties);
+    for (VkBaseOutStructure *next = properties->pNext; next != NULL;
+         next = next->pNext) {
+        if (next->sType == VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3) {
+            VkFormatProperties3 *properties_3 = (VkFormatProperties3 *)next;
+            properties_3->linearTilingFeatures =
+                properties->formatProperties.linearTilingFeatures |
+                (UINT64_C(1) << 40U);
+            properties_3->optimalTilingFeatures =
+                properties->formatProperties.optimalTilingFeatures |
+                (UINT64_C(1) << 41U);
+            properties_3->bufferFeatures =
+                properties->formatProperties.bufferFeatures |
+                (UINT64_C(1) << 42U);
+        }
     }
 }
 
@@ -1637,6 +1664,88 @@ static bool fake_builtin_graphics_pipeline_is_exact(
         info->basePipelineIndex == -1;
 }
 
+static bool fake_general_graphics_pipeline_is_exact(
+    const VkGraphicsPipelineCreateInfo *info) {
+    static const VkDynamicState expected_dynamic[] = {
+        VK_DYNAMIC_STATE_VIEWPORT_WITH_COUNT,
+        VK_DYNAMIC_STATE_SCISSOR_WITH_COUNT,
+        VK_DYNAMIC_STATE_DEPTH_BIAS_ENABLE,
+        VK_DYNAMIC_STATE_DEPTH_TEST_ENABLE,
+        VK_DYNAMIC_STATE_DEPTH_WRITE_ENABLE,
+        VK_DYNAMIC_STATE_DEPTH_COMPARE_OP,
+        VK_DYNAMIC_STATE_PRIMITIVE_RESTART_ENABLE,
+    };
+    if (fake_descriptor_step != 9U || info == NULL || info->pNext == NULL ||
+        ((const VkBaseInStructure *)info->pNext)->sType !=
+            VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO ||
+        info->stageCount != 2U || info->pStages == NULL ||
+        info->pVertexInputState == NULL || info->pInputAssemblyState == NULL ||
+        info->pViewportState == NULL || info->pRasterizationState == NULL ||
+        info->pMultisampleState == NULL || info->pDepthStencilState == NULL ||
+        info->pColorBlendState == NULL || info->pDynamicState == NULL) {
+        return false;
+    }
+    const VkPipelineRenderingCreateInfo *rendering = info->pNext;
+    const VkPipelineShaderStageCreateInfo *vertex = &info->pStages[0];
+    const VkPipelineShaderStageCreateInfo *fragment = &info->pStages[1];
+    const VkShaderModuleCreateInfo *vertex_module = vertex->pNext;
+    const VkShaderModuleCreateInfo *fragment_module = fragment->pNext;
+    const VkPipelineVertexInputStateCreateInfo *vertex_input =
+        info->pVertexInputState;
+    const VkPipelineColorBlendStateCreateInfo *blend = info->pColorBlendState;
+    const VkPipelineDynamicStateCreateInfo *dynamic = info->pDynamicState;
+    return info->flags == 0U && rendering->pNext == NULL &&
+        rendering->viewMask == 0U && rendering->colorAttachmentCount == 0U &&
+        rendering->pColorAttachmentFormats == NULL &&
+        rendering->depthAttachmentFormat == VK_FORMAT_UNDEFINED &&
+        rendering->stencilAttachmentFormat == VK_FORMAT_UNDEFINED &&
+        vertex->stage == VK_SHADER_STAGE_VERTEX_BIT &&
+        vertex->module == VK_NULL_HANDLE && vertex->pName != NULL &&
+        strcmp(vertex->pName, "main") == 0 && vertex_module != NULL &&
+        vertex_module->codeSize == sizeof(fake_dxvk_dummy_frag) &&
+        vertex_module->pCode != NULL &&
+        memcmp(vertex_module->pCode, fake_dxvk_dummy_frag,
+               sizeof(fake_dxvk_dummy_frag)) == 0 &&
+        vertex->pSpecializationInfo == NULL &&
+        fragment->stage == VK_SHADER_STAGE_FRAGMENT_BIT &&
+        fragment->module == VK_NULL_HANDLE && fragment->pName != NULL &&
+        strcmp(fragment->pName, "main") == 0 && fragment_module != NULL &&
+        fragment_module->codeSize == sizeof(fake_dxvk_dummy_frag) &&
+        fragment_module->pCode != NULL &&
+        memcmp(fragment_module->pCode, fake_dxvk_dummy_frag,
+               sizeof(fake_dxvk_dummy_frag)) == 0 &&
+        fragment->pSpecializationInfo == NULL &&
+        vertex_input->vertexBindingDescriptionCount == 1U &&
+        vertex_input->pVertexBindingDescriptions != NULL &&
+        vertex_input->pVertexBindingDescriptions[0].binding == 0U &&
+        vertex_input->pVertexBindingDescriptions[0].stride == 20U &&
+        vertex_input->vertexAttributeDescriptionCount == 3U &&
+        vertex_input->pVertexAttributeDescriptions != NULL &&
+        vertex_input->pVertexAttributeDescriptions[2].location == 2U &&
+        vertex_input->pVertexAttributeDescriptions[2].offset == 16U &&
+        info->pInputAssemblyState->topology ==
+            VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP &&
+        info->pInputAssemblyState->primitiveRestartEnable == VK_TRUE &&
+        info->pViewportState->viewportCount == 0U &&
+        info->pViewportState->scissorCount == 0U &&
+        info->pRasterizationState->depthClampEnable == VK_TRUE &&
+        info->pRasterizationState->lineWidth == 1.0F &&
+        info->pMultisampleState->rasterizationSamples ==
+            VK_SAMPLE_COUNT_1_BIT &&
+        info->pMultisampleState->pSampleMask != NULL &&
+        info->pMultisampleState->pSampleMask[0] == 1U &&
+        info->pDepthStencilState->depthTestEnable == VK_FALSE &&
+        blend->logicOp == (VkLogicOp)5 && blend->attachmentCount == 0U &&
+        blend->pAttachments == NULL && dynamic->dynamicStateCount == 7U &&
+        dynamic->pDynamicStates != NULL &&
+        memcmp(dynamic->pDynamicStates, expected_dynamic,
+               sizeof(expected_dynamic)) == 0 &&
+        info->layout == fake_pipeline_layout &&
+        info->renderPass == VK_NULL_HANDLE && info->subpass == 0U &&
+        info->basePipelineHandle == VK_NULL_HANDLE &&
+        info->basePipelineIndex == -1;
+}
+
 static VkResult VKAPI_CALL fake_create_graphics_pipelines(
     VkDevice device, VkPipelineCache pipeline_cache,
     uint32_t create_info_count,
@@ -1658,6 +1767,12 @@ static VkResult VKAPI_CALL fake_create_graphics_pipelines(
         create_infos != NULL && allocator == NULL && pipelines != NULL &&
         fake_builtin_graphics_pipeline_is_exact(&create_infos[0])) {
         pipelines[0] = fake_builtin_graphics_pipeline;
+        return VK_SUCCESS;
+    }
+    if (pipeline_cache == VK_NULL_HANDLE && create_info_count == 1U &&
+        create_infos != NULL && allocator == NULL && pipelines != NULL &&
+        fake_general_graphics_pipeline_is_exact(&create_infos[0])) {
+        pipelines[0] = fake_general_graphics_pipeline;
         return VK_SUCCESS;
     }
     if (fake_descriptor_step != 7U || pipeline_cache != VK_NULL_HANDLE ||
@@ -1747,6 +1862,9 @@ static void VKAPI_CALL fake_destroy_pipeline(
     const VkAllocationCallbacks *allocator) {
     (void)device;
     if (pipeline == fake_builtin_graphics_pipeline && allocator == NULL) {
+        return;
+    }
+    if (pipeline == fake_general_graphics_pipeline && allocator == NULL) {
         return;
     }
     if (fake_descriptor_step == 8U && pipeline == fake_graphics_pipeline &&
@@ -3269,6 +3387,8 @@ static PFN_vkVoidFunction function_pointer(const char *name) {
     BVB_MATCH("vkGetPhysicalDeviceFeatures2", fake_get_device_features2)
     BVB_MATCH("vkGetPhysicalDeviceFeatures2KHR", fake_get_device_features2)
     BVB_MATCH("vkGetPhysicalDeviceFormatProperties", fake_get_format_properties)
+    BVB_MATCH("vkGetPhysicalDeviceFormatProperties2", fake_get_format_properties_2)
+    BVB_MATCH("vkGetPhysicalDeviceFormatProperties2KHR", fake_get_format_properties_2)
     BVB_MATCH("vkGetPhysicalDeviceImageFormatProperties",
               fake_get_image_format_properties)
     BVB_MATCH("vkGetPhysicalDeviceQueueFamilyProperties", fake_get_queue_properties)

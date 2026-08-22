@@ -123,7 +123,8 @@ enum {
     BVB_OPCODE_VULKAN_DESCRIPTOR_UPDATE_TEMPLATE = 112,
     BVB_OPCODE_VULKAN_COMMAND_BUFFER_BIND_DESCRIPTOR_SETS = 113,
     BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMMEDIATE_RECORD = 114,
-    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMMEDIATE_RECORD,
+    BVB_OPCODE_VULKAN_FORMAT_PROPERTIES_3 = 115,
+    BVB_OPCODE_LAST = BVB_OPCODE_VULKAN_FORMAT_PROPERTIES_3,
     BVB_HELLO_REQUEST_SIZE = 8,
     BVB_HELLO_RESPONSE_SIZE = 16,
     BVB_VULKAN_CAPS_PREFIX_SIZE = 16,
@@ -146,6 +147,7 @@ enum {
     BVB_VULKAN_PHYSICAL_DEVICE_ID_SIZE = 8,
     BVB_VULKAN_FORMAT_QUERY_SIZE = 16,
     BVB_VULKAN_FORMAT_PROPERTIES_SIZE = 12,
+    BVB_VULKAN_FORMAT_PROPERTIES_3_SIZE = 24,
     BVB_VULKAN_IMAGE_FORMAT_QUERY_SIZE = 32,
     BVB_VULKAN_IMAGE_FORMAT_PROPERTIES_SIZE = 40,
     BVB_VULKAN_EXTERNAL_BUFFER_QUERY_SIZE = 24,
@@ -502,6 +504,12 @@ struct bvb_vulkan_format_properties {
     uint32_t linear_tiling_features;
     uint32_t optimal_tiling_features;
     uint32_t buffer_features;
+};
+
+struct bvb_vulkan_format_properties_3 {
+    uint64_t linear_tiling_features;
+    uint64_t optimal_tiling_features;
+    uint64_t buffer_features;
 };
 
 struct bvb_vulkan_image_format_query {
@@ -1150,6 +1158,12 @@ int bvb_protocol_encode_vulkan_format_properties(
 int bvb_protocol_decode_vulkan_format_properties(
     const uint8_t input[BVB_VULKAN_FORMAT_PROPERTIES_SIZE],
     struct bvb_vulkan_format_properties *properties);
+int bvb_protocol_encode_vulkan_format_properties_3(
+    uint8_t output[BVB_VULKAN_FORMAT_PROPERTIES_3_SIZE],
+    const struct bvb_vulkan_format_properties_3 *properties);
+int bvb_protocol_decode_vulkan_format_properties_3(
+    const uint8_t input[BVB_VULKAN_FORMAT_PROPERTIES_3_SIZE],
+    struct bvb_vulkan_format_properties_3 *properties);
 int bvb_protocol_encode_vulkan_image_format_query(
     uint8_t output[BVB_VULKAN_IMAGE_FORMAT_QUERY_SIZE],
     const struct bvb_vulkan_image_format_query *query);

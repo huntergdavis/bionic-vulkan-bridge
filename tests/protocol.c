@@ -107,7 +107,8 @@ int main(void) {
     CHECK(BVB_OPCODE_VULKAN_DESCRIPTOR_UPDATE_TEMPLATE == 112);
     CHECK(BVB_OPCODE_VULKAN_COMMAND_BUFFER_BIND_DESCRIPTOR_SETS == 113);
     CHECK(BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMMEDIATE_RECORD == 114);
-    CHECK(BVB_OPCODE_LAST == 114);
+    CHECK(BVB_OPCODE_VULKAN_FORMAT_PROPERTIES_3 == 115);
+    CHECK(BVB_OPCODE_LAST == 115);
     CHECK(decoded.opcode == BVB_OPCODE_LAST);
 
     const struct bvb_hello_request hello = {
@@ -449,6 +450,23 @@ int main(void) {
     CHECK(format_properties_decoded.linear_tiling_features == 1U);
     CHECK(format_properties_decoded.optimal_tiling_features == 2U);
     CHECK(format_properties_decoded.buffer_features == 4U);
+    const struct bvb_vulkan_format_properties_3 format_properties_3 = {
+        .linear_tiling_features = UINT64_C(0x10000000001),
+        .optimal_tiling_features = UINT64_C(0x20000000002),
+        .buffer_features = UINT64_C(0x40000000004),
+    };
+    uint8_t format_properties_3_wire[BVB_VULKAN_FORMAT_PROPERTIES_3_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_format_properties_3(
+              format_properties_3_wire, &format_properties_3) == 0);
+    struct bvb_vulkan_format_properties_3 format_properties_3_decoded;
+    CHECK(bvb_protocol_decode_vulkan_format_properties_3(
+              format_properties_3_wire, &format_properties_3_decoded) == 0);
+    CHECK(format_properties_3_decoded.linear_tiling_features ==
+          format_properties_3.linear_tiling_features);
+    CHECK(format_properties_3_decoded.optimal_tiling_features ==
+          format_properties_3.optimal_tiling_features);
+    CHECK(format_properties_3_decoded.buffer_features ==
+          format_properties_3.buffer_features);
 
     const struct bvb_vulkan_image_format_query image_format_query = {
         .physical_device_id = physical_devices.ids[0],
@@ -2305,6 +2323,28 @@ int main(void) {
     CHECK(bvb_protocol_decode_vulkan_graphics_pipeline_create_request(
               graphics_pipeline_wire, graphics_pipeline_wire_length,
               &graphics_pipeline_decoded) == -EPROTO);
+
+    const struct bvb_vulkan_builtin_graphics_pipeline_create_request
+        general_graphics_request = {
+            .device_id = UINT64_C(0x0300000000000001),
+            .pipeline_layout_id = UINT64_C(0x0f00000000000001),
+            .blob_bytes = 32768U,
+            .schema = BVB_VULKAN_GENERAL_GRAPHICS_PIPELINE_BLOB_VERSION,
+        };
+    uint8_t general_graphics_wire[
+        BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_REQUEST_SIZE];
+    CHECK(bvb_protocol_encode_vulkan_builtin_graphics_pipeline_create_request(
+              general_graphics_wire, &general_graphics_request) == 0);
+    struct bvb_vulkan_builtin_graphics_pipeline_create_request
+        general_graphics_decoded;
+    CHECK(bvb_protocol_decode_vulkan_builtin_graphics_pipeline_create_request(
+              general_graphics_wire, &general_graphics_decoded) == 0);
+    CHECK(general_graphics_decoded.blob_bytes == 32768U);
+    CHECK(general_graphics_decoded.schema ==
+          BVB_VULKAN_GENERAL_GRAPHICS_PIPELINE_BLOB_VERSION);
+    bvb_wire_put_u32(general_graphics_wire + 16U, 32769U);
+    CHECK(bvb_protocol_decode_vulkan_builtin_graphics_pipeline_create_request(
+              general_graphics_wire, &general_graphics_decoded) == -EPROTO);
 
     puts("protocol: PASS");
     return EXIT_SUCCESS;

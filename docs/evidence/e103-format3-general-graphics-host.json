@@ -1,0 +1,43 @@
+{
+  "gate": "E103",
+  "date": "2026-08-21",
+  "source_base_commit": "2f9bfa0",
+  "trigger": {
+    "run_id": "20260822T024434Z-13437",
+    "graphics_pipeline_result": -8,
+    "graphics_pipeline_shape": "two embedded shader stages, dynamic rendering, vertex input, raster/depth/blend state, seven dynamic states",
+    "render_target_view_rejections": 29,
+    "shader_resource_view_rejections": 30,
+    "format_properties_3_populated_before_fix": false,
+    "visible_game_frame": false
+  },
+  "implementation": {
+    "format_properties_3_opcode": 115,
+    "format_feature_width_bits": 64,
+    "native_query": "vkGetPhysicalDeviceFormatProperties2 with VkFormatProperties3",
+    "general_graphics_transport_opcode": 111,
+    "general_graphics_schema": 2,
+    "blob_max_bytes": 262144,
+    "blob_pointer_model": "sealed memfd with bounded relative offsets; no client pointer crosses the socket",
+    "stage_limit": 5,
+    "vertex_binding_limit": 16,
+    "vertex_attribute_limit": 32,
+    "color_attachment_limit": 8,
+    "dynamic_state_limit": 32,
+    "specialization_entry_limit": 32,
+    "specialization_data_limit": 256,
+    "round_trips_per_pipeline": 1,
+    "per_pipeline_java_or_binder_calls": 0
+  },
+  "validation": {
+    "protocol_round_trip": "passed",
+    "format_properties_3_high_bits": "passed",
+    "cross_process_general_pipeline": "passed",
+    "sealed_blob_size_and_abi_validation": "passed",
+    "host_suite": "63/63 passed",
+    "tablet_runtime": "pending",
+    "visible_game_frame": false,
+    "benchmark_or_fps": false
+  },
+  "reuse": "The required deja query found no indexed implementation. E103 reuses E044's native format-capability query boundary, E064/E101's embedded shader and pipeline ownership, E075a's immutable snapshot rule, and E101/E102's exact tablet diagnostics."
+}

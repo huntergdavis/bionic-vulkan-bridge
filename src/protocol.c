@@ -417,6 +417,28 @@ int bvb_protocol_decode_vulkan_format_properties(
     return 0;
 }
 
+int bvb_protocol_encode_vulkan_format_properties_3(
+    uint8_t output[BVB_VULKAN_FORMAT_PROPERTIES_3_SIZE],
+    const struct bvb_vulkan_format_properties_3 *properties) {
+    if (output == NULL || properties == NULL) return -EINVAL;
+    bvb_wire_put_u64(output, properties->linear_tiling_features);
+    bvb_wire_put_u64(output + 8U, properties->optimal_tiling_features);
+    bvb_wire_put_u64(output + 16U, properties->buffer_features);
+    return 0;
+}
+
+int bvb_protocol_decode_vulkan_format_properties_3(
+    const uint8_t input[BVB_VULKAN_FORMAT_PROPERTIES_3_SIZE],
+    struct bvb_vulkan_format_properties_3 *properties) {
+    if (input == NULL || properties == NULL) return -EINVAL;
+    *properties = (struct bvb_vulkan_format_properties_3){
+        .linear_tiling_features = bvb_wire_get_u64(input),
+        .optimal_tiling_features = bvb_wire_get_u64(input + 8U),
+        .buffer_features = bvb_wire_get_u64(input + 16U),
+    };
+    return 0;
+}
+
 int bvb_protocol_encode_vulkan_image_format_query(
     uint8_t output[BVB_VULKAN_IMAGE_FORMAT_QUERY_SIZE],
     const struct bvb_vulkan_image_format_query *query) {

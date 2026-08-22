@@ -4076,3 +4076,36 @@ frame helper still passed with no per-frame Java/Binder work. Automatic and
 live screenshots were byte-identical bridge triangles, so no game pixel is
 claimed. Steam and X retained PID/start-tick identities
 `14565/121864440` and `13643/121863492` after bounded cleanup.
+
+## E103 — 64-bit format capabilities and general graphics (2026-08-21)
+
+Status: host implementation complete; tablet runtime pending. E102 made the
+next boundary unusually clear: DXVK's 64-bit `VkFormatProperties3` output was
+left zero even though the legacy 32-bit properties were bridged, and BVB only
+recognized two earlier fixed graphics-pipeline shapes. Those two omissions
+jointly prevented D3D11 resource views and the first real game pipeline.
+
+E103 adds opcode 115 for the native driver's three 64-bit format-feature masks.
+The `vkGetPhysicalDeviceFormatProperties2` core/KHR aliases now preserve the
+caller chain and fill `VkFormatProperties3` truthfully. It also adds schema 2
+to the existing FD-bearing pipeline opcode. A single sealed memfd carries a
+bounded relative-offset graph for up to five embedded shader stages, vertex
+input, dynamic rendering formats, viewport/scissor, rasterization,
+multisample, depth/stencil, color blend, specialization data, and 32 dynamic
+states. The service validates the whole immutable graph and typed
+pipeline-layout ancestry before one native `vkCreateGraphicsPipelines` call.
+
+The fake native contract includes high format-feature bits that cannot fit the
+legacy response and an exact reconstruction of the tablet's measured
+two-stage, one-binding/three-attribute, seven-dynamic-state pipeline. Protocol
+corruption, blob size/seals, ABI sizes, SPIR-V headers, specialization bounds,
+and all relative pointers fail closed. The generated Vulkan entry policy is
+unchanged because both public entry names were already exposed. Compact
+evidence is `docs/evidence/e103-format3-general-graphics-host.json`; the full
+host suite passed 63/63.
+
+The required `deja` query returned no indexed implementation. E103 reuses
+E044's native format-capability boundary, E064/E101 embedded shader and typed
+pipeline ownership, E075a immutable snapshot validation, and E101/E102's exact
+tablet diagnostics. No game pixel, benchmark, or FPS claim is made before the
+next screenshot-checked tablet run.

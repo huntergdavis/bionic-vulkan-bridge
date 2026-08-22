@@ -208,10 +208,17 @@ int bvb_protocol_encode_vulkan_builtin_graphics_pipeline_create_request(
         !wire_id_is(request->device_id, BVB_OBJECT_DEVICE) ||
         !wire_id_is(request->pipeline_layout_id,
                     BVB_OBJECT_PIPELINE_LAYOUT) ||
-        request->blob_bytes !=
-            BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_SIZE ||
-        request->schema !=
-            BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_VERSION) {
+        !((request->schema ==
+               BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_VERSION &&
+           request->blob_bytes ==
+               BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_BLOB_SIZE) ||
+          (request->schema ==
+               BVB_VULKAN_GENERAL_GRAPHICS_PIPELINE_BLOB_VERSION &&
+           request->blob_bytes >=
+               BVB_VULKAN_GENERAL_GRAPHICS_PIPELINE_BLOB_HEADER_SIZE &&
+           request->blob_bytes <=
+               BVB_VULKAN_GENERAL_GRAPHICS_PIPELINE_BLOB_MAX_SIZE &&
+           (request->blob_bytes & 7U) == 0U))) {
         return -EINVAL;
     }
     memset(output, 0, BVB_VULKAN_BUILTIN_GRAPHICS_PIPELINE_REQUEST_SIZE);

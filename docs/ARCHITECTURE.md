@@ -355,3 +355,14 @@ Wine or application mapping. If no safe low hole exists, the original normal
 mapping is retained for a possible 64-bit caller; Wine's 32-bit thunk can then
 fail truthfully. No pointer crosses the glibc/Bionic wire, and the native
 Bionic mapping remains unconstrained.
+
+E103 carries the two exact families exposed after E102 without widening the
+per-call socket hot path. `VkFormatProperties3` uses one 24-byte response with
+the native driver's 64-bit format feature masks. General dynamic-rendering
+graphics pipelines use the existing FD-bearing pipeline opcode with schema 2:
+a sealed, at-most-256-KiB memfd contains a versioned ABI-size header and a
+pointer-free graph of bounded relative offsets. The Bionic service privately
+maps the blob, validates every offset/count/sType/pNext and pipeline-layout
+lineage, patches only service-local pointers, and invokes Turnip once. No
+glibc pointer, per-frame Binder call, or unbounded pipeline array crosses the
+bridge.

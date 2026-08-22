@@ -896,22 +896,35 @@ static int answer_vulkan_format_properties(
     struct bvb_vulkan_format_query query;
     int result = bvb_protocol_decode_vulkan_format_query(
         request->payload, &query);
-    struct bvb_vulkan_format_properties properties;
+    const bool format_3 = request->header.opcode ==
+        BVB_OPCODE_VULKAN_FORMAT_PROPERTIES_3;
+    struct bvb_vulkan_format_properties properties = {0};
+    struct bvb_vulkan_format_properties_3 properties_3 = {0};
     char diagnostic[512];
     if (result == 0) {
-        result = bvb_vulkan_global_context_get_format_properties(
-            context, &query, &properties, diagnostic, sizeof(diagnostic));
+        result = format_3
+            ? bvb_vulkan_global_context_get_format_properties_3(
+                  context, &query, &properties_3, diagnostic,
+                  sizeof(diagnostic))
+            : bvb_vulkan_global_context_get_format_properties(
+                  context, &query, &properties, diagnostic,
+                  sizeof(diagnostic));
         if (result != 0) {
             fprintf(stderr, "bvb: format properties failed: %s\n",
                     diagnostic);
         }
     }
     if (result == 0) {
-        result = bvb_protocol_encode_vulkan_format_properties(
-            response.payload, &properties);
+        result = format_3
+            ? bvb_protocol_encode_vulkan_format_properties_3(
+                  response.payload, &properties_3)
+            : bvb_protocol_encode_vulkan_format_properties(
+                  response.payload, &properties);
     }
     if (result == 0) {
-        response.header.payload_length = BVB_VULKAN_FORMAT_PROPERTIES_SIZE;
+        response.header.payload_length = format_3
+            ? BVB_VULKAN_FORMAT_PROPERTIES_3_SIZE
+            : BVB_VULKAN_FORMAT_PROPERTIES_SIZE;
     } else {
         response.header.status = result;
     }
@@ -3332,7 +3345,9 @@ static int serve_connection(int client_fd, const char *loader_path,
             result = answer_vulkan_core_features(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
-                   BVB_OPCODE_VULKAN_FORMAT_PROPERTIES) {
+                       BVB_OPCODE_VULKAN_FORMAT_PROPERTIES ||
+                   request.header.opcode ==
+                       BVB_OPCODE_VULKAN_FORMAT_PROPERTIES_3) {
             result = answer_vulkan_format_properties(
                 client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
