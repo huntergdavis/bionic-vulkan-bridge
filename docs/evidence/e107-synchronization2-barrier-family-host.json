@@ -1,0 +1,38 @@
+{
+  "gate": "E107",
+  "date": "2026-08-21",
+  "source_base_commit": "39ca399b8d2578d7b841ca936078a21e86cd9351",
+  "trigger": {
+    "run_id": "20260822T042731Z-26550",
+    "e106_dynamic_rendering": "passed for color and depth/stencil calls",
+    "first_rejection_entry": "vkCmdPipelineBarrier2",
+    "first_rejection_reason": "unsupported_dependency_shape",
+    "command_sequence": 11,
+    "visible_game_frame": false,
+    "fullscreen_screenshot_sha256": "28b7305067678da2bc88ffcb75bf49b49141cf49c27c59d79df332dcee89e9f8"
+  },
+  "implementation": {
+    "command_record_id": 10,
+    "maximum_memory_barriers": 16,
+    "maximum_buffer_barriers": 16,
+    "maximum_image_barriers": 16,
+    "dependency_flags_mask": "0x6f",
+    "queue_family_transfers": true,
+    "encoded_payload_bytes": 2832,
+    "pointer_free": true,
+    "strict_transport": "one immediate-record RPC",
+    "shared_transport": "local append with zero recording RPC",
+    "native_boundary": "typed same-device buffer/image validation followed by Bionic-local VkMemoryBarrier2, VkBufferMemoryBarrier2, VkImageMemoryBarrier2, and VkDependencyInfo reconstruction"
+  },
+  "validation": {
+    "mixed_family_codec_round_trip": "passed",
+    "inactive_record_canonicalization": "passed",
+    "strict_and_shared_native_reconstruction": "passed",
+    "fake_native_shape": "BY_REGION plus one memory, one buffer queue-family transfer, and one image barrier",
+    "host_suite": "67/67 passed",
+    "tablet_runtime": "pending",
+    "visible_game_frame": false,
+    "benchmark_or_fps": false
+  },
+  "reuse": "The required deja query found no indexed implementation. E107 reuses E075/E075a immutable shared command streams, E076 bounded pointer-free barrier records, E080 typed ownership caching, E101 strict immediate records, E106's proven tablet command boundary, and pinned DXVK synchronization2 use."
+}

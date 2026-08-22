@@ -5669,6 +5669,52 @@ static int replay_command_stream_image_barrier_2(
     int result = resolve_command_buffer(
         context, command_buffer_id, &command_device_id, &command_device,
         &command_pool, &command_buffer);
+    VkMemoryBarrier2
+        memory_barriers[BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS];
+    memset(memory_barriers, 0, sizeof(memory_barriers));
+    for (uint32_t index = 0U; index < command->memory_count; ++index) {
+        const struct bvb_vulkan_memory_barrier_2 *source =
+            &command->memory[index];
+        memory_barriers[index] = (VkMemoryBarrier2){
+            .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+            .srcStageMask = source->source_stage_mask,
+            .srcAccessMask = source->source_access_mask,
+            .dstStageMask = source->destination_stage_mask,
+            .dstAccessMask = source->destination_access_mask,
+        };
+    }
+    VkBufferMemoryBarrier2
+        buffer_barriers[BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS];
+    memset(buffer_barriers, 0, sizeof(buffer_barriers));
+    for (uint32_t index = 0U;
+         result == 0 && index < command->buffer_count; ++index) {
+        uint64_t buffer_device_id = 0U;
+        uint64_t buffer_bits = 0U;
+        VkDevice buffer_device = VK_NULL_HANDLE;
+        result = resolve_device_child(
+            context, command->buffers[index].buffer_id, BVB_OBJECT_BUFFER,
+            &buffer_device_id, &buffer_device, &buffer_bits);
+        if (result == 0 &&
+            (buffer_device_id != command_device_id ||
+             buffer_device != command_device))
+            result = -EPROTO;
+        if (result == 0) {
+            const struct bvb_vulkan_buffer_barrier_2 *source =
+                &command->buffers[index];
+            buffer_barriers[index] = (VkBufferMemoryBarrier2){
+                .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+                .srcStageMask = source->source_stage_mask,
+                .srcAccessMask = source->source_access_mask,
+                .dstStageMask = source->destination_stage_mask,
+                .dstAccessMask = source->destination_access_mask,
+                .srcQueueFamilyIndex = source->source_queue_family_index,
+                .dstQueueFamilyIndex = source->destination_queue_family_index,
+                .buffer = buffer_from_bits(buffer_bits),
+                .offset = source->offset,
+                .size = source->size,
+            };
+        }
+    }
     VkImageMemoryBarrier2 barriers[BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS];
     memset(barriers, 0, sizeof(barriers));
     for (uint32_t index = 0U;
@@ -5716,8 +5762,14 @@ static int replay_command_stream_image_barrier_2(
     const VkDependencyInfo dependency = {
         .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
         .dependencyFlags = command->dependency_flags,
+        .memoryBarrierCount = command->memory_count,
+        .pMemoryBarriers = command->memory_count == 0U
+                               ? NULL : memory_barriers,
+        .bufferMemoryBarrierCount = command->buffer_count,
+        .pBufferMemoryBarriers = command->buffer_count == 0U
+                                     ? NULL : buffer_barriers,
         .imageMemoryBarrierCount = command->image_count,
-        .pImageMemoryBarriers = barriers,
+        .pImageMemoryBarriers = command->image_count == 0U ? NULL : barriers,
     };
     barrier(command_buffer, &dependency);
     return 0;
@@ -5953,6 +6005,10 @@ static int validate_transfer_command_record(
     return result;
 }
 
+static int validate_pipeline_barrier_record(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_command_record *record, uint64_t expected_device_id);
+
 static int validate_render_command_record(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_command_record *record, uint64_t expected_device_id,
@@ -6015,6 +6071,9 @@ static int validate_render_command_record(
             context, command.pipeline_layout_id,
             BVB_OBJECT_PIPELINE_LAYOUT, expected_device_id);
     }
+    if (record->opcode == BVB_COMMAND_VULKAN_IMAGE_BARRIER_2)
+        return validate_pipeline_barrier_record(
+            context, record, expected_device_id);
     if (command_stream_transfer_opcode(record->opcode))
         return validate_transfer_command_record(
             context, record, expected_device_id);
@@ -6085,6 +6144,12 @@ static int replay_render_command_record(
         context, command_buffer_id, &device_id, &device,
         &command_pool, &command_buffer);
     if (result != 0) return result;
+    if (record->opcode == BVB_COMMAND_VULKAN_IMAGE_BARRIER_2) {
+        struct bvb_vulkan_image_barrier_2_command barrier;
+        result = bvb_command_decode_vulkan_image_barrier_2(record, &barrier);
+        return result != 0 ? result : replay_command_stream_image_barrier_2(
+            context, command_buffer_id, &barrier);
+    }
     if (record->opcode == BVB_COMMAND_BEGIN_RENDERING) {
         struct bvb_begin_rendering_command command;
         result = bvb_command_decode_begin_rendering(record, &command);
@@ -6534,6 +6599,43 @@ static int command_stream_image_layout_supported(uint32_t layout) {
     }
 }
 
+static int validate_pipeline_barrier_record(
+    const struct bvb_vulkan_global_context *context,
+    const struct bvb_command_record *record, uint64_t expected_device_id) {
+    struct bvb_vulkan_image_barrier_2_command barrier;
+    int result = bvb_command_decode_vulkan_image_barrier_2(record, &barrier);
+    if (result == 0 &&
+        (barrier.dependency_flags & ~UINT32_C(0x6f)) != 0U)
+        result = -EPROTO;
+    for (uint32_t buffer = 0U;
+         result == 0 && buffer < barrier.buffer_count; ++buffer) {
+        if (barrier.buffers[buffer].size == 0U) {
+            result = -EPROTO;
+            break;
+        }
+        result = command_stream_child_matches_device(
+            context, barrier.buffers[buffer].buffer_id,
+            BVB_OBJECT_BUFFER, expected_device_id);
+    }
+    for (uint32_t image = 0U;
+         result == 0 && image < barrier.image_count; ++image) {
+        const struct bvb_vulkan_image_barrier_2 *entry =
+            &barrier.images[image];
+        if (!command_stream_image_layout_supported(entry->old_layout) ||
+            !command_stream_image_layout_supported(entry->new_layout) ||
+            entry->new_layout == VK_IMAGE_LAYOUT_UNDEFINED ||
+            entry->new_layout == VK_IMAGE_LAYOUT_PREINITIALIZED ||
+            !command_stream_image_barrier_range_supported(&entry->range)) {
+            result = -EPROTO;
+            break;
+        }
+        result = command_stream_child_matches_device(
+            context, entry->image_id, BVB_OBJECT_IMAGE,
+            expected_device_id);
+    }
+    return result;
+}
+
 int bvb_vulkan_global_context_validate_command_stream(
     const struct bvb_vulkan_global_context *context,
     const uint8_t *batch, size_t batch_length, uint64_t expected_device_id,
@@ -6591,29 +6693,8 @@ int bvb_vulkan_global_context_validate_command_stream(
             }
         } else if (record.opcode ==
                    BVB_COMMAND_VULKAN_IMAGE_BARRIER_2) {
-            struct bvb_vulkan_image_barrier_2_command barrier;
-            result = bvb_command_decode_vulkan_image_barrier_2(
-                &record, &barrier);
-            if (result == 0 && barrier.dependency_flags != 0U) {
-                result = -EPROTO;
-            }
-            for (uint32_t image = 0U;
-                 result == 0 && image < barrier.image_count; ++image) {
-                const struct bvb_vulkan_image_barrier_2 *entry =
-                    &barrier.images[image];
-                if (!command_stream_image_layout_supported(entry->old_layout) ||
-                    !command_stream_image_layout_supported(entry->new_layout) ||
-                    entry->new_layout == VK_IMAGE_LAYOUT_UNDEFINED ||
-                    entry->new_layout == VK_IMAGE_LAYOUT_PREINITIALIZED ||
-                    !command_stream_image_barrier_range_supported(
-                        &entry->range)) {
-                    result = -EPROTO;
-                    break;
-                }
-                result = command_stream_child_matches_device(
-                    context, entry->image_id, BVB_OBJECT_IMAGE,
-                    expected_device_id);
-            }
+            result = validate_pipeline_barrier_record(
+                context, &record, expected_device_id);
         } else if (record.opcode ==
                    BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE_GENERAL) {
             struct bvb_vulkan_clear_color_image_general_command clear;

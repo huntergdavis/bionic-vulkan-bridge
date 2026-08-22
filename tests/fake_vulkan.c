@@ -3010,20 +3010,40 @@ static void VKAPI_CALL fake_cmd_pipeline_barrier_2(
         dependency_info == NULL ||
         dependency_info->sType != VK_STRUCTURE_TYPE_DEPENDENCY_INFO ||
         dependency_info->pNext != NULL ||
-        dependency_info->dependencyFlags != 0U ||
-        dependency_info->memoryBarrierCount != 0U ||
-        dependency_info->pMemoryBarriers != NULL ||
-        dependency_info->bufferMemoryBarrierCount != 0U ||
-        dependency_info->pBufferMemoryBarriers != NULL ||
+        (dependency_info->dependencyFlags != 0U &&
+         dependency_info->dependencyFlags != VK_DEPENDENCY_BY_REGION_BIT) ||
+        dependency_info->memoryBarrierCount != 1U ||
+        dependency_info->pMemoryBarriers == NULL ||
+        dependency_info->bufferMemoryBarrierCount != 1U ||
+        dependency_info->pBufferMemoryBarriers == NULL ||
         dependency_info->imageMemoryBarrierCount != 1U ||
         dependency_info->pImageMemoryBarriers == NULL) {
         if (command_buffer == fake_init_image_command)
             fake_init_image_violation = 1;
         return;
     }
+    const VkMemoryBarrier2 *memory = dependency_info->pMemoryBarriers;
+    const VkBufferMemoryBarrier2 *buffer =
+        dependency_info->pBufferMemoryBarriers;
     const VkImageMemoryBarrier2 *barrier =
         &dependency_info->pImageMemoryBarriers[0];
-    if (barrier->sType == VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 &&
+    if (memory->sType == VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 &&
+        memory->pNext == NULL &&
+        memory->srcStageMask == VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT &&
+        memory->srcAccessMask == VK_ACCESS_2_MEMORY_WRITE_BIT &&
+        memory->dstStageMask == VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT &&
+        memory->dstAccessMask == VK_ACCESS_2_MEMORY_READ_BIT &&
+        buffer->sType == VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2 &&
+        buffer->pNext == NULL &&
+        buffer->srcStageMask == VK_PIPELINE_STAGE_2_TRANSFER_BIT &&
+        buffer->srcAccessMask == VK_ACCESS_2_TRANSFER_WRITE_BIT &&
+        buffer->dstStageMask == VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT &&
+        buffer->dstAccessMask == VK_ACCESS_2_SHADER_READ_BIT &&
+        buffer->srcQueueFamilyIndex == 2U &&
+        buffer->dstQueueFamilyIndex == 3U &&
+        buffer->buffer == (VkBuffer)(uintptr_t)UINT64_C(0x4000) &&
+        buffer->offset == 128U && buffer->size == 256U &&
+        barrier->sType == VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 &&
         barrier->pNext == NULL &&
         barrier->srcStageMask == VK_PIPELINE_STAGE_2_NONE &&
         barrier->srcAccessMask == VK_ACCESS_2_NONE &&

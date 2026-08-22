@@ -376,6 +376,11 @@ rasterization extension state remains fail-closed, and the pipeline still
 costs one setup transaction rather than one transaction per nested struct.
 
 E106 generalizes dynamic rendering without changing the hot-path transport.
+E107 similarly keeps record ID 10 while widening synchronization2 to bounded
+memory, buffer, and image arrays. Strict clients send one pointer-free record;
+shared clients append it locally, while the Bionic service remains the only
+side that reconstructs native barriers and authoritatively resolves buffer and
+image ownership.
 One fixed 600-byte, pointer-free record carries up to eight color attachments,
 optional depth and stencil attachments, resolve image views, clear-value bits,
 render flags/area/multiview, and terminal attachment-feedback-loop metadata.

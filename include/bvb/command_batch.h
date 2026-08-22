@@ -37,7 +37,10 @@ enum {
     BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE = 21,
     BVB_COMMAND_VULKAN_INIT_IMAGE_BARRIER = 22,
     BVB_COMMAND_VULKAN_END = 23,
-    BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS = 4,
+    BVB_COMMAND_VULKAN_MAX_INIT_IMAGE_BARRIERS = 4,
+    BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS = 16,
+    BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS = 16,
+    BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS = 16,
     BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES = 4,
     BVB_COMMAND_VULKAN_MAX_BOUND_DESCRIPTOR_SETS = 8,
     BVB_COMMAND_VULKAN_MAX_DYNAMIC_OFFSETS = 32,
@@ -131,7 +134,7 @@ struct bvb_vulkan_clear_color_image_command {
 
 struct bvb_vulkan_init_image_barrier_command {
     uint32_t image_count;
-    uint64_t image_ids[BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS];
+    uint64_t image_ids[BVB_COMMAND_VULKAN_MAX_INIT_IMAGE_BARRIERS];
 };
 
 struct bvb_vulkan_image_subresource_range {
@@ -155,9 +158,34 @@ struct bvb_vulkan_image_barrier_2 {
     struct bvb_vulkan_image_subresource_range range;
 };
 
+struct bvb_vulkan_memory_barrier_2 {
+    uint64_t source_stage_mask;
+    uint64_t source_access_mask;
+    uint64_t destination_stage_mask;
+    uint64_t destination_access_mask;
+};
+
+struct bvb_vulkan_buffer_barrier_2 {
+    uint64_t source_stage_mask;
+    uint64_t source_access_mask;
+    uint64_t destination_stage_mask;
+    uint64_t destination_access_mask;
+    uint32_t source_queue_family_index;
+    uint32_t destination_queue_family_index;
+    uint64_t buffer_id;
+    uint64_t offset;
+    uint64_t size;
+};
+
 struct bvb_vulkan_image_barrier_2_command {
     uint32_t dependency_flags;
+    uint32_t memory_count;
+    uint32_t buffer_count;
     uint32_t image_count;
+    struct bvb_vulkan_memory_barrier_2
+        memory[BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS];
+    struct bvb_vulkan_buffer_barrier_2
+        buffers[BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS];
     struct bvb_vulkan_image_barrier_2
         images[BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS];
 };

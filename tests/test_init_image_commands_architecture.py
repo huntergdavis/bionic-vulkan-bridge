@@ -47,7 +47,8 @@ def main() -> int:
     assert 'BVB_DEVICE_MATCH("vkCmdPipelineBarrier2"' in client
     assert 'BVB_DEVICE_MATCH("vkCmdPipelineBarrier2KHR"' not in client
     assert 'BVB_DEVICE_MATCH("vkCmdClearColorImage"' in client
-    assert "init_image_barrier_supported" in client
+    assert "bvb_command_batch_append_vulkan_image_barrier_2" in client
+    assert "BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMMEDIATE_RECORD" in client
     assert "init_image_subresource_range_supported" in client
 
     native = native_path.read_text()

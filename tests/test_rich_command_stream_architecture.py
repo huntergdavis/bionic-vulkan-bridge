@@ -51,18 +51,22 @@ def main() -> int:
     header = header_path.read_text()
     assert "BVB_COMMAND_VULKAN_IMAGE_BARRIER_2 = 10" in header
     assert "BVB_COMMAND_VULKAN_CLEAR_COLOR_IMAGE_GENERAL = 11" in header
-    assert "BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS = 4" in header
+    assert "BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS = 16" in header
+    assert "BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS = 16" in header
+    assert "BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS = 16" in header
     assert "BVB_COMMAND_VULKAN_MAX_CLEAR_RANGES = 4" in header
 
     batch = batch_path.read_text()
     assert "BVB_VULKAN_IMAGE_BARRIER_2_SIZE" in batch
+    assert "BVB_VULKAN_MEMORY_BARRIER_2_RECORD_SIZE" in batch
+    assert "BVB_VULKAN_BUFFER_BARRIER_2_RECORD_SIZE" in batch
     assert "BVB_VULKAN_CLEAR_COLOR_IMAGE_GENERAL_SIZE" in batch
     assert "image_range_wire_is_zero" in batch
 
     client = client_path.read_text()
     assert "bvb_command_batch_append_vulkan_image_barrier_2" in client
     assert "bvb_command_batch_append_vulkan_clear_color_image_general" in client
-    assert "BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMAGE_BARRIER" in client
+    assert "BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMMEDIATE_RECORD" in client
     assert "BVB_OPCODE_VULKAN_COMMAND_BUFFER_CLEAR_COLOR_IMAGE" in client
     assert "image_owned_by_device_locked" in client
 

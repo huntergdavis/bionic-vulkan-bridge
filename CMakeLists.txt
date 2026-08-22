@@ -1182,4 +1182,16 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_vulkan.c"
   )
+  add_test(
+    NAME e107-synchronization2-barrier-family-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e107_barrier_family_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e107-synchronization2-barrier-family-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/command_batch.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/command_batch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_vulkan.c"
+  )
 endif()

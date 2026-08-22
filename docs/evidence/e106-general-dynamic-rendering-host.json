@@ -30,7 +30,7 @@
     "strict_and_shared_native_reconstruction": "passed",
     "rich_fake_shape": "two color slots, resolve, feedback loop, depth, stencil, nonzero offset, and multiview",
     "host_suite": "66/66 passed",
-    "tablet_runtime": "pending",
+    "tablet_runtime": "passed in 20260822T042731Z-26550; next rejection vkCmdPipelineBarrier2 unsupported_dependency_shape at sequence 11",
     "visible_game_frame": false,
     "benchmark_or_fps": false
   },

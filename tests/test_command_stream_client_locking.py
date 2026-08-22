@@ -74,8 +74,12 @@ def main() -> int:
     fill = function(
         client, "bvb_bridge_vkCmdFillBuffer(", "fence_result_operation("
     )
-    for hot_function in (begin, end, barrier, clear, fill):
+    for hot_function in (begin, end, clear, fill):
         shared_precedes_control(hot_function)
+    assert barrier.index("command_stream_is_enabled()") < barrier.index(
+        "pthread_mutex_lock(&command_state->stream_mutex)"
+    )
+    assert "finish_single_render_record(" in barrier
 
     poison = function(
         client, "poison_shared_command_stream(",
@@ -86,7 +90,8 @@ def main() -> int:
     assert "shared_object_owned_by_device_cached_locked(" in barrier
     assert "shared_object_owned_by_device_cached_locked(" in clear
     assert "shared_object_owned_by_device_cached_locked(" in fill
-    assert "BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMAGE_BARRIER" in barrier
+    assert "bvb_command_batch_append_vulkan_image_barrier_2" in barrier
+    assert "finish_single_render_record(" in barrier
     assert "BVB_OPCODE_VULKAN_COMMAND_BUFFER_CLEAR_COLOR_IMAGE" in clear
     assert "BVB_OPCODE_VULKAN_COMMAND_BUFFER_FILL" in fill
 

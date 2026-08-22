@@ -386,7 +386,7 @@ static int test_vulkan_transfer_family(void) {
 }
 
 static int test_vulkan_command_stream(void) {
-    uint8_t bytes[2048];
+    uint8_t bytes[8192];
     const uint64_t command_buffer =
         bvb_handle_id(BVB_OBJECT_COMMAND_BUFFER, 7U);
     const uint64_t buffer = bvb_handle_id(BVB_OBJECT_BUFFER, 8U);
@@ -425,7 +425,27 @@ static int test_vulkan_command_stream(void) {
     CHECK(bvb_command_batch_append_vulkan_image_barrier_2(
               &builder,
               &(const struct bvb_vulkan_image_barrier_2_command){
+                  .dependency_flags = 1U,
+                  .memory_count = 1U,
+                  .buffer_count = 1U,
                   .image_count = 1U,
+                  .memory = {{
+                      .source_stage_mask = UINT64_C(0x10),
+                      .source_access_mask = UINT64_C(0x20),
+                      .destination_stage_mask = UINT64_C(0x40),
+                      .destination_access_mask = UINT64_C(0x80),
+                  }},
+                  .buffers = {{
+                      .source_stage_mask = UINT64_C(0x100),
+                      .source_access_mask = UINT64_C(0x200),
+                      .destination_stage_mask = UINT64_C(0x400),
+                      .destination_access_mask = UINT64_C(0x800),
+                      .source_queue_family_index = 2U,
+                      .destination_queue_family_index = 3U,
+                      .buffer_id = buffer,
+                      .offset = 256U,
+                      .size = 1024U,
+                  }},
                   .images = {{
                       .source_stage_mask = UINT64_C(0x1000),
                       .source_access_mask = UINT64_C(0x1000),
@@ -522,6 +542,15 @@ static int test_vulkan_command_stream(void) {
     struct bvb_vulkan_image_barrier_2_command rich_barrier;
     CHECK(bvb_command_decode_vulkan_image_barrier_2(&record, &rich_barrier) ==
           0);
+    CHECK(rich_barrier.dependency_flags == 1U);
+    CHECK(rich_barrier.memory_count == 1U);
+    CHECK(rich_barrier.memory[0].destination_access_mask == UINT64_C(0x80));
+    CHECK(rich_barrier.buffer_count == 1U);
+    CHECK(rich_barrier.buffers[0].buffer_id == buffer);
+    CHECK(rich_barrier.buffers[0].source_queue_family_index == 2U);
+    CHECK(rich_barrier.buffers[0].destination_queue_family_index == 3U);
+    CHECK(rich_barrier.buffers[0].offset == 256U);
+    CHECK(rich_barrier.buffers[0].size == 1024U);
     CHECK(rich_barrier.image_count == 1U);
     CHECK(rich_barrier.images[0].image_id == image_one);
     CHECK(rich_barrier.images[0].old_layout == 7U);
@@ -574,8 +603,23 @@ static int test_vulkan_command_stream(void) {
                      2U);
     CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
     memcpy(corrupted, bytes, length);
+    /* Unknown dependency bits and inactive fixed slots are non-canonical. */
+    bvb_wire_put_u32(corrupted + rich_barrier_payload_offset,
+                     UINT32_C(0x10));
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+    memcpy(corrupted, bytes, length);
+    bvb_wire_put_u64(corrupted + rich_barrier_payload_offset + 16U + 32U,
+                     1U);
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+    memcpy(corrupted, bytes, length);
+    bvb_wire_put_u64(corrupted + rich_barrier_payload_offset + 16U +
+                         16U * 32U + 64U,
+                     1U);
+    CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
+    memcpy(corrupted, bytes, length);
     /* The second fixed barrier slot must remain an all-zero inactive slot. */
-    bvb_wire_put_u64(corrupted + rich_barrier_payload_offset + 8U + 80U,
+    bvb_wire_put_u64(corrupted + rich_barrier_payload_offset + 16U +
+                         16U * 32U + 16U * 64U + 80U,
                      1U);
     CHECK(bvb_command_batch_validate(corrupted, length, &info) == -EPROTO);
     memcpy(corrupted, bytes, length);

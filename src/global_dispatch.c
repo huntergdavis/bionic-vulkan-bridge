@@ -7783,23 +7783,6 @@ static int init_image_subresource_range_supported(
            range->baseArrayLayer == 0U && range->layerCount == 1U;
 }
 
-static int init_image_barrier_supported(
-    const VkImageMemoryBarrier2 *barrier) {
-    return barrier != NULL &&
-           barrier->sType == VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 &&
-           barrier->pNext == NULL &&
-           barrier->srcStageMask == VK_PIPELINE_STAGE_2_NONE &&
-           barrier->srcAccessMask == VK_ACCESS_2_NONE &&
-           barrier->dstStageMask == VK_PIPELINE_STAGE_2_TRANSFER_BIT &&
-           barrier->dstAccessMask == VK_ACCESS_2_TRANSFER_WRITE_BIT &&
-           barrier->oldLayout == VK_IMAGE_LAYOUT_UNDEFINED &&
-           barrier->newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
-           barrier->srcQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED &&
-           barrier->dstQueueFamilyIndex == VK_QUEUE_FAMILY_IGNORED &&
-           init_image_subresource_range_supported(
-               &barrier->subresourceRange);
-}
-
 static int command_image_barrier_range_supported(
     const VkImageSubresourceRange *range) {
     const VkImageAspectFlags supported_aspects =
@@ -8855,15 +8838,19 @@ static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
     if (command_state == NULL || dependency_info == NULL ||
         dependency_info->sType != VK_STRUCTURE_TYPE_DEPENDENCY_INFO ||
         dependency_info->pNext != NULL ||
-        dependency_info->dependencyFlags != 0U ||
-        dependency_info->memoryBarrierCount != 0U ||
-        dependency_info->pMemoryBarriers != NULL ||
-        dependency_info->bufferMemoryBarrierCount != 0U ||
-        dependency_info->pBufferMemoryBarriers != NULL ||
-        dependency_info->imageMemoryBarrierCount == 0U ||
+        (dependency_info->dependencyFlags & ~UINT32_C(0x6f)) != 0U ||
+        dependency_info->memoryBarrierCount >
+            BVB_COMMAND_VULKAN_MAX_MEMORY_BARRIERS ||
+        dependency_info->bufferMemoryBarrierCount >
+            BVB_COMMAND_VULKAN_MAX_BUFFER_BARRIERS ||
         dependency_info->imageMemoryBarrierCount >
-            BVB_VULKAN_INIT_IMAGE_MAX_BARRIERS ||
-        dependency_info->pImageMemoryBarriers == NULL) {
+            BVB_COMMAND_VULKAN_MAX_IMAGE_BARRIERS ||
+        (dependency_info->memoryBarrierCount != 0U &&
+         dependency_info->pMemoryBarriers == NULL) ||
+        (dependency_info->bufferMemoryBarrierCount != 0U &&
+         dependency_info->pBufferMemoryBarriers == NULL) ||
+        (dependency_info->imageMemoryBarrierCount != 0U &&
+         dependency_info->pImageMemoryBarriers == NULL)) {
         poison_shared_command_stream(
             command_state, "vkCmdPipelineBarrier2",
             "unsupported_dependency_shape", "VkDependencyInfo_ptr",
@@ -8872,14 +8859,55 @@ static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
     }
     struct bvb_vulkan_image_barrier_2_command general = {
         .dependency_flags = dependency_info->dependencyFlags,
+        .memory_count = dependency_info->memoryBarrierCount,
+        .buffer_count = dependency_info->bufferMemoryBarrierCount,
         .image_count = dependency_info->imageMemoryBarrierCount,
     };
-    struct bvb_vulkan_command_buffer_image_barrier_request decoded = {
-        .command_buffer_id = command_state->wire_id,
-        .image_count = dependency_info->imageMemoryBarrierCount,
-    };
-    bool fixed_init_shape = true;
-    for (uint32_t index = 0U; index < decoded.image_count; ++index) {
+    for (uint32_t index = 0U; index < general.memory_count; ++index) {
+        const VkMemoryBarrier2 *barrier =
+            &dependency_info->pMemoryBarriers[index];
+        if (barrier->sType != VK_STRUCTURE_TYPE_MEMORY_BARRIER_2 ||
+            barrier->pNext != NULL) {
+            poison_shared_command_stream(
+                command_state, "vkCmdPipelineBarrier2",
+                "unsupported_memory_barrier_shape",
+                "VkMemoryBarrier2_ptr", -ENOTSUP);
+            return;
+        }
+        general.memory[index] = (struct bvb_vulkan_memory_barrier_2){
+            .source_stage_mask = barrier->srcStageMask,
+            .source_access_mask = barrier->srcAccessMask,
+            .destination_stage_mask = barrier->dstStageMask,
+            .destination_access_mask = barrier->dstAccessMask,
+        };
+    }
+    for (uint32_t index = 0U; index < general.buffer_count; ++index) {
+        const VkBufferMemoryBarrier2 *barrier =
+            &dependency_info->pBufferMemoryBarriers[index];
+        if (barrier->sType != VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2 ||
+            barrier->pNext != NULL || barrier->buffer == VK_NULL_HANDLE ||
+            barrier->size == 0U) {
+            poison_shared_command_stream(
+                command_state, "vkCmdPipelineBarrier2",
+                "unsupported_buffer_barrier_shape",
+                "VkBufferMemoryBarrier2_ptr", -ENOTSUP);
+            return;
+        }
+        const uint64_t buffer_id = non_dispatchable_wire_id(
+            &barrier->buffer, sizeof(barrier->buffer));
+        general.buffers[index] = (struct bvb_vulkan_buffer_barrier_2){
+            .source_stage_mask = barrier->srcStageMask,
+            .source_access_mask = barrier->srcAccessMask,
+            .destination_stage_mask = barrier->dstStageMask,
+            .destination_access_mask = barrier->dstAccessMask,
+            .source_queue_family_index = barrier->srcQueueFamilyIndex,
+            .destination_queue_family_index = barrier->dstQueueFamilyIndex,
+            .buffer_id = buffer_id,
+            .offset = barrier->offset,
+            .size = barrier->size,
+        };
+    }
+    for (uint32_t index = 0U; index < general.image_count; ++index) {
         const VkImageMemoryBarrier2 *barrier =
             &dependency_info->pImageMemoryBarriers[index];
         if (barrier->sType != VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 ||
@@ -8896,8 +8924,7 @@ static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
                 "VkImageMemoryBarrier2_ptr", -ENOTSUP);
             return;
         }
-        fixed_init_shape &= init_image_barrier_supported(barrier) != 0;
-        decoded.image_ids[index] =
+        const uint64_t image_id =
             non_dispatchable_wire_id(&barrier->image, sizeof(barrier->image));
         general.images[index] = (struct bvb_vulkan_image_barrier_2){
             .source_stage_mask = barrier->srcStageMask,
@@ -8908,55 +8935,32 @@ static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
             .new_layout = barrier->newLayout,
             .source_queue_family_index = barrier->srcQueueFamilyIndex,
             .destination_queue_family_index = barrier->dstQueueFamilyIndex,
-            .image_id = decoded.image_ids[index],
+            .image_id = image_id,
             .range = command_image_range(&barrier->subresourceRange),
         };
-        if (fixed_init_shape) {
-            for (uint32_t earlier = 0U; earlier < index; ++earlier) {
-                if (decoded.image_ids[earlier] == decoded.image_ids[index]) {
-                    fixed_init_shape = false;
-                    break;
-                }
-            }
-        }
     }
-    const bool shared_stream = command_stream_is_enabled();
-    if (!fixed_init_shape && !shared_stream) {
-        bvb_global_diagnostic_poison_command(
-            command_buffer, "vkCmdPipelineBarrier2",
-            "strict_transport_shape_unimplemented", "VkDependencyInfo_ptr",
-            -ENOTSUP);
-        return;
-    }
-    if (shared_stream) {
+    if (command_stream_is_enabled()) {
         if (pthread_mutex_lock(&command_state->stream_mutex) != 0) return;
-        int result = 0;
+        int result = command_state->stream_recording &&
+                             !command_state->stream_error
+                         ? 0 : -EINVAL;
         for (uint32_t index = 0U;
-             result == 0 && index < decoded.image_count; ++index) {
+             result == 0 && index < general.buffer_count; ++index) {
             const int owned = shared_object_owned_by_device_cached_locked(
-                command_state, decoded.image_ids[index], BVB_OBJECT_IMAGE);
-            if (owned < 0) return;
-            if (owned == 0) {
-                result = -EINVAL;
-            }
+                command_state, general.buffers[index].buffer_id,
+                BVB_OBJECT_BUFFER);
+            result = owned > 0 ? 0 : owned < 0 ? owned : -EINVAL;
         }
-        if (result == 0 && command_state->stream_recording &&
-            !command_state->stream_error) {
-            if (fixed_init_shape) {
-                struct bvb_vulkan_init_image_barrier_command command = {
-                    .image_count = decoded.image_count,
-                };
-                memcpy(command.image_ids, decoded.image_ids,
-                       decoded.image_count * sizeof(decoded.image_ids[0]));
-                result = bvb_command_batch_append_vulkan_init_image_barrier(
-                    &command_state->stream_builder, &command);
-            } else {
-                result = bvb_command_batch_append_vulkan_image_barrier_2(
-                    &command_state->stream_builder, &general);
-            }
-        } else {
-            result = -EINVAL;
+        for (uint32_t index = 0U;
+             result == 0 && index < general.image_count; ++index) {
+            const int owned = shared_object_owned_by_device_cached_locked(
+                command_state, general.images[index].image_id,
+                BVB_OBJECT_IMAGE);
+            result = owned > 0 ? 0 : owned < 0 ? owned : -EINVAL;
         }
+        if (result == 0)
+            result = bvb_command_batch_append_vulkan_image_barrier_2(
+                &command_state->stream_builder, &general);
         if (result != 0) {
             store_command_diagnostic_locked(
                 command_state, "vkCmdPipelineBarrier2",
@@ -8968,38 +8972,20 @@ static void VKAPI_CALL bvb_bridge_vkCmdPipelineBarrier2(
         (void)pthread_mutex_unlock(&command_state->stream_mutex);
         return;
     }
-    if (pthread_mutex_lock(&bvb_global_client.mutex) != 0) return;
-    int result = 0;
-    for (uint32_t index = 0U; result == 0 && index < decoded.image_count;
-         ++index) {
-        if (!image_owned_by_device_locked(decoded.image_ids[index],
-                                          command_state->device_id))
-            result = -EINVAL;
-    }
-    if (result == 0) result = connect_locked();
-    struct bvb_protocol_packet request = {0};
-    request.header = (struct bvb_protocol_header){
-        .version = BVB_PROTOCOL_VERSION,
-        .kind = BVB_PROTOCOL_REQUEST,
-        .opcode = BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMAGE_BARRIER,
-        .request_id = next_request_id_locked(),
-        .payload_length =
-            BVB_VULKAN_COMMAND_BUFFER_IMAGE_BARRIER_REQUEST_SIZE,
-    };
+    uint8_t bytes[BVB_PROTOCOL_MAX_PAYLOAD];
+    struct bvb_command_batch_builder builder;
+    int result = begin_single_render_record(command_state, bytes, &builder);
     if (result == 0)
-        result =
-            bvb_protocol_encode_vulkan_command_buffer_image_barrier_request(
-                request.payload, &decoded);
-    struct bvb_protocol_packet response = {0};
-    if (result == 0) result = exchange_locked(&request, &response);
-    if (result == 0 &&
-        (response.header.status != 0 || response.header.payload_length != 0U))
-        result = -EPROTO;
+        result = bvb_command_batch_append_vulkan_image_barrier_2(
+            &builder, &general);
+    if (result == 0)
+        result = finish_single_render_record(
+            command_state, bytes, &builder, "vkCmdPipelineBarrier2",
+            "VkDependencyInfo_ptr");
     if (result != 0)
-        store_command_diagnostic_locked(
+        poison_shared_command_stream(
             command_state, "vkCmdPipelineBarrier2",
-            "strict_transport_rejected", "VkDependencyInfo_ptr", result);
-    (void)pthread_mutex_unlock(&bvb_global_client.mutex);
+            "dependency_record_rejected", "VkDependencyInfo_ptr", result);
 }
 
 static void VKAPI_CALL bvb_bridge_vkCmdClearColorImage(

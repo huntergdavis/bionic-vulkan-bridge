@@ -2878,16 +2878,32 @@ int main(void) {
             .layerCount = 1U,
         },
     };
-    VkDependencyInfo rejected_dependency = {
-        .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-        .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
-        .imageMemoryBarrierCount = 1U,
-        .pImageMemoryBarriers = &init_image_barrier,
+    const VkMemoryBarrier2 broad_memory_barrier = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+        .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+        .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
+        .dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+        .dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT,
     };
-    if (!shared_command_stream)
-        cmd_pipeline_barrier_2(command_buffer, &rejected_dependency);
+    const VkBufferMemoryBarrier2 broad_buffer_barrier = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER_2,
+        .srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
+        .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+        .dstStageMask = VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT,
+        .dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT,
+        .srcQueueFamilyIndex = 2U,
+        .dstQueueFamilyIndex = 3U,
+        .buffer = buffer,
+        .offset = 128U,
+        .size = 256U,
+    };
     const VkDependencyInfo init_dependency = {
         .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
+        .memoryBarrierCount = 1U,
+        .pMemoryBarriers = &broad_memory_barrier,
+        .bufferMemoryBarrierCount = 1U,
+        .pBufferMemoryBarriers = &broad_buffer_barrier,
         .imageMemoryBarrierCount = 1U,
         .pImageMemoryBarriers = &init_image_barrier,
     };

@@ -4197,3 +4197,35 @@ shape. No game pixel, benchmark, or FPS claim is made before the next
 screenshot-checked tablet run.
 
 The final host suite passed 66/66 contracts.
+
+## E107 — synchronization2 barrier family (2026-08-21)
+
+The screenshot-checked E106 tablet run `20260822T042731Z-26550` proved that
+the generalized color and depth/stencil rendering calls reached the native
+driver. The next game-process failure was `vkCmdPipelineBarrier2` at command
+sequence 11 with `unsupported_dependency_shape`; the captured full-screen
+image was still the bridge triangle, so no game pixel is claimed.
+
+E107 expands the existing command record ID 10 into the complete bounded
+synchronization2 dependency family: up to 16 memory barriers, 16 buffer
+barriers, and 16 image barriers, including dependency flags, 64-bit stage and
+access masks, buffer ranges, image subresources/layouts, and queue-family
+ownership transfers. Its fixed 2,832-byte little-endian payload stays below
+the 4 KiB immediate protocol ceiling and contains typed wire IDs rather than
+native handles or pointers. Strict mode uses one immediate-record RPC; shared
+mode performs cached ownership checks and appends locally with zero recording
+RPC. The Bionic service independently checks same-device ancestry and rebuilds
+all four native Vulkan structures locally.
+
+The fake-native contract carries BY_REGION plus one memory, one buffer
+queue-family transfer, and one image barrier through both strict and shared
+paths. Codec coverage additionally checks inactive fixed slots remain zero.
+Compact evidence is
+`docs/evidence/e107-synchronization2-barrier-family-host.json`. The required
+`deja "BVB Tomb Raider vkCmdPipelineBarrier2 unsupported_dependency_shape
+memory buffer image barriers E107"` query returned no indexed implementation.
+E107 reuses E075/E075a's immutable stream, E076's bounded barrier ABI, E080's
+ownership cache, E101's immediate-record path, E106's real tablet boundary,
+and pinned DXVK synchronization2 behavior. The host suite passes 67/67; tablet
+deployment and the next screenshot-checked run remain pending, with no game
+pixel, benchmark, or FPS claim.

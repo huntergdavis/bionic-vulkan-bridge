@@ -103,7 +103,7 @@ def main() -> int:
             "shared_object_owned_by_device_cached_locked(", stream_lock
         )
         assert stream_lock < cached_lookup
-    assert "BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMAGE_BARRIER" in client
+    assert "BVB_OPCODE_VULKAN_COMMAND_BUFFER_IMMEDIATE_RECORD" in client
     assert "BVB_OPCODE_VULKAN_COMMAND_BUFFER_CLEAR_COLOR_IMAGE" in client
     assert "BVB_OPCODE_VULKAN_COMMAND_BUFFER_FILL" in client
 
