@@ -1,0 +1,22 @@
+{
+  "gate": "E131",
+  "date": "2026-08-22",
+  "source_commit": "261e953479edb11f73bd0cbd0522e3935eda8339",
+  "result": "failed_runtime_gate",
+  "host_contracts": "93/93 passed",
+  "termux_contracts": "91/91 passed",
+  "real_fullscreen_game_frame_rendered": true,
+  "game_authored_result_file_created": false,
+  "profiled_presents": 1056,
+  "descriptor_allocation_attempts": 159843,
+  "lease_hits": 36,
+  "lease_misses": 159807,
+  "lease_hit_percent": 0.022522,
+  "descriptor_ring_calls": 159807,
+  "descriptor_ring_mean_microseconds_per_call": 220.987,
+  "diagnosis": "Pool resets occurred, but Tomb Raider did not repeat the learned whole-epoch layout sequence. Reset-epoch prediction therefore missed 99.977478 percent of allocation attempts and the run did not complete.",
+  "next_gate": "E132 live per-signature batch leases: use the current real request as the predictor, return its prefix from one bounded native batch, publish only extra real typed sets, scan multiple signature banks per pool, and preserve exact fallback/reset/destroy semantics.",
+  "claim_boundary": "No FPS or speedup is claimed. E131 proved its host contracts and rendered real frames, but its optimization was ineffective on the target workload and this attempt was stopped without a benchmark result.",
+  "canonical_runtime_evidence": "steamclienttermux/docs/evidence/tombraider-bvb-e131-reset-epoch-lease-failure-20260822.json",
+  "reuse": "The required deja query returned no indexed E131 implementation. Runtime validation reused E130's matched launch controls, protected-process checks, frame summaries, and visual-evidence discipline."
+}

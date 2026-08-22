@@ -5176,3 +5176,30 @@ allocated until the next reset, so this remains an opt-in optimization and its
 real workload stability must be measured. Exact host boundaries are in
 `docs/evidence/e131-descriptor-reset-epoch-leases-host.json`; no tablet, game,
 or FPS claim is made yet.
+
+### E131 tablet result: real frames, ineffective leases, no benchmark result
+
+The exact E131 source then passed 91/91 Termux contracts and its glibc ICD
+self-test. The installed pair rendered real full-screen 2800x1752 Tomb Raider
+frames while preserving the existing Steam and X11 processes. This proves the
+runtime remained capable of game pixels, but it does not validate the
+optimization.
+
+Across 1,056 profiled presents, the client attempted 159,843 descriptor
+allocations. Only 36 used a reset-epoch lease (**0.0225%**); 159,807 still used
+the synchronous completion ring at 221.0 microseconds mean. Reset appeared at
+least 221 times in the top-eight RPC summaries, so absence of resets was not
+the explanation. The learned whole-epoch layout order simply did not repeat.
+The camera later stopped making observable progress, no game-authored result
+file appeared after the E130 completion-time boundary, and the run was stopped
+through its owning controller. No E131 FPS or speedup is claimed.
+
+E132 must switch from epoch-sequence prediction to live request evidence. A
+ring miss can repeat that exact pool/layout signature in one bounded native
+multi-set allocation, return the requested prefix, and publish only the extra
+real typed sets. Independent signatures must coexist for one pool; reset and
+destroy invalidate every pool bank; an atomic batch-allocation failure falls
+back to the exact request. Compact runtime evidence is
+`docs/evidence/e131-tombraider-runtime-failure.json`; canonical screenshots,
+artifact identities, logs, and protected-process state are retained by the
+sibling `steamclienttermux` evidence.
