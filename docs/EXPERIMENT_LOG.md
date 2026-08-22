@@ -4226,6 +4226,16 @@ Compact evidence is
 memory buffer image barriers E107"` query returned no indexed implementation.
 E107 reuses E075/E075a's immutable stream, E076's bounded barrier ABI, E080's
 ownership cache, E101's immediate-record path, E106's real tablet boundary,
-and pinned DXVK synchronization2 behavior. The host suite passes 67/67; tablet
-deployment and the next screenshot-checked run remain pending, with no game
-pixel, benchmark, or FPS claim.
+and pinned DXVK synchronization2 behavior. The host suite passes 67/67; the
+tablet result is recorded below, with no game pixel, benchmark, or FPS claim.
+
+Tablet deployment then passed 65/65 native contracts and the glibc ICD
+self-test. Transactional install retained rollback `install-pre-MyLeQA7E` and
+installed ICD/service SHA-256 identities `55f78baa...ab32` and
+`067b4e6e...7f0`. Bounded run `20260822T045352Z-3300` crossed the mixed
+synchronization2 boundary and repeated E106's color and depth/stencil rendering
+calls. Its exact next command poison is `vkCmdBindVertexBuffers2` at sequence
+11. The automatic 2800x1752 screenshot SHA-256 is
+`28b73050...e9f8`; visual inspection still shows the full-screen bridge
+triangle, not a Tomb Raider pixel. Cleanup preserved Steam PID 14565 and X11
+PID 13643 and removed only run-owned children.

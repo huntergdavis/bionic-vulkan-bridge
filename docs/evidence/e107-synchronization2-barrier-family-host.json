@@ -30,7 +30,20 @@
     "strict_and_shared_native_reconstruction": "passed",
     "fake_native_shape": "BY_REGION plus one memory, one buffer queue-family transfer, and one image barrier",
     "host_suite": "67/67 passed",
-    "tablet_runtime": "pending",
+    "tablet_runtime": {
+      "status": "passed",
+      "run_id": "20260822T045352Z-3300",
+      "tablet_suite": "65/65 passed",
+      "glibc_icd_selftest": "passed",
+      "installed_icd_sha256": "55f78baa912e8f752811316397665db1b790e08e516183db62f6dc100b13ab32",
+      "installed_service_sha256": "067b4e6eb2136de7f4cfbe1ddc971644125af419c7380172cfd69ac56d0977f0",
+      "fullscreen_screenshot_sha256": "28b7305067678da2bc88ffcb75bf49b49141cf49c27c59d79df332dcee89e9f8",
+      "next_rejection_entry": "vkCmdBindVertexBuffers2",
+      "next_rejection_reason": "diagnostic_stub_invoked",
+      "next_rejection_command_sequence": 11,
+      "rollback_snapshot": "install-pre-MyLeQA7E",
+      "steam_and_x_preserved": true
+    },
     "visible_game_frame": false,
     "benchmark_or_fps": false
   },
