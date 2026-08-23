@@ -1,0 +1,48 @@
+{
+  "gate": "E133",
+  "date": "2026-08-22",
+  "result": "failed_runtime_gate",
+  "source_commit": "8526f78beda69cc3db303ef4f3baf8cdb122ccf2",
+  "run_id": "20260822T235811Z-28753",
+  "target": "Tomb Raider (2013), 2800x1752 Low, 60 Hz, Samsung Galaxy Tab S8+ SM-X808U",
+  "validation": {
+    "host_contracts": "95/95 passed",
+    "termux_contracts": "93/93 passed",
+    "glibc_icd_selftest": "passed",
+    "rollback_backup": "/data/data/com.termux/files/home/steam-arm64/bvb/backups/install-pre-askFUMfF"
+  },
+  "installed_artifacts": {
+    "glibc_icd_sha256": "d12e38069002d3b342ed38d2f6fcdeb34d60f6a693830502509f00707f876bc7",
+    "bionic_service_sha256": "e2cbe7a07eb169e7dbe438de1a03369f12c43607b5508d67ed938ff322f9c5cc"
+  },
+  "fatal_boundary": {
+    "entry": "vkAllocateDescriptorSets",
+    "result": -1000069000,
+    "symbolic_result": "VK_ERROR_OUT_OF_POOL_MEMORY",
+    "reason": "negative_vkresult_after_retry",
+    "executable_invocations_before_failure": 1500,
+    "game_swapchain_created": false,
+    "game_frame_presented": false,
+    "fps_claim": false
+  },
+  "visual_boundary": {
+    "activity_triangle_sha256": "28b7305067678da2bc88ffcb75bf49b49141cf49c27c59d79df332dcee89e9f8",
+    "hidden_x11_window_title": "Tomb Raider Error",
+    "interpretation": "Screenshot inspection showed only the unchanged bridge triangle. The X11 title proved Tomb Raider had opened its error dialog; no game pixel is claimed."
+  },
+  "retained_log_sha256": {
+    "direct": "385a9a24aa057d4103f5a1038ac74df7bc9bf01a8982ba5f6dc8a2da90640bfb",
+    "service": "3b77e599423bab0e1390f062f485ef5a50064bd8fee9652079539c072cda3d3f",
+    "launcher": "7cb70ee63e968dd8b0c323d1220179a16ed82a44428b0d446916eddb9f28fdf0",
+    "anr_watchdog": "235a95bac9a49df4fab6fa07e9a6d04dbcbfa3c5f48b39f4d2b298167fc18e96"
+  },
+  "diagnosis": "Reducing cold batches from sixteen to two reduced speculative waste but did not remove it. One unused real extra across enough distinct live signatures still exhausted Tomb Raider's tightly sized descriptor pools.",
+  "next_gate": "E134 performs the first two occurrences of every signature as exact allocations with zero speculation. Only the third occurrence proves reuse and starts a two-repetition batch; fully drained banks can then grow geometrically.",
+  "post_run": {
+    "controller_terminated_by_exact_validated_pid": true,
+    "owned_children_remaining": 0,
+    "steam_and_x11_start_ticks_unchanged": true,
+    "maximum_thermal_zone_c_after_teardown": 39.3
+  },
+  "reuse": "The required E134 deja query returned no indexed implementation. The run reused E131-E133's paired-ADB Activity handoff, exact Wait-only ANR watchdog, first-rejection diagnostic, screenshot inspection, and protected-process checks."
+}

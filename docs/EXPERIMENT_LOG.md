@@ -5293,3 +5293,25 @@ rejects the cold batch and succeeds through exact fallback. Focused contracts
 passed 4/4 and the full host suite passed 95/95. This is host proof only: no
 tablet deployment, visible frame, FPS, or speedup is claimed. Exact boundaries
 are in `docs/evidence/e133-adaptive-descriptor-signature-growth-host.json`.
+
+### E133 tablet result: one cold extra is still too much
+
+The exact E133 pair passed 93/93 applicable Termux contracts and the glibc ICD
+self-test, then again stopped before a game swapchain. The inspected screen was
+the unchanged bridge triangle and X11 exposed a hidden **Tomb Raider Error**
+window. The first-rejection diagnostic again ended at
+`vkAllocateDescriptorSets` with `VK_ERROR_OUT_OF_POOL_MEMORY`, this time after
+1,500 executable Vulkan invocations. No game pixel or FPS is claimed.
+
+E133 proved that lowering cold allocation from sixteen repetitions to two is
+insufficient. Tomb Raider creates enough distinct signatures—and sizes its
+native descriptor pools tightly enough—that even one unused real extra per
+unproven signature can consume capacity required by later exact allocations.
+The exact-PID controller teardown removed every owned child while Steam and
+X11 retained their start ticks.
+
+E134 must make cold observation free: allocate the first two occurrences of a
+signature exactly, with no published extra. The third occurrence is real reuse
+evidence and may start a two-repetition batch; only a fully drained published
+bank may grow further. Exact identities and diagnostics are retained in
+`docs/evidence/e133-tombraider-cold-extra-pool-exhaustion-tablet.json`.
