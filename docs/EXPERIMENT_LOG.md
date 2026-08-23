@@ -5485,3 +5485,33 @@ FD that the glibc side maps directly and observes bidirectionally. Exact tablet
 counts, identities, hashes, and the no-overclaim boundary are retained in
 `docs/evidence/e137-native-sync-shape-profile-tablet.json` and the sibling
 `steamclienttermux` evidence.
+
+## E138 — probe direct mapping of exported host-visible memory (2026-08-22)
+
+E137 measured 14.04 ms of coherent mirror synchronization per Tomb Raider
+present. E138 starts with the smallest honest architecture question: is the
+private-Turnip opaque FD itself a directly map-capable host-visible allocation?
+
+The existing E035 external-memory selftest already creates two Vulkan devices,
+selects exportable/importable host-visible memory, exports one opaque FD, and
+verifies a Vulkan import. E138 adds an explicit `--raw-fd-mmap` mode without
+changing default E035 behavior. It maps the exported descriptor with POSIX
+`mmap`, verifies the source Vulkan pattern, writes a second pattern through the
+raw mapping, verifies it through the second Vulkan device, writes a third
+pattern through that destination Vulkan mapping, and finally verifies it
+through the still-live raw mapping after FD ownership transferred to the
+importing driver. The bounded gate fails closed unless memory is coherent.
+
+The memfd-backed fake driver passes with 4,096 mapped bytes and zero mismatches
+in both directions. Default E035 also still passes, and the full host suite is
+98/98. This does not yet say anything about KGSL's real exported descriptor;
+the next action is the same explicit probe against the unchanged private
+Turnip loader on the tablet. If it fails to `mmap`, direct allocation sharing is
+ruled out before any bridge refactor. If it passes, the next gate transports
+that FD once to the glibc client and replaces only eligible coherent mirrors.
+
+The required exact `deja` query returned no indexed implementation. E138 reuses
+E035's Vulkan bootstrap, memory selection, export/import ownership, and fake
+memfd regression rather than introducing another loader path. Host scope and
+the no-hardware-claim boundary are retained in
+`docs/evidence/e138-raw-external-memory-mmap-host.json`.

@@ -1,0 +1,44 @@
+{
+  "gate": "E138",
+  "date": "2026-08-22",
+  "result": "host_contract_pass",
+  "source_base_commit": "b6937e2",
+  "hypothesis": "A host-visible coherent private-Turnip allocation exported as an opaque FD can be mapped directly by the glibc client, eliminating eligible E077 mirror copies.",
+  "implementation": {
+    "entry_point": "bvb-vulkan-external-memory-selftest --raw-fd-mmap",
+    "default_e035_unchanged": true,
+    "allocation": "4 KiB exportable/importable host-visible coherent buffer",
+    "sequence": [
+      "write deterministic pattern through source Vulkan mapping",
+      "export opaque FD",
+      "POSIX mmap the FD and verify the source pattern",
+      "write a second pattern through the raw FD mapping",
+      "import the same allocation into a second Vulkan device and verify it",
+      "write a third pattern through the destination Vulkan mapping",
+      "verify the third pattern through the still-live raw FD mapping"
+    ],
+    "raw_mapping_lifetime_after_fd_import": true,
+    "noncoherent_memory": "fail closed; this bounded gate requires HOST_COHERENT"
+  },
+  "host_fake": {
+    "backing": "memfd",
+    "raw_fd_mmap_bytes": 4096,
+    "source_mismatched_bytes": 0,
+    "destination_mismatched_bytes": 0,
+    "default_e035_round_trip_passed": true,
+    "explicit_e138_round_trip_passed": true
+  },
+  "validation": {
+    "focused_contracts": "1/1 passed",
+    "full_host_suite": "98/98 passed",
+    "warnings": "-Werror build passed",
+    "diff_check": "passed after whitespace correction"
+  },
+  "recall": {
+    "query": "Turnip KGSL Vulkan external memory opaque fd mmap CPU host visible allocation direct shared mapped memory glibc Bionic bridge",
+    "result": "no indexed implementation",
+    "reuse": "E138 reuses E035's real opaque-FD export/import bootstrap and memory-type selection. It adds only the previously unproven raw mmap and bidirectional CPU visibility checks behind an explicit mode."
+  },
+  "next_gate": "Build the E138 Bionic probe on the tablet and run it against the unchanged private Turnip loader. Host memfd success is not evidence that KGSL's exported FD is mmapable.",
+  "claim_boundary": "This proves the bounded test and fake-driver semantics only. It does not prove private-Turnip raw mapping, cross-libc FD transport, mirror removal, a rendered frame, or an FPS improvement."
+}

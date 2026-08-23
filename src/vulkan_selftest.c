@@ -960,10 +960,10 @@ int bvb_vulkan_batch_context_execute(
     return 0;
 }
 
-int bvb_vulkan_batch_context_external_memory_test(
+static int external_memory_test(
     struct bvb_vulkan_batch_context *context,
     struct bvb_vulkan_external_memory_result *output,
-    char *error, size_t error_size) {
+    bool raw_fd_mmap, char *error, size_t error_size) {
     if (error != NULL && error_size > 0U) error[0] = '\0';
     if (context == NULL || output == NULL) return -EINVAL;
     memset(output, 0, sizeof(*output));
@@ -1031,6 +1031,8 @@ int bvb_vulkan_batch_context_external_memory_test(
     };
     struct bvb_external_resources destination = {0};
     int exported_fd = -1;
+    void *raw_mapping = MAP_FAILED;
+    size_t raw_mapping_size = 0U;
     int status = 0;
     const float queue_priority = 1.0F;
     const VkDeviceQueueCreateInfo queue_info = {
@@ -1252,6 +1254,39 @@ int bvb_vulkan_batch_context_external_memory_test(
         goto done;
     }
 
+    if (raw_fd_mmap) {
+        if (!coherent_found || source_requirements.size > SIZE_MAX) {
+            set_error(error, error_size,
+                      "raw FD mmap requires bounded coherent memory");
+            status = -ENOTSUP;
+            goto done;
+        }
+        raw_mapping_size = (size_t)source_requirements.size;
+        raw_mapping = mmap(NULL, raw_mapping_size, PROT_READ | PROT_WRITE,
+                           MAP_SHARED, exported_fd, 0);
+        if (raw_mapping == MAP_FAILED) {
+            set_error(error, error_size, "raw FD mmap failed: %d", errno);
+            status = -errno;
+            goto done;
+        }
+        output->raw_fd_mmap_bytes = BVB_SELFTEST_BUFFER_BYTES;
+        for (uint32_t index = 0U; index < BVB_SELFTEST_BUFFER_BYTES; ++index) {
+            const uint8_t expected =
+                (uint8_t)(index ^ (index >> 4U) ^ UINT32_C(0x5a));
+            if (((const uint8_t *)raw_mapping)[index] != expected)
+                ++output->raw_fd_source_mismatched_bytes;
+            ((uint8_t *)raw_mapping)[index] =
+                (uint8_t)(index ^ (index >> 3U) ^ UINT32_C(0xa5));
+        }
+        if (output->raw_fd_source_mismatched_bytes != 0U) {
+            set_error(error, error_size,
+                      "raw FD source mapping found %u mismatched bytes",
+                      output->raw_fd_source_mismatched_bytes);
+            status = -EIO;
+            goto done;
+        }
+    }
+
     const VkMemoryDedicatedAllocateInfo destination_dedicated = {
         .sType = VK_STRUCTURE_TYPE_MEMORY_DEDICATED_ALLOCATE_INFO,
         .buffer = destination.buffer,
@@ -1305,8 +1340,9 @@ int bvb_vulkan_batch_context_external_memory_test(
         }
     }
     for (uint32_t index = 0U; index < BVB_SELFTEST_BUFFER_BYTES; ++index) {
-        const uint8_t expected =
-            (uint8_t)(index ^ (index >> 4U) ^ UINT32_C(0x5a));
+        const uint8_t expected = raw_fd_mmap
+            ? (uint8_t)(index ^ (index >> 3U) ^ UINT32_C(0xa5))
+            : (uint8_t)(index ^ (index >> 4U) ^ UINT32_C(0x5a));
         if (((const uint8_t *)destination.mapped)[index] != expected) {
             ++output->mismatched_bytes;
         }
@@ -1317,12 +1353,48 @@ int bvb_vulkan_batch_context_external_memory_test(
                   output->mismatched_bytes);
         status = -EIO;
     }
+    if (status == 0 && raw_fd_mmap) {
+        for (uint32_t index = 0U; index < BVB_SELFTEST_BUFFER_BYTES; ++index) {
+            ((uint8_t *)destination.mapped)[index] =
+                (uint8_t)(index ^ (index >> 2U) ^ UINT32_C(0x3c));
+        }
+        for (uint32_t index = 0U; index < BVB_SELFTEST_BUFFER_BYTES; ++index) {
+            const uint8_t expected =
+                (uint8_t)(index ^ (index >> 2U) ^ UINT32_C(0x3c));
+            if (((const uint8_t *)raw_mapping)[index] != expected)
+                ++output->raw_fd_destination_mismatched_bytes;
+        }
+        if (output->raw_fd_destination_mismatched_bytes != 0U) {
+            set_error(error, error_size,
+                      "raw FD destination mapping found %u mismatched bytes",
+                      output->raw_fd_destination_mismatched_bytes);
+            status = -EIO;
+        }
+    }
 
 done:
+    if (raw_mapping != MAP_FAILED)
+        (void)munmap(raw_mapping, raw_mapping_size);
     if (exported_fd >= 0) (void)close(exported_fd);
     cleanup_external_resources(&destination);
     cleanup_external_resources(&source);
     return status;
+}
+
+int bvb_vulkan_batch_context_external_memory_test(
+    struct bvb_vulkan_batch_context *context,
+    struct bvb_vulkan_external_memory_result *output,
+    char *error, size_t error_size) {
+    return external_memory_test(
+        context, output, false, error, error_size);
+}
+
+int bvb_vulkan_batch_context_external_memory_mmap_test(
+    struct bvb_vulkan_batch_context *context,
+    struct bvb_vulkan_external_memory_result *output,
+    char *error, size_t error_size) {
+    return external_memory_test(
+        context, output, true, error, error_size);
 }
 
 static int import_external_memory_fds(

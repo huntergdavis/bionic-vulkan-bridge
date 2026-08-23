@@ -48,6 +48,9 @@ struct bvb_vulkan_external_memory_result {
     uint32_t memory_property_flags;
     uint32_t buffer_bytes;
     uint32_t mismatched_bytes;
+    uint32_t raw_fd_mmap_bytes;
+    uint32_t raw_fd_source_mismatched_bytes;
+    uint32_t raw_fd_destination_mismatched_bytes;
 };
 
 struct bvb_vulkan_external_sync_result {
@@ -90,6 +93,10 @@ int bvb_vulkan_batch_context_execute(
     size_t batch_length, struct bvb_vulkan_selftest_result *result,
     char *error, size_t error_size);
 int bvb_vulkan_batch_context_external_memory_test(
+    struct bvb_vulkan_batch_context *context,
+    struct bvb_vulkan_external_memory_result *result,
+    char *error, size_t error_size);
+int bvb_vulkan_batch_context_external_memory_mmap_test(
     struct bvb_vulkan_batch_context *context,
     struct bvb_vulkan_external_memory_result *result,
     char *error, size_t error_size);
