@@ -364,7 +364,11 @@ int bvb_vulkan_batch_context_create(
         (PFN_vkGetInstanceProcAddr)symbol_from_loader(objects.loader,
                                                       "vkGetInstanceProcAddr");
     if (gipa == NULL) {
-        set_error(error, error_size, "loader has no vkGetInstanceProcAddr");
+        gipa = (PFN_vkGetInstanceProcAddr)symbol_from_loader(
+            objects.loader, "vk_icdGetInstanceProcAddr");
+    }
+    if (gipa == NULL) {
+        set_error(error, error_size, "loader has no Vulkan instance resolver");
         status = -ENOSYS;
         goto done;
     }
