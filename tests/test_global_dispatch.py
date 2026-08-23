@@ -622,15 +622,24 @@ def main() -> int:
                 )
             elif validation_mode == "shared-descriptor-journal":
                 profile_lines = server_stderr.splitlines()
-                assert len(profile_lines) == 1, server_stderr
-                assert profile_lines[0].startswith(
-                    "BVB_E129_DESCRIPTOR_WORKER_PROFILE "
-                ), server_stderr
+                descriptor_lines = [
+                    line
+                    for line in profile_lines
+                    if line.startswith("BVB_E129_DESCRIPTOR_WORKER_PROFILE ")
+                ]
+                sync_lines = [
+                    line
+                    for line in profile_lines
+                    if line.startswith("BVB_E136_SYNC_SERVICE_PROFILE ")
+                ]
+                assert len(descriptor_lines) == 1, server_stderr
+                assert len(sync_lines) == 1, server_stderr
+                assert len(profile_lines) == 2, server_stderr
                 profile = {
                     key: int(value)
                     for key, value in (
                         field.split("=", 1)
-                        for field in profile_lines[0].split()[1:]
+                        for field in descriptor_lines[0].split()[1:]
                     )
                 }
                 assert profile["calls"] >= 2
@@ -650,6 +659,29 @@ def main() -> int:
                 assert profile["batch_fallbacks"] >= 1
                 assert profile["batch_growths"] >= 3
                 assert profile["batch_cold_exact"] >= 6
+                sync_profile = {
+                    key: int(value)
+                    for key, value in (
+                        field.split("=", 1)
+                        for field in sync_lines[0].split()[1:]
+                    )
+                }
+                assert sync_profile["wait_calls"] == 2
+                assert sync_profile["wait_total_ns"] >= sum(
+                    sync_profile[key]
+                    for key in (
+                        "wait_decode_ns", "wait_native_ns", "wait_encode_ns",
+                    )
+                )
+                assert sync_profile["stream_submit_calls"] == 0
+                assert sync_profile["regular_submit_calls"] == 1
+                assert sync_profile["submit_total_ns"] >= sum(
+                    sync_profile[key]
+                    for key in (
+                        "submit_decode_ns", "submit_replay_ns",
+                        "submit_queue_ns", "submit_encode_ns",
+                    )
+                )
             else:
                 assert server_stderr == expected_server_stderr
                 assert not socket_path.exists()

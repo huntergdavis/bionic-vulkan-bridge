@@ -53,6 +53,25 @@ struct shared_batch_region {
     bool descriptor_journal;
 };
 
+struct sync_service_profile {
+    uint64_t wait_total_ns;
+    uint64_t wait_decode_ns;
+    uint64_t wait_native_ns;
+    uint64_t wait_encode_ns;
+    uint64_t wait_native_max_ns;
+    uint64_t submit_total_ns;
+    uint64_t submit_decode_ns;
+    uint64_t submit_replay_ns;
+    uint64_t submit_queue_ns;
+    uint64_t submit_encode_ns;
+    uint64_t submit_replay_max_ns;
+    uint64_t submit_queue_max_ns;
+    uint32_t wait_calls;
+    uint32_t stream_submit_calls;
+    uint32_t regular_submit_calls;
+    bool enabled;
+};
+
 struct descriptor_lease_plan {
     uint64_t pool_id;
     uint64_t epoch;
@@ -207,6 +226,43 @@ static uint64_t monotonic_ns(void) {
 static uint64_t elapsed_ns(uint64_t started_ns, uint64_t finished_ns) {
     return started_ns != 0U && finished_ns >= started_ns
         ? finished_ns - started_ns : 0U;
+}
+
+static void sync_service_profile_emit_and_reset(
+    struct sync_service_profile *profile, bool force) {
+    if (profile == NULL || !profile->enabled ||
+        (profile->wait_calls == 0U && profile->stream_submit_calls == 0U &&
+         profile->regular_submit_calls == 0U) ||
+        (!force && profile->wait_calls < 32U)) {
+        return;
+    }
+    fprintf(stderr,
+            "BVB_E136_SYNC_SERVICE_PROFILE wait_calls=%u "
+            "wait_total_ns=%llu wait_decode_ns=%llu wait_native_ns=%llu "
+            "wait_encode_ns=%llu wait_native_max_ns=%llu "
+            "stream_submit_calls=%u regular_submit_calls=%u "
+            "submit_total_ns=%llu submit_decode_ns=%llu "
+            "submit_replay_ns=%llu submit_queue_ns=%llu "
+            "submit_encode_ns=%llu submit_replay_max_ns=%llu "
+            "submit_queue_max_ns=%llu\n",
+            profile->wait_calls,
+            (unsigned long long)profile->wait_total_ns,
+            (unsigned long long)profile->wait_decode_ns,
+            (unsigned long long)profile->wait_native_ns,
+            (unsigned long long)profile->wait_encode_ns,
+            (unsigned long long)profile->wait_native_max_ns,
+            profile->stream_submit_calls,
+            profile->regular_submit_calls,
+            (unsigned long long)profile->submit_total_ns,
+            (unsigned long long)profile->submit_decode_ns,
+            (unsigned long long)profile->submit_replay_ns,
+            (unsigned long long)profile->submit_queue_ns,
+            (unsigned long long)profile->submit_encode_ns,
+            (unsigned long long)profile->submit_replay_max_ns,
+            (unsigned long long)profile->submit_queue_max_ns);
+    const bool enabled = profile->enabled;
+    memset(profile, 0, sizeof(*profile));
+    profile->enabled = enabled;
 }
 
 static int activity_listen(uint16_t requested_port, uint16_t *actual_port) {
@@ -3537,7 +3593,10 @@ static int answer_vulkan_semaphore_counter(
 
 static int answer_vulkan_semaphore_wait(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
-    struct bvb_vulkan_global_context *context) {
+    struct bvb_vulkan_global_context *context,
+    struct sync_service_profile *profile) {
+    const bool profile_enabled = profile != NULL && profile->enabled;
+    const uint64_t started_ns = profile_enabled ? monotonic_ns() : 0U;
     struct bvb_protocol_packet response;
     prepare_response(&response, request);
     if (!negotiated || context == NULL) {
@@ -3547,11 +3606,13 @@ static int answer_vulkan_semaphore_wait(
     struct bvb_vulkan_semaphore_wait_request decoded;
     int result = bvb_protocol_decode_vulkan_semaphore_wait_request(
         request->payload, request->header.payload_length, &decoded);
+    const uint64_t decoded_ns = profile_enabled ? monotonic_ns() : 0U;
     int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
     char diagnostic[512] = {0};
     if (result == 0)
         result = bvb_vulkan_global_context_wait_semaphores(
             context, &decoded, &vulkan_result, diagnostic, sizeof(diagnostic));
+    const uint64_t native_ns = profile_enabled ? monotonic_ns() : 0U;
     if (result == 0)
         result = bvb_protocol_encode_vulkan_result(
             response.payload, vulkan_result);
@@ -3560,6 +3621,18 @@ static int answer_vulkan_semaphore_wait(
     else {
         fprintf(stderr, "bvb: semaphore wait failed: %s\n", diagnostic);
         response.header.status = result;
+    }
+    const uint64_t encoded_ns = profile_enabled ? monotonic_ns() : 0U;
+    if (profile_enabled) {
+        const uint64_t native_elapsed = elapsed_ns(decoded_ns, native_ns);
+        ++profile->wait_calls;
+        profile->wait_total_ns += elapsed_ns(started_ns, encoded_ns);
+        profile->wait_decode_ns += elapsed_ns(started_ns, decoded_ns);
+        profile->wait_native_ns += native_elapsed;
+        profile->wait_encode_ns += elapsed_ns(native_ns, encoded_ns);
+        if (native_elapsed > profile->wait_native_max_ns)
+            profile->wait_native_max_ns = native_elapsed;
+        sync_service_profile_emit_and_reset(profile, false);
     }
     return bvb_transport_send(client_fd, &response);
 }
@@ -3729,7 +3802,10 @@ static int replay_submit_command_streams(
 static int answer_vulkan_queue_submit_2(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context,
-    struct shared_batch_region *region, bool stream_wire) {
+    struct shared_batch_region *region, bool stream_wire,
+    struct sync_service_profile *profile) {
+    const bool profile_enabled = profile != NULL && profile->enabled;
+    const uint64_t started_ns = profile_enabled ? monotonic_ns() : 0U;
     struct bvb_protocol_packet response;
     prepare_response(&response, request);
     if (!negotiated || context == NULL) {
@@ -3742,14 +3818,17 @@ static int answer_vulkan_queue_submit_2(
               request->payload, request->header.payload_length, &decoded)
         : bvb_protocol_decode_vulkan_queue_submit_2_request(
               request->payload, request->header.payload_length, &decoded);
+    const uint64_t decoded_ns = profile_enabled ? monotonic_ns() : 0U;
     int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
     char diagnostic[512] = {0};
     if (result == 0 && stream_wire)
         result = replay_submit_command_streams(
             region, &decoded, context, diagnostic, sizeof(diagnostic));
+    const uint64_t replayed_ns = profile_enabled ? monotonic_ns() : 0U;
     if (result == 0)
         result = bvb_vulkan_global_context_queue_submit_2(
             context, &decoded, &vulkan_result, diagnostic, sizeof(diagnostic));
+    const uint64_t queued_ns = profile_enabled ? monotonic_ns() : 0U;
     if (result == 0)
         result = bvb_protocol_encode_vulkan_result(
             response.payload, vulkan_result);
@@ -3758,6 +3837,24 @@ static int answer_vulkan_queue_submit_2(
     else {
         fprintf(stderr, "bvb: queue submit2 failed: %s\n", diagnostic);
         response.header.status = result;
+    }
+    const uint64_t encoded_ns = profile_enabled ? monotonic_ns() : 0U;
+    if (profile_enabled) {
+        const uint64_t replay_elapsed = elapsed_ns(decoded_ns, replayed_ns);
+        const uint64_t queue_elapsed = elapsed_ns(replayed_ns, queued_ns);
+        if (stream_wire)
+            ++profile->stream_submit_calls;
+        else
+            ++profile->regular_submit_calls;
+        profile->submit_total_ns += elapsed_ns(started_ns, encoded_ns);
+        profile->submit_decode_ns += elapsed_ns(started_ns, decoded_ns);
+        profile->submit_replay_ns += replay_elapsed;
+        profile->submit_queue_ns += queue_elapsed;
+        profile->submit_encode_ns += elapsed_ns(queued_ns, encoded_ns);
+        if (replay_elapsed > profile->submit_replay_max_ns)
+            profile->submit_replay_max_ns = replay_elapsed;
+        if (queue_elapsed > profile->submit_queue_max_ns)
+            profile->submit_queue_max_ns = queue_elapsed;
     }
     return bvb_transport_send(client_fd, &response);
 }
@@ -4197,6 +4294,10 @@ static int serve_connection(int client_fd, const char *loader_path,
     struct shared_batch_region shared_region = {0};
     struct shared_batch_region descriptor_journal_region = {0};
     struct descriptor_transaction_worker descriptor_worker = {0};
+    const char *frame_profile = getenv("BVB_FRAME_PROFILE");
+    struct sync_service_profile sync_profile = {
+        .enabled = frame_profile != NULL && strcmp(frame_profile, "1") == 0,
+    };
     pthread_mutex_t context_mutex = PTHREAD_MUTEX_INITIALIZER;
     struct bvb_vulkan_batch_context *vulkan_context = NULL;
     struct bvb_vulkan_global_context *global_context = NULL;
@@ -4582,7 +4683,8 @@ static int serve_connection(int client_fd, const char *loader_path,
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_SEMAPHORE_WAIT) {
             result = answer_vulkan_semaphore_wait(
-                client_fd, &request, negotiated, global_context);
+                client_fd, &request, negotiated, global_context,
+                &sync_profile);
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_SEMAPHORE_SIGNAL) {
             result = answer_vulkan_semaphore_signal(
@@ -4595,12 +4697,12 @@ static int serve_connection(int client_fd, const char *loader_path,
                    BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2) {
             result = answer_vulkan_queue_submit_2(
                 client_fd, &request, negotiated, global_context,
-                &shared_region, false);
+                &shared_region, false, &sync_profile);
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_QUEUE_SUBMIT_2_STREAM) {
             result = answer_vulkan_queue_submit_2(
                 client_fd, &request, negotiated, global_context,
-                &shared_region, true);
+                &shared_region, true, &sync_profile);
         } else if (request.header.opcode ==
                    BVB_OPCODE_VULKAN_SWAPCHAIN_PREPARE) {
             result = answer_vulkan_swapchain_prepare(
@@ -4633,6 +4735,7 @@ static int serve_connection(int client_fd, const char *loader_path,
             break;
         }
     }
+    sync_service_profile_emit_and_reset(&sync_profile, true);
     stop_descriptor_transaction_worker(&descriptor_worker);
     if (cleanup_vulkan_context) {
         bvb_vulkan_batch_context_destroy(vulkan_context);

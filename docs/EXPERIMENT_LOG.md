@@ -5400,3 +5400,32 @@ handling, and protected Steam/X checks. This is a runtime scheduling result,
 not a new bridge implementation. Exact identities and metrics are retained in
 `docs/evidence/e135-tombraider-top-app-speedup-tablet.json` and sibling
 `steamclienttermux` evidence.
+
+## E136 — split synchronization service time from transport (2026-08-22)
+
+E135 reduced the complete bridge path enough to expose a narrower dominant
+boundary: client-side `vkWaitSemaphores`, shared-stream `vkQueueSubmit2`, and
+ordinary `vkQueueSubmit2` together consumed about 59.4 ms per present. The
+existing descriptor-worker phase profile shows that waiting for its native
+context lock is a small part of descriptor processing, so E136 does not
+speculatively weaken serialization or synchronization.
+
+Instead, E136 adds behavior-neutral, opt-in service-side stage timing under the
+existing `BVB_FRAME_PROFILE=1` selector. Every 32 semaphore waits, plus a final
+partial window, the service reports decode, native wait, shared command-stream
+replay, native queue submission, and encode time. Subtracting the service total
+from E117's existing client RPC total isolates the remaining socket, wakeup,
+scheduling, and response-copy cost. The strict default path performs no new
+clock reads or output.
+
+The focused host contracts pass 3/3 and the full host suite passes 97/97,
+including a cross-process fake-native run that parses one real E136 record
+alongside E129's descriptor-worker record.
+The required `deja "E136 Tomb Raider BVB opcode 83 vkWaitSemaphores 36.7ms
+opcode 105 shared submit 18.1ms opcode 85 4.6ms GPU completion socket
+serialization optimization"` query returned no indexed implementation. E136
+reuses E116's bounded service profiling, E117's client RPC windows, E129's
+descriptor-worker stage timing, and E135's measured opcode boundary. This is a
+host instrumentation gate only; no synchronization optimization, hardware
+timing, rendered-frame, or FPS claim is made yet. Exact host scope is retained
+in `docs/evidence/e136-sync-service-profile-host.json`.

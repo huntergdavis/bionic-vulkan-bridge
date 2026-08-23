@@ -1,0 +1,38 @@
+{
+  "gate": "E136",
+  "date": "2026-08-22",
+  "source_base_commit": "a813ab099dc5ed0f8d1c50e12dfb07045501dee6",
+  "result": "host_instrumentation_ready",
+  "behavior_changed": false,
+  "selector": "BVB_FRAME_PROFILE=1",
+  "bounded_window": {
+    "semaphore_wait_calls": 32,
+    "final_partial_window_emitted": true,
+    "one_line_per_window": true
+  },
+  "stages": {
+    "semaphore_wait": [
+      "decode",
+      "native_wait_including_handle_resolution",
+      "encode"
+    ],
+    "queue_submit_2": [
+      "decode",
+      "shared_stream_replay",
+      "native_submit_including_mirror_sync",
+      "encode"
+    ]
+  },
+  "client_transport_residual_measurable": true,
+  "host_validation": {
+    "focused_contracts_passed": 3,
+    "focused_contracts_failed": 0,
+    "full_contracts_passed": 97,
+    "full_contracts_failed": 0,
+    "dynamic_fake_native_profile_parse": true,
+    "strict_default_behavior_preserved": true
+  },
+  "interpretation": "Subtracting the bounded service total from the existing client RPC total isolates transport, wakeup, scheduling, and response-copy time. Native wait and native queue stages remain Vulkan-correct and unchanged.",
+  "claim_boundary": "Host instrumentation only. No tablet timing, frame-rate gain, synchronization optimization, or GPU bottleneck claim is made until a foreground hardware run produces the new records.",
+  "reuse": "The required exact E136 deja query returned no indexed implementation. This gate reuses E116 bounded service profiling, E117 client RPC windows, E129 descriptor-worker stage timing, and E135's measured opcode boundary."
+}

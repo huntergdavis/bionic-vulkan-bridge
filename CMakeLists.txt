@@ -1538,4 +1538,12 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_vulkan.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
   )
+  add_test(
+    NAME e136-sync-service-profile-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e136_sync_service_profile_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e136-sync-service-profile-host.json"
+  )
 endif()
