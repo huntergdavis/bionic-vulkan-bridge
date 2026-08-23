@@ -5344,3 +5344,28 @@ and pending-journal ordering are unchanged.
 Focused contracts passed 5/5 and the full host suite passed 96/96. This gate
 currently makes no tablet, visible frame, FPS, or speedup claim. Exact boundaries are retained in
 `docs/evidence/e134-zero-speculation-descriptor-learning-host.json`.
+
+### E134 tablet result: complete benchmark restored
+
+The exact E134 pair passed 94/94 applicable Termux contracts and the glibc ICD
+self-test, then completed the 2800x1752 Low Tomb Raider benchmark. The game
+rendered multiple distinct Lara frames, wrote its own result, and exited with
+status zero. No post-retry descriptor-pool failure occurred. The only first
+rejection was the already-known incidental Zink `vkCreateDevice` failure on
+the GLX path; Tomb Raider/DXVK continued normally.
+
+The game-authored result is **0.5 FPS minimum, 5.0 maximum, and 2.2 average**.
+This proves E134 fixed the E132/E133 correctness regression, but it is not a
+performance victory. In the final 960 presents, socket waiting averages 126.1
+ms per present and descriptor-ring waiting averages 116.6 ms. Shared stream
+submission, semaphore waits, and ordinary Submit2 contribute about 107.8 ms
+per present, while client WSI acquire plus present remains only 1.70 ms.
+
+The Termux-owned game and service also remain in Android `/background` plus
+`/moderate` on CPUs 0-3; the visible BVB Activity is a different UID. That
+known placement defect is not isolated by this run. Preserve E134's exact
+allocation correctness, perform a bounded foreground-scheduling A/B, and
+measure any later shared submission/completion change against the same
+game-authored target. Exact identities, profiles, screenshots, log hashes, and
+the 2.2-FPS result are retained in sibling `steamclienttermux` evidence and
+`docs/evidence/e134-tombraider-complete-benchmark-tablet.json`.
