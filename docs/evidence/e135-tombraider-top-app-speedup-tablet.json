@@ -1,0 +1,69 @@
+{
+  "gate": "E135",
+  "date": "2026-08-22",
+  "result": "foreground_scheduling_speedup_confirmed",
+  "bridge_commit": "5a0cc335dbebec4b9ae8a19ba7eac5103e554d43",
+  "bridge_binary_changed_from_e134": false,
+  "target": {
+    "game": "Tomb Raider (2013)",
+    "resolution": "2800x1752",
+    "quality": "Low",
+    "refresh_hz": 60
+  },
+  "clean_game_authored_result": {
+    "minimum_fps": 3.6,
+    "maximum_fps": 13.9,
+    "average_fps": 7.0,
+    "source_sha256": "1ff56b0faf1b927e974d42c1f0225d4c658c6d2375a191db0081241ffea7f716",
+    "e134_average_fps": 2.2,
+    "average_fps_change_percent": 218.182
+  },
+  "confirmation": {
+    "diagnostic_average_fps": 7.1,
+    "diagnostic_mid_scene_screenshot": true,
+    "clean_mid_scene_screenshot": false,
+    "clean_vs_diagnostic_change_percent": -1.408
+  },
+  "foreground_placement": {
+    "controller_parent_pid": 11485,
+    "controller_cpuset": "/top-app",
+    "controller_cpu": "/top-app",
+    "service_cpuset": "/top-app",
+    "service_cpu": "/top-app",
+    "game_ready_threads": 39,
+    "game_ready_cpus": "1-7",
+    "raknet_cpu": 1,
+    "termux_properties_restored_sha256": "89094537f49531dc9b380a0dec3a441b2fb92577e0a4f1db505790eb8b7025b0"
+  },
+  "final_30_window_profile": {
+    "presents": 960,
+    "socket_blocked_ms_per_present": 69.035008,
+    "descriptor_ring_blocked_ms_per_present": 12.15363,
+    "socket_plus_ring_ms_per_present": 81.188638,
+    "semaphore_wait_ms_per_present": 36.687503,
+    "shared_stream_submit_ms_per_present": 18.12451,
+    "queue_submit_2_ms_per_present": 4.62025,
+    "wsi_acquire_plus_present_ms_per_present": 1.539076,
+    "descriptor_lease_hit_rate_percent": 81.624098
+  },
+  "descriptor_worker": {
+    "transactions": 367738,
+    "mean_microseconds": 19.935,
+    "e134_mean_microseconds": 74.336,
+    "mean_change_percent": -73.182
+  },
+  "artifacts_unchanged": {
+    "glibc_icd_sha256": "d12e38069002d3b342ed38d2f6fcdeb34d60f6a693830502509f00707f876bc7",
+    "bionic_service_sha256": "6aeacb849177a85b865d7ed7ae4d638a248691bb46810d7c1d2e5a4df31e86b9"
+  },
+  "protected_processes": {
+    "steam_pid": 15575,
+    "steam_start_ticks": 128118834,
+    "x11_pid": 13643,
+    "x11_start_ticks": 121863492,
+    "unchanged": true
+  },
+  "next_boundary": "Harden foreground launch/lifetime first. The next bridge performance target is the measured semaphore-wait and submission/completion boundary, not virtual WSI.",
+  "claim_boundary": "One clean result plus one agreeing activation result proves a large target-specific scheduling gain. The small X11 foreground window is a temporary usability compromise and the result is not yet an alternating statistical series.",
+  "reuse": "The exact E135 deja query returned no indexed implementation. Runtime validation reused the parent repository's guarded RunCommandService launch, top-app validation, affinity guard, paired-ADB handoff, ANR Wait handling, and protected-process checks."
+}

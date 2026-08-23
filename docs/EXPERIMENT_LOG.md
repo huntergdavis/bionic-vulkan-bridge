@@ -5369,3 +5369,34 @@ measure any later shared submission/completion change against the same
 game-authored target. Exact identities, profiles, screenshots, log hashes, and
 the 2.2-FPS result are retained in sibling `steamclienttermux` evidence and
 `docs/evidence/e134-tombraider-complete-benchmark-tablet.json`.
+
+## E135 — Android foreground scheduling is a first-order bridge factor (2026-08-22)
+
+E135 retained the exact E134 client, service, Turnip driver, selectors, and
+2800x1752 Low profile. The only variable was Android execution placement. A
+guarded Termux RunCommandService launch put the controller and Bionic bridge
+service in `/top-app`, while a small shared-UID Termux:X11 Activity remained
+visible above the BVB surface. Tomb Raider's affinity guard reached ready with
+39 threads on CPUs 1-7 and RakNet isolated to CPU 1. The steady-state
+`termux.properties` file was restored byte-for-byte immediately after the
+exact controller entered the foreground lineage.
+
+An activation pass with one screenshot scored 7.1 FPS average. The clean
+repeat performed no screenshot or window operation during the scene and wrote
+**3.6 minimum, 13.9 maximum, and 7.0 average FPS**. That is a **218.2%** gain
+over E134's 2.2 average without a bridge code change.
+
+Foreground scheduling also changes the measured bridge budget. In the final
+960 presents, socket waiting falls from 126.1 to 69.0 ms per present,
+descriptor-ring waiting from 116.6 to 12.2 ms, and descriptor-worker mean time
+from 74.3 to 19.9 microseconds. Virtual WSI remains only 1.54 ms. Semaphore
+wait, shared stream submit, and ordinary Submit2 are now the dominant measured
+bridge boundary at about 59.4 ms per present.
+
+The exact E135 `deja` query returned no indexed implementation. The run reused
+the parent repository's guarded RunCommand property restoration, top-app
+validation, topology/affinity guard, paired-ADB Activity handoff, Wait-only ANR
+handling, and protected Steam/X checks. This is a runtime scheduling result,
+not a new bridge implementation. Exact identities and metrics are retained in
+`docs/evidence/e135-tombraider-top-app-speedup-tablet.json` and sibling
+`steamclienttermux` evidence.
