@@ -110,7 +110,13 @@ static bool bvb_shared_command_stream_enabled(void) {
 
 static bool bvb_shared_mapped_memory_enabled(void) {
     const char *value = getenv("BVB_MAPPED_MEMORY");
-    return value != NULL && strcmp(value, "shared") == 0;
+    return value != NULL &&
+        (strcmp(value, "shared") == 0 || strcmp(value, "direct") == 0);
+}
+
+static bool bvb_direct_mapped_memory_enabled(void) {
+    const char *value = getenv("BVB_MAPPED_MEMORY");
+    return value != NULL && strcmp(value, "direct") == 0;
 }
 
 static bool bvb_keep_mapped_memory_enabled(void) {
@@ -228,6 +234,10 @@ int main(void) {
     const bool animated_wsi =
         shared_command_stream && getenv("BVB_TEST_ANIMATED_WSI") != NULL;
     const bool shared_mapped_memory = bvb_shared_mapped_memory_enabled();
+    const bool direct_mapped_memory = bvb_direct_mapped_memory_enabled();
+    const bool direct_mapped_memory_fallback =
+        direct_mapped_memory &&
+        getenv("BVB_TEST_DIRECT_MEMORY_FALLBACK") != NULL;
     const bool keep_mapped_memory =
         shared_mapped_memory || bvb_keep_mapped_memory_enabled();
     const bool noncoherent_mapped_memory =
@@ -3005,20 +3015,30 @@ int main(void) {
           VK_SUCCESS);
     const uint64_t flush_rtts =
         bvb_global_dispatch_exchange_count() - exchanges_before_flush;
-    const uint16_t flush_opcode = bvb_global_dispatch_last_opcode();
-    memset(mapped, 0, sizeof(expected_mapping));
+    const uint16_t flush_opcode = flush_rtts == 0U
+        ? 0U : bvb_global_dispatch_last_opcode();
+    if (!direct_mapped_memory || direct_mapped_memory_fallback)
+        memset(mapped, 0, sizeof(expected_mapping));
     const uint64_t exchanges_before_invalidate =
         bvb_global_dispatch_exchange_count();
     CHECK(invalidate_mapped_memory_ranges(device, 1U, &mapped_range) ==
           VK_SUCCESS);
     const uint64_t invalidate_rtts =
         bvb_global_dispatch_exchange_count() - exchanges_before_invalidate;
-    const uint16_t invalidate_opcode = bvb_global_dispatch_last_opcode();
+    const uint16_t invalidate_opcode = invalidate_rtts == 0U
+        ? 0U : bvb_global_dispatch_last_opcode();
     uint32_t mapped_mismatches = 0U;
     for (size_t index = 0U; index < sizeof(expected_mapping); ++index) {
         if (mapped[index] != expected_mapping[index]) ++mapped_mismatches;
     }
     CHECK(mapped_mismatches == 0U);
+    if (direct_mapped_memory && !direct_mapped_memory_fallback) {
+        uint32_t direct_mismatches = UINT32_MAX;
+        CHECK(bvb_verify_memory_fill(
+                  upload_memory, 0U, 4U, UINT32_C(0x03020100),
+                  &direct_mismatches) == 0);
+        CHECK(direct_mismatches == 0U);
+    }
     if (noncoherent_mapped_memory) {
         const VkMappedMemoryRange partial_range = {
             .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
@@ -3954,6 +3974,9 @@ int main(void) {
                          : free_mapped_memory ? "shared-mapped-free-memory"
                          : noncoherent_mapped_memory
                                ? "shared-noncoherent-memory"
+                         : direct_mapped_memory_fallback
+                               ? "direct-mapped-memory-fallback"
+                         : direct_mapped_memory ? "direct-mapped-memory"
                          : shared_mapped_memory ? "shared-mapped-memory"
                          : keep_mapped_memory ? "strict-mapped-memory"
                                                 : "strict-fake",

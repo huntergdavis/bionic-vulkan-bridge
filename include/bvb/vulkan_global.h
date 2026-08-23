@@ -365,6 +365,10 @@ int bvb_vulkan_global_context_setup_memory_mirror(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_memory_mirror_setup_request *request,
     int mirror_fd, int32_t *vulkan_result, char *error, size_t error_size);
+int bvb_vulkan_global_context_setup_direct_memory(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_mirror_setup_request *request,
+    int *export_fd, int32_t *vulkan_result, char *error, size_t error_size);
 int bvb_vulkan_global_context_flush_memory_mirror(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_memory_mirror_range_request *request,

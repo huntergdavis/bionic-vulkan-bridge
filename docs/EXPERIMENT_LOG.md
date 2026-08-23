@@ -5543,3 +5543,28 @@ the existing mirror path retained for A/B and fallback. Cross-libc transport,
 full eligibility, and FPS remain explicitly unproven. Exact hashes and the
 bidirectional proof are retained in
 `docs/evidence/e138-private-turnip-raw-mmap-tablet.json`.
+
+## E139 — bridge coherent memory by direct opaque-FD mapping (2026-08-22)
+
+E138 answered the hardware feasibility question, so E139 implements the
+smallest opt-in production slice. `BVB_MAPPED_MEMORY=direct` injects the real
+raw `VK_KHR_external_memory_fd` device dependency, creates export-compatible
+buffers and host-coherent allocations, and adds opcode 125. At Map, Bionic
+retains the native Vulkan mapping and sends its exported FD once; the glibc ICD
+maps the same allocation directly. No Vulkan handle or pointer crosses the
+wire. Flush and Invalidate require no RPC, Unmap reuses typed opcode 109, and
+normal queue Submit remains the sole steady-state exchange.
+
+The fake-native cross-process contract proves direct byte visibility with zero
+mismatches and changes the measured Map/Flush/Invalidate/Unmap/Submit exchange
+shape from mirror `1,1,1,1,1` to direct `1,0,0,1,1`. Strict and E077 mirror
+paths remain green and direct setup falls back to the mirror on a clean native
+capability rejection. The complete host suite passes 101/101. The required
+`deja "BVB direct mapped Vulkan memory
+service export FD SCM_RIGHTS glibc vkMapMemory replace coherent mirror"` query
+returned no indexed implementation. E139 reuses E077's typed ownership, caps,
+fallback and poison rules; E060's authenticated response-FD transport; and
+E138's real private-Turnip mmap proof. Tablet bridge deployment, Tomb Raider,
+and FPS remain unclaimed in
+`docs/evidence/e139-direct-mapped-memory-host.json` (SHA-256
+`abd326a1d71ef994cb334a30dcb4f2722e358adc9c9f34a2afb50d8f8377af22`).

@@ -69,6 +69,7 @@ struct bvb_memory_metadata {
     uint64_t memory_id;
     uint64_t allocation_size;
     uint32_t property_flags;
+    bool opaque_fd_exportable;
 };
 
 struct bvb_memory_mirror_metadata {
@@ -85,6 +86,7 @@ struct bvb_memory_mirror_metadata {
     uint8_t *mirror;
     uint8_t *native;
     uint8_t *baseline;
+    bool direct;
 };
 
 struct bvb_buffer_metadata {
@@ -4851,9 +4853,13 @@ int bvb_vulkan_global_context_create_buffer(
     if (error != NULL && error_size != 0U) error[0] = '\0';
     if (context == NULL || request == NULL || response == NULL) return -EINVAL;
     *response = (struct bvb_vulkan_object_create_response){0};
+    const bool export_opaque_fd =
+        (request->flags & BVB_VULKAN_BUFFER_CREATE_EXPORT_OPAQUE_FD) != 0U;
+    const uint32_t application_flags =
+        request->flags & ~BVB_VULKAN_BUFFER_CREATE_EXPORT_OPAQUE_FD;
     if (request->size == 0U ||
         request->size > BVB_VULKAN_MAX_MEMORY_ALLOCATION_SIZE ||
-        request->flags != 0U ||
+        application_flags != 0U ||
         (request->usage != VK_BUFFER_USAGE_TRANSFER_DST_BIT &&
          request->usage != VK_BUFFER_USAGE_TRANSFER_SRC_BIT &&
          (((request->usage &
@@ -4893,8 +4899,13 @@ int bvb_vulkan_global_context_create_buffer(
         (PFN_vkDestroyBuffer)context->get_device_proc_addr(
             device, "vkDestroyBuffer");
     if (create_buffer == NULL || destroy_buffer == NULL) return -ENOSYS;
+    const VkExternalMemoryBufferCreateInfo external_info = {
+        .sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO,
+        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
     const VkBufferCreateInfo create_info = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = export_opaque_fd ? &external_info : NULL,
         .size = request->size,
         .usage = request->usage,
         .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
@@ -5192,6 +5203,20 @@ int bvb_vulkan_global_context_allocate_memory_extended(
         .flags = request->allocation_flags,
         .deviceMask = request->device_mask,
     };
+    const bool export_opaque_fd =
+        (request->pnext_flags &
+         BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_EXPORT_OPAQUE_FD) != 0U &&
+        (request->pnext_flags &
+         BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_DEDICATED_IMAGE) == 0U &&
+        (properties.memoryTypes[request->memory_type_index].propertyFlags &
+         (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT)) ==
+            (VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+             VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VkExportMemoryAllocateInfo export_info = {
+        .sType = VK_STRUCTURE_TYPE_EXPORT_MEMORY_ALLOCATE_INFO,
+        .handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
     const void *pnext = NULL;
     if ((request->pnext_flags &
          BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_DEDICATED_IMAGE) != 0U) {
@@ -5202,6 +5227,10 @@ int bvb_vulkan_global_context_allocate_memory_extended(
          BVB_VULKAN_MEMORY_ALLOCATE_PNEXT_FLAGS) != 0U) {
         flags.pNext = pnext;
         pnext = &flags;
+    }
+    if (export_opaque_fd) {
+        export_info.pNext = pnext;
+        pnext = &export_info;
     }
     PFN_vkAllocateMemory allocate =
         (PFN_vkAllocateMemory)context->get_device_proc_addr(
@@ -5240,6 +5269,7 @@ int bvb_vulkan_global_context_allocate_memory_extended(
         .allocation_size = request->allocation_size,
         .property_flags =
             properties.memoryTypes[request->memory_type_index].propertyFlags,
+        .opaque_fd_exportable = export_opaque_fd,
     };
     response->object_id = wire_id;
     return 0;
@@ -8317,6 +8347,138 @@ int bvb_vulkan_global_context_setup_memory_mirror(
     return 0;
 }
 
+int bvb_vulkan_global_context_setup_direct_memory(
+    struct bvb_vulkan_global_context *context,
+    const struct bvb_vulkan_memory_mirror_setup_request *request,
+    int *export_fd, int32_t *vulkan_result, char *error,
+    size_t error_size) {
+    if (error != NULL && error_size != 0U) error[0] = '\0';
+    if (context == NULL || request == NULL || export_fd == NULL ||
+        vulkan_result == NULL)
+        return -EINVAL;
+    *export_fd = -1;
+    *vulkan_result = VK_ERROR_MEMORY_MAP_FAILED;
+    uint8_t validation[BVB_VULKAN_MEMORY_MIRROR_SETUP_SIZE];
+    if (bvb_protocol_encode_vulkan_memory_mirror_setup_request(
+            validation, request) != 0)
+        return -EINVAL;
+
+    uint64_t memory_device_id = 0U, memory_bits = 0U;
+    VkDevice device = VK_NULL_HANDLE;
+    int result = resolve_device_child(
+        context, request->memory_id, BVB_OBJECT_DEVICE_MEMORY,
+        &memory_device_id, &device, &memory_bits);
+    uint64_t device_bits = 0U;
+    if (result == 0)
+        result = bvb_handle_table_lookup(
+            &context->objects, request->device_id, BVB_OBJECT_DEVICE,
+            NULL, &device_bits);
+    struct bvb_memory_metadata *native_metadata =
+        memory_metadata_slot(context, request->memory_id);
+    struct bvb_device_metadata *native_device_metadata =
+        device_metadata_slot(context, request->device_id);
+    if (result != 0 || memory_device_id != request->device_id ||
+        device_from_bits(device_bits) != device || native_metadata == NULL ||
+        native_metadata->memory_id != request->memory_id ||
+        native_device_metadata == NULL ||
+        native_device_metadata->device_id != request->device_id ||
+        native_device_metadata->non_coherent_atom_size == 0U) {
+        set_error(error, error_size,
+                  "direct map references unknown or cross-device memory");
+        return result != 0 ? result : -EPROTO;
+    }
+    if (!memory_is_buffer_only(context, request->memory_id)) {
+        set_error(error, error_size,
+                  "direct map is not bound exclusively to buffers");
+        *vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    const VkMemoryPropertyFlags required_properties =
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+        VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    if (!native_metadata->opaque_fd_exportable ||
+        (native_metadata->property_flags & required_properties) !=
+            required_properties) {
+        set_error(error, error_size,
+                  "direct map memory is not coherent opaque-fd exportable");
+        *vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    if (request->offset > native_metadata->allocation_size ||
+        request->length > native_metadata->allocation_size - request->offset) {
+        set_error(error, error_size,
+                  "direct map range exceeds the native allocation");
+        return -ERANGE;
+    }
+    struct bvb_memory_mirror_metadata *slot =
+        memory_mirror_slot(context, request->memory_id);
+    if (slot == NULL || slot->memory_id != 0U ||
+        context->memory_mirror_bytes >
+            BVB_VULKAN_MEMORY_MIRROR_TOTAL_BYTES - request->length) {
+        set_error(error, error_size,
+                  "direct map slot or total-byte cap exhausted");
+        return slot != NULL && slot->memory_id != 0U ? -EBUSY : -ENOSPC;
+    }
+
+    PFN_vkMapMemory map = (PFN_vkMapMemory)context->get_device_proc_addr(
+        device, "vkMapMemory");
+    PFN_vkUnmapMemory unmap =
+        (PFN_vkUnmapMemory)context->get_device_proc_addr(
+            device, "vkUnmapMemory");
+    PFN_vkGetMemoryFdKHR get_memory_fd =
+        (PFN_vkGetMemoryFdKHR)context->get_device_proc_addr(
+            device, "vkGetMemoryFdKHR");
+    if (map == NULL || unmap == NULL || get_memory_fd == NULL) {
+        set_error(error, error_size,
+                  "direct map requires map, unmap, and opaque-fd export");
+        *vulkan_result = VK_ERROR_FEATURE_NOT_PRESENT;
+        return 0;
+    }
+    VkDeviceMemory memory = memory_from_bits(memory_bits);
+    void *native = NULL;
+    *vulkan_result = map(
+        device, memory, 0U, VK_WHOLE_SIZE, 0U, &native);
+    if (*vulkan_result != VK_SUCCESS || native == NULL) return 0;
+    const VkMemoryGetFdInfoKHR get_fd_info = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_GET_FD_INFO_KHR,
+        .memory = memory,
+        .handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
+    };
+    int fd = -1;
+    *vulkan_result = get_memory_fd(device, &get_fd_info, &fd);
+    if (*vulkan_result != VK_SUCCESS || fd < 0) {
+        unmap(device, memory);
+        if (*vulkan_result == VK_SUCCESS)
+            *vulkan_result = VK_ERROR_MEMORY_MAP_FAILED;
+        return 0;
+    }
+    if (fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
+        const int saved_errno = errno;
+        (void)close(fd);
+        unmap(device, memory);
+        return -saved_errno;
+    }
+    *slot = (struct bvb_memory_mirror_metadata){
+        .device_id = request->device_id,
+        .memory_id = request->memory_id,
+        .generation = request->generation,
+        .offset = request->offset,
+        .length = request->length,
+        .allocation_size = native_metadata->allocation_size,
+        .non_coherent_atom_size =
+            native_device_metadata->non_coherent_atom_size,
+        .property_flags = native_metadata->property_flags,
+        .device = device,
+        .memory = memory,
+        .native = native,
+        .direct = true,
+    };
+    context->memory_mirror_bytes += request->length;
+    atomic_thread_fence(memory_order_release);
+    *export_fd = fd;
+    return 0;
+}
+
 static int memory_mirror_range_operation(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_memory_mirror_range_request *request,
@@ -8335,6 +8497,11 @@ static int memory_mirror_range_operation(
     if (mirror == NULL) {
         set_error(error, error_size, "stale or cross-device memory mirror");
         return -ESTALE;
+    }
+    if (mirror->direct) {
+        set_error(error, error_size,
+                  "direct mapped memory does not use mirror range RPCs");
+        return -EPROTO;
     }
     if (request->offset < mirror->offset ||
         request->offset > mirror->offset + mirror->length ||
@@ -8402,7 +8569,8 @@ int bvb_vulkan_global_context_unmap_memory_mirror(
         set_error(error, error_size, "stale or cross-device memory mirror");
         return -ESTALE;
     }
-    if ((mirror->property_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0U) {
+    if (!mirror->direct &&
+        (mirror->property_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0U) {
         atomic_thread_fence(memory_order_acquire);
         upload_host_diverged_range(mirror, 0U, (size_t)mirror->length);
     }
@@ -8418,6 +8586,7 @@ static int sync_coherent_memory_mirrors(
         struct bvb_memory_mirror_metadata *mirror =
             &context->memory_mirrors[index];
         if (mirror->memory_id != 0U && mirror->device_id == device_id &&
+            !mirror->direct &&
             (mirror->property_flags &
              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0U) {
             upload_host_diverged_range(mirror, 0U, (size_t)mirror->length);

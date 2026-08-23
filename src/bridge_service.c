@@ -3478,6 +3478,44 @@ static int answer_vulkan_memory_mirror_setup(
     return bvb_transport_send(client_fd, &response);
 }
 
+static int answer_vulkan_memory_direct_map_setup(
+    int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
+    struct bvb_vulkan_global_context *context) {
+    struct bvb_protocol_packet response;
+    prepare_response(&response, request);
+    if (!negotiated || context == NULL ||
+        request->header.payload_length !=
+            BVB_VULKAN_MEMORY_MIRROR_SETUP_SIZE) {
+        response.header.status = -EPROTO;
+        return bvb_transport_send(client_fd, &response);
+    }
+    struct bvb_vulkan_memory_mirror_setup_request decoded;
+    int result = bvb_protocol_decode_vulkan_memory_mirror_setup_request(
+        request->payload, &decoded);
+    int export_fd = -1;
+    int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    char diagnostic[512] = {0};
+    if (result == 0)
+        result = bvb_vulkan_global_context_setup_direct_memory(
+            context, &decoded, &export_fd, &vulkan_result,
+            diagnostic, sizeof(diagnostic));
+    if (result == 0)
+        result = bvb_protocol_encode_vulkan_result(
+            response.payload, vulkan_result);
+    if (result == 0)
+        response.header.payload_length = BVB_VULKAN_RESULT_SIZE;
+    else {
+        fprintf(stderr, "bvb: direct memory setup failed: %s\n", diagnostic);
+        response.header.status = result;
+    }
+    if (result == 0 && vulkan_result == VK_SUCCESS && export_fd >= 0)
+        result = bvb_transport_send_fd(client_fd, &response, export_fd);
+    else
+        result = bvb_transport_send(client_fd, &response);
+    if (export_fd >= 0) (void)close(export_fd);
+    return result;
+}
+
 static int answer_vulkan_memory_mirror_range(
     int client_fd, const struct bvb_protocol_packet *request, bool negotiated,
     struct bvb_vulkan_global_context *context) {
@@ -4749,6 +4787,10 @@ static int serve_connection(int client_fd, const char *loader_path,
                 client_fd, &request, negotiated, received_fd,
                 global_context);
             received_fd = -1;
+        } else if (request.header.opcode ==
+                   BVB_OPCODE_VULKAN_MEMORY_DIRECT_MAP_SETUP) {
+            result = answer_vulkan_memory_direct_map_setup(
+                client_fd, &request, negotiated, global_context);
         } else if (request.header.opcode ==
                        BVB_OPCODE_VULKAN_MEMORY_MIRROR_FLUSH ||
                    request.header.opcode ==

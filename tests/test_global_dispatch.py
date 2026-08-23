@@ -24,7 +24,8 @@ def main() -> int:
             "shared-command-stream-concurrency|"
             "shared-command-stream-non-success|strict-mapped-memory|"
             "shared-mapped-memory|shared-noncoherent-memory|"
-            "shared-mapped-free-memory|"
+            "shared-mapped-free-memory|direct-mapped-memory|"
+            "direct-mapped-memory-fallback|"
             "shared-memory-unmap-lost-ack|first-rejection-command|"
             "first-rejection-wsi|shared-descriptor-journal|"
             "loader-tls-lifetime]"
@@ -40,6 +41,8 @@ def main() -> int:
         "shared-command-stream-non-success",
         "strict-mapped-memory", "shared-mapped-memory",
         "shared-noncoherent-memory", "shared-mapped-free-memory",
+        "direct-mapped-memory",
+        "direct-mapped-memory-fallback",
         "shared-memory-unmap-lost-ack",
         "first-rejection-command", "first-rejection-wsi",
         "shared-descriptor-journal",
@@ -75,10 +78,17 @@ def main() -> int:
             server_environment["BVB_FAKE_REQUIRE_DESCRIPTOR_JOURNAL"] = "1"
         if validation_mode in (
             "shared-mapped-memory", "shared-noncoherent-memory",
-            "shared-mapped-free-memory",
+            "shared-mapped-free-memory", "direct-mapped-memory",
+            "direct-mapped-memory-fallback",
             "shared-memory-unmap-lost-ack",
         ):
             server_environment["BVB_FAKE_REQUIRE_MEMORY_MIRROR"] = "1"
+        if validation_mode in (
+            "direct-mapped-memory", "direct-mapped-memory-fallback"
+        ):
+            server_environment["BVB_FAKE_REQUIRE_DIRECT_MAPPED_MEMORY"] = "1"
+        if validation_mode == "direct-mapped-memory-fallback":
+            server_environment["BVB_FAKE_FAIL_DIRECT_MAPPED_MEMORY_FD"] = "1"
         if validation_mode == "shared-noncoherent-memory":
             server_environment["BVB_FAKE_NONCOHERENT_MEMORY"] = "1"
         if validation_mode == "shared-descriptor-journal":
@@ -185,15 +195,24 @@ def main() -> int:
 
             if validation_mode in (
                 "shared-mapped-memory", "shared-noncoherent-memory",
-                "shared-mapped-free-memory",
+                "shared-mapped-free-memory", "direct-mapped-memory",
+                "direct-mapped-memory-fallback",
                 "shared-memory-unmap-lost-ack",
             ):
-                environment["BVB_MAPPED_MEMORY"] = "shared"
+                environment["BVB_MAPPED_MEMORY"] = (
+                    "direct" if validation_mode in (
+                        "direct-mapped-memory",
+                        "direct-mapped-memory-fallback",
+                    )
+                    else "shared"
+                )
             else:
                 environment["BVB_MAPPED_MEMORY"] = "strict"
             if validation_mode in (
                 "strict-mapped-memory", "shared-mapped-memory",
                 "shared-noncoherent-memory", "shared-mapped-free-memory",
+                "direct-mapped-memory",
+                "direct-mapped-memory-fallback",
                 "shared-memory-unmap-lost-ack",
             ):
                 environment["BVB_TEST_KEEP_MEMORY_MAPPED"] = "1"
@@ -211,6 +230,10 @@ def main() -> int:
                 environment["BVB_TEST_FREE_MAPPED_MEMORY"] = "1"
             else:
                 environment.pop("BVB_TEST_FREE_MAPPED_MEMORY", None)
+            if validation_mode == "direct-mapped-memory-fallback":
+                environment["BVB_TEST_DIRECT_MEMORY_FALLBACK"] = "1"
+            else:
+                environment.pop("BVB_TEST_DIRECT_MEMORY_FALLBACK", None)
 
             sink_result = {}
 
@@ -488,6 +511,11 @@ def main() -> int:
             assert "image_bytes=16384" in completed.stdout
             assert "mapped_bytes=4096 mapped_mismatches=0" in completed.stdout
             assert (
+                "memory_rtts=1,0,0,1,1"
+                if validation_mode == "direct-mapped-memory"
+                else "memory_rtts=2,1,1,1,1"
+                if validation_mode == "direct-mapped-memory-fallback"
+                else
                 "memory_rtts=1,1,1,1,1"
                 if validation_mode in (
                     "shared-mapped-memory", "shared-noncoherent-memory"
@@ -499,6 +527,11 @@ def main() -> int:
                 else "memory_rtts=2,2,2,2,1"
             ) in completed.stdout
             assert (
+                "memory_opcodes=125,0,0,109,47"
+                if validation_mode == "direct-mapped-memory"
+                else "memory_opcodes=106,107,108,109,47"
+                if validation_mode == "direct-mapped-memory-fallback"
+                else
                 "memory_opcodes=106,107,108,109,47"
                 if validation_mode in (
                     "shared-mapped-memory", "shared-noncoherent-memory"
@@ -514,13 +547,20 @@ def main() -> int:
                     "shared-command-stream-non-success",
                 )
                 else "memory_opcodes=49,48,49,48,47"
-            ) in completed.stdout
+            ) in completed.stdout, completed.stdout
             assert (
+                "ineligible_memory_rtts=1,1 "
+                "ineligible_memory_opcodes=125,109"
+                if validation_mode in (
+                    "direct-mapped-memory",
+                    "direct-mapped-memory-fallback",
+                )
+                else
                 "ineligible_memory_rtts=1,1 "
                 "ineligible_memory_opcodes=106,109"
                 if validation_mode in (
                     "shared-mapped-memory", "shared-noncoherent-memory",
-                    "shared-mapped-free-memory",
+                    "shared-mapped-free-memory", "direct-mapped-memory",
                 )
                 else "ineligible_memory_rtts=0,0 "
                      "ineligible_memory_opcodes=0,0"

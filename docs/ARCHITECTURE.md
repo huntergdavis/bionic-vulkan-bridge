@@ -617,3 +617,17 @@ clears its capacity state; destroy forgets every signature. Published but
 unclaimed extras remain real pool allocations until claim or reset/destroy,
 and a publication failure disables batching for that signature rather than
 fabricating a result. Strict descriptor mode remains unchanged.
+
+E139 adds an independent opt-in direct mapping path for coherent exported
+buffer memory. With `BVB_MAPPED_MEMORY=direct`, buffer creation and compatible
+host-coherent allocation carry private wire-only opaque-FD export markers that
+the Bionic service strips before reconstructing the real Vulkan structures.
+At `vkMapMemory`, the service retains the real native Vulkan mapping, exports
+one opaque FD, and returns it once over the authenticated socket. The glibc ICD
+maps that descriptor directly, including its low-address search for 32-bit
+Wine thunks. Coherent Flush and Invalidate become local memory-order fences;
+Submit no longer scans or copies those bytes. Typed ownership, map-count and
+byte caps, explicit Unmap, uncertain-transport poisoning, strict mode, and the
+E077 mirror fallback remain intact. E138 proved the same descriptor behavior
+on private Turnip, while E139 initially claims only the fake-driver host
+transport until the combined bridge is deployed and measured on the tablet.

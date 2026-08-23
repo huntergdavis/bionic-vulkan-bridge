@@ -2721,10 +2721,24 @@ static VkResult VKAPI_CALL fake_create_buffer(
     if (create_info == NULL || create_info->size == 0U) {
         return VK_ERROR_INITIALIZATION_FAILED;
     }
+    const bool direct_memory =
+        getenv("BVB_FAKE_REQUIRE_DIRECT_MAPPED_MEMORY") != NULL;
+    const VkExternalMemoryBufferCreateInfo *external_info =
+        create_info->pNext;
+    if (direct_memory &&
+        (external_info == NULL ||
+         external_info->sType !=
+             VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO ||
+         external_info->pNext != NULL ||
+         external_info->handleTypes !=
+             VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT)) {
+        return VK_ERROR_INVALID_EXTERNAL_HANDLE;
+    }
     if ((create_info->usage &
          VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT) != 0U &&
         (create_info->sType != VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO ||
-         create_info->pNext != NULL || create_info->flags != 0U ||
+         (!direct_memory && create_info->pNext != NULL) ||
+         create_info->flags != 0U ||
          create_info->sharingMode != VK_SHARING_MODE_EXCLUSIVE ||
          create_info->queueFamilyIndexCount != 0U ||
          create_info->pQueueFamilyIndices != NULL ||
@@ -3019,6 +3033,9 @@ static VkResult VKAPI_CALL fake_get_memory_fd(
              VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT)) {
         return VK_ERROR_INVALID_EXTERNAL_HANDLE;
     }
+    if (getenv("BVB_FAKE_FAIL_DIRECT_MAPPED_MEMORY_FD") != NULL &&
+        info->memory == fake_upload_memory)
+        return VK_ERROR_INVALID_EXTERNAL_HANDLE;
     struct bvb_fake_memory_record *record = fake_memory_record(
         (void *)(uintptr_t)info->memory);
     if (record == NULL || record->fd < 0) {

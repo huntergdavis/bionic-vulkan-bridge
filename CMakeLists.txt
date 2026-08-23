@@ -935,6 +935,39 @@ if(BUILD_TESTING)
       "shared-mapped-memory"
   )
   add_test(
+    NAME global-direct-mapped-memory-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+      "$<TARGET_FILE:bvb-bridge-service>"
+      "$<TARGET_FILE:bvb-global-dispatch-test>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+      "direct-mapped-memory"
+  )
+  add_test(
+    NAME direct-mapped-memory-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_direct_mapped_memory_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e139-direct-mapped-memory-host.json"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/protocol.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/global_dispatch.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_vulkan.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+  )
+  add_test(
+    NAME global-direct-mapped-memory-fallback-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+      "$<TARGET_FILE:bvb-bridge-service>"
+      "$<TARGET_FILE:bvb-global-dispatch-test>"
+      "$<TARGET_FILE:bvb-fake-vulkan>"
+      "direct-mapped-memory-fallback"
+  )
+  add_test(
     NAME global-shared-noncoherent-memory-contract
     COMMAND
       "${Python3_EXECUTABLE}"

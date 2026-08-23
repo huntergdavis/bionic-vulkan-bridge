@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "gate": "E139",
+  "source_base_commit": "462d84ab33157fec0b3078c5e6a353622501c624",
+  "prerequisite": {
+    "gate": "E138",
+    "private_turnip_raw_mmap": true,
+    "bidirectional_mismatched_bytes": 0
+  },
+  "reuse": [
+    "E077 typed memory ownership, bounded live-map capacity, strict fallback, and uncertain-transport poison",
+    "E060 authenticated one-time SCM_RIGHTS response transport",
+    "E138 real private-Turnip opaque-FD raw mmap and bidirectional visibility proof"
+  ],
+  "selector": {
+    "environment": "BVB_MAPPED_MEMORY",
+    "value": "direct",
+    "default": "strict",
+    "mirror_fallback_retained": true
+  },
+  "wire": {
+    "direct_setup": {
+      "opcode": 125,
+      "bytes": 40,
+      "fd_transfers": 1
+    },
+    "flush": {
+      "socket_exchanges": 0
+    },
+    "invalidate": {
+      "socket_exchanges": 0
+    },
+    "unmap": {
+      "opcode": 109,
+      "bytes": 24,
+      "fd_transfers": 0
+    },
+    "pointer_values_crossed": false
+  },
+  "native_requirements": {
+    "host_visible": true,
+    "host_coherent": true,
+    "opaque_fd_exportable": true,
+    "buffer_only_at_setup": true,
+    "service_vkMapMemory_retained_until_unmap": true
+  },
+  "host_ab": {
+    "order": [
+      "map",
+      "flush",
+      "invalidate",
+      "unmap",
+      "submit"
+    ],
+    "mirror_rtts": [1, 1, 1, 1, 1],
+    "direct_rtts": [1, 0, 0, 1, 1],
+    "direct_opcodes": [125, 0, 0, 109, 47],
+    "direct_mismatched_bytes": 0
+  },
+  "validation": {
+    "focused_contracts": "pass",
+    "complete_host_suite": "101/101 pass"
+  },
+  "claims": {
+    "host_transport_contract": true,
+    "tablet_bridge_deployment": false,
+    "tomb_raider_run": false,
+    "fps": null
+  }
+}
