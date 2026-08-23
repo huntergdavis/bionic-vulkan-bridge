@@ -63,12 +63,32 @@ struct sync_service_profile {
     uint64_t submit_decode_ns;
     uint64_t submit_replay_ns;
     uint64_t submit_queue_ns;
+    uint64_t submit_resolve_ns;
+    uint64_t submit_mirror_ns;
+    uint64_t submit_native_ns;
     uint64_t submit_encode_ns;
     uint64_t submit_replay_max_ns;
     uint64_t submit_queue_max_ns;
+    uint64_t submit_mirror_max_ns;
+    uint64_t submit_native_max_ns;
+    uint64_t wait_semaphore_total;
+    uint64_t submit_wait_total;
+    uint64_t submit_command_total;
+    uint64_t submit_signal_total;
     uint32_t wait_calls;
+    uint32_t wait_zero_timeout_calls;
+    uint32_t wait_finite_timeout_calls;
+    uint32_t wait_infinite_timeout_calls;
+    uint32_t wait_any_calls;
+    uint32_t wait_success_calls;
+    uint32_t wait_timeout_result_calls;
+    uint32_t wait_other_result_calls;
+    uint32_t wait_semaphore_max;
     uint32_t stream_submit_calls;
     uint32_t regular_submit_calls;
+    uint32_t submit_wait_max;
+    uint32_t submit_command_max;
+    uint32_t submit_signal_max;
     bool enabled;
 };
 
@@ -240,26 +260,57 @@ static void sync_service_profile_emit_and_reset(
             "BVB_E136_SYNC_SERVICE_PROFILE wait_calls=%u "
             "wait_total_ns=%llu wait_decode_ns=%llu wait_native_ns=%llu "
             "wait_encode_ns=%llu wait_native_max_ns=%llu "
+            "wait_zero_timeout_calls=%u wait_finite_timeout_calls=%u "
+            "wait_infinite_timeout_calls=%u wait_any_calls=%u "
+            "wait_success_calls=%u wait_timeout_result_calls=%u "
+            "wait_other_result_calls=%u wait_semaphore_total=%llu "
+            "wait_semaphore_max=%u "
             "stream_submit_calls=%u regular_submit_calls=%u "
             "submit_total_ns=%llu submit_decode_ns=%llu "
             "submit_replay_ns=%llu submit_queue_ns=%llu "
+            "submit_resolve_ns=%llu submit_mirror_ns=%llu "
+            "submit_native_ns=%llu "
             "submit_encode_ns=%llu submit_replay_max_ns=%llu "
-            "submit_queue_max_ns=%llu\n",
+            "submit_queue_max_ns=%llu submit_mirror_max_ns=%llu "
+            "submit_native_max_ns=%llu submit_wait_total=%llu "
+            "submit_command_total=%llu submit_signal_total=%llu "
+            "submit_wait_max=%u submit_command_max=%u "
+            "submit_signal_max=%u\n",
             profile->wait_calls,
             (unsigned long long)profile->wait_total_ns,
             (unsigned long long)profile->wait_decode_ns,
             (unsigned long long)profile->wait_native_ns,
             (unsigned long long)profile->wait_encode_ns,
             (unsigned long long)profile->wait_native_max_ns,
+            profile->wait_zero_timeout_calls,
+            profile->wait_finite_timeout_calls,
+            profile->wait_infinite_timeout_calls,
+            profile->wait_any_calls,
+            profile->wait_success_calls,
+            profile->wait_timeout_result_calls,
+            profile->wait_other_result_calls,
+            (unsigned long long)profile->wait_semaphore_total,
+            profile->wait_semaphore_max,
             profile->stream_submit_calls,
             profile->regular_submit_calls,
             (unsigned long long)profile->submit_total_ns,
             (unsigned long long)profile->submit_decode_ns,
             (unsigned long long)profile->submit_replay_ns,
             (unsigned long long)profile->submit_queue_ns,
+            (unsigned long long)profile->submit_resolve_ns,
+            (unsigned long long)profile->submit_mirror_ns,
+            (unsigned long long)profile->submit_native_ns,
             (unsigned long long)profile->submit_encode_ns,
             (unsigned long long)profile->submit_replay_max_ns,
-            (unsigned long long)profile->submit_queue_max_ns);
+            (unsigned long long)profile->submit_queue_max_ns,
+            (unsigned long long)profile->submit_mirror_max_ns,
+            (unsigned long long)profile->submit_native_max_ns,
+            (unsigned long long)profile->submit_wait_total,
+            (unsigned long long)profile->submit_command_total,
+            (unsigned long long)profile->submit_signal_total,
+            profile->submit_wait_max,
+            profile->submit_command_max,
+            profile->submit_signal_max);
     const bool enabled = profile->enabled;
     memset(profile, 0, sizeof(*profile));
     profile->enabled = enabled;
@@ -3632,6 +3683,25 @@ static int answer_vulkan_semaphore_wait(
         profile->wait_encode_ns += elapsed_ns(native_ns, encoded_ns);
         if (native_elapsed > profile->wait_native_max_ns)
             profile->wait_native_max_ns = native_elapsed;
+        if (result == 0) {
+            if (decoded.timeout == 0U)
+                ++profile->wait_zero_timeout_calls;
+            else if (decoded.timeout == UINT64_MAX)
+                ++profile->wait_infinite_timeout_calls;
+            else
+                ++profile->wait_finite_timeout_calls;
+            if ((decoded.flags & VK_SEMAPHORE_WAIT_ANY_BIT) != 0U)
+                ++profile->wait_any_calls;
+            if (vulkan_result == VK_SUCCESS)
+                ++profile->wait_success_calls;
+            else if (vulkan_result == VK_TIMEOUT)
+                ++profile->wait_timeout_result_calls;
+            else
+                ++profile->wait_other_result_calls;
+            profile->wait_semaphore_total += decoded.semaphore_count;
+            if (decoded.semaphore_count > profile->wait_semaphore_max)
+                profile->wait_semaphore_max = decoded.semaphore_count;
+        }
         sync_service_profile_emit_and_reset(profile, false);
     }
     return bvb_transport_send(client_fd, &response);
@@ -3820,6 +3890,7 @@ static int answer_vulkan_queue_submit_2(
               request->payload, request->header.payload_length, &decoded);
     const uint64_t decoded_ns = profile_enabled ? monotonic_ns() : 0U;
     int32_t vulkan_result = VK_ERROR_INITIALIZATION_FAILED;
+    struct bvb_vulkan_queue_submit_2_profile native_profile = {0};
     char diagnostic[512] = {0};
     if (result == 0 && stream_wire)
         result = replay_submit_command_streams(
@@ -3827,7 +3898,8 @@ static int answer_vulkan_queue_submit_2(
     const uint64_t replayed_ns = profile_enabled ? monotonic_ns() : 0U;
     if (result == 0)
         result = bvb_vulkan_global_context_queue_submit_2(
-            context, &decoded, &vulkan_result, diagnostic, sizeof(diagnostic));
+            context, &decoded, profile_enabled ? &native_profile : NULL,
+            &vulkan_result, diagnostic, sizeof(diagnostic));
     const uint64_t queued_ns = profile_enabled ? monotonic_ns() : 0U;
     if (result == 0)
         result = bvb_protocol_encode_vulkan_result(
@@ -3850,11 +3922,29 @@ static int answer_vulkan_queue_submit_2(
         profile->submit_decode_ns += elapsed_ns(started_ns, decoded_ns);
         profile->submit_replay_ns += replay_elapsed;
         profile->submit_queue_ns += queue_elapsed;
+        profile->submit_resolve_ns += native_profile.resolve_ns;
+        profile->submit_mirror_ns += native_profile.mirror_sync_ns;
+        profile->submit_native_ns += native_profile.native_submit_ns;
         profile->submit_encode_ns += elapsed_ns(queued_ns, encoded_ns);
         if (replay_elapsed > profile->submit_replay_max_ns)
             profile->submit_replay_max_ns = replay_elapsed;
         if (queue_elapsed > profile->submit_queue_max_ns)
             profile->submit_queue_max_ns = queue_elapsed;
+        if (native_profile.mirror_sync_ns > profile->submit_mirror_max_ns)
+            profile->submit_mirror_max_ns = native_profile.mirror_sync_ns;
+        if (native_profile.native_submit_ns > profile->submit_native_max_ns)
+            profile->submit_native_max_ns = native_profile.native_submit_ns;
+        if (result == 0) {
+            profile->submit_wait_total += decoded.wait_count;
+            profile->submit_command_total += decoded.command_count;
+            profile->submit_signal_total += decoded.signal_count;
+            if (decoded.wait_count > profile->submit_wait_max)
+                profile->submit_wait_max = decoded.wait_count;
+            if (decoded.command_count > profile->submit_command_max)
+                profile->submit_command_max = decoded.command_count;
+            if (decoded.signal_count > profile->submit_signal_max)
+                profile->submit_signal_max = decoded.signal_count;
+        }
     }
     return bvb_transport_send(client_fd, &response);
 }

@@ -1,0 +1,50 @@
+{
+  "gate": "E137",
+  "date": "2026-08-22",
+  "source_base_commit": "67f768ef30e45760f7c2b8976429a5b67a8c86e9",
+  "result": "host_instrumentation_ready",
+  "behavior_changed": false,
+  "selector": "BVB_FRAME_PROFILE=1",
+  "e136_tablet_input": {
+    "run_id": "20260823T014711Z-26293",
+    "complete_client_windows": 43,
+    "profiled_presents": 1376,
+    "client_sync_ms_per_present": 41.231394,
+    "service_sync_ms_per_present": 39.8572,
+    "native_wait_ms_per_present": 20.879462,
+    "native_submit_including_mirror_ms_per_present": 16.705262,
+    "shared_stream_replay_ms_per_present": 2.262772,
+    "client_transport_residual_ms_per_present": 1.374193,
+    "native_wait_percent": 50.64,
+    "native_submit_percent": 40.516,
+    "shared_stream_replay_percent": 5.488,
+    "e136_transport_residual_percent": 3.333,
+    "client_log_sha256": "37ddf59e122a83c5bffad90de219b9fb590bf46161b69b9d5ab661e7596db055",
+    "service_log_sha256": "d52896f9335a30f75a457de644df006a1277c24383e09f77fda6d6469ac5e2a5",
+    "claim_boundary": "The benchmark was deliberately interrupted by a now-fixed foreground-controller timeout, so these sustained windows diagnose the bridge but make no FPS or completed-benchmark claim. Client and service call counts differ by at most ten at the interrupted edges, making the residual a conservative aggregate rather than an exact paired-call subtraction."
+  },
+  "new_profile_dimensions": {
+    "wait": [
+      "zero_finite_or_infinite_timeout",
+      "wait_all_or_wait_any",
+      "success_timeout_or_other_result",
+      "semaphore_count"
+    ],
+    "submit": [
+      "typed_handle_resolution",
+      "coherent_memory_mirror_sync",
+      "native_vkQueueSubmit2",
+      "wait_command_signal_counts"
+    ]
+  },
+  "host_validation": {
+    "dynamic_fake_native_shape_parse": true,
+    "strict_default_behavior_preserved": true,
+    "focused_contracts_passed": 3,
+    "focused_contracts_failed": 0,
+    "full_contracts_passed": 98,
+    "full_contracts_failed": 0
+  },
+  "claim_boundary": "E137 adds clocks and counters only under the existing opt-in profile selector. It does not remove a wait, defer a submission, change Vulkan results, or claim a performance gain until the tablet stage split is measured.",
+  "reuse": "The required exact E137 deja query returned no indexed implementation. E137 reuses E116 bounded native stage timing, E117 client RPC accounting, E136 service-versus-transport decomposition, and E077's existing coherent-mirror boundary."
+}

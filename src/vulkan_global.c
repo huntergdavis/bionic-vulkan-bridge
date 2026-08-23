@@ -8757,7 +8757,12 @@ int bvb_vulkan_global_context_signal_semaphore(
 int bvb_vulkan_global_context_queue_submit_2(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_queue_submit_2_request *request,
+    struct bvb_vulkan_queue_submit_2_profile *profile,
     int32_t *vulkan_result, char *error, size_t error_size) {
+    if (profile != NULL)
+        *profile = (struct bvb_vulkan_queue_submit_2_profile){0};
+    const uint64_t started_ns =
+        profile != NULL ? wsi_profile_monotonic_ns() : 0U;
     if (error != NULL && error_size != 0U) error[0] = '\0';
     if (context == NULL || request == NULL || vulkan_result == NULL ||
         request->flags != 0U ||
@@ -8852,8 +8857,12 @@ int bvb_vulkan_global_context_queue_submit_2(
                   "submit2 references objects from different devices");
         return result;
     }
+    const uint64_t resolved_ns =
+        profile != NULL ? wsi_profile_monotonic_ns() : 0U;
     result = sync_coherent_memory_mirrors(context, device_id);
     if (result != 0) return result;
+    const uint64_t mirrors_synced_ns =
+        profile != NULL ? wsi_profile_monotonic_ns() : 0U;
     PFN_vkQueueSubmit2 submit =
         (PFN_vkQueueSubmit2)context->get_device_proc_addr(
             device, "vkQueueSubmit2");
@@ -8872,6 +8881,15 @@ int bvb_vulkan_global_context_queue_submit_2(
         .pSignalSemaphoreInfos = request->signal_count != 0U ? signals : NULL,
     };
     *vulkan_result = submit(queue, 1U, &submit_info, fence);
+    if (profile != NULL) {
+        const uint64_t submitted_ns = wsi_profile_monotonic_ns();
+        profile->resolve_ns =
+            wsi_profile_elapsed_ns(started_ns, resolved_ns);
+        profile->mirror_sync_ns =
+            wsi_profile_elapsed_ns(resolved_ns, mirrors_synced_ns);
+        profile->native_submit_ns =
+            wsi_profile_elapsed_ns(mirrors_synced_ns, submitted_ns);
+    }
     return 0;
 }
 

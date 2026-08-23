@@ -667,6 +667,24 @@ def main() -> int:
                     )
                 }
                 assert sync_profile["wait_calls"] == 2
+                assert sum(
+                    sync_profile[key]
+                    for key in (
+                        "wait_zero_timeout_calls",
+                        "wait_finite_timeout_calls",
+                        "wait_infinite_timeout_calls",
+                    )
+                ) == sync_profile["wait_calls"]
+                assert sum(
+                    sync_profile[key]
+                    for key in (
+                        "wait_success_calls",
+                        "wait_timeout_result_calls",
+                        "wait_other_result_calls",
+                    )
+                ) == sync_profile["wait_calls"]
+                assert sync_profile["wait_semaphore_total"] >= sync_profile["wait_calls"]
+                assert sync_profile["wait_semaphore_max"] >= 1
                 assert sync_profile["wait_total_ns"] >= sum(
                     sync_profile[key]
                     for key in (
@@ -675,11 +693,20 @@ def main() -> int:
                 )
                 assert sync_profile["stream_submit_calls"] == 0
                 assert sync_profile["regular_submit_calls"] == 1
+                assert sync_profile["submit_command_total"] >= 1
+                assert sync_profile["submit_command_max"] >= 1
                 assert sync_profile["submit_total_ns"] >= sum(
                     sync_profile[key]
                     for key in (
                         "submit_decode_ns", "submit_replay_ns",
                         "submit_queue_ns", "submit_encode_ns",
+                    )
+                )
+                assert sync_profile["submit_queue_ns"] >= sum(
+                    sync_profile[key]
+                    for key in (
+                        "submit_resolve_ns", "submit_mirror_ns",
+                        "submit_native_ns",
                     )
                 )
             else:

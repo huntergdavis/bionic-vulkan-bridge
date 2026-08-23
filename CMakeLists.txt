@@ -1546,4 +1546,14 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e136-sync-service-profile-host.json"
   )
+  add_test(
+    NAME e137-native-sync-shape-profile-architecture-contract
+    COMMAND
+      "${Python3_EXECUTABLE}"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_e137_native_sync_shape_profile_architecture.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/bridge_service.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/bvb/vulkan_global.h"
+      "${CMAKE_CURRENT_SOURCE_DIR}/docs/evidence/e137-native-sync-shape-profile-host.json"
+  )
 endif()

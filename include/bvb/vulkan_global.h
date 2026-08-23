@@ -415,9 +415,15 @@ int bvb_vulkan_global_context_signal_semaphore(
     const struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_semaphore_signal_request *request,
     int32_t *vulkan_result, char *error, size_t error_size);
+struct bvb_vulkan_queue_submit_2_profile {
+    uint64_t resolve_ns;
+    uint64_t mirror_sync_ns;
+    uint64_t native_submit_ns;
+};
 int bvb_vulkan_global_context_queue_submit_2(
     struct bvb_vulkan_global_context *context,
     const struct bvb_vulkan_queue_submit_2_request *request,
+    struct bvb_vulkan_queue_submit_2_profile *profile,
     int32_t *vulkan_result, char *error, size_t error_size);
 int bvb_vulkan_global_context_queue_submit_command_fence(
     struct bvb_vulkan_global_context *context,

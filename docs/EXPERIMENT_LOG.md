@@ -5429,3 +5429,34 @@ descriptor-worker stage timing, and E135's measured opcode boundary. This is a
 host instrumentation gate only; no synchronization optimization, hardware
 timing, rendered-frame, or FPS claim is made yet. Exact host scope is retained
 in `docs/evidence/e136-sync-service-profile-host.json`.
+
+## E137 — identify the native synchronization shape (2026-08-22)
+
+The interrupted first E136 controller run still produced 43 complete client
+windows covering 1,376 presents. Aggregate call counts match at the edges to
+within ten waits/submits. The client spent 41.23 ms per present across timeline
+wait, shared-stream Submit2, and ordinary Submit2; the Bionic service accounted
+for 39.86 ms. Native semaphore waits consumed 20.88 ms, queue work consumed
+16.71 ms, shared command replay consumed 2.26 ms, and the conservative
+transport/scheduling residual was only 1.37 ms. In other words, 96.7% of this
+boundary is already inside service-side Vulkan/replay work; another socket
+micro-optimization cannot close the performance gap.
+
+E137 therefore extends the existing opt-in record rather than changing Vulkan
+behavior. Wait records now distinguish zero, finite, and infinite timeouts;
+wait-all versus wait-any; success, timeout, and other results; and semaphore
+count. Submit records split typed-handle resolution, coherent mapped-memory
+mirror synchronization, and the actual native `vkQueueSubmit2`, while retaining
+wait/command/signal shape counts. All clocks and counters remain behind
+`BVB_FRAME_PROFILE=1`; the default path and every Vulkan result are unchanged.
+The focused contracts pass 3/3 and the complete host suite passes 98/98.
+
+The required `deja "E136 native vkWaitSemaphores 20.88ms per present
+vkQueueSubmit2 16.71ms Turnip Tomb Raider timeline semaphore polling mirror
+sync split"` query returned no indexed implementation. E137 reuses E116's
+bounded native stage timing, E117's client accounting, E136's
+service-versus-transport split, and E077's coherent-mirror boundary. The E136
+run rendered a screenshot-inspected Lara frame but was interrupted by the
+foreground-controller defect recorded in the parent repository, so it makes no
+completed-benchmark or FPS claim. Exact inputs and the new host scope are in
+`docs/evidence/e137-native-sync-shape-profile-host.json`.
