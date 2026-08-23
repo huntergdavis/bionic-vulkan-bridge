@@ -1,0 +1,75 @@
+{
+  "gate": "E138",
+  "date": "2026-08-22",
+  "result": "private_turnip_raw_fd_mmap_pass",
+  "source_commit": "6964ac72f0f84e9a2216f2536a4c6588e2599a7a",
+  "target": {
+    "device": "Samsung Galaxy Tab S8+ SM-X808U",
+    "gpu": "Adreno 730",
+    "android_abi": "aarch64 Bionic",
+    "probe_interpreter": "/system/bin/linker64"
+  },
+  "artifacts": {
+    "candidate_directory": "/data/data/com.termux/files/home/steam-arm64/bvb-candidates/e138-271d71a-probe",
+    "probe_path": "/data/data/com.termux/files/home/steam-arm64/bvb-candidates/e138-271d71a-probe/build/bvb-vulkan-external-memory-selftest",
+    "probe_sha256": "fb5aa68d28d4c912c42390ed214d9988a28f9947399c4674e8221c7ab246ef5f",
+    "private_turnip_path": "/data/data/com.termux/files/home/steam-arm64/bvb/driver/libvulkan_freedreno.so",
+    "private_turnip_sha256": "8ac6ef78c3c92998aa46c59fd0081edcba82756f5bad561d1b24a57684874a45",
+    "stdout_sha256": "8d072f5f078f11098b9b7e30a6801e7b8d013dbff5ff0b683778b65abb1ebeb0",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "driver_result": {
+    "external_memory_features": 6,
+    "exportable": true,
+    "importable": true,
+    "dedicated_only": false,
+    "compatible_handle_types": 513,
+    "export_from_imported_handle_types": 513,
+    "opaque_fd_compatible": true,
+    "dma_buf_compatible": true,
+    "memory_type_index": 0,
+    "memory_property_flags": 7,
+    "host_visible": true,
+    "host_coherent": true,
+    "device_local": true
+  },
+  "bidirectional_proof": {
+    "buffer_bytes": 4096,
+    "raw_fd_mmap_bytes": 4096,
+    "source_vulkan_to_raw_mismatched_bytes": 0,
+    "raw_to_destination_vulkan_mismatched_bytes": 0,
+    "destination_vulkan_to_raw_mismatched_bytes": 0,
+    "mapping_survived_successful_fd_import": true,
+    "stderr_bytes": 0
+  },
+  "bootstrap_correction": {
+    "initial_result": "probe stopped before Vulkan because the raw ICD exposes vk_icdGetInstanceProcAddr rather than loader-facing vkGetInstanceProcAddr",
+    "fix_commit": "6964ac72f0f84e9a2216f2536a4c6588e2599a7a",
+    "fix": "reuse the bridge service's existing vkGetInstanceProcAddr then vk_icdGetInstanceProcAddr resolver fallback",
+    "memory_result_before_fix": "not reached"
+  },
+  "preservation": {
+    "installed_bridge_changed": false,
+    "activity_or_ui_launched": false,
+    "service_launched": false,
+    "steam_pid": 15575,
+    "steam_start_ticks": 128118834,
+    "x11_pid": 13643,
+    "x11_start_ticks": 121863492,
+    "protected_processes_unchanged": true
+  },
+  "recall": [
+    {
+      "query": "Turnip KGSL Vulkan external memory opaque fd mmap CPU host visible allocation direct shared mapped memory glibc Bionic bridge",
+      "result": "no indexed implementation",
+      "reuse": "E035 external-memory allocation, selection, export/import, and ownership logic"
+    },
+    {
+      "query": "private Turnip loader has no vkGetInstanceProcAddr vk_icdGetInstanceProcAddr selftest raw ICD Bionic",
+      "result": "no indexed implementation",
+      "reuse": "the already-tested raw-ICD resolver fallback in vulkan_global.c"
+    }
+  ],
+  "decision": "Proceed with an opt-in direct mapped-memory transport. Allocate eligible host-visible coherent memory as exportable in the Bionic service, export its FD once at MapMemory, transfer it to the glibc client over the authenticated control socket, and map it directly. Retain strict/shared mirror fallbacks until hardware A/B validation.",
+  "claim_boundary": "This proves raw mmap and bidirectional CPU visibility for one real private-Turnip host-visible coherent allocation. It does not yet prove cross-libc SCM_RIGHTS transport, general Vulkan memory eligibility, synchronization correctness for GPU-written allocations, mirror removal in Tomb Raider, or an FPS gain."
+}

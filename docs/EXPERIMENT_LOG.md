@@ -5515,3 +5515,31 @@ E035's Vulkan bootstrap, memory selection, export/import ownership, and fake
 memfd regression rather than introducing another loader path. Host scope and
 the no-hardware-claim boundary are retained in
 `docs/evidence/e138-raw-external-memory-mmap-host.json`.
+
+### E138 tablet result — private Turnip exports a directly map-capable FD
+
+The first tablet invocation stopped before Vulkan because E035's selftest
+accepted only loader-facing `vkGetInstanceProcAddr`, while the raw Turnip ICD
+exports `vk_icdGetInstanceProcAddr`. That was a bootstrap mismatch, not a
+memory failure. Commit `6964ac7` reuses the bridge service's existing resolver
+fallback. The focused host contract remained green and the rebuilt Bionic
+probe then ran directly against the unchanged 18-MiB private Turnip library.
+
+The result is decisive. Turnip reports exportable+importable features `6`,
+opaque-FD plus DMA-BUF compatibility mask `513`, and device-local,
+host-visible, host-coherent memory type 0 with flags `7`. POSIX `mmap` mapped
+all 4,096 bytes of the exported descriptor. The raw mapping recovered the
+source Vulkan pattern, its writes were recovered through the imported second
+Vulkan device, and writes through that destination Vulkan mapping were
+recovered through the still-live raw mapping after successful FD import. All
+three comparisons have zero mismatched bytes and stderr is empty.
+
+No installed bridge file changed and no Activity, service, game, or UI was
+launched. Steam and X11 retained their exact PIDs and start ticks. This passes
+the direct-allocation feasibility gate and justifies the next implementation:
+an opt-in Bionic allocation/export plus one-time authenticated FD response to
+the glibc client, limited to eligible host-visible coherent upload memory with
+the existing mirror path retained for A/B and fallback. Cross-libc transport,
+full eligibility, and FPS remain explicitly unproven. Exact hashes and the
+bidirectional proof are retained in
+`docs/evidence/e138-private-turnip-raw-mmap-tablet.json`.
