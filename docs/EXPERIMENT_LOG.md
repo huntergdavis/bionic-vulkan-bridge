@@ -5568,3 +5568,32 @@ E138's real private-Turnip mmap proof. Tablet bridge deployment, Tomb Raider,
 and FPS remain unclaimed in
 `docs/evidence/e139-direct-mapped-memory-host.json` (SHA-256
 `abd326a1d71ef994cb334a30dcb4f2722e358adc9c9f34a2afb50d8f8377af22`).
+
+### E139 tablet direct-memory proof
+
+The first real-hardware attempt exposed an unrelated stale assertion in the
+broad synthetic global client: hardware `VkFormatProperties3` correctly
+contained every legacy feature plus newer flag2-only bits. After changing the
+hardware check to require the legacy mask as a subset, that broad client then
+reached its deliberately fake graphics-pipeline fixture and native Turnip
+rejected it before the mapped-memory section. Neither failure exercised E139.
+
+A new narrow gate therefore tests only the intended boundary: real instance
+and device creation, an opaque-FD-exportable read-only buffer, host-visible
+coherent allocation and bind, direct Map, native-byte verification, zero-RPC
+Flush and Invalidate, typed Unmap, and teardown. The native verifier was also
+corrected to inspect an already-live direct mapping rather than attempt a
+second illegal `vkMapMemory` of the same allocation. The tracked gate on commit
+`a4f35ef237110835928ed54fedc4981133300656` passed against the unchanged
+private Turnip driver: 4,096 bytes, zero mismatches, Map/Flush/Invalidate/Unmap
+round trips `1,0,0,1`, and opcodes `125,0,0,109`. Client and service stderr
+were empty. The tablet-available suite passed 99/99 before the gate and the
+complete host suite passed 101/101 afterward.
+
+The installed game runtime remained untouched, as did Steam PID 15575/start
+128118834, X11 PID 13643/start 121863492, and Termux properties. This proves
+real cross-libc direct mapping and removes the E139 hardware-risk blocker. It
+does not yet prove Tomb Raider chooses eligible mappings or improves FPS;
+deployment and a paired game run are next. Exact artifact hashes and the raw
+result identity are retained in
+`docs/evidence/e139-direct-mapped-memory-tablet.json`.

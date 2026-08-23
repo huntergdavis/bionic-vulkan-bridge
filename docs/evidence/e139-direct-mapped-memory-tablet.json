@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "gate": "E139-tablet-direct-memory",
+  "result": "pass",
+  "date": "2026-08-22",
+  "source_commit": "a4f35ef237110835928ed54fedc4981133300656",
+  "target": "Samsung Galaxy Tab S8+ / Adreno 730 / Android 16",
+  "transport": "Termux glibc ICD to Android Bionic private Turnip",
+  "artifacts": {
+    "glibc_icd": {
+      "bytes": 649952,
+      "sha256": "1c4f0ccca6c11a2aef735ba0105e1b4eaf2416e604f81d1785c5f9a946e4ab68"
+    },
+    "bionic_service": {
+      "bytes": 376232,
+      "sha256": "0cdde463fc98d8fef7e82cbf7192d1de2a1576290f2a18311d025f00166f9b6e"
+    },
+    "hardware_client": {
+      "bytes": 71320,
+      "sha256": "c8058711d5301a932ea573c710f6ac9319477a29e25b201f73f486201b8b37bc"
+    },
+    "private_turnip": {
+      "bytes": 18041856,
+      "sha256": "8ac6ef78c3c92998aa46c59fd0081edcba82756f5bad561d1b24a57684874a45"
+    }
+  },
+  "mapping": {
+    "bytes": 4096,
+    "native_mismatches": 0,
+    "round_trips": {
+      "map": 1,
+      "flush": 0,
+      "invalidate": 0,
+      "unmap": 1
+    },
+    "map_opcode": 125,
+    "unmap_opcode": 109
+  },
+  "validation": {
+    "host_suite": "101/101 pass",
+    "tablet_suite_before_hardware_gate": "99/99 pass",
+    "tracked_hardware_gate": "pass",
+    "client_stderr_bytes": 0,
+    "service_stderr_bytes": 0,
+    "raw_result_sha256": "3a78f0edaa845a0033c0990706d1df4c318e179df9b9717b50d126c74ca7f5f6"
+  },
+  "preservation": {
+    "installed_runtime_changed": false,
+    "installed_glibc_icd_sha256": "d12e38069002d3b342ed38d2f6fcdeb34d60f6a693830502509f00707f876bc7",
+    "installed_service_sha256": "655daa499c382d9e5ce2236dab2cd51d9ed766bd559956ae8d33120acb2fe67c",
+    "steam_pid": 15575,
+    "steam_start_ticks": 128118834,
+    "x11_pid": 13643,
+    "x11_start_ticks": 121863492,
+    "termux_properties_sha256": "89094537f49531dc9b380a0dec3a441b2fb92577e0a4f1db505790eb8b7025b0"
+  },
+  "claims": {
+    "real_private_turnip": true,
+    "cross_libc_direct_mapping": true,
+    "mirror_removed_for_eligible_allocation": true,
+    "installed_game_runtime": false,
+    "tomb_raider": false,
+    "fps": null
+  }
+}
