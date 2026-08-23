@@ -655,12 +655,24 @@ int main(void) {
         physical_device, VK_FORMAT_R8G8B8A8_UNORM, &format_properties2);
     CHECK(format_properties2.formatProperties.optimalTilingFeatures ==
           format_properties.optimalTilingFeatures);
-    CHECK((format_properties3.linearTilingFeatures &
-           (UINT64_C(1) << 40U)) != 0U);
-    CHECK((format_properties3.optimalTilingFeatures &
-           (UINT64_C(1) << 41U)) != 0U);
-    CHECK((format_properties3.bufferFeatures &
-           (UINT64_C(1) << 42U)) != 0U);
+    if (hardware_mode) {
+        CHECK(((uint32_t)format_properties3.linearTilingFeatures &
+               format_properties2.formatProperties.linearTilingFeatures) ==
+              format_properties2.formatProperties.linearTilingFeatures);
+        CHECK(((uint32_t)format_properties3.optimalTilingFeatures &
+               format_properties2.formatProperties.optimalTilingFeatures) ==
+              format_properties2.formatProperties.optimalTilingFeatures);
+        CHECK(((uint32_t)format_properties3.bufferFeatures &
+               format_properties2.formatProperties.bufferFeatures) ==
+              format_properties2.formatProperties.bufferFeatures);
+    } else {
+        CHECK((format_properties3.linearTilingFeatures &
+               (UINT64_C(1) << 40U)) != 0U);
+        CHECK((format_properties3.optimalTilingFeatures &
+               (UINT64_C(1) << 41U)) != 0U);
+        CHECK((format_properties3.bufferFeatures &
+               (UINT64_C(1) << 42U)) != 0U);
+    }
     const VkPhysicalDeviceImageFormatInfo2 image_info2 = {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
         .format = VK_FORMAT_R8G8B8A8_UNORM,

@@ -697,6 +697,15 @@ if(BUILD_TESTING)
     PRIVATE bvb-vulkan-client-dispatch bvb-command-batch Vulkan::Headers
   )
   bvb_enable_warnings(bvb-global-dispatch-test)
+  add_executable(
+    bvb-direct-mapped-memory-hardware-test
+    tests/direct_mapped_memory_hardware.c
+  )
+  target_link_libraries(
+    bvb-direct-mapped-memory-hardware-test
+    PRIVATE bvb-vulkan-client-dispatch Vulkan::Headers
+  )
+  bvb_enable_warnings(bvb-direct-mapped-memory-hardware-test)
   add_executable(bvb-first-rejection-test tests/first_rejection.c)
   target_link_libraries(
     bvb-first-rejection-test
@@ -956,6 +965,8 @@ if(BUILD_TESTING)
       "${CMAKE_CURRENT_SOURCE_DIR}/src/vulkan_global.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/fake_vulkan.c"
       "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_global_dispatch.py"
+      "${CMAKE_CURRENT_SOURCE_DIR}/tests/direct_mapped_memory_hardware.c"
+      "${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-direct-mapped-memory-hardware-termux.sh"
   )
   add_test(
     NAME global-direct-mapped-memory-fallback-contract

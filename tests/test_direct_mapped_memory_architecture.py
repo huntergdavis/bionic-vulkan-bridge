@@ -6,13 +6,15 @@ import sys
 
 
 def main() -> int:
-    if len(sys.argv) != 8:
+    if len(sys.argv) != 10:
         raise SystemExit(
             "usage: test_direct_mapped_memory_architecture.py EVIDENCE "
-            "HEADER CLIENT SERVICE NATIVE DRIVER GLOBAL_RUNNER"
+            "HEADER CLIENT SERVICE NATIVE DRIVER GLOBAL_RUNNER "
+            "HARDWARE_CLIENT HARDWARE_RUNNER"
         )
     evidence_path, header_path, client_path, service_path, native_path, \
-        driver_path, runner_path = map(pathlib.Path, sys.argv[1:])
+        driver_path, runner_path, hardware_client_path, hardware_runner_path = \
+        map(pathlib.Path, sys.argv[1:])
 
     evidence = json.loads(evidence_path.read_text())
     assert evidence["gate"] == "E139"
@@ -87,6 +89,7 @@ def main() -> int:
         "!mirror->direct",
     ):
         assert marker in native
+    assert "mapping->native + request->offset" in native
 
     driver = driver_path.read_text()
     assert 'getenv("BVB_FAKE_REQUIRE_DIRECT_MAPPED_MEMORY")' in driver
@@ -97,6 +100,26 @@ def main() -> int:
     assert '"direct-mapped-memory"' in runner
     assert '"memory_rtts=1,0,0,1,1"' in runner
     assert '"memory_opcodes=125,0,0,109,47"' in runner
+
+    hardware_client = hardware_client_path.read_text()
+    for marker in (
+        'strcmp(mode, "direct") == 0',
+        "BVB_OPCODE_VULKAN_MEMORY_DIRECT_MAP_SETUP",
+        "bvb_verify_memory_fill(",
+        "bvb_global_dispatch_exchange_count() == before_flush",
+        "bvb_global_dispatch_exchange_count() == before_invalidate",
+        "BVB_OPCODE_VULKAN_MEMORY_MIRROR_UNMAP",
+    ):
+        assert marker in hardware_client
+    hardware_runner = hardware_runner_path.read_text()
+    for marker in (
+        "BVB_MAPPED_MEMORY=direct",
+        "bvb-direct-mapped-memory-hardware-glibc",
+        '--loader "$service_loader"',
+        "direct_memory=PASS",
+        "map_rtts=1 flush_rtts=0 invalidate_rtts=0 unmap_rtts=1",
+    ):
+        assert marker in hardware_runner
     print("PASS: E139 direct mapped-memory host architecture")
     return 0
 

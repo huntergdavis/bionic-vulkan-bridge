@@ -7954,6 +7954,26 @@ int bvb_vulkan_global_context_verify_memory_fill(
         context, request->memory_id, BVB_OBJECT_DEVICE_MEMORY, &device_id,
         &device, &memory_bits);
     if (result != 0) return result;
+    for (size_t index = 0U; index < BVB_VULKAN_MEMORY_MIRROR_CAPACITY;
+         ++index) {
+        const struct bvb_memory_mirror_metadata *mapping =
+            &context->memory_mirrors[index];
+        if (mapping->memory_id != request->memory_id || !mapping->direct ||
+            mapping->native == NULL)
+            continue;
+        if (request->offset < mapping->offset ||
+            request->size > mapping->length -
+                (request->offset - mapping->offset))
+            return -ERANGE;
+        atomic_thread_fence(memory_order_acquire);
+        const uint32_t *words = (const uint32_t *)(
+            mapping->native + request->offset);
+        response->vulkan_result = VK_SUCCESS;
+        for (uint64_t word = 0U; word < request->size / 4U; ++word)
+            if (words[word] != request->expected_word)
+                ++response->mismatched_words;
+        return 0;
+    }
     PFN_vkMapMemory map = (PFN_vkMapMemory)context->get_device_proc_addr(
         device, "vkMapMemory");
     PFN_vkUnmapMemory unmap =
