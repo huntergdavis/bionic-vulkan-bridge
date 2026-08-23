@@ -5460,3 +5460,28 @@ run rendered a screenshot-inspected Lara frame but was interrupted by the
 foreground-controller defect recorded in the parent repository, so it makes no
 completed-benchmark or FPS claim. Exact inputs and the new host scope are in
 `docs/evidence/e137-native-sync-shape-profile-host.json`.
+
+### E137 tablet result — mirrors dominate the queue stage, not the whole frame
+
+The corrected foreground controller completed a 1,568-present profile and
+wrote a diagnostic 3.7/11.7/**7.1 FPS** game-authored result at 2800x1752 Low.
+The Wait-only ANR guard acted during the timed scene, so the FPS corroborates
+the earlier clean 7.0-FPS result rather than claiming a new speedup.
+
+All 3,926 measured native waits used `UINT64_MAX`, waited for both of two
+timeline semaphores, returned success, and produced no timeout or other error.
+They cost 23.80 ms per present. Queue submission split into 14.04 ms of
+coherent mirror synchronization, 3.04 ms of native Turnip submit, 2.47 ms of
+shared-command replay, and 0.004 ms of typed-handle resolution per present.
+Client/service reconciliation leaves only 0.80 ms per present for transport,
+wakeup, and response overhead. WSI remains 0.79 ms.
+
+Mirror work is therefore 82% of the measured resolve/mirror/native queue
+stage, making direct shared device memory the next architecture probe. It is
+not the entire performance answer: 14.04 ms is only about 10% of the
+140.85-ms frame, so ideal mirror removal alone caps near 7.9 FPS. The next gate
+will first test whether a host-visible private-Turnip allocation can export an
+FD that the glibc side maps directly and observes bidirectionally. Exact tablet
+counts, identities, hashes, and the no-overclaim boundary are retained in
+`docs/evidence/e137-native-sync-shape-profile-tablet.json` and the sibling
+`steamclienttermux` evidence.

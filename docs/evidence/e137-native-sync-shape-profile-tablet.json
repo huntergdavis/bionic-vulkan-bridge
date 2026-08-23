@@ -1,0 +1,88 @@
+{
+  "gate": "E137",
+  "date": "2026-08-22",
+  "result": "tablet_native_sync_shape_and_cost_proven",
+  "source_commit": "cdd10cba102e849b125e936a7d5ea87805b58139",
+  "sibling_steamclienttermux_evidence_commit": "6b5e01078602a7156e0eb0f7f68b5878779675cd",
+  "target": {
+    "device": "Samsung Galaxy Tab S8+ SM-X808U",
+    "gpu": "Adreno 730",
+    "game": "Tomb Raider (2013)",
+    "resolution": "2800x1752",
+    "quality": "Low",
+    "refresh_hz": 60
+  },
+  "installed_runtime": {
+    "bionic_service_sha256": "655daa499c382d9e5ce2236dab2cd51d9ed766bd559956ae8d33120acb2fe67c",
+    "glibc_icd_sha256": "d12e38069002d3b342ed38d2f6fcdeb34d60f6a693830502509f00707f876bc7",
+    "private_turnip_unchanged": true,
+    "activity_version_code": 40,
+    "command_stream": "shared",
+    "mapped_memory": "shared",
+    "descriptor_journal": "shared",
+    "profile_selector": true
+  },
+  "completed_run": {
+    "run_id": "20260823T021407Z-5760",
+    "profiled_presents": 1568,
+    "minimum_fps": 3.7,
+    "maximum_fps": 11.7,
+    "average_fps": 7.1,
+    "classification": "diagnostic profile because the Wait-only Android ANR guard acted during the timed scene",
+    "service_log_sha256": "f0623b37aad9dc26a5d64bb29474f856b11cf4a8597036afb106d7e768f91c55",
+    "client_log_sha256": "486476e4df8d5287c3e65901e73fbb632f2ff01748dc6c572ece23895f636e20",
+    "result_sha256": "786c0d794c624e97cd5d75e6961253e4c898306b31b5de13db3c782da5893a28"
+  },
+  "service_profile": {
+    "wait_calls": 3926,
+    "wait_native_ms": 37312.218,
+    "wait_native_ms_per_present": 23.796057,
+    "wait_timeout_shape": "UINT64_MAX",
+    "wait_all": true,
+    "wait_semaphores_per_call": 2,
+    "wait_success_calls": 3926,
+    "wait_timeout_results": 0,
+    "wait_other_results": 0,
+    "stream_submit_calls": 3918,
+    "regular_submit_calls": 1589,
+    "submit_total_ms": 30688.493,
+    "submit_total_ms_per_present": 19.571743,
+    "shared_command_replay_ms_per_present": 2.472193,
+    "typed_handle_resolution_ms_per_present": 0.003766,
+    "coherent_mirror_sync_ms_per_present": 14.040892,
+    "native_queue_submit_ms_per_present": 3.044123,
+    "wsi_ms_per_present": 0.790338
+  },
+  "client_service_reconciliation": {
+    "client_wait_ms_per_present": 24.052193,
+    "client_shared_submit_ms_per_present": 15.532264,
+    "client_regular_submit_ms_per_present": 4.585124,
+    "client_minus_service_sync_residual_ms_per_present": 0.80178,
+    "interpretation": "Socket/wakeup/response overhead is small at this boundary. Service-side native synchronization, replay, and coherent mirror work explain almost all client blocking time."
+  },
+  "architecture_decision": {
+    "mirror_share_of_resolve_mirror_native_queue_stage_percent": 82.164,
+    "mirror_only_ideal_fps_ceiling": 7.886,
+    "mirror_only_ideal_gain_percent": 11.073,
+    "next_gate": "Probe a private-Turnip host-visible exported allocation FD for direct glibc mmap and bidirectional visibility before changing the mirror architecture.",
+    "rejected_shortcuts": [
+      "Do not remove or poll around the successful infinite wait-all timeline waits.",
+      "Do not attribute the remaining performance gap to socket latency.",
+      "Do not claim that mirror elimination alone can close the roughly 31-FPS direct-path gap."
+    ]
+  },
+  "post_run": {
+    "owned_children_remaining": 0,
+    "steam_pid": 15575,
+    "steam_start_ticks": 128118834,
+    "x11_pid": 13643,
+    "x11_start_ticks": 121863492,
+    "protected_processes_unchanged": true
+  },
+  "recall": {
+    "query": "E136 native vkWaitSemaphores 20.88ms per present vkQueueSubmit2 16.71ms Turnip Tomb Raider timeline semaphore polling mirror sync split",
+    "result": "no indexed implementation",
+    "reuse": "E137 reused E116 bounded service profiling, E117 client RPC accounting, E136 service-versus-transport timing, and E077 coherent mapped-memory mirror ownership."
+  },
+  "claim_boundary": "This tablet gate proves the wait shapes and service-stage costs during one completed native-resolution diagnostic run. It does not prove a clean FPS improvement, a direct-map implementation, or that mirror removal alone closes the full performance gap."
+}
