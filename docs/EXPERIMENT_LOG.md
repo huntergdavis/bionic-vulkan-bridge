@@ -5315,3 +5315,32 @@ signature exactly, with no published extra. The third occurrence is real reuse
 evidence and may start a two-repetition batch; only a fully drained published
 bank may grow further. Exact identities and diagnostics are retained in
 `docs/evidence/e133-tombraider-cold-extra-pool-exhaustion-tablet.json`.
+
+## E134 — zero-speculation descriptor learning (2026-08-22)
+
+E133 still exhausted Tomb Raider's native pool before a swapchain because one
+unused real extra per unproven signature was enough to consume required exact
+capacity. The required `deja "E134 descriptor lease zero speculation cold
+signature observation proven hot third request adaptive growth pool
+exhaustion"` query returned no indexed implementation. E134 reuses E121's
+pool lifecycle, E127's journal ordering, E131's typed claims, E132's live
+signature/fallback boundary, and E133's drained-bank growth.
+
+The first two occurrences of every tracked signature now allocate exactly and
+publish nothing. Only the third identical live request proves recurrence and
+starts a two-repetition batch. Once its one extra is claimed, later misses can
+grow to four, eight, and at most sixteen exactly as before. Reset clears both
+the observation count and repetition state without prefill. The worker profile
+adds `batch_cold_exact` so the non-speculative learning cost is visible.
+
+The cross-process fake injects an eight-set capacity failure. The service
+backs off atomically to four, publishes only successful real IDs, and grows to
+eight again only after the smaller bank drains. The complete primary sequence
+has two exact observations, fourteen local hits, and bounded real refills; a
+second signature learns independently. After reset, two exact calls and the
+first batch cross the ring and only the fourth call hits locally. Strict mode
+and pending-journal ordering are unchanged.
+
+Focused contracts passed 5/5 and the full host suite passed 96/96. This gate
+currently makes no tablet, visible frame, FPS, or speedup claim. Exact boundaries are retained in
+`docs/evidence/e134-zero-speculation-descriptor-learning-host.json`.

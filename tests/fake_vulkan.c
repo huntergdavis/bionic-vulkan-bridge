@@ -78,6 +78,7 @@ static uint32_t fake_descriptor_template_step;
 static uint32_t fake_descriptor_template_null_updates;
 static int fake_descriptor_journal_wait_seen;
 static int fake_descriptor_transaction_allocate_seen;
+static int fake_core_descriptor_batch8_failed;
 static uint32_t fake_query_step;
 static int fake_descriptor_template_swapchain_update_seen;
 static int fake_descriptor_bind_seen;
@@ -1108,6 +1109,7 @@ static void VKAPI_CALL fake_destroy_device(
     fake_descriptor_template_null_updates = 0U;
     fake_descriptor_journal_wait_seen = 0;
     fake_descriptor_transaction_allocate_seen = 0;
+    fake_core_descriptor_batch8_failed = 0;
     fake_query_step = 0U;
     fake_descriptor_template_swapchain_update_seen = 0;
     fake_descriptor_bind_seen = 0;
@@ -1299,6 +1301,14 @@ static VkResult VKAPI_CALL fake_allocate_descriptor_sets(
     VkDevice device, const VkDescriptorSetAllocateInfo *allocate_info,
     VkDescriptorSet *descriptor_sets) {
     (void)device;
+    if (getenv("BVB_FAKE_REQUIRE_DESCRIPTOR_JOURNAL") != NULL &&
+        allocate_info != NULL &&
+        allocate_info->descriptorPool == fake_core_descriptor_pool &&
+        allocate_info->descriptorSetCount == 8U &&
+        fake_core_descriptor_batch8_failed == 0) {
+        fake_core_descriptor_batch8_failed = 1;
+        return VK_ERROR_OUT_OF_POOL_MEMORY;
+    }
     if (fake_core_descriptor_pool_step <= 3U &&
         allocate_info != NULL && descriptor_sets != NULL &&
         allocate_info->sType ==
@@ -1307,7 +1317,8 @@ static VkResult VKAPI_CALL fake_allocate_descriptor_sets(
         allocate_info->descriptorPool == fake_core_descriptor_pool &&
         (getenv("BVB_FAKE_REQUIRE_DESCRIPTOR_JOURNAL") == NULL
              ? allocate_info->descriptorSetCount == 1U
-             : (allocate_info->descriptorSetCount == 2U ||
+             : (allocate_info->descriptorSetCount == 1U ||
+                allocate_info->descriptorSetCount == 2U ||
                 allocate_info->descriptorSetCount == 4U ||
                 allocate_info->descriptorSetCount == 8U ||
                 allocate_info->descriptorSetCount == 16U)) &&
@@ -1343,19 +1354,10 @@ static VkResult VKAPI_CALL fake_allocate_descriptor_sets(
         allocate_info->sType == VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO &&
         allocate_info->pNext == NULL &&
         allocate_info->descriptorPool == fake_dxvk_descriptor_pool &&
-        allocate_info->descriptorSetCount ==
-            (getenv("BVB_FAKE_REQUIRE_DESCRIPTOR_JOURNAL") != NULL ? 2U : 1U) &&
+        allocate_info->descriptorSetCount == 1U &&
         allocate_info->pSetLayouts != NULL &&
         allocate_info->pSetLayouts[0] == fake_dxvk_descriptor_layout) {
         descriptor_sets[0] = fake_dxvk_descriptor_set;
-        if (allocate_info->descriptorSetCount == 2U) {
-            if (allocate_info->pSetLayouts[1] !=
-                fake_dxvk_descriptor_layout) {
-                return VK_ERROR_INITIALIZATION_FAILED;
-            }
-            descriptor_sets[1] =
-                (VkDescriptorSet)(uintptr_t)UINT64_C(0xaaf2);
-        }
         fake_descriptor_template_step = 4U;
         return VK_SUCCESS;
     }

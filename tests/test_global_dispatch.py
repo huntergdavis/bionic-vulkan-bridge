@@ -648,7 +648,8 @@ def main() -> int:
                 assert profile["batch_successes"] >= 6
                 assert profile["batch_prefetched_sets"] >= 14
                 assert profile["batch_fallbacks"] >= 1
-                assert profile["batch_growths"] >= 2
+                assert profile["batch_growths"] >= 3
+                assert profile["batch_cold_exact"] >= 6
             else:
                 assert server_stderr == expected_server_stderr
                 assert not socket_path.exists()

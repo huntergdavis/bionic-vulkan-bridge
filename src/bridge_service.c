@@ -58,6 +58,7 @@ struct descriptor_lease_plan {
     uint64_t epoch;
     uint32_t signature_count;
     uint32_t batch_repetitions;
+    uint32_t observed_requests;
     bool published;
     bool batch_disabled;
     uint64_t signature_layout_ids[
@@ -91,6 +92,7 @@ struct descriptor_transaction_worker {
     uint64_t profile_batch_prefetched_sets;
     uint64_t profile_batch_fallbacks;
     uint64_t profile_batch_growths;
+    uint64_t profile_batch_cold_exact;
     struct descriptor_lease_plan
         lease_plans[BVB_DESCRIPTOR_LEASE_BANK_COUNT];
 };
@@ -2294,7 +2296,7 @@ static void descriptor_worker_profile_emit(
         "completion_ns=%llu total_max_ns=%llu allocate_max_ns=%llu "
         "batch_attempts=%llu batch_successes=%llu "
         "batch_prefetched_sets=%llu batch_fallbacks=%llu "
-        "batch_growths=%llu\n",
+        "batch_growths=%llu batch_cold_exact=%llu\n",
         (unsigned long long)worker->profile_calls,
         (unsigned long long)worker->profile_total_ns,
         (unsigned long long)worker->profile_context_wait_ns,
@@ -2310,7 +2312,8 @@ static void descriptor_worker_profile_emit(
         (unsigned long long)worker->profile_batch_successes,
         (unsigned long long)worker->profile_batch_prefetched_sets,
         (unsigned long long)worker->profile_batch_fallbacks,
-        (unsigned long long)worker->profile_batch_growths);
+        (unsigned long long)worker->profile_batch_growths,
+        (unsigned long long)worker->profile_batch_cold_exact);
     if (written > 0) {
         const size_t length = (size_t)written < sizeof(line)
             ? (size_t)written : sizeof(line) - 1U;
@@ -2333,6 +2336,7 @@ static void descriptor_worker_profile_emit(
     worker->profile_batch_prefetched_sets = 0U;
     worker->profile_batch_fallbacks = 0U;
     worker->profile_batch_growths = 0U;
+    worker->profile_batch_cold_exact = 0U;
 }
 
 static void descriptor_worker_profile_record(
@@ -2456,6 +2460,12 @@ static int descriptor_lease_allocate_live_batch(
               request->descriptor_set_count, plan->batch_repetitions);
     if (plan == NULL || plan->batch_disabled ||
         batch_count <= request->descriptor_set_count) {
+        return bvb_vulkan_global_context_allocate_descriptor_sets(
+            worker->context, request, response, diagnostic, diagnostic_size);
+    }
+    if (!plan->published && plan->observed_requests < 2U) {
+        ++plan->observed_requests;
+        ++worker->profile_batch_cold_exact;
         return bvb_vulkan_global_context_allocate_descriptor_sets(
             worker->context, request, response, diagnostic, diagnostic_size);
     }
@@ -2585,6 +2595,7 @@ static int descriptor_lease_after_pool_reset(
         candidate->published = false;
         candidate->batch_disabled = false;
         candidate->batch_repetitions = 2U;
+        candidate->observed_requests = 0U;
     }
     (void)diagnostic;
     (void)diagnostic_size;

@@ -46,13 +46,13 @@ def main() -> int:
     if "bvb_vulkan_global_context_allocate_descriptor_sets(" in reset_body:
         raise AssertionError("reset must not speculatively allocate descriptor sets")
 
-    require(global_test, "ring_calls_after_live_batch + 2U", "2-4-8 miss count")
-    require(global_test, "lease_hits_after_live_batch + 11U", "1+3+7 lease hits")
-    require(global_test, "ring_calls_before_descriptor_lease + 1U", "cold post-reset miss")
+    require(global_test, "ring_calls_after_live_batch + 5U", "adaptive miss count")
+    require(global_test, "lease_hits_after_live_batch + 14U", "adaptive lease hits")
+    require(global_test, "ring_calls_before_descriptor_lease + 3U", "cold reset observations")
     require(fake, "allocate_info->descriptorSetCount == 2U", "cold fake allocation")
     require(fake, "allocate_info->descriptorSetCount == 4U", "warm fake allocation")
     require(fake, "allocate_info->descriptorSetCount == 8U", "hot fake allocation")
-    require(global_py, 'profile["batch_growths"] >= 2', "profile growth proof")
+    require(global_py, 'profile["batch_growths"] >= 3', "profile growth proof")
     print("PASS: E133 adaptive descriptor signature growth")
     return 0
 

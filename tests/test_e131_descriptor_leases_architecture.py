@@ -50,7 +50,7 @@ def main() -> int:
     require(service, "bvb_vulkan_global_context_allocate_descriptor_sets(", "real native allocation")
     require(ring_test, "wrong_layout", "mismatch cursor proof")
     require(global_test, "ring_calls_before_descriptor_lease", "zero ring call proof")
-    require(global_test, "ring_calls_before_descriptor_lease + 1U", "cold reset miss proof")
+    require(global_test, "ring_calls_before_descriptor_lease + 3U", "cold reset proof")
     print("PASS: E131 bounded descriptor reset-epoch leases")
     return 0
 

@@ -1,0 +1,61 @@
+{
+  "gate": "E134",
+  "date": "2026-08-22",
+  "source_base_commit": "8ab48f95491cc172d1c5c637ae1a711a1c0b01dc",
+  "trigger": {
+    "e133_runtime_result": "VK_ERROR_OUT_OF_POOL_MEMORY before game swapchain",
+    "e133_cold_speculative_extras_per_signature": 1,
+    "diagnosis": "Even one unused real extra across enough distinct signatures exhausted tightly sized native pools."
+  },
+  "reuse": {
+    "deja_query": "E134 descriptor lease zero speculation cold signature observation proven hot third request adaptive growth pool exhaustion",
+    "deja_result": "no indexed implementation",
+    "local_contracts": [
+      "E121 authoritative pool reset and destruction",
+      "E127 journal ordering",
+      "E131 typed local leases",
+      "E132 exact live signatures and capacity fallback",
+      "E133 demand-proven geometric growth"
+    ]
+  },
+  "implementation": {
+    "exact_observations_before_batch": 2,
+    "cold_speculative_extras": 0,
+    "first_batched_request_ordinal": 3,
+    "initial_hot_repetitions": 2,
+    "drained_growth_sequence": [2, 4, 8, 16],
+    "reset_observation_count": 0,
+    "reset_prefill_sets": 0,
+    "pending_journal_can_claim_lease": false,
+    "maximum_native_batch_sets": 16,
+    "strict_mode_changed": false
+  },
+  "correctness": {
+    "cold_capacity": "A signature seen once or twice receives only the exact application allocation and consumes no unused native descriptor capacity.",
+    "hot_evidence": "The third identical live request proves recurrence before the service creates one extra. Further growth still requires a fully drained published bank.",
+    "fallback": "The fake driver rejects the first eight-set batch. Bionic atomically backs off to four, publishes only successful real IDs, then grows to eight again after those extras drain.",
+    "reset": "All matching banks are disabled and both observation count and repetition state return to cold without native prefill.",
+    "journal": "A pending descriptor journal still forces exact ordered allocation and cannot consume a local extra."
+  },
+  "validation": {
+    "primary_signature": "After the first exact request, nineteen more requests produce four further real ring calls and fourteen local hits: second exact; batch 2 + one hit; batch 4 + three hits; failed 8/backoff 4 + three hits; successful 8 + seven hits.",
+    "second_signature": "Two exact observations, a batch-2 request, then one local hit while the first signature remains independent.",
+    "post_reset": "Two exact observations and a batch-2 request cross the ring; only the fourth request is a local hit.",
+    "profile": "batch_cold_exact counts zero-speculation observations; batch_growths and batch_fallbacks remain measurable.",
+    "focused_contracts": "5/5 passed",
+    "full_host_suite": "96/96 passed",
+    "artifact_sha256": {
+      "bridge_service_source": "9f6af9dfcd028d3c517ab5a94104edf06945fddddf1a933bd9e5f51386fc6482",
+      "global_dispatch_contract": "6c00bdb3a94546c442662eeeac9ed9000180c0bc2ee6e887a6340a9ecf24b9ea",
+      "fake_vulkan": "b4fd831f9859a0dab372e927fbb79f512b98032c7ab59dcd802453a09533cd9f",
+      "global_dispatch_driver": "d8ff4562ae54e665ea5ea6acfd3fbfa66d77eb790811fcbafd8d344d18cc8ec6"
+    }
+  },
+  "claims": {
+    "host_architecture_complete": true,
+    "tablet_deployed": false,
+    "game_frame_presented": false,
+    "fps_claim": false
+  },
+  "next_gate": "Build/deploy the exact tablet pair and rerun Tomb Raider with screenshot inspection. The immediate pass criterion is removal of descriptor pool exhaustion and a real game frame."
+}
